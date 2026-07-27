@@ -336,7 +336,7 @@ private struct Mango9LicensingFragment: View {
 								title: "Mango9 corresponding source code",
 								subtitle: correspondingSourceURL == nil
 									? "Public repository URL must be configured before distribution"
-									: "Exact source snapshot for Mango9 iOS 6.2.0 (build 7)",
+									: "Exact source snapshot for Mango9 iOS 6.2.0 (build 8)",
 								url: correspondingSourceURL
 							)
 							

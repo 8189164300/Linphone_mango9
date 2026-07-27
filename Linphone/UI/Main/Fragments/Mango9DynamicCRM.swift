@@ -1124,25 +1124,30 @@ struct Mango9ChatFragment: View {
 		.navigationBarTitleDisplayMode(.inline)
 		.navigationBarItems(
 			leading:
-				Button {
-					onClose?()
-				} label: {
-					Image("caret-left")
-						.renderingMode(.template)
-						.foregroundStyle(Color.orangeMain500)
-				}
-				.opacity(onClose == nil ? 0 : 1)
-				.disabled(onClose == nil),
+				Group {
+					if let onClose {
+						Button {
+							onClose()
+						} label: {
+							Image("caret-left")
+								.renderingMode(.template)
+								.foregroundStyle(Color.orangeMain500)
+						}
+						.accessibilityLabel("Back")
+					}
+				},
 			trailing:
-				Button {
-					isManagingMembers = true
-				} label: {
-					Image(systemName: "person.2")
-						.foregroundStyle(Color.orangeMain500)
+				Group {
+					if room?.isDirect == false {
+						Button {
+							isManagingMembers = true
+						} label: {
+							Image(systemName: "person.2")
+								.foregroundStyle(Color.orangeMain500)
+						}
+						.accessibilityLabel("Group members")
+					}
 				}
-				.opacity(room?.isDirect == false ? 1 : 0)
-				.disabled(room?.isDirect != false)
-				.accessibilityLabel("Group members")
 		)
 		.task(id: conversationKey) {
 			if let user {
@@ -2186,6 +2191,95 @@ struct Mango9ClientListPayload: Decodable {
 	let pagination: Pagination
 }
 
+struct Mango9SMSSenderID: Decodable, Identifiable {
+	let senderId: String
+
+	var id: String { senderId }
+}
+
+private struct Mango9ActionEnvelope: Decodable {
+	let success: Bool
+	let message: String?
+}
+
+private struct Mango9CommunicationTarget: Identifiable {
+	let id = UUID()
+	let name: String
+	let phone: String
+	let email: String
+
+	var displayName: String {
+		let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+		return trimmed.isEmpty ? "CRM contact" : trimmed
+	}
+}
+
+private enum Mango9MessagingAPIError: LocalizedError {
+	case message(String)
+
+	var errorDescription: String? {
+		switch self {
+		case .message(let message):
+			return message
+		}
+	}
+}
+
+@MainActor
+private enum Mango9CommunicationRouter {
+	static func callWithMango9(_ phone: String) {
+		let number = phone.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !number.isEmpty else { return }
+		let callViewModel = StartCallViewModel()
+		callViewModel.searchField = number
+		callViewModel.interpretAndStartCall()
+	}
+
+	static func callNative(_ phone: String) {
+		openNativeURL(scheme: "tel", value: nativePhoneValue(phone))
+	}
+
+	static func smsNative(_ phone: String) {
+		openNativeURL(scheme: "sms", value: nativePhoneValue(phone))
+	}
+
+	static func emailNative(_ email: String) {
+		let address = email.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard
+			!address.isEmpty,
+			let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+			let url = URL(string: "mailto:\(encoded)")
+		else {
+			return
+		}
+		UIApplication.shared.open(url)
+	}
+
+	static func copy(_ value: String, confirmation: String) {
+		UIPasteboard.general.string = value
+		ToastViewModel.shared.show(confirmation)
+	}
+
+	private static func nativePhoneValue(_ raw: String) -> String {
+		let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+		let digits = trimmed.filter(\.isNumber)
+		return trimmed.hasPrefix("+") ? "+\(digits)" : digits
+	}
+
+	private static func openNativeURL(scheme: String, value: String) {
+		guard !value.isEmpty, let url = URL(string: "\(scheme):\(value)") else {
+			return
+		}
+		UIApplication.shared.open(url) { opened in
+			if !opened {
+				DispatchQueue.main.async {
+					ToastViewModel.shared.show("This action is not available on this device.")
+				}
+			}
+		}
+	}
+}
+
 extension Mango9CRMAPI {
 	static func lineIdentity(session: Mango9Session) async throws -> Mango9LineIdentity {
 		let request = try authorizedRequest(
@@ -2376,6 +2470,53 @@ extension Mango9CRMAPI {
 		return payload
 	}
 
+	static func smsSenderIDs(session: Mango9Session) async throws -> [Mango9SMSSenderID] {
+		let request = try authorizedRequest(
+			session: session,
+			path: ["senderids"]
+		)
+		let envelope: Envelope<[Mango9SMSSenderID]> = try await send(request)
+		guard envelope.success else {
+			throw Mango9CRMAPIError.server
+		}
+		return envelope.data ?? []
+	}
+
+	static func sendSMS(
+		session: Mango9Session,
+		to: String,
+		message: String,
+		senderID: String
+	) async throws {
+		var request = try authorizedRequest(
+			session: session,
+			path: ["messages", "send"]
+		)
+		request.httpMethod = "POST"
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.httpBody = try JSONSerialization.data(
+			withJSONObject: [
+				"to": to,
+				"message": message,
+				"sender_id": senderID
+			]
+		)
+
+		let (data, response) = try await URLSession.shared.data(for: request)
+		guard let httpResponse = response as? HTTPURLResponse else {
+			throw Mango9CRMAPIError.server
+		}
+		if httpResponse.statusCode == 401 {
+			throw Mango9CRMAPIError.unauthorized
+		}
+		let envelope = try? JSONDecoder().decode(Mango9ActionEnvelope.self, from: data)
+		guard (200..<300).contains(httpResponse.statusCode), envelope?.success == true else {
+			throw Mango9MessagingAPIError.message(
+				envelope?.message ?? "The Mango9 SMS service could not send this message."
+			)
+		}
+	}
+
 	private static func authorizedRequest(
 		session: Mango9Session,
 		path: [String],
@@ -2401,6 +2542,298 @@ extension Mango9CRMAPI {
 		request.setValue("application/json", forHTTPHeaderField: "Accept")
 		request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
 		return request
+	}
+}
+
+@MainActor
+private final class Mango9SMSComposerViewModel: ObservableObject {
+	let recipientName: String
+	let phone: String
+
+	@Published var message = ""
+	@Published var selectedSenderID = ""
+	@Published private(set) var senderIDs: [Mango9SMSSenderID] = []
+	@Published private(set) var isLoading = false
+	@Published private(set) var isSending = false
+	@Published private(set) var errorMessage: String?
+
+	init(recipientName: String, phone: String) {
+		self.recipientName = recipientName
+		self.phone = phone
+	}
+
+	func load() async {
+		guard !isLoading else { return }
+		guard var session = Mango9SessionStore.load() else {
+			errorMessage = "Connect your Mango9 account to send SMS."
+			return
+		}
+		isLoading = true
+		errorMessage = nil
+		defer { isLoading = false }
+
+		do {
+			do {
+				senderIDs = try await Mango9CRMAPI.smsSenderIDs(session: session)
+			} catch Mango9CRMAPIError.unauthorized {
+				session = try await Mango9CRMAPI.refresh(session: session)
+				try Mango9SessionStore.save(session)
+				senderIDs = try await Mango9CRMAPI.smsSenderIDs(session: session)
+			}
+			if selectedSenderID.isEmpty {
+				selectedSenderID = senderIDs.first?.senderId ?? ""
+			}
+		} catch Mango9CRMAPIError.unauthorized {
+			errorMessage = "Your CRM session expired. Sign in again."
+		} catch {
+			errorMessage = "Mango9 SMS numbers could not be loaded."
+		}
+	}
+
+	func send() async -> Bool {
+		let outgoing = message.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !outgoing.isEmpty, !isSending else { return false }
+		guard var session = Mango9SessionStore.load() else {
+			errorMessage = "Connect your Mango9 account to send SMS."
+			return false
+		}
+
+		isSending = true
+		errorMessage = nil
+		defer { isSending = false }
+
+		do {
+			do {
+				try await Mango9CRMAPI.sendSMS(
+					session: session,
+					to: phone,
+					message: outgoing,
+					senderID: selectedSenderID
+				)
+			} catch Mango9CRMAPIError.unauthorized {
+				session = try await Mango9CRMAPI.refresh(session: session)
+				try Mango9SessionStore.save(session)
+				try await Mango9CRMAPI.sendSMS(
+					session: session,
+					to: phone,
+					message: outgoing,
+					senderID: selectedSenderID
+				)
+			}
+			return true
+		} catch Mango9CRMAPIError.unauthorized {
+			errorMessage = "Your CRM session expired. Sign in again."
+		} catch {
+			errorMessage = error.localizedDescription
+		}
+		return false
+	}
+}
+
+private struct Mango9SMSComposer: View {
+	@Environment(\.dismiss) private var dismiss
+	@StateObject private var viewModel: Mango9SMSComposerViewModel
+
+	init(target: Mango9CommunicationTarget) {
+		_viewModel = StateObject(
+			wrappedValue: Mango9SMSComposerViewModel(
+				recipientName: target.displayName,
+				phone: target.phone
+			)
+		)
+	}
+
+	var body: some View {
+		NavigationView {
+			ScrollView {
+				VStack(alignment: .leading, spacing: 18) {
+					VStack(alignment: .leading, spacing: 4) {
+						Text(viewModel.recipientName)
+							.default_text_style_800(styleSize: 18)
+						Text(viewModel.phone)
+							.default_text_style(styleSize: 13)
+							.foregroundStyle(Color.grayMain2c500)
+					}
+
+					VStack(alignment: .leading, spacing: 7) {
+						Text("Send from")
+							.default_text_style_700(styleSize: 12)
+						if viewModel.isLoading {
+							ProgressView()
+								.tint(Color.orangeMain500)
+								.frame(maxWidth: .infinity, minHeight: 48)
+						} else if viewModel.senderIDs.isEmpty {
+							Text("Automatic Mango9 number")
+								.default_text_style(styleSize: 14)
+								.frame(maxWidth: .infinity, alignment: .leading)
+								.padding(.horizontal, 14)
+								.frame(height: 48)
+								.background(Color.gray100)
+								.cornerRadius(12)
+						} else {
+							Picker("Send from", selection: $viewModel.selectedSenderID) {
+								ForEach(viewModel.senderIDs) { sender in
+									Text(sender.senderId).tag(sender.senderId)
+								}
+							}
+							.pickerStyle(.menu)
+							.tint(Color.orangeMain500)
+							.frame(maxWidth: .infinity, alignment: .leading)
+							.padding(.horizontal, 10)
+							.frame(height: 48)
+							.background(Color.gray100)
+							.cornerRadius(12)
+						}
+					}
+
+					VStack(alignment: .leading, spacing: 7) {
+						Text("Message")
+							.default_text_style_700(styleSize: 12)
+						ZStack(alignment: .topLeading) {
+							if viewModel.message.isEmpty {
+								Text("Write an SMS")
+									.default_text_style(styleSize: 14)
+									.foregroundStyle(Color.grayMain2c500)
+									.padding(.horizontal, 12)
+									.padding(.vertical, 14)
+							}
+							messageEditor
+						}
+						.background(Color.gray100)
+						.cornerRadius(12)
+					}
+
+					if let errorMessage = viewModel.errorMessage {
+						HStack(alignment: .top, spacing: 9) {
+							Image("warning-circle")
+								.renderingMode(.template)
+								.resizable()
+								.foregroundStyle(Color.redDanger500)
+								.frame(width: 20, height: 20)
+							Text(errorMessage)
+								.default_text_style(styleSize: 12)
+							Spacer()
+						}
+						.padding(12)
+						.background(Color.redDanger200.opacity(0.45))
+						.cornerRadius(12)
+					}
+
+					Button {
+						Task {
+							if await viewModel.send() {
+								ToastViewModel.shared.show("SMS sent with Mango9")
+								dismiss()
+							}
+						}
+					} label: {
+						Group {
+							if viewModel.isSending {
+								ProgressView().tint(Color.white)
+							} else {
+								Text("Send with Mango9")
+									.font(.system(size: 15, weight: .bold))
+									.foregroundStyle(Color.white)
+							}
+						}
+						.frame(maxWidth: .infinity)
+						.frame(height: 50)
+						.background(Color.orangeMain500)
+						.cornerRadius(25)
+					}
+					.disabled(
+						viewModel.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+						|| viewModel.isSending
+					)
+					.opacity(
+						viewModel.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+						? 0.55
+						: 1
+					)
+				}
+				.padding(20)
+			}
+			.background(Color.white)
+			.navigationTitle("Mango9 SMS")
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .cancellationAction) {
+					Button("Cancel") {
+						dismiss()
+					}
+				}
+			}
+		}
+		.navigationViewStyle(.stack)
+		.task {
+			await viewModel.load()
+		}
+	}
+
+	@ViewBuilder
+	private var messageEditor: some View {
+		if #available(iOS 16.0, *) {
+			TextEditor(text: $viewModel.message)
+				.default_text_style(styleSize: 14)
+				.scrollContentBackground(.hidden)
+				.padding(8)
+				.frame(minHeight: 150)
+				.background(Color.clear)
+		} else {
+			TextEditor(text: $viewModel.message)
+				.default_text_style(styleSize: 14)
+				.padding(8)
+				.frame(minHeight: 150)
+				.background(Color.clear)
+		}
+	}
+}
+
+private struct Mango9CommunicationButtons: View {
+	let target: Mango9CommunicationTarget
+	let onMango9SMS: (Mango9CommunicationTarget) -> Void
+
+	var body: some View {
+		Group {
+			if !target.phone.isEmpty {
+				Button {
+					Mango9CommunicationRouter.callWithMango9(target.phone)
+				} label: {
+					Label("Call with Mango9", systemImage: "phone.fill")
+				}
+				Button {
+					onMango9SMS(target)
+				} label: {
+					Label("SMS with Mango9", systemImage: "message.fill")
+				}
+				Button {
+					Mango9CommunicationRouter.callNative(target.phone)
+				} label: {
+					Label("Call Native", systemImage: "iphone")
+				}
+				Button {
+					Mango9CommunicationRouter.smsNative(target.phone)
+				} label: {
+					Label("SMS Native", systemImage: "message")
+				}
+			}
+			if !target.email.isEmpty {
+				Button {
+					Mango9CommunicationRouter.emailNative(target.email)
+				} label: {
+					Label("Email Native", systemImage: "envelope")
+				}
+			}
+			Button {
+				let value = target.phone.isEmpty ? target.email : target.phone
+				Mango9CommunicationRouter.copy(
+					value,
+					confirmation: target.phone.isEmpty ? "Email copied" : "Phone number copied"
+				)
+			} label: {
+				Label("Copy", systemImage: "doc.on.doc")
+			}
+		}
 	}
 }
 
@@ -2599,6 +3032,7 @@ final class Mango9LeadsViewModel: ObservableObject {
 struct Mango9LeadsFragment: View {
 	@Environment(\.presentationMode) private var presentationMode
 	@StateObject private var viewModel = Mango9LeadsViewModel()
+	@State private var smsTarget: Mango9CommunicationTarget?
 
 	var body: some View {
 		ZStack {
@@ -2631,6 +3065,13 @@ struct Mango9LeadsFragment: View {
 									leadRow(lead)
 								}
 								.buttonStyle(.plain)
+								.contextMenu {
+									Mango9CommunicationButtons(
+										target: communicationTarget(for: lead)
+									) {
+										smsTarget = $0
+									}
+								}
 							}
 						}
 					}
@@ -2649,6 +3090,9 @@ struct Mango9LeadsFragment: View {
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9LeadDidChange)) { _ in
 			Task { await viewModel.reloadList() }
+		}
+		.sheet(item: $smsTarget) { selected in
+			Mango9SMSComposer(target: selected)
 		}
 	}
 
@@ -2832,6 +3276,14 @@ struct Mango9LeadsFragment: View {
 		let parts = name.split(separator: " ").prefix(2)
 		let value = parts.compactMap(\.first).map(String.init).joined()
 		return value.isEmpty ? "L" : value.uppercased()
+	}
+
+	private func communicationTarget(for lead: Mango9Lead) -> Mango9CommunicationTarget {
+		Mango9CommunicationTarget(
+			name: lead.name,
+			phone: lead.phone,
+			email: lead.email
+		)
 	}
 
 	private var emptyState: some View {
@@ -3270,6 +3722,9 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 struct Mango9LeadDetailFragment: View {
 	@Environment(\.presentationMode) private var presentationMode
 	@StateObject private var viewModel: Mango9LeadDetailViewModel
+	@State private var communicationTarget: Mango9CommunicationTarget?
+	@State private var smsTarget: Mango9CommunicationTarget?
+	@State private var isShowingCommunicationActions = false
 
 	init(leadId: Int) {
 		_viewModel = StateObject(wrappedValue: Mango9LeadDetailViewModel(leadId: leadId))
@@ -3326,6 +3781,28 @@ struct Mango9LeadDetailFragment: View {
 		.navigationBarHidden(true)
 		.task {
 			await viewModel.load()
+		}
+		.confirmationDialog(
+			communicationTarget?.displayName ?? "Contact options",
+			isPresented: $isShowingCommunicationActions,
+			titleVisibility: .visible
+		) {
+			if let communicationTarget {
+				Mango9CommunicationButtons(target: communicationTarget) {
+					smsTarget = $0
+				}
+			}
+		} message: {
+			if let communicationTarget {
+				Text(
+					communicationTarget.phone.isEmpty
+					? communicationTarget.email
+					: communicationTarget.phone
+				)
+			}
+		}
+		.sheet(item: $smsTarget) { selected in
+			Mango9SMSComposer(target: selected)
 		}
 	}
 
@@ -3417,15 +3894,39 @@ struct Mango9LeadDetailFragment: View {
 					.default_text_style_800(styleSize: 16)
 					.lineLimit(1)
 				if !lead.phone.isEmpty {
-					Text(lead.phone)
-						.default_text_style(styleSize: 12)
-						.foregroundStyle(Color.grayMain2c500)
+					Button {
+						presentCommunicationActions(
+							phone: lead.phone,
+							email: lead.email
+						)
+					} label: {
+						HStack(spacing: 5) {
+							Image(systemName: "phone.fill")
+								.font(.system(size: 10, weight: .semibold))
+							Text(lead.phone)
+								.default_text_style_700(styleSize: 12)
+						}
+						.foregroundStyle(Color.orangeMain500)
+					}
+					.buttonStyle(.plain)
 				}
 				if !lead.email.isEmpty {
-					Text(lead.email)
-						.default_text_style(styleSize: 12)
-						.foregroundStyle(Color.grayMain2c500)
-						.lineLimit(1)
+					Button {
+						presentCommunicationActions(
+							phone: lead.phone,
+							email: lead.email
+						)
+					} label: {
+						HStack(spacing: 5) {
+							Image(systemName: "envelope.fill")
+								.font(.system(size: 10, weight: .semibold))
+							Text(lead.email)
+								.default_text_style_700(styleSize: 12)
+								.lineLimit(1)
+						}
+						.foregroundStyle(Color.orangeMain500)
+					}
+					.buttonStyle(.plain)
 				}
 			}
 
@@ -3485,16 +3986,50 @@ struct Mango9LeadDetailFragment: View {
 		}
 	}
 
+	@ViewBuilder
 	private func valueRow(_ field: Mango9LeadSchema.Field) -> some View {
+		let rawValue = viewModel.values[field.key] ?? ""
 		VStack(alignment: .leading, spacing: 4) {
 			Text(field.label)
 				.default_text_style_700(styleSize: 11)
 				.foregroundStyle(Color.grayMain2c500)
-			Text(displayValue(viewModel.values[field.key] ?? "", type: field.type))
-				.default_text_style(styleSize: 14)
-				.foregroundStyle((viewModel.values[field.key] ?? "").isEmpty ? Color.grayMain2c500 : Color.black)
-				.frame(maxWidth: .infinity, alignment: .leading)
+			if !rawValue.isEmpty && (field.type == "phone" || field.type == "email") {
+				Button {
+					presentCommunicationActions(
+						phone: field.type == "phone" ? rawValue : nil,
+						email: field.type == "email" ? rawValue : nil
+					)
+				} label: {
+					HStack(spacing: 7) {
+						Image(systemName: field.type == "phone" ? "phone.fill" : "envelope.fill")
+							.font(.system(size: 12, weight: .semibold))
+						Text(displayValue(rawValue, type: field.type))
+							.default_text_style_700(styleSize: 14)
+							.frame(maxWidth: .infinity, alignment: .leading)
+					}
+					.foregroundStyle(Color.orangeMain500)
+				}
+				.buttonStyle(.plain)
+			} else {
+				Text(displayValue(rawValue, type: field.type))
+					.default_text_style(styleSize: 14)
+					.foregroundStyle(rawValue.isEmpty ? Color.grayMain2c500 : Color.black)
+					.frame(maxWidth: .infinity, alignment: .leading)
+			}
 		}
+	}
+
+	private func presentCommunicationActions(phone: String?, email: String?) {
+		guard let lead = viewModel.lead else { return }
+		let selectedPhone = phone ?? lead.phone
+		let selectedEmail = email ?? lead.email
+		guard !selectedPhone.isEmpty || !selectedEmail.isEmpty else { return }
+		communicationTarget = Mango9CommunicationTarget(
+			name: lead.name,
+			phone: selectedPhone,
+			email: selectedEmail
+		)
+		isShowingCommunicationActions = true
 	}
 
 	@ViewBuilder
