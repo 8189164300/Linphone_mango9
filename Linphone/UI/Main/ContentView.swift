@@ -1,0 +1,2478 @@
+/*
+ * Copyright (c) 2010-2023 Belledonne Communications SARL.
+ *
+ * This file is part of linphone-iphone
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+// swiftlint:disable type_body_length
+// swiftlint:disable line_length
+import SwiftUI
+import linphonesw
+
+struct ContentView: View {
+	
+	@Environment(\.scenePhase) var scenePhase
+	
+	@EnvironmentObject var navigationManager: NavigationManager
+	@EnvironmentObject var coreContext: CoreContext
+	@EnvironmentObject var telecomManager: TelecomManager
+	@EnvironmentObject var sharedMainViewModel: SharedMainViewModel
+	
+	@ObservedObject private var contactsManager = ContactsManager.shared
+	@ObservedObject private var magicSearch = MagicSearchSingleton.shared
+	@ObservedObject private var mango9ChatStore = Mango9ChatStore.shared
+	
+	@StateObject private var callViewModel = CallViewModel()
+	@StateObject private var accountProfileViewModel = AccountProfileViewModel()
+	
+	@State private var contactsListViewModel: ContactsListViewModel?
+	@State private var historyListViewModel: HistoryListViewModel?
+	@State private var conversationsListViewModel: ConversationsListViewModel?
+	@State private var meetingsListViewModel: MeetingsListViewModel?
+	
+	@State private var orientation = UIDevice.current.orientation
+	@State var sideMenuIsOpen: Bool = false
+	
+	@State private var searchIsActive = false
+	@State private var text = ""
+	@FocusState private var focusedField: Bool
+	
+	@State private var showingDialer = false
+	@State var isMenuOpen = false
+	@State var isShowDeleteContactPopup = false
+	@State var isShowDeleteAllHistoryPopup = false
+	@State var isShowEditContactFragment = false
+	@State var isShowEditContactFragmentInContactDetails = false
+	@State var isShowEditContactFragmentAddress = ""
+	@State var isShowStartCallFragment = false
+	@State var isShowStartConversationFragment = false
+	@State var isShowDismissPopup = false
+	@State var isShowDeleteMeetingNotificationPopup = false
+	@State var isShowSendCancelMeetingNotificationPopup = false
+	@State var isShowTrustLevelPopup = false
+	@State var isShowIncreaseTrustLevelPopup = false
+	@State var increaseTrustLevelPopupAcceptedTmp = false
+	@State var isShowStartCallGroupPopup = false
+	@State var isShowRemoveParticipantPopup = false
+	@State var isShowDeleteMessagePopup = false
+	@State var isShowSipAddressesPopup = false
+	@State var isShowSipAddressesPopupType = 0 // 0 to call, 1  to message, 2 to video call
+	@State var isShowConversationFragment = false
+	@State var isShowAccountProfileFragment = false
+	@State var isShowSettingsFragment = false
+	@State var isShowRecordingsListFragment = false
+	@State var isShowHelpFragment = false
+	@State var isShowCRMFragment = false
+	@State private var crmDeepLinkLeadId: Int?
+	@State private var mango9ChatTarget: Mango9ChatTarget?
+	
+	@State var fullscreenVideo = false
+	
+	@State var isShowScheduleMeetingFragment = false
+	@State var isShowScheduleMeetingFragmentSubject = ""
+	@State var isShowScheduleMeetingFragmentParticipants: [SelectedAddressModel] = []
+	
+	@State private var isShowLoginFragment: Bool = false
+	
+	private let avatarSize = 45.0
+	@State private var imagePath: URL?
+	@State private var imageTmp: Image?
+	
+	@State var isShowConversationInfoPopup: Bool = false
+	@State var conversationInfoPopupText: String = ""
+	
+	@State var isShowUpdatePasswordPopup: Bool = false
+	@State var passwordUpdateAddress: String = ""
+	
+	@State var showLeaveConversationPopup: Bool = false
+	@State var showDeleteConversationPopup: Bool = false
+	@State var showDeleteConversationHistoryPopup: Bool = false
+	
+	@State private var securitySheet = false
+
+	private var combinedUnreadMessages: Int {
+		let mango9Unread = Mango9SessionStore.load() == nil ? 0 : mango9ChatStore.unreadCount
+		return max(0, sharedMainViewModel.unreadMessages) + mango9Unread
+	}
+	
+	var body: some View {
+		GeometryReader { geometry in
+			VStack(spacing: 0) {
+				if accountProfileViewModel.accountError && (!telecomManager.callInProgress || (telecomManager.callInProgress && !telecomManager.callDisplayed)) {
+					HStack {
+						if let index = accountProfileViewModel.defaultAccountModelIndex,
+						   index < coreContext.accounts.count, coreContext.accounts[index].isDefaultAccount, coreContext.accounts[index].registrationStateAssociatedUIColor == .orangeWarning600 {
+							Image("warning-circle")
+								.renderingMode(.template)
+								.resizable()
+								.foregroundStyle(.white)
+								.frame(width: 26, height: 26)
+								.padding(.leading, 10)
+							
+							
+							Text(String(localized: "default_account_disabled"))
+								.default_text_style_white(styleSize: 16)
+						} else {
+							Image("bell-simple")
+								.renderingMode(.template)
+								.resizable()
+								.foregroundStyle(.white)
+								.frame(width: 26, height: 26)
+								.padding(.leading, 10)
+							
+							
+							Text(String(localized: "connection_error_for_non_default_account"))
+								.default_text_style_white(styleSize: 16)
+						}
+						Spacer()
+						
+						Button(
+							action: {
+								withAnimation {
+									accountProfileViewModel.accountError = false
+								}
+							}, label: {
+								Image("x")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(.white)
+									.frame(width: 26, height: 26)
+									.padding(.trailing, 10)
+							}
+						)
+						
+					}
+					.frame(maxWidth: .infinity)
+					.frame(height: 40)
+					.padding(.horizontal, 10)
+					.background(Color.redDanger500)
+				}
+				
+				if accountProfileViewModel.nonDefaultAccountNotificationsCount > 0 && (!telecomManager.callInProgress || (telecomManager.callInProgress && !telecomManager.callDisplayed)) {
+					HStack {
+						Image("bell-simple")
+							.renderingMode(.template)
+							.resizable()
+							.foregroundStyle(.white)
+							.frame(width: 26, height: 26)
+							.padding(.leading, 10)
+						
+						if accountProfileViewModel.nonDefaultAccountNotificationsCount > 1 {
+							Text(String(format: String(localized: "pending_notification_for_other_accounts_multiple"), accountProfileViewModel.nonDefaultAccountNotificationsCount.description))
+								.default_text_style_white(styleSize: 16)
+						} else {
+							Text(String(localized: "pending_notification_for_other_accounts_single"))
+								.default_text_style_white(styleSize: 16)
+						}
+						
+						Spacer()
+						
+						Button(
+							action: {
+								withAnimation {
+									accountProfileViewModel.nonDefaultAccountNotificationsCount = 0
+								}
+							}, label: {
+								Image("x")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(.white)
+									.frame(width: 26, height: 26)
+									.padding(.trailing, 10)
+							}
+						)
+						
+					}
+					.frame(maxWidth: .infinity)
+					.frame(height: 40)
+					.padding(.horizontal, 10)
+					.background(Color.gray)
+				}
+				
+				if sharedMainViewModel.waitingMessageCount > 0 && (!telecomManager.callInProgress || (telecomManager.callInProgress && !telecomManager.callDisplayed)) {
+					HStack {
+						Image("voicemail")
+							.renderingMode(.template)
+							.resizable()
+							.foregroundStyle(.white)
+							.frame(width: 26, height: 26)
+							.padding(.leading, 10)
+						
+						if sharedMainViewModel.waitingMessageCount > 1 {
+							Text(String(format: String(localized: "mwi_messages_are_waiting_multiple"), sharedMainViewModel.waitingMessageCount.description))
+								.default_text_style_white(styleSize: 16)
+						} else {
+							Text(String(localized: "mwi_messages_are_waiting_single"))
+								.default_text_style_white(styleSize: 16)
+						}
+						
+						Spacer()
+						
+						Button(
+							action: {
+								withAnimation {
+									sharedMainViewModel.waitingMessageCount = 0
+								}
+							}, label: {
+								Image("x")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(.white)
+									.frame(width: 26, height: 26)
+									.padding(.trailing, 10)
+							}
+						)
+						
+					}
+					.frame(maxWidth: .infinity)
+					.frame(height: 40)
+					.padding(.horizontal, 10)
+					.background(Color.gray)
+					.onTapGesture {
+						if let index = accountProfileViewModel.defaultAccountModelIndex,
+						   index < coreContext.accounts.count {
+                            sharedMainViewModel.waitingMessageCount = 0
+							coreContext.accounts[index].callVoicemailUri()
+						}
+					}
+				}
+				
+				if !sharedMainViewModel.fileUrlsToShare.isEmpty && (!telecomManager.callInProgress || (telecomManager.callInProgress && !telecomManager.callDisplayed)) {
+					HStack {
+						Image("share-network")
+							.renderingMode(.template)
+							.resizable()
+							.foregroundStyle(.white)
+							.frame(width: 26, height: 26)
+							.padding(.leading, 10)
+						
+						if sharedMainViewModel.fileUrlsToShare.count > 1 {
+							Text(String(format: String(localized: "conversations_files_waiting_to_be_shared_multiple"), sharedMainViewModel.fileUrlsToShare.count.description))
+								.default_text_style_white(styleSize: 16)
+						} else {
+							Text(String(localized: "conversations_files_waiting_to_be_shared_single"))
+								.default_text_style_white(styleSize: 16)
+						}
+						
+						Spacer()
+						
+						Button(
+							action: {
+								withAnimation {
+									sharedMainViewModel.fileUrlsToShare = []
+								}
+							}, label: {
+								Image("x")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(.white)
+									.frame(width: 26, height: 26)
+									.padding(.trailing, 10)
+							}
+						)
+						
+					}
+					.frame(maxWidth: .infinity)
+					.frame(height: 40)
+					.padding(.horizontal, 10)
+					.background(Color.gray)
+				}
+				
+				if (telecomManager.callInProgress && !fullscreenVideo && ((!telecomManager.callDisplayed && callViewModel.callsCounter == 1) || callViewModel.callsCounter > 1)) || isShowConversationFragment {
+					HStack {
+						Image("phone")
+							.renderingMode(.template)
+							.resizable()
+							.foregroundStyle(.white)
+							.frame(width: 26, height: 26)
+							.padding(.leading, 10)
+						
+						if callViewModel.callsCounter > 1 {
+							Text(String(format: String(localized: "calls_count_label"), callViewModel.callsCounter.description))
+								.default_text_style_white(styleSize: 16)
+						} else {
+							Text("\(callViewModel.displayName)")
+								.default_text_style_white(styleSize: 16)
+						}
+						
+						Spacer()
+						
+						if callViewModel.callsCounter == 1 {
+							Text(callViewModel.isPaused || telecomManager.isPausedByRemote ? String(localized: "call_state_paused") : String(localized: "call_state_connected"))
+								.default_text_style_white(styleSize: 16)
+								.padding(.trailing, 10)
+						}
+					}
+					.frame(maxWidth: .infinity)
+					.frame(height: 40)
+					.padding(.horizontal, 10)
+					.background(Color.greenSuccess500)
+					.onTapGesture {
+						withAnimation {
+							telecomManager.callDisplayed = true
+						}
+					}
+				}
+				
+				ZStack {
+					VStack(spacing: 0) {
+						HStack(spacing: 0) {
+							if orientation == .landscapeLeft
+								|| orientation == .landscapeRight
+								|| UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height {
+								VStack(spacing: 0) {
+									Group {
+										Spacer()
+										
+										Button(action: {
+											resetFilter()
+											
+											sharedMainViewModel.changeIndexView(indexViewInt: 0)
+											sharedMainViewModel.displayedCall = nil
+											sharedMainViewModel.displayedConversation = nil
+											sharedMainViewModel.displayedMeeting = nil
+										}, label: {
+											VStack {
+												Image("address-book")
+													.renderingMode(.template)
+													.resizable()
+													.foregroundStyle(sharedMainViewModel.indexView == 0 ? Color.orangeMain500 : Color.grayMain2c600)
+													.frame(width: 25, height: 25)
+												if sharedMainViewModel.indexView == 0 {
+													Text("bottom_navigation_contacts_label")
+														.default_text_style_700(styleSize: 10)
+												} else {
+													Text("bottom_navigation_contacts_label")
+														.default_text_style(styleSize: 10)
+												}
+											}
+										})
+										.padding(.top)
+										
+										Spacer()
+
+										Button(action: {
+											resetFilter()
+											withAnimation {
+												isShowCRMFragment = true
+											}
+										}, label: {
+											VStack {
+												Image("users-three-square")
+													.renderingMode(.template)
+													.resizable()
+													.foregroundStyle(Color.grayMain2c600)
+													.frame(width: 25, height: 25)
+												Text("CRM")
+													.default_text_style(styleSize: 10)
+											}
+										})
+										.padding(.top)
+										.accessibilityIdentifier("bottom_bar_crm_button")
+
+										Spacer()
+										
+										ZStack {
+											if SharedMainViewModel.shared.missedCallsCount > 0 {
+												VStack {
+													HStack {
+														Text(
+                                                            SharedMainViewModel.shared.missedCallsCount < 99
+															? String(SharedMainViewModel.shared.missedCallsCount)
+															: "99+"
+														)
+														.foregroundStyle(.white)
+														.default_text_style(styleSize: 10)
+														.lineLimit(1)
+													}
+													.frame(width: 18, height: 18)
+													.background(Color.redDanger500)
+													.cornerRadius(50)
+												}
+												.padding(.bottom, 30)
+												.padding(.leading, 30)
+											}
+											
+											Button(action: {
+												resetFilter()
+
+												sharedMainViewModel.changeIndexView(indexViewInt: 1)
+												sharedMainViewModel.displayedFriend = nil
+												sharedMainViewModel.displayedConversation = nil
+												sharedMainViewModel.displayedMeeting = nil
+												if SharedMainViewModel.shared.missedCallsCount > 0 {
+                                                    SharedMainViewModel.shared.resetMissedCallsCount()
+												}
+											}, label: {
+												VStack {
+													Image("phone")
+														.renderingMode(.template)
+														.resizable()
+														.foregroundStyle(sharedMainViewModel.indexView == 1 ? Color.orangeMain500 : Color.grayMain2c600)
+														.frame(width: 25, height: 25)
+													if sharedMainViewModel.indexView == 1 {
+														Text("bottom_navigation_calls_label")
+															.default_text_style_700(styleSize: 10)
+													} else {
+														Text("bottom_navigation_calls_label")
+															.default_text_style(styleSize: 10)
+													}
+												}
+											})
+											.padding(.top)
+											.accessibilityIdentifier("bottom_bar_calls_button")
+										}
+										
+										Spacer()
+										
+                                        if !sharedMainViewModel.disableChatFeature {
+                                            ZStack {
+                                                if combinedUnreadMessages > 0 {
+                                                    VStack {
+                                                        HStack {
+                                                            Text(
+                                                                combinedUnreadMessages < 99
+                                                                ? String(combinedUnreadMessages)
+                                                                : "99+"
+                                                            )
+                                                            .foregroundStyle(.white)
+                                                            .default_text_style(styleSize: 10)
+                                                            .lineLimit(1)
+                                                        }
+                                                        .frame(width: 18, height: 18)
+                                                        .background(Color.redDanger500)
+                                                        .cornerRadius(50)
+                                                    }
+                                                    .padding(.bottom, 30)
+                                                    .padding(.leading, 30)
+                                                }
+                                                
+                                                Button(action: {
+													resetFilter()
+													
+                                                    sharedMainViewModel.changeIndexView(indexViewInt: 2)
+                                                    sharedMainViewModel.displayedFriend = nil
+                                                    sharedMainViewModel.displayedCall = nil
+                                                    sharedMainViewModel.displayedMeeting = nil
+                                                }, label: {
+                                                    VStack {
+                                                        Image("chat-teardrop-text")
+                                                            .renderingMode(.template)
+                                                            .resizable()
+                                                            .foregroundStyle(sharedMainViewModel.indexView == 2 ? Color.orangeMain500 : Color.grayMain2c600)
+                                                            .frame(width: 25, height: 25)
+
+                                                        if sharedMainViewModel.indexView == 2 {
+                                                            Text("bottom_navigation_conversations_label")
+                                                                .default_text_style_700(styleSize: 10)
+                                                        } else {
+                                                            Text("bottom_navigation_conversations_label")
+                                                                .default_text_style(styleSize: 10)
+                                                        }
+                                                    }
+                                                })
+                                                .padding(.top)
+                                                .accessibilityIdentifier("bottom_bar_chat_button")
+                                            }
+											
+											Spacer()
+                                        }
+										
+										if !sharedMainViewModel.disableMeetingFeature {
+											Button(action: {
+												resetFilter()
+												
+												sharedMainViewModel.changeIndexView(indexViewInt: 3)
+												sharedMainViewModel.displayedFriend = nil
+												sharedMainViewModel.displayedCall = nil
+												sharedMainViewModel.displayedConversation = nil
+												
+												if let meetingsListVM = meetingsListViewModel, sharedMainViewModel.indexView == 3 {
+													meetingsListVM.currentFilter = ""
+													meetingsListVM.computeMeetingsList()
+												}
+											}, label: {
+												VStack {
+													Image("video-conference")
+														.renderingMode(.template)
+														.resizable()
+														.foregroundStyle(sharedMainViewModel.indexView == 3 ? Color.orangeMain500 : Color.grayMain2c600)
+														.frame(width: 25, height: 25)
+													if sharedMainViewModel.indexView == 0 {
+														Text("bottom_navigation_meetings_label")
+															.default_text_style_700(styleSize: 10)
+													} else {
+														Text("bottom_navigation_meetings_label")
+															.default_text_style(styleSize: 10)
+													}
+												}
+											})
+											.padding(.top)
+											
+											Spacer()
+										}
+									}
+								}
+								.frame(width: 75, height: geometry.size.height)
+								.padding(.bottom, geometry.safeAreaInsets.bottom)
+								.padding(.leading,
+										 orientation == .landscapeRight && geometry.safeAreaInsets.bottom > 0
+										 ? -geometry.safeAreaInsets.leading
+										 : 0)
+							}
+							
+							VStack(spacing: 0) {
+								Rectangle()
+									.foregroundColor(Color.orangeMain500)
+									.edgesIgnoringSafeArea(.top)
+									.frame(height: 1)
+								
+								ZStack {
+									VStack {
+										Rectangle()
+											.foregroundColor(
+												(orientation == .landscapeLeft
+												 || orientation == .landscapeRight
+												 || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)
+												? Color.white
+												: Color.orangeMain500
+											)
+											.frame(height: 100)
+										
+										Spacer()
+									}
+									
+									VStack(spacing: 0) {
+										if searchIsActive == false {
+											HStack {
+												Button {
+													openMenu()
+												} label: {
+													Image("list")
+														.renderingMode(.template)
+														.resizable()
+														.foregroundStyle(.white)
+														.frame(width: 25, height: 25, alignment: .leading)
+														.padding(.all, 5)
+												}
+												
+                                                if let index = accountProfileViewModel.defaultAccountModelIndex,
+                                                   index < coreContext.accounts.count {
+                                                    
+                                                    let account = coreContext.accounts[index]
+                                                    let imagePath = account.getImagePath()
+                                                    let finalUrl = imagePath.appendingQueryItem("v", value: UUID().uuidString)
+
+                                                    AsyncImage(url: finalUrl)
+                                                        { image in
+                                                            switch image {
+                                                            case .empty:
+                                                                ProgressView()
+                                                                    .frame(width: avatarSize, height: avatarSize)
+                                                            case .success(let image):
+                                                                image
+                                                                    .resizable()
+                                                                    .aspectRatio(contentMode: .fill)
+                                                                    .frame(width: avatarSize, height: avatarSize)
+                                                                    .clipShape(Circle())
+                                                                    .onAppear {
+                                                                        imageTmp = image
+                                                                    }
+                                                            case .failure:
+                                                                if let avatar = account.avatarModel {
+                                                                    let tmpImage = contactsManager.textToImage(firstName: avatar.name, lastName: "")
+                                                                    Image(uiImage: tmpImage)
+                                                                        .resizable()
+                                                                        .frame(width: avatarSize, height: avatarSize)
+                                                                        .clipShape(Circle())
+                                                                } else if let cachedImage = imageTmp {
+                                                                    cachedImage
+                                                                        .resizable()
+                                                                        .aspectRatio(contentMode: .fill)
+                                                                        .frame(width: avatarSize, height: avatarSize)
+                                                                        .clipShape(Circle())
+                                                                } else {
+                                                                    ProgressView()
+                                                                        .frame(width: avatarSize, height: avatarSize)
+                                                                }
+                                                            @unknown default:
+                                                                EmptyView()
+                                                            }
+                                                        }
+                                                        .id(imagePath)
+                                                        .onTapGesture {
+                                                            openMenu()
+                                                        }
+                                                        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImageChanged"))) { _ in
+                                                            imageTmp = nil
+                                                        }
+                                                    
+                                                } else if let cachedImage = imageTmp {
+                                                    cachedImage
+                                                        .resizable()
+                                                        .aspectRatio(contentMode: .fill)
+														.frame(width: avatarSize, height: avatarSize)
+														.clipShape(Circle())
+														.onTapGesture {
+															openMenu()
+														}
+                                                } else {
+                                                    ProgressView()
+                                                        .frame(width: avatarSize, height: avatarSize)
+                                                }
+												
+												Text(String(localized: sharedMainViewModel.indexView == 0 ? "bottom_navigation_contacts_label" : (sharedMainViewModel.indexView == 1 ? "bottom_navigation_calls_label" : (sharedMainViewModel.indexView == 2 ? "bottom_navigation_conversations_label" : "bottom_navigation_meetings_label"))))
+													.default_text_style_white_800(styleSize: 20)
+													.padding(.leading, 2)
+												
+												Spacer()
+												
+												Button {
+													withAnimation {
+														searchIsActive.toggle()
+													}
+												} label: {
+													Image("magnifying-glass")
+														.renderingMode(.template)
+														.resizable()
+														.foregroundStyle(.white)
+														.frame(width: 25, height: 25, alignment: .leading)
+														.padding(.all, 10)
+												}
+												.padding(.trailing, sharedMainViewModel.indexView == 2 ? 10 : 0)
+												
+												if sharedMainViewModel.indexView == 0 {
+													Menu {
+														Button {
+															sharedMainViewModel.displayedFriend = nil
+															isMenuOpen = false
+															magicSearch.changeAllContact(allContactBool: true)
+															magicSearch.searchForContacts()
+														} label: {
+															HStack {
+																Text("contacts_list_filter_popup_see_all")
+																Spacer()
+																if magicSearch.allContact {
+																	Image("green-check")
+																		.resizable()
+																		.frame(width: 25, height: 25, alignment: .leading)
+																		.padding(.all, 10)
+																}
+															}
+														}
+														
+														Button {
+															sharedMainViewModel.displayedFriend = nil
+															isMenuOpen = false
+															magicSearch.changeAllContact(allContactBool: false)
+															magicSearch.searchForContacts()
+														} label: {
+															HStack {
+																Text(!magicSearch.linphoneDomain ? String(localized: "contacts_list_filter_popup_see_sip_only") : String(format: String(localized: "contacts_list_filter_popup_see_linphone_only"), Bundle.main.displayName))
+																Spacer()
+																if !magicSearch.allContact {
+																	Image("green-check")
+																		.resizable()
+																		.frame(width: 25, height: 25, alignment: .leading)
+																		.padding(.all, 10)
+																}
+															}
+														}
+													} label: {
+														Image(sharedMainViewModel.indexView == 0 ? "funnel" : "dots-three-vertical")
+															.renderingMode(.template)
+															.resizable()
+															.foregroundStyle(.white)
+															.frame(width: 25, height: 25, alignment: .leading)
+															.padding(.all, 10)
+													}
+													.padding(.trailing, 10)
+													.onTapGesture {
+														isMenuOpen = true
+													}
+												} else if sharedMainViewModel.indexView == 1 {
+													Button {
+														isShowDeleteAllHistoryPopup.toggle()
+													} label: {
+														Image("trash-simple")
+															.renderingMode(.template)
+															.resizable()
+															.foregroundStyle(.white)
+															.frame(width: 25, height: 25, alignment: .leading)
+															.padding(.all, 10)
+													}
+													.padding(.trailing, 10)
+												} else if sharedMainViewModel.indexView == 3 {
+													Button {
+														NotificationCenter.default.post(name: MeetingsListViewModel.ScrollToTodayNotification, object: nil)
+													} label: {
+														Image("calendar")
+															.renderingMode(.template)
+															.resizable()
+															.foregroundStyle(.white)
+															.frame(width: 25, height: 25, alignment: .leading)
+															.padding(.all, 10)
+													}
+													.padding(.trailing, 10)
+												}
+											}
+											.frame(maxWidth: .infinity)
+											.frame(height: 50)
+											.padding(.leading)
+											.padding(.top, 2.5)
+											.padding(.bottom, 2.5)
+											.background(Color.orangeMain500)
+											.roundedCorner(10, corners: [.bottomRight, .bottomLeft])
+										} else {
+											HStack {
+												Button {
+													withAnimation {
+														self.focusedField = false
+														searchIsActive.toggle()
+													}
+													
+													text = ""
+													
+													if sharedMainViewModel.indexView != 3 {
+														magicSearch.currentFilter = ""
+														magicSearch.searchForContacts()
+													}
+													
+													if let historyListVM = historyListViewModel, sharedMainViewModel.indexView == 1 {
+														historyListVM.resetFilterCallLogs()
+													} else if let conversationsListVM = conversationsListViewModel, sharedMainViewModel.indexView == 2 {
+														conversationsListVM.resetFilterConversations()
+													} else if let meetingsListVM = meetingsListViewModel, sharedMainViewModel.indexView == 3 {
+														meetingsListVM.currentFilter = ""
+														meetingsListVM.computeMeetingsList()
+													}
+												} label: {
+													Image("caret-left")
+														.renderingMode(.template)
+														.resizable()
+														.foregroundStyle(.white)
+														.frame(width: 25, height: 25, alignment: .leading)
+														.padding(.all, 10)
+														.padding(.leading, -10)
+												}
+												
+												if #available(iOS 16.0, *) {
+													TextEditor(text: Binding(
+														get: {
+															return text
+														},
+														set: { value in
+															var newValue = value
+															if value.contains("\n") {
+																newValue = value.replacingOccurrences(of: "\n", with: "")
+															}
+															text = newValue
+														}
+													))
+													.default_text_style_white_700(styleSize: 15)
+													.padding(.all, 6)
+													.disableAutocorrection(true)
+													.autocapitalization(.none)
+													.accentColor(.white)
+													.scrollContentBackground(.hidden)
+													.focused($focusedField)
+													.onAppear {
+														self.focusedField = true
+													}
+													.onChange(of: text) { newValue in
+														if sharedMainViewModel.indexView != 3 {
+															magicSearch.currentFilter = newValue
+															magicSearch.searchForContacts()
+														}
+														
+														if let historyListVM = historyListViewModel, sharedMainViewModel.indexView == 1 {
+															if text.isEmpty {
+																historyListVM.resetFilterCallLogs()
+															} else {
+																historyListVM.filterCallLogs(filter: text)
+															}
+														} else if let conversationsListVM = conversationsListViewModel, sharedMainViewModel.indexView == 2 {
+															if text.isEmpty {
+																conversationsListVM.resetFilterConversations()
+															} else {
+																conversationsListVM.filterConversations(filter: text)
+															}
+														} else if let meetingsListVM = meetingsListViewModel, sharedMainViewModel.indexView == 3 {
+															meetingsListVM.currentFilter = text
+															meetingsListVM.computeMeetingsList()
+														}
+													}
+													.onChange(of: isShowStartCallFragment) { isShowStartCallFragmentNewValue in
+														if isShowStartCallFragmentNewValue == false && !text.isEmpty {
+															if let historyListVM = historyListViewModel, sharedMainViewModel.indexView == 1 {
+																magicSearch.currentFilter = text
+																magicSearch.searchForContacts()
+																
+																if text.isEmpty {
+																	historyListVM.resetFilterCallLogs()
+																} else {
+																	historyListVM.filterCallLogs(filter: text)
+																}
+															}
+														}
+													}
+													.onChange(of: isShowStartConversationFragment) { isShowStartConversationFragmentNewValue in
+														if isShowStartConversationFragmentNewValue == false && !text.isEmpty {
+															if let conversationsListVM = conversationsListViewModel, sharedMainViewModel.indexView == 2 {
+																magicSearch.currentFilter = text
+																magicSearch.searchForContacts()
+																
+																if text.isEmpty {
+																	conversationsListVM.resetFilterConversations()
+																} else {
+																	conversationsListVM.filterConversations(filter: text)
+																}
+															}
+														}
+													}
+												} else {
+													TextEditor(text: Binding(
+														get: {
+															return text
+														},
+														set: { value in
+															var newValue = value
+															if value.contains("\n") {
+																newValue = value.replacingOccurrences(of: "\n", with: "")
+															}
+															text = newValue
+														}
+													))
+													.default_text_style_700(styleSize: 15)
+													.padding(.all, 6)
+													.focused($focusedField)
+													.disableAutocorrection(true)
+													.autocapitalization(.none)
+													.onAppear {
+														self.focusedField = true
+													}
+													.onChange(of: text) { newValue in
+														if sharedMainViewModel.indexView != 3 {
+															magicSearch.currentFilter = newValue
+															magicSearch.searchForContacts()
+														}
+														
+														if let historyListVM = historyListViewModel, sharedMainViewModel.indexView == 1 {
+															if text.isEmpty {
+																historyListVM.resetFilterCallLogs()
+															} else {
+																historyListVM.filterCallLogs(filter: text)
+															}
+														} else if let conversationsListVM = conversationsListViewModel, sharedMainViewModel.indexView == 2 {
+															if text.isEmpty {
+																conversationsListVM.resetFilterConversations()
+															} else {
+																conversationsListVM.filterConversations(filter: text)
+															}
+														} else if let meetingsListVM = meetingsListViewModel, sharedMainViewModel.indexView == 3 {
+															meetingsListVM.currentFilter = text
+															meetingsListVM.computeMeetingsList()
+														}
+													}
+													.onChange(of: isShowStartCallFragment) { isShowStartCallFragmentNewValue in
+														if isShowStartCallFragmentNewValue == false && !text.isEmpty {
+															if let historyListVM = historyListViewModel, sharedMainViewModel.indexView == 1 {
+																magicSearch.currentFilter = text
+																magicSearch.searchForContacts()
+																
+																if text.isEmpty {
+																	historyListVM.resetFilterCallLogs()
+																} else {
+																	historyListVM.filterCallLogs(filter: text)
+																}
+															}
+														}
+													}
+													.onChange(of: isShowStartConversationFragment) { isShowStartConversationFragmentNewValue in
+														if isShowStartConversationFragmentNewValue == false && !text.isEmpty {
+															if let conversationsListVM = conversationsListViewModel, sharedMainViewModel.indexView == 2 {
+																magicSearch.currentFilter = text
+																magicSearch.searchForContacts()
+																
+																if text.isEmpty {
+																	conversationsListVM.resetFilterConversations()
+																} else {
+																	conversationsListVM.filterConversations(filter: text)
+																}
+															}
+														}
+													}
+												}
+												
+												Button {
+													text = ""
+												} label: {
+													Image("x")
+														.renderingMode(.template)
+														.resizable()
+														.foregroundStyle(.white)
+														.frame(width: 25, height: 25, alignment: .leading)
+														.padding(.all, 10)
+												}
+												.padding(.leading)
+											}
+											.frame(maxWidth: .infinity)
+											.frame(height: 50)
+											.padding(.horizontal)
+											.padding(.bottom, 5)
+											.background(Color.orangeMain500)
+											.roundedCorner(10, corners: [.bottomRight, .bottomLeft])
+										}
+										
+										if sharedMainViewModel.indexView == 0 {
+											ContactsContainer(
+												contactsListViewModel: $contactsListViewModel,
+												isShowEditContactFragment: $isShowEditContactFragment,
+												isShowDeleteContactPopup: $isShowDeleteContactPopup,
+												text: $text,
+												orientation: orientation
+											)
+										} else if sharedMainViewModel.indexView == 1 {
+											HistoryContainer(
+												historyListViewModel: $historyListViewModel,
+												isShowStartCallFragment: $isShowStartCallFragment,
+												isShowEditContactFragment: $isShowEditContactFragment,
+												text: $text,
+												isShowEditContactFragmentAddress: $isShowEditContactFragmentAddress,
+												orientation: orientation
+											)
+										} else if sharedMainViewModel.indexView == 2 {
+											ConversationsContainer(
+												conversationsListViewModel: $conversationsListViewModel,
+												isShowStartConversationFragment: $isShowStartConversationFragment,
+												showLeaveConversationPopup: $showLeaveConversationPopup,
+						   						showDeleteConversationPopup: $showDeleteConversationPopup,
+						   						showDeleteConversationHistoryPopup: $showDeleteConversationHistoryPopup,
+												isShowRemoveParticipantPopup: $isShowRemoveParticipantPopup,
+												text: $text,
+												orientation: orientation
+											)
+										} else if sharedMainViewModel.indexView == 3 {
+											MeetingsContainer(
+												meetingsListViewModel: $meetingsListViewModel,
+												isShowScheduleMeetingFragment: $isShowScheduleMeetingFragment,
+												isShowDeleteMeetingNotificationPopup: $isShowDeleteMeetingNotificationPopup,
+												isShowSendCancelMeetingNotificationPopup: $isShowSendCancelMeetingNotificationPopup,
+												text: $text,
+												orientation: orientation
+											)
+										}
+									}
+								}
+							}
+							.frame(maxWidth:
+									(orientation == .landscapeLeft
+									 || orientation == .landscapeRight
+									 || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)
+								   ? geometry.size.width/100*40
+								   : .infinity
+							)
+							.background(
+								Color.white
+									.shadow(color: Color.gray200, radius: 4, x: 0, y: 0)
+									.mask(Rectangle().padding(.horizontal, -8))
+							)
+							
+							if orientation == .landscapeLeft
+								|| orientation == .landscapeRight
+								|| UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height {
+								Spacer()
+							}
+						}
+						
+						if !(orientation == .landscapeLeft
+							 || orientation == .landscapeRight
+							 || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height) && !searchIsActive {
+							HStack {
+								Group {
+									Spacer()
+									Button(action: {
+										resetFilter()
+										
+										sharedMainViewModel.changeIndexView(indexViewInt: 0)
+										sharedMainViewModel.displayedCall = nil
+										sharedMainViewModel.displayedConversation = nil
+										sharedMainViewModel.displayedMeeting = nil
+									}, label: {
+										VStack {
+											Image("address-book")
+												.renderingMode(.template)
+												.resizable()
+												.foregroundStyle(sharedMainViewModel.indexView == 0 ? Color.orangeMain500 : Color.grayMain2c600)
+												.frame(width: 25, height: 25)
+											if sharedMainViewModel.indexView == 0 {
+												Text("bottom_navigation_contacts_label")
+													.default_text_style_700(styleSize: 10)
+											} else {
+												Text("bottom_navigation_contacts_label")
+													.default_text_style(styleSize: 10)
+											}
+										}
+									})
+									.padding(.top)
+									.frame(width: 66)
+									
+									Spacer()
+
+									Button(action: {
+										resetFilter()
+										withAnimation {
+											isShowCRMFragment = true
+										}
+									}, label: {
+										VStack {
+											Image("users-three-square")
+												.renderingMode(.template)
+												.resizable()
+												.foregroundStyle(Color.grayMain2c600)
+												.frame(width: 25, height: 25)
+											Text("CRM")
+												.default_text_style(styleSize: 9)
+										}
+									})
+									.padding(.top)
+									.frame(width: 66)
+									.accessibilityIdentifier("bottom_bar_crm_button")
+
+									Spacer()
+									
+									ZStack {
+										if SharedMainViewModel.shared.missedCallsCount > 0 {
+											VStack {
+												HStack {
+													Text(
+                                                        SharedMainViewModel.shared.missedCallsCount < 99
+														? String(SharedMainViewModel.shared.missedCallsCount)
+														: "99+"
+													)
+													.foregroundStyle(.white)
+													.default_text_style(styleSize: 10)
+													.lineLimit(1)
+												}
+												.frame(width: 18, height: 18)
+												.background(Color.redDanger500)
+												.cornerRadius(50)
+											}
+											.padding(.bottom, 30)
+											.padding(.leading, 30)
+										}
+										
+										Button(action: {
+											resetFilter()
+											
+											sharedMainViewModel.changeIndexView(indexViewInt: 1)
+											sharedMainViewModel.displayedFriend = nil
+											sharedMainViewModel.displayedConversation = nil
+											sharedMainViewModel.displayedMeeting = nil
+											if SharedMainViewModel.shared.missedCallsCount > 0 {
+                                                SharedMainViewModel.shared.resetMissedCallsCount()
+											}
+										}, label: {
+											VStack {
+												Image("phone")
+													.renderingMode(.template)
+													.resizable()
+													.foregroundStyle(sharedMainViewModel.indexView == 1 ? Color.orangeMain500 : Color.grayMain2c600)
+													.frame(width: 25, height: 25)
+												if sharedMainViewModel.indexView == 1 {
+													Text("bottom_navigation_calls_label")
+														.default_text_style_700(styleSize: 9)
+												} else {
+													Text("bottom_navigation_calls_label")
+														.default_text_style(styleSize: 9)
+												}
+											}
+										})
+										.padding(.top)
+										.frame(width: 66)
+									}
+                                    
+                                    if !sharedMainViewModel.disableChatFeature {
+                                        Spacer()
+                                    
+                                        ZStack {
+                                            if combinedUnreadMessages > 0 {
+                                                VStack {
+                                                    HStack {
+                                                        Text(
+                                                            combinedUnreadMessages < 99
+                                                            ? String(combinedUnreadMessages)
+                                                            : "99+"
+                                                        )
+                                                        .foregroundStyle(.white)
+                                                        .default_text_style(styleSize: 10)
+                                                        .lineLimit(1)
+                                                    }
+                                                    .frame(width: 18, height: 18)
+                                                    .background(Color.redDanger500)
+                                                    .cornerRadius(50)
+                                                }
+                                                .padding(.bottom, 30)
+                                                .padding(.leading, 30)
+                                            }
+                                            
+                                            Button(action: {
+												resetFilter()
+												
+                                                sharedMainViewModel.changeIndexView(indexViewInt: 2)
+                                                sharedMainViewModel.displayedFriend = nil
+                                                sharedMainViewModel.displayedCall = nil
+                                                sharedMainViewModel.displayedMeeting = nil
+                                            }, label: {
+                                                VStack {
+                                                    Image("chat-teardrop-text")
+                                                        .renderingMode(.template)
+                                                        .resizable()
+                                                        .foregroundStyle(sharedMainViewModel.indexView == 2 ? Color.orangeMain500 : Color.grayMain2c600)
+                                                        .frame(width: 25, height: 25)
+                                                    
+                                                    if sharedMainViewModel.indexView == 2 {
+                                                        Text("bottom_navigation_conversations_label")
+                                                            .default_text_style_700(styleSize: 9)
+                                                    } else {
+                                                        Text("bottom_navigation_conversations_label")
+                                                            .default_text_style(styleSize: 9)
+                                                    }
+                                                }
+                                            })
+                                            .padding(.top)
+                                            .frame(width: 66)
+                                        }
+                                    }
+									
+									if !sharedMainViewModel.disableMeetingFeature {
+										Spacer()
+										Button(action: {
+											resetFilter()
+											
+											sharedMainViewModel.changeIndexView(indexViewInt: 3)
+											sharedMainViewModel.displayedFriend = nil
+											sharedMainViewModel.displayedCall = nil
+											sharedMainViewModel.displayedConversation = nil
+											
+											if let meetingsListVM = meetingsListViewModel, sharedMainViewModel.indexView == 3 {
+												meetingsListVM.currentFilter = ""
+												meetingsListVM.computeMeetingsList()
+											}
+										}, label: {
+											VStack {
+												Image("video-conference")
+													.renderingMode(.template)
+													.resizable()
+													.foregroundStyle(sharedMainViewModel.indexView == 3 ? Color.orangeMain500 : Color.grayMain2c600)
+													.frame(width: 25, height: 25)
+												if sharedMainViewModel.indexView == 3 {
+													Text("bottom_navigation_meetings_label")
+														.default_text_style_700(styleSize: 9)
+												} else {
+													Text("bottom_navigation_meetings_label")
+														.default_text_style(styleSize: 9)
+												}
+											}
+										})
+										.padding(.top)
+										.frame(width: 66)
+									}
+									
+									Spacer()
+								}
+							}
+							.padding(.bottom, geometry.safeAreaInsets.bottom > 0 ? 0 : 15)
+							.background(
+								Color.white
+									.shadow(color: Color.gray200, radius: 4, x: 0, y: 0)
+									.mask(Rectangle().padding(.top, -8))
+							)
+						}
+					}
+					
+					if sharedMainViewModel.displayedFriend != nil || sharedMainViewModel.displayedCall != nil || sharedMainViewModel.displayedConversation != nil ||
+						sharedMainViewModel.displayedMeeting != nil {
+						HStack(spacing: 0) {
+							Spacer()
+								.frame(maxWidth:
+										(orientation == .landscapeLeft
+										 || orientation == .landscapeRight
+										 || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)
+									   ? (geometry.size.width/100*40) + 75
+									   : 0
+								)
+							if let contactsListVM = contactsListViewModel, let displayedFriend = sharedMainViewModel.displayedFriend, sharedMainViewModel.indexView == 0 {
+								ContactFragment(
+									isShowDeletePopup: $isShowDeleteContactPopup,
+									isShowDismissPopup: $isShowDismissPopup,
+									isShowTrustLevelPopup: $isShowTrustLevelPopup,
+									isShowSipAddressesPopup: $isShowSipAddressesPopup,
+									isShowSipAddressesPopupType: $isShowSipAddressesPopupType,
+									isShowIncreaseTrustLevelPopup: $isShowIncreaseTrustLevelPopup,
+									isShowEditContactFragmentInContactDetails: $isShowEditContactFragmentInContactDetails
+								)
+								.environmentObject(contactsListVM)
+								.environmentObject(displayedFriend)
+								.frame(maxWidth: .infinity)
+								.background(Color.gray100)
+								.ignoresSafeArea(.keyboard)
+							} else if let historyListVM = historyListViewModel, let displayedCall = sharedMainViewModel.displayedCall, sharedMainViewModel.indexView == 1 {
+								HistoryContactFragment(
+									isShowDeleteAllHistoryPopup: $isShowDeleteAllHistoryPopup,
+									isShowEditContactFragment: $isShowEditContactFragment,
+									isShowEditContactFragmentAddress: $isShowEditContactFragmentAddress
+								)
+								.environmentObject(historyListVM)
+								.environmentObject(displayedCall)
+								.frame(maxWidth: .infinity)
+								.background(Color.gray100)
+								.ignoresSafeArea(.keyboard)
+							} else if let conversationsListVM = conversationsListViewModel, let displayedConversation = sharedMainViewModel.displayedConversation, sharedMainViewModel.indexView == 2 {
+								ConversationFragment(
+									isShowConversationFragment: $isShowConversationFragment,
+									isShowStartCallGroupPopup: $isShowStartCallGroupPopup,
+									isShowDeleteMessagePopup: $isShowDeleteMessagePopup,
+									isShowEditContactFragment: $isShowEditContactFragment,
+									isShowEditContactFragmentAddress: $isShowEditContactFragmentAddress,
+									isShowScheduleMeetingFragment: $isShowScheduleMeetingFragment,
+									isShowScheduleMeetingFragmentSubject: $isShowScheduleMeetingFragmentSubject,
+									isShowScheduleMeetingFragmentParticipants: $isShowScheduleMeetingFragmentParticipants,
+									isShowConversationInfoPopup: $isShowConversationInfoPopup,
+									conversationInfoPopupText: $conversationInfoPopupText,
+									isShowRemoveParticipantPopup: $isShowRemoveParticipantPopup,
+									showLeaveConversationPopup: $showLeaveConversationPopup,
+									showDeleteConversationPopup: $showDeleteConversationPopup,
+									showDeleteConversationHistoryPopup: $showDeleteConversationHistoryPopup,
+									securitySheet: $securitySheet
+								)
+								.environmentObject(conversationsListVM)
+								.environmentObject(accountProfileViewModel)
+								.frame(maxWidth: .infinity)
+								.background(Color.gray100)
+								.ignoresSafeArea(.keyboard)
+							} else if let meetingsListVM = meetingsListViewModel, let displayedMeeting = sharedMainViewModel.displayedMeeting, sharedMainViewModel.indexView == 3 {
+								MeetingFragment(isShowScheduleMeetingFragment: $isShowScheduleMeetingFragment, isShowSendCancelMeetingNotificationPopup: $isShowSendCancelMeetingNotificationPopup)
+									.environmentObject(meetingsListVM)
+									.frame(maxWidth: .infinity)
+									.background(Color.gray100)
+									.ignoresSafeArea(.keyboard)
+							}
+							
+						}
+						.onAppear {
+							if !(orientation == .landscapeLeft
+								 || orientation == .landscapeRight
+								 || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)
+								&& searchIsActive {
+								self.focusedField = false
+							}
+						}
+						.onDisappear {
+							if !(orientation == .landscapeLeft
+								 || orientation == .landscapeRight
+								 || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)
+								&& searchIsActive {
+								self.focusedField = true
+							}
+						}
+						.padding(.leading,
+								 orientation == .landscapeRight && geometry.safeAreaInsets.bottom > 0
+								 ? -geometry.safeAreaInsets.leading
+								 : 0)
+						.transition(.move(edge: .trailing))
+						.zIndex(1)
+					}
+					
+					SideMenu(
+						width: geometry.size.width / 5 * 4,
+						isOpen: $sideMenuIsOpen,
+						menuClose: self.openMenu,
+						safeAreaInsets: geometry.safeAreaInsets,
+						isShowLoginFragment: $isShowLoginFragment,
+						isShowAccountProfileFragment: $isShowAccountProfileFragment,
+						isShowSettingsFragment: $isShowSettingsFragment,
+						isShowRecordingsListFragment: $isShowRecordingsListFragment,
+						isShowHelpFragment: $isShowHelpFragment
+					)
+					.environmentObject(accountProfileViewModel)
+					.ignoresSafeArea(.all)
+					.zIndex(2)
+					
+					if isShowLoginFragment {
+						LoginFragment(
+							isShowBack: true,
+							onBackPressed: {
+								withAnimation {
+									isShowLoginFragment.toggle()
+								}
+							})
+						.zIndex(3)
+						.transition(.move(edge: .bottom))
+						.onAppear {
+						}
+					}
+					
+					if isShowEditContactFragment {
+						VStack {
+							EditContactFragment(
+								isShowEditContactFragment: $isShowEditContactFragment,
+								isShowDismissPopup: $isShowDismissPopup,
+								isShowEditContactFragmentAddress: isShowEditContactFragmentAddress
+							)
+							.frame(height: geometry.size.height)
+							.onAppear {
+								if focusedField {
+									resetFilter()
+								}
+								sharedMainViewModel.displayedFriend = nil
+								isShowEditContactFragmentAddress = ""
+							}
+							
+							Spacer()
+						}
+						.zIndex(3)
+						.transition(.opacity.combined(with: .move(edge: .bottom)))
+					}
+					
+					if isShowStartCallFragment {
+						StartCallFragment(
+							showingDialer: $showingDialer,
+							isShowStartCallFragment: $isShowStartCallFragment,
+							resetCallView: {callViewModel.resetCallView()}
+						)
+						.onAppear {
+							if focusedField {
+								withAnimation {
+									self.focusedField = false
+									searchIsActive.toggle()
+								}
+								
+								text = ""
+								
+								if sharedMainViewModel.indexView != 3 {
+									magicSearch.currentFilter = ""
+									magicSearch.searchForContacts()
+								}
+								
+								if let historyListVM = historyListViewModel, sharedMainViewModel.indexView == 1 {
+									historyListVM.resetFilterCallLogs()
+								} else if let conversationsListVM = conversationsListViewModel, sharedMainViewModel.indexView == 2 {
+									conversationsListVM.resetFilterConversations()
+								} else if let meetingsListVM = meetingsListViewModel, sharedMainViewModel.indexView == 3 {
+									meetingsListVM.currentFilter = ""
+									meetingsListVM.computeMeetingsList()
+								}
+							}
+						}
+						.environmentObject(callViewModel)
+						.zIndex(6)
+						.transition(.opacity.combined(with: .move(edge: .bottom)))
+					}
+					
+					if let conversationsListVM = conversationsListViewModel, isShowStartConversationFragment {
+						StartConversationFragment(
+							isShowStartConversationFragment: $isShowStartConversationFragment
+						)
+						.onAppear {
+							if focusedField {
+								withAnimation {
+									self.focusedField = false
+									searchIsActive.toggle()
+								}
+								
+								text = ""
+								
+								if sharedMainViewModel.indexView != 3 {
+									magicSearch.currentFilter = ""
+									magicSearch.searchForContacts()
+								}
+								
+								if let historyListVM = historyListViewModel, sharedMainViewModel.indexView == 1 {
+									historyListVM.resetFilterCallLogs()
+								} else if let conversationsListVM = conversationsListViewModel, sharedMainViewModel.indexView == 2 {
+									conversationsListVM.resetFilterConversations()
+								} else if let meetingsListVM = meetingsListViewModel, sharedMainViewModel.indexView == 3 {
+									meetingsListVM.currentFilter = ""
+									meetingsListVM.computeMeetingsList()
+								}
+							}
+						}
+						.environmentObject(conversationsListVM)
+						.zIndex(6)
+						.transition(.opacity.combined(with: .move(edge: .bottom)))
+					}
+					
+					if let contactsListVM = contactsListViewModel, isShowDeleteContactPopup {
+						PopupView(
+							isShowPopup: $isShowDeleteContactPopup,
+							title: Text(
+								String(
+									format: String(localized: "contact_dialog_delete_title"),
+									contactsListVM.selectedFriend?.name
+									?? (SharedMainViewModel.shared.displayedFriend!.name ?? "Unknown Contact")
+								)
+							),
+							content: Text("contact_dialog_delete_message"),
+							titleFirstButton: nil,
+							actionFirstButton: {},
+							titleSecondButton: Text("dialog_confirm"),
+							actionSecondButton: {
+								contactsListVM.deleteSelectedContact()
+								self.isShowDeleteContactPopup.toggle()
+							},
+							titleThirdButton: Text("dialog_cancel"),
+							actionThirdButton: { self.isShowDeleteContactPopup.toggle() }
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.isShowDeleteContactPopup.toggle()
+						}
+						.onAppear {
+							contactsListVM.changeSelectedFriendToDelete()
+						}
+					}
+					
+					if isShowDeleteAllHistoryPopup {
+						PopupView(
+							isShowPopup: $isShowDeleteContactPopup,
+							title: Text("history_dialog_delete_all_call_logs_title"),
+							content: Text("history_dialog_delete_all_call_logs_message"),
+							titleFirstButton: nil,
+							actionFirstButton: {},
+							titleSecondButton: Text("dialog_confirm"),
+							actionSecondButton: {
+								if let historyListVM = historyListViewModel {
+									historyListVM.removeCallLogs()
+								}
+								
+								self.isShowDeleteAllHistoryPopup.toggle()
+								sharedMainViewModel.displayedCall = nil
+								
+								ToastViewModel.shared.show("Success_remove_call_logs")
+							},
+							titleThirdButton: Text("dialog_cancel"),
+							actionThirdButton: {
+								self.isShowDeleteAllHistoryPopup.toggle()
+								if let historyListVM = historyListViewModel {
+									historyListVM.callLogsAddressToDelete = ""
+								}
+							}
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.isShowDeleteAllHistoryPopup.toggle()
+						}
+					}
+					
+					if showLeaveConversationPopup {
+						PopupView(
+							isShowPopup: $isShowDeleteContactPopup,
+							title: Text("conversation_info_dialog_leave_chatroom_title"),
+							content: Text("conversation_info_dialog_leave_chatroom_message"),
+							titleFirstButton: nil,
+							actionFirstButton: {},
+							titleSecondButton: Text("conversation_info_leave_chatroom_confirm"),
+							actionSecondButton: {
+								if let conversationsListVM = conversationsListViewModel, let targetConversation = conversationsListVM.targetConversation {
+									targetConversation.leaveChatRoom()
+								}
+								self.showLeaveConversationPopup.toggle()
+							},
+							titleThirdButton: Text("dialog_cancel"),
+							actionThirdButton: {
+								self.showLeaveConversationPopup.toggle()
+							}
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.showLeaveConversationPopup.toggle()
+						}
+					}
+					
+					if showDeleteConversationPopup {
+						PopupView(
+							isShowPopup: $isShowDeleteContactPopup,
+							title: Text("conversation_info_dialog_delete_chatroom_title"),
+							content: Text("conversation_info_dialog_delete_chatroom_message"),
+							titleFirstButton: nil,
+							actionFirstButton: {},
+							titleSecondButton: Text("conversation_info_delete_chatroom_confirm"),
+							actionSecondButton: {
+								if let conversationsListVM = conversationsListViewModel, let targetConversation = conversationsListVM.targetConversation {
+									targetConversation.deleteChatRoom()
+									SharedMainViewModel.shared.displayedConversation = nil
+								}
+								self.showDeleteConversationPopup.toggle()
+							},
+							titleThirdButton: Text("dialog_cancel"),
+							actionThirdButton: {
+								self.showDeleteConversationPopup.toggle()
+							}
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.showDeleteConversationPopup.toggle()
+						}
+					}
+					
+					if showDeleteConversationHistoryPopup {
+						PopupView(
+							isShowPopup: $isShowDeleteContactPopup,
+							title: Text("conversation_info_dialog_delete_all_call_logs_title"),
+							content: Text("conversation_info_dialog_delete_all_message"),
+							titleFirstButton: nil,
+							actionFirstButton: {},
+							titleSecondButton: Text("conversation_info_delete_history_confirm"),
+							actionSecondButton: {
+								if let conversationsListVM = conversationsListViewModel, let targetConversation = conversationsListVM.targetConversation {
+									targetConversation.deleteHistory()
+									conversationsListVM.displayedConversation = nil
+									SharedMainViewModel.shared.displayedConversation = nil
+								}
+								self.showDeleteConversationHistoryPopup.toggle()
+							},
+							titleThirdButton: Text("dialog_cancel"),
+							actionThirdButton: {
+								self.showDeleteConversationHistoryPopup.toggle()
+							}
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.showDeleteConversationHistoryPopup.toggle()
+						}
+					}
+					
+					if isShowDismissPopup {
+						PopupView(
+							isShowPopup: $isShowDismissPopup,
+							title: Text("contact_editor_dialog_abort_confirmation_title"),
+							content: Text("contact_editor_dialog_abort_confirmation_message"),
+							titleFirstButton: nil,
+							actionFirstButton: {},
+							titleSecondButton: Text("dialog_confirm"),
+							actionSecondButton: {
+								self.isShowDismissPopup.toggle()
+								if isShowEditContactFragment {
+									isShowEditContactFragment = false
+								} else {
+									isShowEditContactFragmentInContactDetails = false
+								}
+							},
+							titleThirdButton: Text("dialog_cancel"),
+							actionThirdButton: { self.isShowDismissPopup.toggle() }
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.isShowDismissPopup.toggle()
+						}
+					}
+					
+					if let contactsListVM = contactsListViewModel, let displayedFriend = sharedMainViewModel.displayedFriend, isShowSipAddressesPopup {
+						SipAddressesPopup(
+							isShowSipAddressesPopup: $isShowSipAddressesPopup,
+							isShowSipAddressesPopupType: $isShowSipAddressesPopupType
+						)
+						.environmentObject(contactsListVM)
+						.environmentObject(displayedFriend)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							isShowSipAddressesPopup.toggle()
+						}
+					}
+					
+					if sharedMainViewModel.operationInProgress {
+						PopupLoadingView()
+							.padding(.bottom, UIDevice.current.userInterfaceIdiom == .pad && (orientation == .landscapeLeft || orientation == .landscapeRight || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height) ? geometry.safeAreaInsets.bottom : 0)
+							.background(.black.opacity(0.65))
+							.zIndex(3)
+							.onDisappear {
+								if let contactsListVM = contactsListViewModel, let displayedConversation = contactsListVM.displayedConversation {
+                                    
+                                    if !sharedMainViewModel.disableChatFeature {
+										resetFilter()
+                                        
+										sharedMainViewModel.displayedFriend = nil
+                                        sharedMainViewModel.displayedCall = nil
+                                        sharedMainViewModel.changeIndexView(indexViewInt: 2)
+                                        
+                                        if let conversationsListVM = self.conversationsListViewModel {
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                                withAnimation {
+                                                    conversationsListVM.changeDisplayedChatRoom(conversationModel: displayedConversation)
+                                                }
+                                                contactsListVM.displayedConversation = nil
+                                            }
+                                        } else {
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                                if let conversationsListVM = self.conversationsListViewModel {
+                                                    withAnimation {
+                                                        conversationsListVM.changeDisplayedChatRoom(conversationModel: displayedConversation)
+                                                    }
+                                                }
+                                                contactsListVM.displayedConversation = nil
+                                            }
+                                        }
+                                    }
+								} else if let historyListVM = historyListViewModel, let displayedConversation = historyListVM.displayedConversation {
+                                    
+                                    if !sharedMainViewModel.disableChatFeature {
+										resetFilter()
+										
+                                        sharedMainViewModel.displayedFriend = nil
+                                        sharedMainViewModel.displayedCall = nil
+                                        sharedMainViewModel.changeIndexView(indexViewInt: 2)
+                                        
+                                        if let conversationsListVM = self.conversationsListViewModel {
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                                withAnimation {
+                                                    conversationsListVM.changeDisplayedChatRoom(conversationModel: displayedConversation)
+                                                }
+                                                historyListVM.displayedConversation = nil
+                                            }
+                                        } else {
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                                if let conversationsListVM = self.conversationsListViewModel {
+                                                    withAnimation {
+                                                        conversationsListVM.changeDisplayedChatRoom(conversationModel: displayedConversation)
+                                                    }
+                                                }
+                                                historyListVM.displayedConversation = nil
+                                            }
+                                        }
+                                    }
+								} else if let conversationsListVM = conversationsListViewModel {
+									conversationsListVM.currentFilter = ""
+									
+									self.resetFilter()
+									
+									if let displayedConversation = conversationsListVM.displayedConversation {
+										conversationsListVM.changeDisplayedChatRoom(conversationModel: displayedConversation)
+										conversationsListVM.displayedConversation = nil
+									}
+								}
+							}
+					}
+					
+					if let meetingsListVM = meetingsListViewModel, isShowScheduleMeetingFragment {
+						ScheduleMeetingFragment(
+							isShowScheduleMeetingFragmentSubject: isShowScheduleMeetingFragmentSubject,
+							isShowScheduleMeetingFragmentParticipants: isShowScheduleMeetingFragmentParticipants,
+							isShowScheduleMeetingFragment: $isShowScheduleMeetingFragment
+						)
+						.environmentObject(meetingsListVM)
+						.zIndex(3)
+						.transition(.move(edge: .bottom))
+						.onAppear {
+							if focusedField {
+								withAnimation {
+									self.focusedField = false
+									searchIsActive.toggle()
+								}
+								
+								text = ""
+								
+								if sharedMainViewModel.indexView != 3 {
+									magicSearch.currentFilter = ""
+									magicSearch.searchForContacts()
+								}
+								
+								if let historyListVM = historyListViewModel, sharedMainViewModel.indexView == 1 {
+									historyListVM.resetFilterCallLogs()
+								} else if let conversationsListVM = conversationsListViewModel, sharedMainViewModel.indexView == 2 {
+									conversationsListVM.resetFilterConversations()
+								} else if let meetingsListVM = meetingsListViewModel, sharedMainViewModel.indexView == 3 {
+									meetingsListVM.currentFilter = ""
+									meetingsListVM.computeMeetingsList()
+								}
+							}
+							
+							isShowScheduleMeetingFragmentSubject = ""
+							isShowScheduleMeetingFragmentParticipants = []
+						}
+					}
+					
+					if isShowAccountProfileFragment {
+						AccountProfileFragment(
+							isShowAccountProfileFragment: $isShowAccountProfileFragment
+						)
+						.environmentObject(accountProfileViewModel)
+						.zIndex(3)
+						.transition(.move(edge: .trailing))
+					}
+					
+					if isShowSettingsFragment {
+						SettingsFragment(
+							isShowSettingsFragment: $isShowSettingsFragment
+						)
+						.zIndex(3)
+						.transition(.move(edge: .trailing))
+					}
+					
+					if isShowRecordingsListFragment {
+						RecordingsListFragment(
+							isShowRecordingsListFragment: $isShowRecordingsListFragment
+						)
+						.zIndex(3)
+						.transition(.move(edge: .trailing))
+					}
+					
+					if isShowHelpFragment {
+						HelpFragment(
+							isShowHelpFragment: $isShowHelpFragment
+						)
+						.zIndex(3)
+						.transition(.move(edge: .trailing))
+					}
+
+					if isShowCRMFragment {
+						Mango9CRMFragment(
+							isPresented: $isShowCRMFragment,
+							initialLeadId: crmDeepLinkLeadId,
+							onConnectAccount: {
+								withAnimation {
+									isShowLoginFragment = true
+								}
+							}
+						)
+						.zIndex(3)
+						.transition(.move(edge: .trailing))
+					}
+
+					if mango9ChatTarget != nil {
+						Mango9ChatStandaloneFragment(target: $mango9ChatTarget)
+							.zIndex(4)
+							.transition(.move(edge: .trailing))
+					}
+					
+					if let meetingsListVM = meetingsListViewModel, isShowSendCancelMeetingNotificationPopup {
+						PopupView(
+							isShowPopup: $isShowSendCancelMeetingNotificationPopup,
+							title: Text("meeting_schedule_cancel_dialog_title"),
+							content: !sharedMainViewModel.disableChatFeature ? Text("meeting_schedule_cancel_dialog_message") : Text(""),
+							titleFirstButton: nil,
+							actionFirstButton: {},
+							titleSecondButton: Text("dialog_confirm"),
+							actionSecondButton: {
+								sharedMainViewModel.displayedMeeting = nil
+								meetingsListVM.cancelMeetingWithNotifications()
+								self.isShowSendCancelMeetingNotificationPopup.toggle()
+							},
+							titleThirdButton: Text("dialog_cancel"),
+							actionThirdButton: {
+								sharedMainViewModel.displayedMeeting = nil
+								meetingsListVM.deleteSelectedMeeting()
+								self.isShowSendCancelMeetingNotificationPopup.toggle()
+							}
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.isShowSendCancelMeetingNotificationPopup.toggle()
+						}
+					}
+					
+					if let meetingsListVM = meetingsListViewModel, isShowDeleteMeetingNotificationPopup {
+						PopupView(
+							isShowPopup: $isShowDeleteMeetingNotificationPopup,
+							title: Text("meeting_schedule_delete_dialog_title"),
+							content: !sharedMainViewModel.disableChatFeature ? Text("meeting_schedule_delete_dialog_message") : Text(""),
+							titleFirstButton: nil,
+							actionFirstButton: {},
+							titleSecondButton: Text("dialog_confirm"),
+							actionSecondButton: {
+								sharedMainViewModel.displayedMeeting = nil
+								meetingsListVM.deleteSelectedMeeting()
+								self.isShowDeleteMeetingNotificationPopup.toggle()
+							},
+							titleThirdButton: nil,
+							actionThirdButton: {}
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.isShowDeleteMeetingNotificationPopup.toggle()
+						}
+					}
+					
+					if isShowTrustLevelPopup {
+						if let displayedFriend = sharedMainViewModel.displayedFriend {
+							PopupView(
+								isShowPopup: $isShowTrustLevelPopup,
+								title: Text("contact_dialog_devices_trust_help_title"),
+								content: Text("contact_dialog_devices_trust_help_message"),
+								additionalContent: {
+									HStack {
+										let avatarSize = 50.0
+										let avatar = Avatar(contactAvatarModel: displayedFriend, avatarSize: avatarSize, hidePresence: true)
+										
+										avatar
+										
+										Image("arrow-right")
+											.renderingMode(.template)
+											.resizable()
+											.foregroundStyle(Color.grayMain2c600)
+											.frame(width: 25, height: 25, alignment: .leading)
+											.padding(.all, 10)
+										
+										ZStack {
+											avatar
+											
+											Circle()
+												.stroke(Color.blueInfo500, lineWidth: 2)
+												.frame(width: avatarSize, height: avatarSize)
+											
+											HStack {
+												VStack {
+													Spacer()
+													Image("trusted")
+														   .resizable()
+														   .frame(width: avatarSize/4, height: avatarSize/4)
+														   .padding(.trailing, 1)
+														   .padding(.bottom, 1)
+												}
+												Spacer()
+											}
+											.frame(width: avatarSize, height: avatarSize)
+										}
+									}
+									.frame(maxWidth: .infinity)
+									.padding(.bottom, 10)
+								},
+								titleFirstButton: nil,
+								actionFirstButton: {},
+								titleSecondButton: Text("dialog_understood"),
+								actionSecondButton: { self.isShowTrustLevelPopup.toggle() },
+								titleThirdButton: nil,
+								actionThirdButton: {}
+							)
+							.background(.black.opacity(0.65))
+							.zIndex(3)
+							.onTapGesture {
+								self.isShowTrustLevelPopup.toggle()
+							}
+						}
+					}
+					
+					if isShowIncreaseTrustLevelPopup {
+						if let displayedFriend = sharedMainViewModel.displayedFriend {
+							PopupView(
+								isShowPopup: $isShowIncreaseTrustLevelPopup,
+								title: Text("contact_dialog_increase_trust_level_title"),
+								content: Text(String(format: String(localized: "contact_dialog_increase_trust_level_message"), displayedFriend.name, SharedMainViewModel.shared.increaseTrustLevelPopupDeviceName)),
+								additionalContent: {
+									if !SharedMainViewModel.shared.increaseTrustLevelPopupAccepted {
+										HStack {
+											Button(action: {
+												increaseTrustLevelPopupAcceptedTmp.toggle()
+											}, label: {
+												HStack {
+													Image(systemName: increaseTrustLevelPopupAcceptedTmp ? "checkmark.square.fill" : "square")
+														.renderingMode(.template)
+														.resizable()
+														.foregroundStyle(Color.orangeMain500)
+														.frame(width: 20, height: 20)
+												}
+											})
+											.buttonStyle(PlainButtonStyle())
+											
+											Text("dialog_do_not_show_anymore")
+												.tint(Color.grayMain2c600)
+												.default_text_style(styleSize: 15)
+										}
+										.padding(.bottom, 10)
+									}
+								},
+								titleFirstButton: nil,
+								actionFirstButton: {},
+								titleSecondButton: Text("contact_call_action"),
+								actionSecondButton: {
+									if increaseTrustLevelPopupAcceptedTmp == true {
+										SharedMainViewModel.shared.changeIncreaseTrustLevelPopupAccepted()
+									}
+									
+									if let deviceAddress = SharedMainViewModel.shared.increaseTrustLevelPopupDeviceAddress {
+										TelecomManager.shared.doCallOrJoinConf(address: deviceAddress)
+									}
+									
+									self.isShowIncreaseTrustLevelPopup.toggle()
+									self.increaseTrustLevelPopupAcceptedTmp = false
+									SharedMainViewModel.shared.increaseTrustLevelPopupDeviceName = ""
+									SharedMainViewModel.shared.increaseTrustLevelPopupDeviceAddress = nil
+								},
+								titleThirdButton: Text("dialog_cancel"),
+								actionThirdButton: {
+									self.isShowIncreaseTrustLevelPopup.toggle()
+									self.increaseTrustLevelPopupAcceptedTmp = false
+									SharedMainViewModel.shared.increaseTrustLevelPopupDeviceName = ""
+									SharedMainViewModel.shared.increaseTrustLevelPopupDeviceAddress = nil
+									
+								}
+							)
+							.background(.black.opacity(0.65))
+							.zIndex(3)
+							.onTapGesture {
+								self.isShowIncreaseTrustLevelPopup.toggle()
+								self.increaseTrustLevelPopupAcceptedTmp = false
+								SharedMainViewModel.shared.increaseTrustLevelPopupDeviceName = ""
+								SharedMainViewModel.shared.increaseTrustLevelPopupDeviceAddress = nil
+							}
+						}
+					}
+					
+					if isShowStartCallGroupPopup {
+						PopupView(
+							isShowPopup: $isShowStartCallGroupPopup,
+							title: Text("conversation_info_confirm_start_group_call_dialog_title"),
+							content: Text("conversation_info_confirm_start_group_call_dialog_message"),
+							titleFirstButton: nil,
+							actionFirstButton: {},
+							titleSecondButton: Text("dialog_confirm"),
+							actionSecondButton: {
+								if sharedMainViewModel.displayedConversation != nil {
+									sharedMainViewModel.displayedConversation!.createGroupCall()
+								}
+								self.isShowStartCallGroupPopup.toggle()
+							},
+							titleThirdButton: Text("dialog_cancel"),
+							actionThirdButton: { self.isShowStartCallGroupPopup.toggle() }
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.isShowStartCallGroupPopup.toggle()
+						}
+					}
+					
+					if isShowRemoveParticipantPopup {
+						PopupView(
+							isShowPopup: $isShowRemoveParticipantPopup,
+							title: Text("conversation_info_confirm_participant_removal_dialog_title"),
+							content: Text("conversation_info_confirm_participant_removal_dialog_message"),
+							titleFirstButton: nil,
+							actionFirstButton: {},
+							titleSecondButton: Text("dialog_confirm"),
+							actionSecondButton: {
+								if let conversationsListVM = conversationsListViewModel {
+									conversationsListVM.removeParticipant()
+								}
+								self.isShowRemoveParticipantPopup.toggle()
+							},
+							titleThirdButton: Text("dialog_cancel"),
+							actionThirdButton: { self.isShowRemoveParticipantPopup.toggle() }
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.isShowRemoveParticipantPopup.toggle()
+						}
+					}
+					
+					/*
+					if isShowDeleteMessagePopup {
+						PopupView(
+							isShowPopup: $isShowDeleteMessagePopup,
+							title: Text("conversation_dialog_delete_chat_message_title"),
+							content: nil,
+							titleFirstButton: Text("conversation_dialog_delete_for_everyone_label"),
+							actionFirstButton: {
+								NotificationCenter.default.post(name: NSNotification.Name("DeleteMessageForEveryone"), object: nil)
+								self.isShowDeleteMessagePopup.toggle()
+							},
+							titleSecondButton: Text("conversation_dialog_delete_locally_label"),
+							actionSecondButton: {
+								NotificationCenter.default.post(name: NSNotification.Name("DeleteMessageForMe"), object: nil)
+								self.isShowDeleteMessagePopup.toggle()
+							},
+							titleThirdButton: Text("dialog_cancel"),
+							actionThirdButton: { self.isShowDeleteMessagePopup.toggle() }
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.isShowDeleteMessagePopup.toggle()
+						}
+					}
+					*/
+					
+					if isShowConversationInfoPopup {
+						PopupViewWithTextField(
+							isShowConversationInfoPopup: $isShowConversationInfoPopup,
+							conversationInfoPopupText: $conversationInfoPopupText
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.isShowConversationInfoPopup.toggle()
+						}
+					}
+					
+					if isShowUpdatePasswordPopup {
+						PopupUpdatePassword(
+							isShowUpdatePasswordPopup: $isShowUpdatePasswordPopup,
+							passwordUpdateAddress: $passwordUpdateAddress
+						)
+						.background(.black.opacity(0.65))
+						.zIndex(3)
+						.onTapGesture {
+							self.isShowUpdatePasswordPopup.toggle()
+						}
+					}
+					
+					if telecomManager.meetingWaitingRoomDisplayed {
+						MeetingWaitingRoomFragment()
+							.zIndex(3)
+							.transition(.opacity.combined(with: .move(edge: .bottom)))
+					}
+					
+					if telecomManager.callDisplayed && ((telecomManager.callInProgress && telecomManager.outgoingCallStarted) || telecomManager.callConnected) && !telecomManager.meetingWaitingRoomDisplayed {
+						CallView(
+							fullscreenVideo: $fullscreenVideo,
+							isShowStartCallFragment: $isShowStartCallFragment,
+							isShowConversationFragment: $isShowConversationFragment,
+							isShowStartCallGroupPopup: $isShowStartCallGroupPopup,
+							isShowEditContactFragment: $isShowEditContactFragment,
+							isShowScheduleMeetingFragment: $isShowScheduleMeetingFragment
+						)
+						.environmentObject(callViewModel)
+						.zIndex(5)
+						.transition(.scale.combined(with: .move(edge: .top)))
+						.onAppear {
+							UIApplication.shared.isIdleTimerDisabled = true
+                            
+                            isShowStartCallFragment = false
+                            isShowStartConversationFragment = false
+                            
+							callViewModel.resetCallView()
+							if callViewModel.callsCounter >= 1 {
+								DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+									callViewModel.resetCallView()
+								}
+							}
+						}
+						.onDisappear {
+							UIApplication.shared.isIdleTimerDisabled = false
+						}
+					}
+					
+					ToastView()
+						.zIndex(6)
+				}
+			}
+			.onChange(of: navigationManager.selectedCallId) { newCallId in
+				if newCallId != nil {
+                    if !sharedMainViewModel.disableChatFeature {
+						resetFilter()
+                        sharedMainViewModel.changeIndexView(indexViewInt: 2)
+                    }
+				}
+			}
+			.onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ContactLoaded"))) { _ in
+				callViewModel.resetCallView()
+				
+				if let conversationsListVM = conversationsListViewModel {
+					conversationsListVM.updateChatRoomsList()
+				}
+				
+				if let historyListVM = historyListViewModel {
+					historyListVM.refreshHistoryAvatarModel()
+				}
+			}
+			.onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ContactAdded")).compactMap { $0.userInfo?["address"] as? String }) { address in
+				if let conversationsListVM = conversationsListViewModel {
+					conversationsListVM.updateChatRoom(address: address)
+				}
+			}
+			.onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("CoreStarted"))) { _ in
+				accountProfileViewModel.setAvatarModel()
+			}
+			.onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("DefaultAccountChanged"))) { _ in
+                accountProfileViewModel.defaultAccountModelIndex = CoreContext.shared.accounts.firstIndex(where: {$0.isDefaultAccount})
+								
+				accountProfileViewModel.accountError = CoreContext.shared.accounts.contains {
+					($0.registrationState == .Cleared && $0.isDefaultAccount) ||
+					$0.registrationState == .Failed
+				}
+				
+                withAnimation {
+                    if self.sideMenuIsOpen {
+                        self.sideMenuIsOpen = false
+                    }
+                }
+                
+                if self.isShowLoginFragment {
+                    self.isShowLoginFragment = false
+                }
+                
+                if conversationsListViewModel != nil {
+                    conversationsListViewModel = ConversationsListViewModel()
+                }
+                
+				if historyListViewModel != nil {
+                    historyListViewModel = HistoryListViewModel()
+				}
+				
+				if meetingsListViewModel != nil {
+                    meetingsListViewModel = MeetingsListViewModel()
+				}
+			}
+			.onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("PasswordUpdate")).compactMap { $0.userInfo?["address"] as? String }) { address in
+				passwordUpdateAddress = address
+				isShowUpdatePasswordPopup = true
+			}
+		}
+		.sheet(isPresented: $securitySheet, onDismiss: {
+			securitySheet = false
+		}, content: {
+			if #available(iOS 16.0, *) {
+				VStack {
+					Text("conversation_end_to_end_encrypted_bottom_sheet_title")
+						.default_text_style_700(styleSize: 18)
+						.multilineTextAlignment(.center)
+					
+					Spacer()
+					
+					Image("profile-secure-logo")
+							  .resizable()
+							  .frame(width: 100, height: 100)
+					
+					Spacer()
+					
+					Text("conversation_end_to_end_encrypted_bottom_sheet_message")
+						.default_text_style(styleSize: 14)
+						.multilineTextAlignment(.center)
+					
+					Spacer()
+					
+					Text("conversation_end_to_end_encrypted_bottom_sheet_link")
+						.default_text_style(styleSize: 14)
+						.underline()
+				}
+				.padding(.vertical, 20)
+				.padding(.horizontal, 30)
+				.presentationDetents([.medium])
+			}
+		})
+		.overlay {
+			if isMenuOpen {
+				Color.white.opacity(0.001)
+					.ignoresSafeArea()
+					.frame(maxWidth: .infinity, maxHeight: .infinity)
+					.onTapGesture {
+						isMenuOpen = false
+					}
+			}
+		}
+		.onRotate { newOrientation in
+			if (sharedMainViewModel.displayedFriend != nil || sharedMainViewModel.displayedCall != nil || sharedMainViewModel.displayedConversation != nil) && searchIsActive {
+				self.focusedField = false
+			} else if searchIsActive {
+				self.focusedField = true
+			}
+			orientation = newOrientation
+		}
+		.onChange(of: scenePhase) { newPhase in
+			orientation = UIDevice.current.orientation
+			if newPhase == .active {
+				if let conversationsListVM = conversationsListViewModel {
+					conversationsListVM.computeChatRoomsList()
+				}
+				Task {
+					await mango9ChatStore.refreshAfterForeground()
+				}
+			}
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenLead)) { notification in
+			guard let leadId = notification.object as? Int else { return }
+			crmDeepLinkLeadId = leadId
+			withAnimation {
+				isShowCRMFragment = true
+			}
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenChat)) { notification in
+			guard let target = notification.object as? Mango9ChatTarget else { return }
+			withAnimation {
+				mango9ChatTarget = target
+			}
+		}
+		.task {
+			if var session = Mango9SessionStore.load() {
+				do {
+					let team: [Mango9TeamMember]
+					do {
+						if let lineIdentity = try? await Mango9CRMAPI.lineIdentity(session: session) {
+							Mango9LineIdentityStore.save(lineIdentity)
+						}
+						team = try await Mango9CRMAPI.teamMembers(session: session)
+					} catch Mango9CRMAPIError.unauthorized {
+						session = try await Mango9CRMAPI.refresh(session: session)
+						try Mango9SessionStore.save(session)
+						if let lineIdentity = try? await Mango9CRMAPI.lineIdentity(session: session) {
+							Mango9LineIdentityStore.save(lineIdentity)
+						}
+						team = try await Mango9CRMAPI.teamMembers(session: session)
+					}
+					ContactsManager.shared.syncMango9Team(team)
+				} catch {
+					Log.error("[Mango9] Failed to refresh the CRM teammate directory: \(error)")
+				}
+				await Mango9ChatStore.shared.connectIfNeeded()
+			}
+		}
+		.id(coreContext.reloadID)
+	}
+	
+	func openMenu() {
+		withAnimation {
+			self.sideMenuIsOpen.toggle()
+		}
+	}
+	
+	func resetFilter() {
+		self.text = ""
+		self.focusedField = false
+		self.searchIsActive = false
+		
+		if !magicSearch.currentFilter.isEmpty {
+			magicSearch.currentFilter = ""
+			magicSearch.searchForContacts()
+		}
+	}
+}
+
+struct ContactsContainer: View {
+	@Binding var contactsListViewModel: ContactsListViewModel?
+	@Binding var isShowEditContactFragment: Bool
+	@Binding var isShowDeleteContactPopup: Bool
+	@Binding var text: String
+	var orientation: UIDeviceOrientation
+
+	var body: some View {
+		Group {
+			if let contactsListVM = contactsListViewModel {
+				ContactsView(
+					isShowEditContactFragment: $isShowEditContactFragment,
+					isShowDeletePopup: $isShowDeleteContactPopup,
+					text: $text
+				)
+				.environmentObject(contactsListVM)
+				.roundedCorner(25, corners: [.topRight, .topLeft])
+				.shadow(
+					color: (orientation == .landscapeLeft
+							|| orientation == .landscapeRight
+							|| UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)
+					? .white.opacity(0.0)
+					: .black.opacity(0.2),
+					radius: 25
+				)
+			} else {
+				NavigationView {
+					VStack {
+						Spacer()
+						
+						ProgressView()
+							.controlSize(.large)
+						
+						Spacer()
+					}
+					.onAppear {
+						if contactsListViewModel == nil {
+							contactsListViewModel = ContactsListViewModel()
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+struct HistoryContainer: View {
+	@Binding var historyListViewModel: HistoryListViewModel?
+	@Binding var isShowStartCallFragment: Bool
+	@Binding var isShowEditContactFragment: Bool
+	@Binding var text: String
+	@Binding var isShowEditContactFragmentAddress: String
+	var orientation: UIDeviceOrientation
+
+	var body: some View {
+		Group {
+			if let historyListVM = historyListViewModel {
+				HistoryView(
+					isShowStartCallFragment: $isShowStartCallFragment,
+					isShowEditContactFragment: $isShowEditContactFragment,
+					text: $text,
+					isShowEditContactFragmentAddress: $isShowEditContactFragmentAddress
+				)
+				.environmentObject(historyListVM)
+				.roundedCorner(25, corners: [.topRight, .topLeft])
+				.shadow(
+					color: (orientation == .landscapeLeft
+							|| orientation == .landscapeRight
+							|| UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)
+					? .white.opacity(0.0)
+					: .black.opacity(0.2),
+					radius: 25
+				)
+			} else {
+				NavigationView {
+					VStack {
+						Spacer()
+						
+						ProgressView()
+							.controlSize(.large)
+						
+						Spacer()
+					}
+					.onAppear {
+						if historyListViewModel == nil {
+							historyListViewModel = HistoryListViewModel()
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+struct ConversationsContainer: View {
+	@Binding var conversationsListViewModel: ConversationsListViewModel?
+	
+	@Binding var isShowStartConversationFragment: Bool
+	
+	@Binding var showLeaveConversationPopup: Bool
+	@Binding var showDeleteConversationPopup: Bool
+	@Binding var showDeleteConversationHistoryPopup: Bool
+	@Binding var isShowRemoveParticipantPopup: Bool
+	
+	@Binding var text: String
+	
+	var orientation: UIDeviceOrientation
+
+	var body: some View {
+		Group {
+			if let conversationsListVM = conversationsListViewModel {
+				ConversationsView(
+					text: $text,
+					isShowStartConversationFragment: $isShowStartConversationFragment,
+					showLeaveConversationPopup: $showLeaveConversationPopup,
+					showDeleteConversationPopup: $showDeleteConversationPopup,
+					showDeleteConversationHistoryPopup: $showDeleteConversationHistoryPopup,
+					isShowRemoveParticipantPopup: $isShowRemoveParticipantPopup
+				)
+				.environmentObject(conversationsListVM)
+				.roundedCorner(25, corners: [.topRight, .topLeft])
+				.shadow(
+					color: (orientation == .landscapeLeft
+							|| orientation == .landscapeRight
+							|| UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)
+					? .white.opacity(0.0)
+					: .black.opacity(0.2),
+					radius: 25
+				)
+			} else {
+				NavigationView {
+					VStack {
+						Spacer()
+						
+						ProgressView()
+							.controlSize(.large)
+						
+						Spacer()
+					}
+					.onAppear {
+						if conversationsListViewModel == nil {
+							conversationsListViewModel = ConversationsListViewModel()
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+struct MeetingsContainer: View {
+	@Binding var meetingsListViewModel: MeetingsListViewModel?
+	@Binding var isShowScheduleMeetingFragment: Bool
+	@Binding var isShowDeleteMeetingNotificationPopup: Bool
+	@Binding var isShowSendCancelMeetingNotificationPopup: Bool
+	@Binding var text: String
+	var orientation: UIDeviceOrientation
+
+	var body: some View {
+		Group {
+			if let meetingsListVM = meetingsListViewModel {
+				MeetingsView(
+					isShowScheduleMeetingFragment: $isShowScheduleMeetingFragment,
+					isShowDeleteMeetingNotificationPopup: $isShowDeleteMeetingNotificationPopup,
+					isShowSendCancelMeetingNotificationPopup: $isShowSendCancelMeetingNotificationPopup,
+					text: $text
+				)
+				.environmentObject(meetingsListVM)
+				.roundedCorner(25, corners: [.topRight, .topLeft])
+				.shadow(
+					color: (orientation == .landscapeLeft
+							|| orientation == .landscapeRight
+							|| UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)
+					? .white.opacity(0.0)
+					: .black.opacity(0.2),
+					radius: 25
+				)
+			} else {
+				NavigationView {
+					VStack {
+						Spacer()
+						
+						ProgressView()
+							.controlSize(.large)
+						
+						Spacer()
+					}
+					.onAppear {
+						if meetingsListViewModel == nil {
+							meetingsListViewModel = MeetingsListViewModel()
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+
+class NavigationManager: ObservableObject {
+	@Published var selectedCallId: String?
+	@Published var peerAddr: String?
+	@Published var localAddr: String?
+	
+	func openChatRoom(callId: String, peerAddr: String, localAddr: String) {
+		self.selectedCallId = callId
+		self.peerAddr = peerAddr
+		self.localAddr = localAddr
+	}
+}
+
+#Preview {
+	ContentView()
+}
+// swiftlint:enable type_body_length
+// swiftlint:enable line_length

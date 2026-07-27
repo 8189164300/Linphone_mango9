@@ -1,0 +1,169 @@
+/*
+ * Copyright (c) 2010-2023 Belledonne Communications SARL.
+ *
+ * This file is part of linphone-iphone
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+import linphonesw
+import SwiftUI
+
+class HelpViewModel: ObservableObject {
+	private let TAG = "[HelpViewModel]"
+
+	@Published var logcat: Bool = false
+	@Published var logText: String = ""
+	@Published var version: String = ""
+	@Published var appVersion: String = ""
+	@Published var sdkVersion: String = ""
+	@Published var checkUpdateAvailable: Bool = false
+	@Published var uploadLogsAvailable: Bool = false
+	@Published var logsUploadInProgress: Bool = false
+	@Published var versionAvailable: String = ""
+	@Published var urlVersionAvailable: String = ""
+	
+	private var coreDelegate: CoreDelegate?
+
+	init() {
+		let appGitVersion = AppGitInfo.commit
+		let appGitBranch = AppGitInfo.branch
+		let appGitTag = AppGitInfo.tag
+		let sdkGitVersion = linphonesw.LinphoneSdkInfos.version
+		var sdkGitBranch = linphonesw.LinphoneSdkInfos.branch
+		
+		if sdkGitBranch.hasPrefix("remotes/origin/") {
+			sdkGitBranch = String(sdkGitBranch.dropFirst("remotes/origin/".count))
+		}
+		
+		self.appVersion = appGitTag
+		self.version = appGitTag + "-" + appGitVersion + "\n(\(appGitBranch))"
+		
+		self.sdkVersion = sdkGitVersion + "\n(\(sdkGitBranch))"
+		
+		CoreContext.shared.doOnCoreQueue { core in
+			self.coreDelegate = CoreDelegateStub(
+				onLogCollectionUploadStateChanged: {(
+							core: Core,
+							state: Core.LogCollectionUploadState,
+							info: String
+						) in
+					if info.starts(with: "https") {
+						DispatchQueue.main.async {
+							self.logsUploadInProgress = false
+							self.logText = info
+						}
+					}
+				},
+				onVersionUpdateCheckResultReceived: {(
+					core: Core,
+					result: VersionUpdateCheckResult,
+					version: String?,
+					url: String?
+				) in
+					switch result {
+					case .NewVersionAvailable:
+						if let version = version, let url = url {
+							Log.info("\(self.TAG): Update available, version [\(version)], url [\(url)]")
+							DispatchQueue.main.async {
+								self.versionAvailable = version
+								self.urlVersionAvailable = url
+								self.checkUpdateAvailable = true
+							}
+						}
+					case .UpToDate:
+						Log.info("\(self.TAG): This version is up-to-date")
+						DispatchQueue.main.async {
+							ToastViewModel.shared.show("Success_version_up_to_date")
+						}
+					default:
+						Log.info("\(self.TAG): Can't check for update, an error happened [\(result)]")
+						DispatchQueue.main.async {
+							ToastViewModel.shared.show("Error")
+						}
+					}
+				}
+			)
+			core.addDelegate(delegate: self.coreDelegate!)
+		}
+	}
+	
+	deinit {
+		if let delegate = coreDelegate {
+			CoreContext.shared.doOnCoreQueue { core in
+				core.removeDelegate(delegate: delegate)
+			}
+		}
+	}
+	
+	/*
+	func toggleLogcat() {
+		let newValue = !self.logcat
+		CoreContext.shared.doOnCoreQueue { core in
+			AppServices.corePreferences.printLogsInLogcat = newValue
+			Factory.Instance.enableLogcatLogs(newValue)
+			self.logcat = newValue
+		}
+	}
+	*/
+	
+	func shareLogs() {
+		CoreContext.shared.doOnCoreQueue { core in
+			Log.info("\(self.TAG) Uploading debug logs for sharing")
+			core.uploadLogCollection()
+			DispatchQueue.main.async {
+				self.logsUploadInProgress = true
+			}
+		}
+	}
+	
+	func cleanLogs() {
+		CoreContext.shared.doOnCoreQueue { _ in
+			Core.resetLogCollection()
+			Log.info("\(self.TAG) Debug logs have been cleaned")
+			DispatchQueue.main.async {
+				ToastViewModel.shared.show("Success_clear_logs")
+			}
+		}
+	}
+
+	func checkForUpdate() {
+		let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+		CoreContext.shared.doOnCoreQueue { core in
+			Log.info("\(self.TAG) Checking for update using current version \(currentVersion ?? "6.0.0")")
+			core.checkForUpdate(currentVersion: currentVersion ?? "6.0.0")
+		}
+	}
+
+	/*
+	func showConfigFile() {
+		CoreContext.shared.doOnCoreQueue { core in
+			Log.i("\(self.TAG) Dumping & displaying Core's config")
+			let config = core.config.dump()
+			let file = FileUtils.getFileStorageCacheDir(
+				"linphonerc.txt",
+				overrideExisting: true
+			)
+			DispatchQueue.main.async {
+				if FileUtils.dumpStringToFile(config, file: file) {
+					Log.i("\(self.TAG) .linphonerc string saved as file in cache folder")
+					self.showConfigFileEvent = Event(value: file.absolutePath)
+				} else {
+					Log.e("\(self.TAG) Failed to save .linphonerc string as file in cache folder")
+				}
+			}
+		}
+	}
+	*/
+}

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>APP_GROUP_NAME</key>
+	<string>$(APP_GROUP_NAME)</string>
+	<key>Mango9SourceCodeURL</key>
+	<string>$(MANGO9_SOURCE_CODE_URL)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>mango9-mention</string>
+				<string>mango9-message</string>
+				<string>mango9-config</string>
+				<string>mango9-auth</string>
+				<string>sip</string>
+				<string>sips</string>
+				<string>tel</string>
+				<string>callto</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+	<key>TFInternalTestingOnly</key>
+	<false/>
+	<key>UIAppFonts</key>
+	<array>
+		<string>NotoSans-Light.ttf</string>
+		<string>NotoSans-Regular.ttf</string>
+		<string>NotoSans-Medium.ttf</string>
+		<string>NotoSans-SemiBold.ttf</string>
+		<string>NotoSans-Bold.ttf</string>
+		<string>NotoSans-ExtraBold.ttf</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+		<string>voip</string>
+		<string>audio</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<false/>
+</dict>
+</plist>

@@ -1,0 +1,146 @@
+/*
+ * Copyright (c) 2010-2023 Belledonne Communications SARL.
+ *
+ * This file is part of Linphone
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+import SwiftUI
+import Photos
+
+struct PopupView<AdditionalContent: View>: View {
+	
+	var permissionManager = PermissionManager.shared
+	
+	@Binding var isShowPopup: Bool
+	var title: Text
+	var content: Text?
+	
+	private let additionalContent: AdditionalContent
+	
+	var titleFirstButton: Text?
+	var actionFirstButton: () -> Void
+	
+	var titleSecondButton: Text?
+	var actionSecondButton: () -> Void
+	
+	var titleThirdButton: Text?
+	var actionThirdButton: () -> Void
+	
+	init(
+		isShowPopup: Binding<Bool>,
+		title: Text,
+		content: Text? = nil,
+		@ViewBuilder additionalContent: () -> AdditionalContent = { EmptyView() },
+		titleFirstButton: Text? = nil,
+		actionFirstButton: @escaping () -> Void = {},
+		titleSecondButton: Text? = nil,
+		actionSecondButton: @escaping () -> Void = {},
+		titleThirdButton: Text? = nil,
+		actionThirdButton: @escaping () -> Void = {}
+	) {
+		self._isShowPopup = isShowPopup
+		self.title = title
+		self.content = content
+		self.additionalContent = additionalContent()
+		self.titleFirstButton = titleFirstButton
+		self.actionFirstButton = actionFirstButton
+		self.titleSecondButton = titleSecondButton
+		self.actionSecondButton = actionSecondButton
+		self.titleThirdButton = titleThirdButton
+		self.actionThirdButton = actionThirdButton
+	}
+	
+	var body: some View {
+		GeometryReader { geometry in
+			VStack(alignment: .leading) {
+				title
+					.default_text_style_800(styleSize: 16)
+					.frame(alignment: .leading)
+					.padding(.bottom, 2)
+				
+				if content != nil {
+					content
+						.tint(Color.grayMain2c600)
+						.default_text_style(styleSize: 15)
+						.padding(.bottom, 20)
+				}
+				
+				additionalContent
+				
+				HStack {
+					if titleFirstButton != nil {
+						Button(action: {
+							actionFirstButton()
+						}, label: {
+							titleFirstButton
+								.default_text_style_white_600(styleSize: 14)
+							.frame(height: 30)
+						})
+						.padding(.horizontal, 20)
+						.padding(.vertical, 10)
+						.background(Color.orangeMain500)
+						.cornerRadius(60)
+						.padding(.horizontal, 2)
+					}
+					
+					if titleSecondButton != nil {
+						Button(action: {
+							actionSecondButton()
+						}, label: {
+							titleSecondButton
+								.default_text_style_white_600(styleSize: 14)
+							.frame(height: 30)
+						})
+						.padding(.horizontal, 20)
+						.padding(.vertical, 10)
+						.background(Color.orangeMain500)
+						.cornerRadius(60)
+						.padding(.horizontal, 2)
+					}
+					
+					if titleThirdButton != nil {
+						Button(action: {
+							actionThirdButton()
+						}, label: {
+							titleThirdButton
+								.default_text_style_orange_600(styleSize: 14)
+							.frame(height: 30)
+						})
+						.padding(.horizontal, 20)
+						.padding(.vertical, 10)
+						.cornerRadius(60)
+						.overlay(
+							RoundedRectangle(cornerRadius: 60)
+								.inset(by: 0.5)
+								.stroke(Color.orangeMain500, lineWidth: 1)
+						)
+						.padding(.horizontal, 2)
+					}
+				}
+				.frame(maxWidth: .infinity, alignment: .trailing)
+			}
+			.padding(.horizontal, 20)
+			.padding(.vertical, 20)
+			.background(.white)
+			.cornerRadius(20)
+			.padding(.horizontal)
+			.frame(maxHeight: .infinity)
+			.shadow(color: Color.orangeMain500, radius: 0, x: 0, y: 2)
+			.frame(maxWidth: SharedMainViewModel.shared.maxWidth)
+			.position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+		}
+	}
+}

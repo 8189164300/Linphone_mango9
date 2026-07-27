@@ -1,0 +1,32 @@
+{
+  "originHash" : "359ba15f5232a2575567e80da977a86316bb7c0377d3671c9bdd111387081a92",
+  "pins" : [
+    {
+      "identity" : "appauth-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/openid/AppAuth-iOS.git",
+      "state" : {
+        "revision" : "145104f5ea9d58ae21b60add007c33c1cc0c948e",
+        "version" : "2.0.0"
+      }
+    },
+    {
+      "identity" : "elegant-emoji-picker",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Finalet/Elegant-Emoji-Picker",
+      "state" : {
+        "revision" : "598ff0a72198375d7317b61982fa8648d0ba3a44"
+      }
+    },
+    {
+      "identity" : "linphone-sdk-swift-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/BelledonneCommunications/linphone-sdk-swift-ios.git",
+      "state" : {
+        "revision" : "6d81a65d5fee9d06a8008787e873ff1dc392a19a",
+        "version" : "5.5.5"
+      }
+    }
+  ],
+  "version" : 3
+}

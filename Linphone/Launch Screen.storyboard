@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="24128" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
+	<device id="retina6_12" orientation="portrait" appearance="light"/>
+	<dependencies>
+		<deployment identifier="iOS"/>
+		<plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="24063"/>
+		<capability name="Safe area layout guides" minToolsVersion="9.0"/>
+		<capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+	</dependencies>
+	<scenes>
+		<scene sceneID="EHf-IW-A2E">
+			<objects>
+				<viewController id="01J-lp-oVM" sceneMemberID="viewController">
+					<view key="view" contentMode="scaleToFill" id="Ze5-6b-2t3">
+						<rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+						<autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+						<subviews>
+							<imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" translatesAutoresizingMaskIntoConstraints="NO" id="6L3-wz-ibv" image="mango9-logo">
+								<rect key="frame" x="0" y="0" width="260" height="84"/>
+							</imageView>
+							<label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="9" textAlignment="right" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="M9N-um-ber">
+								<rect key="frame" x="0" y="0" width="38" height="84"/>
+								<fontDescription key="fontDescription" type="system" weight="bold" pointSize="54"/>
+								<color key="textColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+								<nil key="highlightedColor"/>
+							</label>
+						</subviews>
+						<viewLayoutGuide key="safeArea" id="Bcu-3y-fUS"/>
+						<color key="backgroundColor" red="0.2509803922" green="0.3254901961" blue="0.7843137255" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+						<constraints>
+							<!-- Center horizontally -->
+							<constraint firstItem="6L3-wz-ibv" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="centerXConstraint"/>
+							<!-- Center vertically -->
+							<constraint firstItem="6L3-wz-ibv" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="centerYConstraint"/>
+							<!-- Fixed width -->
+							<constraint firstItem="6L3-wz-ibv" firstAttribute="width" constant="260" id="widthConstraint"/>
+							<!-- Fixed height -->
+							<constraint firstItem="6L3-wz-ibv" firstAttribute="height" constant="84" id="heightConstraint"/>
+							<constraint firstItem="M9N-um-ber" firstAttribute="centerY" secondItem="6L3-wz-ibv" secondAttribute="centerY" id="nineCenterYConstraint"/>
+							<constraint firstItem="M9N-um-ber" firstAttribute="trailing" secondItem="6L3-wz-ibv" secondAttribute="trailing" id="nineTrailingConstraint"/>
+							<constraint firstItem="M9N-um-ber" firstAttribute="width" constant="38" id="nineWidthConstraint"/>
+							<constraint firstItem="M9N-um-ber" firstAttribute="height" constant="84" id="nineHeightConstraint"/>
+						</constraints>
+					</view>
+				</viewController>
+				<placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
+			</objects>
+			<point key="canvasLocation" x="53" y="375"/>
+		</scene>
+	</scenes>
+	<resources>
+		<image name="mango9-logo" width="461" height="147"/>
+	</resources>
+</document>
