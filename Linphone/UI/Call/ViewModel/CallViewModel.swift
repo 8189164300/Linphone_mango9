@@ -30,6 +30,28 @@ import UserNotifications
 class CallViewModel: ObservableObject {
 	
 	static let TAG = "[CallViewModel]"
+
+	private static func friendlyRemoteAddress(_ address: Address?) -> String {
+		guard let address else { return "" }
+		let username = address.username?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		guard !username.isEmpty else {
+			return String(address.asStringUriOnly().dropFirst(4))
+		}
+
+		var digits = username.filter(\.isNumber)
+		let nonDialCharacters = CharacterSet(charactersIn: "+0123456789-(). ")
+		let isPhoneNumber = username.unicodeScalars.allSatisfy { nonDialCharacters.contains($0) }
+		guard isPhoneNumber else { return username }
+
+		if digits.count == 11, digits.first == "1" {
+			digits.removeFirst()
+		}
+		guard digits.count == 10 else { return username }
+
+		let areaEnd = digits.index(digits.startIndex, offsetBy: 3)
+		let prefixEnd = digits.index(areaEnd, offsetBy: 3)
+		return "\(digits[..<areaEnd])-\(digits[areaEnd..<prefixEnd])-\(digits[prefixEnd...])"
+	}
 	
 	var coreContext = CoreContext.shared
 	var telecomManager = TelecomManager.shared
@@ -297,7 +319,7 @@ class CallViewModel: ObservableObject {
 				
 				remoteAddressTmp!.clean()
 				
-				let remoteAddressCleanedStringTmp = remoteAddressTmp != nil ? String(remoteAddressTmp!.asStringUriOnly().dropFirst(4)) : ""
+				let remoteAddressCleanedStringTmp = Self.friendlyRemoteAddress(remoteAddressTmp)
 				
 				if self.currentCall?.conference != nil {
 					displayNameTmp = self.currentCall?.conference?.subject ?? ""

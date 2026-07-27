@@ -109,23 +109,16 @@ struct HistoryContactFragment: View {
 						Button {
 							isMenuOpen = false
 							
-							if historyModel.isOutgoing {
-								UIPasteboard.general.setValue(
-									historyModel.address.dropFirst(4),
-									forPasteboardType: UTType.plainText.identifier
-								)
-							} else {
-								UIPasteboard.general.setValue(
-									historyModel.address.dropFirst(4),
-									forPasteboardType: UTType.plainText.identifier
-								)
-							}
+							UIPasteboard.general.setValue(
+								historyModel.displayAddress,
+								forPasteboardType: UTType.plainText.identifier
+							)
 							
 							ToastViewModel.shared.show("Success_address_copied_into_clipboard")
 							
 						} label: {
 							HStack {
-								Text("menu_copy_sip_address")
+								Text("Copy number")
 								Spacer()
 								Image("copy")
 									.resizable()
@@ -190,15 +183,6 @@ struct HistoryContactFragment: View {
 										.frame(maxWidth: .infinity)
 										.padding(.top, 10)
 									
-									if !AppServices.corePreferences.hideSipAddresses {
-										Text(historyModel.address)
-											.foregroundStyle(Color.grayMain2c700)
-											.multilineTextAlignment(.center)
-											.default_text_style(styleSize: 14)
-											.frame(maxWidth: .infinity)
-											.padding(.top, 5)
-									}
-									
 									if let avatar = historyModel.avatarModel {
 										AvatarPresenceView(avatarModel: avatar)
 									} else {
@@ -240,7 +224,11 @@ struct HistoryContactFragment: View {
 								
 								if !historyModel.isConf {
 									Button(action: {
-										telecomManager.doCallOrJoinConf(address: historyModel.addressLinphone)
+										telecomManager.doCallOrJoinConf(
+											address: historyModel.addressLinphone,
+											displayName: historyModel.addressName,
+											displayHandle: historyModel.displayAddress
+										)
 									}, label: {
 										VStack {
 											HStack(alignment: .center) {
@@ -289,7 +277,12 @@ struct HistoryContactFragment: View {
 										Spacer()
 										
 										Button(action: {
-											telecomManager.doCallOrJoinConf(address: historyModel.addressLinphone, isVideo: true)
+											telecomManager.doCallOrJoinConf(
+												address: historyModel.addressLinphone,
+												isVideo: true,
+												displayName: historyModel.addressName,
+												displayHandle: historyModel.displayAddress
+											)
 										}, label: {
 											VStack {
 												HStack(alignment: .center) {

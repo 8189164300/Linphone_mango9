@@ -85,8 +85,13 @@ final class Mango9ChatStore: ObservableObject {
 	@Published private(set) var isConnected = false
 	@Published private(set) var errorMessage: String?
 
+	private struct PendingCall {
+		let method: String
+		let continuation: CheckedContinuation<Any, Error>
+	}
+
 	private var socket: URLSessionWebSocketTask?
-	private var pendingCalls: [String: CheckedContinuation<Any, Error>] = [:]
+	private var pendingCalls: [String: PendingCall] = [:]
 	private var reconnectTask: Task<Void, Never>?
 	private var intentionallyDisconnected = false
 	private var openingUserId: Int?
@@ -147,7 +152,7 @@ final class Mango9ChatStore: ObservableObject {
 			socket = task
 			task.resume()
 			isConnected = true
-			receiveNext()
+			receiveNext(on: task)
 
 			try await loadDirectory()
 		} catch {
@@ -169,8 +174,8 @@ final class Mango9ChatStore: ObservableObject {
 		chatToken = nil
 		chatTokenExpiresAt = nil
 		uploadURL = nil
-		for continuation in pendingCalls.values {
-			continuation.resume(throwing: Mango9ChatError.disconnected)
+		for pending in pendingCalls.values {
+			pending.continuation.resume(throwing: Mango9ChatError.disconnected)
 		}
 		pendingCalls.removeAll()
 		if clearData {
@@ -590,7 +595,7 @@ final class Mango9ChatStore: ObservableObject {
 		}
 
 		return try await withCheckedThrowingContinuation { continuation in
-			pendingCalls[id] = continuation
+			pendingCalls[id] = PendingCall(method: method, continuation: continuation)
 			socket.send(.string(text)) { [weak self] error in
 				guard let error else {
 					return
@@ -600,19 +605,18 @@ final class Mango9ChatStore: ObservableObject {
 						  let pending = self.pendingCalls.removeValue(forKey: id) else {
 						return
 					}
-					pending.resume(throwing: error)
+					pending.continuation.resume(throwing: error)
 				}
 			}
 		}
 	}
 
-	private func receiveNext() {
-		guard let socket else {
-			return
-		}
-		socket.receive { [weak self] result in
+	private func receiveNext(on observedSocket: URLSessionWebSocketTask) {
+		observedSocket.receive { [weak self, weak observedSocket] result in
 			Task { @MainActor in
-				guard let self else {
+				guard let self,
+					  let observedSocket,
+					  self.socket === observedSocket else {
 					return
 				}
 				switch result {
@@ -627,7 +631,7 @@ final class Mango9ChatStore: ObservableObject {
 					@unknown default:
 						break
 					}
-					self.receiveNext()
+					self.receiveNext(on: observedSocket)
 				case .failure(let error):
 					self.isConnected = false
 					self.errorMessage = error.localizedDescription
@@ -644,15 +648,15 @@ final class Mango9ChatStore: ObservableObject {
 		}
 
 		if let id = json["id"] as? String,
-		   let continuation = pendingCalls.removeValue(forKey: id) {
+		   let pending = pendingCalls.removeValue(forKey: id) {
 			if let error = json["error"] as? [String: Any] {
-				continuation.resume(
+				pending.continuation.resume(
 					throwing: Mango9ChatError.server(
-						(error["message"] as? String) ?? "Chat request failed."
+						"\(pending.method): \((error["message"] as? String) ?? "Chat request failed.")"
 					)
 				)
 			} else {
-				continuation.resume(returning: json["result"] ?? "")
+				pending.continuation.resume(returning: json["result"] ?? "")
 			}
 			return
 		}
@@ -2002,6 +2006,93 @@ struct Mango9Lead: Decodable, Identifiable {
 	let createdAt: String
 }
 
+enum Mango9CRMDateFilter: String, CaseIterable, Identifiable {
+	case all
+	case today
+	case last7Days
+	case last30Days
+
+	var id: String { rawValue }
+
+	var title: String {
+		switch self {
+		case .all:
+			return "All"
+		case .today:
+			return "Today"
+		case .last7Days:
+			return "Last 7 Days"
+		case .last30Days:
+			return "Last 30 Days"
+		}
+	}
+
+	var compactTitle: String {
+		switch self {
+		case .all:
+			return "All"
+		case .today:
+			return "Today"
+		case .last7Days:
+			return "7d"
+		case .last30Days:
+			return "30d"
+		}
+	}
+
+	func includes(_ rawDate: String, now: Date = Date()) -> Bool {
+		guard self != .all else { return true }
+		guard let date = Self.parse(rawDate) else { return false }
+
+		let calendar = Calendar.current
+		switch self {
+		case .all:
+			return true
+		case .today:
+			return calendar.isDate(date, inSameDayAs: now)
+		case .last7Days:
+			let start = calendar.date(
+				byAdding: .day,
+				value: -6,
+				to: calendar.startOfDay(for: now)
+			) ?? now
+			return date >= start && date <= now
+		case .last30Days:
+			let start = calendar.date(
+				byAdding: .day,
+				value: -29,
+				to: calendar.startOfDay(for: now)
+			) ?? now
+			return date >= start && date <= now
+		}
+	}
+
+	private static func parse(_ rawDate: String) -> Date? {
+		let value = rawDate.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !value.isEmpty else { return nil }
+
+		if let date = ISO8601DateFormatter().date(from: value) {
+			return date
+		}
+
+		let formatter = DateFormatter()
+		formatter.locale = Locale(identifier: "en_US_POSIX")
+		for format in [
+			"yyyy-MM-dd HH:mm:ss",
+			"yyyy-MM-dd'T'HH:mm:ss",
+			"yyyy-MM-dd",
+			"MM/dd/yyyy HH:mm:ss",
+			"MM/dd/yyyy"
+		] {
+			formatter.dateFormat = format
+			if let date = formatter.date(from: value) {
+				return date
+			}
+		}
+		return nil
+	}
+}
+
 struct Mango9LeadListPayload: Decodable {
 	struct Pagination: Decodable {
 		let total: Int
@@ -2227,12 +2318,26 @@ private enum Mango9MessagingAPIError: LocalizedError {
 
 @MainActor
 private enum Mango9CommunicationRouter {
-	static func callWithMango9(_ phone: String) {
-		let number = phone.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !number.isEmpty else { return }
-		let callViewModel = StartCallViewModel()
-		callViewModel.searchField = number
-		callViewModel.interpretAndStartCall()
+	static func callWithMango9(_ target: Mango9CommunicationTarget) {
+		let dialValue = sipDialValue(target.phone)
+		let displayHandle = displayPhoneNumber(target.phone)
+		guard !dialValue.isEmpty else { return }
+
+		CoreContext.shared.doOnCoreQueue { core in
+			guard let address = core.interpretUrl(url: dialValue, applyInternationalPrefix: false) else {
+				DispatchQueue.main.async {
+					ToastViewModel.shared.show("The phone number could not be called.")
+				}
+				return
+			}
+
+			try? address.setDisplayname(newValue: target.displayName)
+			TelecomManager.shared.doCallOrJoinConf(
+				address: address,
+				displayName: target.displayName,
+				displayHandle: displayHandle
+			)
+		}
 	}
 
 	static func callNative(_ phone: String) {
@@ -2264,6 +2369,37 @@ private enum Mango9CommunicationRouter {
 		let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 		let digits = trimmed.filter(\.isNumber)
 		return trimmed.hasPrefix("+") ? "+\(digits)" : digits
+	}
+
+	private static func sipDialValue(_ raw: String) -> String {
+		let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty else { return "" }
+
+		let digits = trimmed.filter(\.isNumber)
+		if digits.count == 10 {
+			return "1\(digits)"
+		}
+		if digits.count == 11, digits.first == "1" {
+			return digits
+		}
+		if trimmed.hasPrefix("+"), !digits.isEmpty {
+			return "+\(digits)"
+		}
+		return digits.isEmpty ? trimmed : digits
+	}
+
+	private static func displayPhoneNumber(_ raw: String) -> String {
+		var digits = raw.filter(\.isNumber)
+		if digits.count == 11, digits.first == "1" {
+			digits.removeFirst()
+		}
+		guard digits.count == 10 else {
+			return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+		}
+
+		let areaEnd = digits.index(digits.startIndex, offsetBy: 3)
+		let prefixEnd = digits.index(areaEnd, offsetBy: 3)
+		return "\(digits[..<areaEnd])-\(digits[areaEnd..<prefixEnd])-\(digits[prefixEnd...])"
 	}
 
 	private static func openNativeURL(scheme: String, value: String) {
@@ -2797,7 +2933,7 @@ private struct Mango9CommunicationButtons: View {
 		Group {
 			if !target.phone.isEmpty {
 				Button {
-					Mango9CommunicationRouter.callWithMango9(target.phone)
+					Mango9CommunicationRouter.callWithMango9(target)
 				} label: {
 					Label("Call with Mango9", systemImage: "phone.fill")
 				}
@@ -2956,6 +3092,11 @@ final class Mango9LeadsViewModel: ObservableObject {
 	@Published private(set) var errorMessage: String?
 	@Published var searchText = ""
 	@Published var selectedStatus = ""
+	@Published var selectedDateFilter: Mango9CRMDateFilter = .all
+
+	var filteredLeads: [Mango9Lead] {
+		leads.filter { selectedDateFilter.includes($0.createdAt) }
+	}
 
 	func load() async {
 		guard !isLoading else { return }
@@ -2978,6 +3119,10 @@ final class Mango9LeadsViewModel: ObservableObject {
 			}
 		} catch Mango9CRMAPIError.unauthorized {
 			errorMessage = "Your CRM session expired. Sign in again."
+		} catch is CancellationError {
+			// A newer refresh superseded this request. Keep the last successful list.
+		} catch let error as URLError where error.code == .cancelled {
+			// URLSession reports normal Swift task cancellation as NSURLErrorCancelled.
 		} catch {
 			errorMessage = "Leads could not be loaded. Check the connection and try again."
 		}
@@ -3008,6 +3153,10 @@ final class Mango9LeadsViewModel: ObservableObject {
 			}
 		} catch Mango9CRMAPIError.unauthorized {
 			errorMessage = "Your CRM session expired. Sign in again."
+		} catch is CancellationError {
+			// A newer refresh superseded this request. Keep the last successful list.
+		} catch let error as URLError where error.code == .cancelled {
+			// URLSession reports normal Swift task cancellation as NSURLErrorCancelled.
 		} catch {
 			errorMessage = "Leads could not be loaded. Check the connection and try again."
 		}
@@ -3053,14 +3202,14 @@ struct Mango9LeadsFragment: View {
 							errorCard(errorMessage)
 						}
 
-						if viewModel.isLoading && viewModel.leads.isEmpty {
+						if viewModel.isLoading && viewModel.filteredLeads.isEmpty {
 							ProgressView()
 								.tint(Color.orangeMain500)
 								.padding(.top, 60)
-						} else if viewModel.leads.isEmpty && viewModel.errorMessage == nil {
+						} else if viewModel.filteredLeads.isEmpty && viewModel.errorMessage == nil {
 							emptyState
 						} else {
-							ForEach(viewModel.leads) { lead in
+							ForEach(viewModel.filteredLeads) { lead in
 								NavigationLink(destination: Mango9LeadDetailFragment(leadId: lead.id)) {
 									leadRow(lead)
 								}
@@ -3119,6 +3268,8 @@ struct Mango9LeadsFragment: View {
 
 			Spacer()
 
+			dateFilterMenu
+
 			Button {
 				Task { await viewModel.reloadList() }
 			} label: {
@@ -3137,6 +3288,43 @@ struct Mango9LeadsFragment: View {
 		.overlay(alignment: .bottom) {
 			Rectangle().fill(Color.gray200).frame(height: 1)
 		}
+	}
+
+	private var dateFilterMenu: some View {
+		Menu {
+			ForEach(Mango9CRMDateFilter.allCases) { filter in
+				Button {
+					viewModel.selectedDateFilter = filter
+				} label: {
+					if viewModel.selectedDateFilter == filter {
+						Label(filter.title, systemImage: "checkmark")
+					} else {
+						Text(filter.title)
+					}
+				}
+			}
+		} label: {
+			HStack(spacing: 4) {
+				Image("calendar")
+					.renderingMode(.template)
+					.resizable()
+					.foregroundStyle(Color.orangeMain500)
+					.frame(width: 18, height: 18)
+				Text(viewModel.selectedDateFilter.compactTitle)
+					.font(.system(size: 11, weight: .semibold))
+					.foregroundStyle(Color.orangeMain500)
+				Image("caret-down")
+					.renderingMode(.template)
+					.resizable()
+					.foregroundStyle(Color.orangeMain500)
+					.frame(width: 12, height: 12)
+			}
+			.padding(.horizontal, 8)
+			.frame(height: 36)
+			.background(Color.orangeMain100)
+			.cornerRadius(10)
+		}
+		.accessibilityLabel("Filter leads by date")
 	}
 
 	private var searchCard: some View {
@@ -3295,7 +3483,7 @@ struct Mango9LeadsFragment: View {
 				.frame(width: 44, height: 44)
 			Text("No leads found")
 				.default_text_style_800(styleSize: 16)
-			Text("Try another search or status filter.")
+			Text("Try another search, status, or date filter.")
 				.default_text_style(styleSize: 12)
 				.foregroundStyle(Color.grayMain2c500)
 		}
@@ -3328,6 +3516,11 @@ final class Mango9ClientsViewModel: ObservableObject {
 	@Published private(set) var isLoading = false
 	@Published private(set) var errorMessage: String?
 	@Published var searchText = ""
+	@Published var selectedDateFilter: Mango9CRMDateFilter = .all
+
+	var filteredClients: [Mango9Client] {
+		clients.filter { selectedDateFilter.includes($0.createdAt) }
+	}
 
 	func load() async {
 		await reloadList()
@@ -3363,6 +3556,10 @@ final class Mango9ClientsViewModel: ObservableObject {
 			total = payload.pagination.total
 		} catch Mango9CRMAPIError.unauthorized {
 			errorMessage = "Your CRM session expired. Sign in again."
+		} catch is CancellationError {
+			// A newer refresh superseded this request. Keep the last successful list.
+		} catch let error as URLError where error.code == .cancelled {
+			// URLSession reports normal Swift task cancellation as NSURLErrorCancelled.
 		} catch {
 			errorMessage = "Clients could not be loaded. Check the connection and try again."
 		}
@@ -3388,14 +3585,14 @@ struct Mango9ClientsFragment: View {
 							errorCard(errorMessage)
 						}
 
-						if viewModel.isLoading && viewModel.clients.isEmpty {
+						if viewModel.isLoading && viewModel.filteredClients.isEmpty {
 							ProgressView()
 								.tint(Color.orangeMain500)
 								.padding(.top, 60)
-						} else if viewModel.clients.isEmpty && viewModel.errorMessage == nil {
+						} else if viewModel.filteredClients.isEmpty && viewModel.errorMessage == nil {
 							emptyState
 						} else {
-							ForEach(viewModel.clients) { client in
+							ForEach(viewModel.filteredClients) { client in
 								clientRow(client)
 							}
 						}
@@ -3438,6 +3635,8 @@ struct Mango9ClientsFragment: View {
 
 			Spacer()
 
+			dateFilterMenu
+
 			Button {
 				Task { await viewModel.reloadList() }
 			} label: {
@@ -3456,6 +3655,43 @@ struct Mango9ClientsFragment: View {
 		.overlay(alignment: .bottom) {
 			Rectangle().fill(Color.gray200).frame(height: 1)
 		}
+	}
+
+	private var dateFilterMenu: some View {
+		Menu {
+			ForEach(Mango9CRMDateFilter.allCases) { filter in
+				Button {
+					viewModel.selectedDateFilter = filter
+				} label: {
+					if viewModel.selectedDateFilter == filter {
+						Label(filter.title, systemImage: "checkmark")
+					} else {
+						Text(filter.title)
+					}
+				}
+			}
+		} label: {
+			HStack(spacing: 4) {
+				Image("calendar")
+					.renderingMode(.template)
+					.resizable()
+					.foregroundStyle(Color.orangeMain500)
+					.frame(width: 18, height: 18)
+				Text(viewModel.selectedDateFilter.compactTitle)
+					.font(.system(size: 11, weight: .semibold))
+					.foregroundStyle(Color.orangeMain500)
+				Image("caret-down")
+					.renderingMode(.template)
+					.resizable()
+					.foregroundStyle(Color.orangeMain500)
+					.frame(width: 12, height: 12)
+			}
+			.padding(.horizontal, 8)
+			.frame(height: 36)
+			.background(Color.orangeMain100)
+			.cornerRadius(10)
+		}
+		.accessibilityLabel("Filter clients by date")
 	}
 
 	private var searchCard: some View {
@@ -3562,7 +3798,7 @@ struct Mango9ClientsFragment: View {
 				.frame(width: 44, height: 44)
 			Text("No clients found")
 				.default_text_style_800(styleSize: 16)
-			Text("Try another name, phone number, or email.")
+			Text("Try another search or date filter.")
 				.default_text_style(styleSize: 12)
 				.foregroundStyle(Color.grayMain2c500)
 		}

@@ -97,7 +97,15 @@ class TelecomManager: ObservableObject {
 		}
 	}
 	
-	func startCallCallKit(core: Core, addr: Address?, isSas: Bool, isVideo: Bool, isConference: Bool = false) throws {
+	func startCallCallKit(
+		core: Core,
+		addr: Address?,
+		isSas: Bool,
+		isVideo: Bool,
+		isConference: Bool = false,
+		displayName: String? = nil,
+		displayHandle: String? = nil
+	) throws {
 		if addr == nil {
 			Log.info("Can not start a call with null address!")
 			return
@@ -105,8 +113,27 @@ class TelecomManager: ObservableObject {
 
 		if TelecomManager.callKitEnabled(core: core) {// && !nextCallIsTransfer != true {
 			let uuid = UUID()
-			let name = addr?.asStringUriOnly() ?? "Unknown"
-			let handle = CXHandle(type: .generic, value: addr?.asStringUriOnly() ?? "")
+			let nonEmpty: (String?) -> String? = { value in
+				guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+					return nil
+				}
+				return trimmed
+			}
+			let addressDisplayName = nonEmpty(addr?.displayName)
+			let addressUsername = nonEmpty(addr?.username)
+			let name = nonEmpty(displayName)
+				?? addressDisplayName
+				?? addressUsername
+				?? addr?.asStringUriOnly()
+				?? "Unknown"
+			let handleValue = nonEmpty(displayHandle)
+				?? addressUsername
+				?? addr?.asStringUriOnly()
+				?? ""
+			let phoneCharacters = CharacterSet(charactersIn: "+0123456789-(). ")
+			let isPhoneNumber = !handleValue.isEmpty
+				&& handleValue.unicodeScalars.allSatisfy { phoneCharacters.contains($0) }
+			let handle = CXHandle(type: isPhoneNumber ? .phoneNumber : .generic, value: handleValue)
 			let startCallAction = CXStartCallAction(call: uuid, handle: handle)
 			let transaction = CXTransaction(action: startCallAction)
 			
@@ -166,7 +193,13 @@ class TelecomManager: ObservableObject {
 		}
 	}
 	
-	func doCallOrJoinConf(address: Address, isVideo: Bool = false, isConference: Bool = false) {
+	func doCallOrJoinConf(
+		address: Address,
+		isVideo: Bool = false,
+		isConference: Bool = false,
+		displayName: String? = nil,
+		displayHandle: String? = nil
+	) {
         CoreContext.shared.doOnCoreQueue { core in
             if let _ = core.findConferenceInformationFromUri(uri: address) {
                 do {
@@ -181,16 +214,34 @@ class TelecomManager: ObservableObject {
                 } catch {}
             } else {
                 self.doCallWithCore(
-                    addr: address, isVideo: isVideo, isConference: isConference
+                    addr: address,
+					isVideo: isVideo,
+					isConference: isConference,
+					displayName: displayName,
+					displayHandle: displayHandle
                 )
             }
         }
 	}
 	
-	func doCallWithCore(addr: Address, isVideo: Bool, isConference: Bool) {
+	func doCallWithCore(
+		addr: Address,
+		isVideo: Bool,
+		isConference: Bool,
+		displayName: String? = nil,
+		displayHandle: String? = nil
+	) {
 		CoreContext.shared.doOnCoreQueue { core in
 			do {
-				try self.startCallCallKit(core: core, addr: addr, isSas: false, isVideo: isVideo, isConference: isConference)
+				try self.startCallCallKit(
+					core: core,
+					addr: addr,
+					isSas: false,
+					isVideo: isVideo,
+					isConference: isConference,
+					displayName: displayName,
+					displayHandle: displayHandle
+				)
 			} catch {
 				Log.error("[TelecomManager] unable to create address for a new outgoing call : \(addr) \(error) ")
 			}

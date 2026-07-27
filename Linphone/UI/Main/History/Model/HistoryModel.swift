@@ -23,6 +23,25 @@ import linphonesw
 class HistoryModel: ObservableObject, Identifiable {
 	
 	private var coreContext = CoreContext.shared
+
+	private static func friendlyAddress(_ address: Address) -> String {
+		let username = address.username?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		guard !username.isEmpty else { return "" }
+
+		var digits = username.filter(\.isNumber)
+		let phoneCharacters = CharacterSet(charactersIn: "+0123456789-(). ")
+		let isPhoneNumber = username.unicodeScalars.allSatisfy { phoneCharacters.contains($0) }
+		guard isPhoneNumber else { return username }
+
+		if digits.count == 11, digits.first == "1" {
+			digits.removeFirst()
+		}
+		guard digits.count == 10 else { return username }
+
+		let areaEnd = digits.index(digits.startIndex, offsetBy: 3)
+		let prefixEnd = digits.index(areaEnd, offsetBy: 3)
+		return "\(digits[..<areaEnd])-\(digits[areaEnd..<prefixEnd])-\(digits[prefixEnd...])"
+	}
 	
 	static let TAG = "[History Model]"
 	
@@ -42,6 +61,10 @@ class HistoryModel: ObservableObject, Identifiable {
 	@Published var duration: Int
 	@Published var isFriend: Bool = false
 	@Published var avatarModel: ContactAvatarModel?
+
+	var displayAddress: String {
+		Self.friendlyAddress(addressLinphone)
+	}
 	
 	init(callLog: CallLog) {
 		self.callLog = callLog
@@ -75,9 +98,11 @@ class HistoryModel: ObservableObject, Identifiable {
 			
 			let addressLinphoneTmp = callLog.dir == .Outgoing && callLog.toAddress != nil ? callLog.toAddress! : callLog.fromAddress!
 			
+			let addressDisplayName = addressLinphoneTmp.displayName?
+				.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 			let addressNameTmp = confInfoTmp != nil && confInfoTmp!.subject != nil
-			? confInfoTmp!.subject!
-			: (addressLinphoneTmp.displayName != nil ? addressLinphoneTmp.displayName ?? "" : addressLinphoneTmp.username ?? "")
+				? confInfoTmp!.subject!
+				: (addressDisplayName.isEmpty ? Self.friendlyAddress(addressLinphoneTmp) : addressDisplayName)
 			
 			let addressTmp = addressLinphoneTmp.asStringUriOnly()
 			
