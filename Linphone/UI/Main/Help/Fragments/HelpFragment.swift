@@ -246,7 +246,7 @@ private struct Mango9LicensingFragment: View {
 		string: "https://github.com/BelledonneCommunications/linphone-sdk-swift-ios/tree/5.5.5"
 	)!
 	private let upstreamNativeSdkURL = URL(
-		string: "https://gitlab.linphone.org/BC/public/linphone-sdk/-/tree/5.5.5"
+		string: "https://github.com/BelledonneCommunications/linphone-sdk/tree/5.5.5"
 	)!
 	private let appAuthLicenseURL = URL(
 		string: "https://github.com/openid/AppAuth-iOS/blob/2.0.0/LICENSE"
@@ -336,7 +336,7 @@ private struct Mango9LicensingFragment: View {
 								title: "Mango9 corresponding source code",
 								subtitle: correspondingSourceURL == nil
 									? "Public repository URL must be configured before distribution"
-									: "Exact source snapshot for Mango9 iOS 6.2.0 (build 5)",
+									: "Exact source snapshot for Mango9 iOS 6.2.0 (build 6)",
 								url: correspondingSourceURL
 							)
 							

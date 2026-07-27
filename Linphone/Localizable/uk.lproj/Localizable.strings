@@ -413,7 +413,7 @@
 "welcome_page_1_message" = "**Захищений**, **з відкритим вихідним кодом** та **французький** застосунок для спілкування.";
 "help_dialog_update_available_message" = "Доступна нова версія %@. Бажаєте оновити?";
 "website_user_guide_url" = "https://linphone.org/en/docs/";
-"website_privacy_policy_url" = "https://linphone.org/en/privacy-policy";
+"website_privacy_policy_url" = "https://www.mango9.com/privacy";
 "welcome_page_3_message" = "**Безкоштовний** застосунок з відкритим кодом з **2001 року**.";
 "welcome_page_subtitle" = "в %@";
 "Chiffrement de bout en bout de tous vos échanges, grâce au mode default vos communications sont à l’abri des regards." = "Наскрізне шифрування всіх ваших повідомлень, завдяки режиму за замовчуванням ваші повідомлення захищені від сторонніх очей.";
@@ -510,7 +510,7 @@
 "history_title" = "Історія дзвінків";
 "IM_MSG" = "Ви отримали повідомлення";
 "Interoperable" = "Сумісний";
-"website_terms_and_conditions_url" = "https://www.linphone.org/en/terms-of-use";
+"website_terms_and_conditions_url" = "https://www.mango9.com/terms-of-service";
 "welcome_carousel_skip" = "Пропустити";
 "welcome_page_2_message" = "Ваше спілкування убезпечене завдяки нашому **наскрізному шифруванню**.";
 "You will change this mode later" = "Ви зміните цей режим пізніше";

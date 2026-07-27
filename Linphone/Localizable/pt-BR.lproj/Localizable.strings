@@ -512,8 +512,8 @@
 "uri_handler_config_failed_toast" = "Falha na configuração";
 "web_platform_register_email_url" = "https://subscribe.linphone.org/register/email";
 "website_open_source_licences_usage_url" = "https://wiki.linphone.org/xwiki/wiki/public/view/Linphone/Third%20party%20components%20/";
-"website_privacy_policy_url" = "https://linphone.org/en/privacy-policy";
-"website_terms_and_conditions_url" = "https://www.linphone.org/en/terms-of-use";
+"website_privacy_policy_url" = "https://www.mango9.com/privacy";
+"website_terms_and_conditions_url" = "https://www.mango9.com/terms-of-service";
 "website_translate_weblate_url" = "https://weblate.linphone.org/";
 "[https://sip.linphone.org](https://sip.linphone.org)" = "[https://sip.linphone.org](https://sip.linphone.org)";
 ": %@" = ": %@";

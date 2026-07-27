@@ -1,7 +1,7 @@
 # Mango9 iOS Open-Source Notices
 
 This file identifies the principal open-source components included in Mango9
-iOS 6.2.0 (build 5). Copyright notices in the source remain with their
+iOS 6.2.0 (build 6). Copyright notices in the source remain with their
 respective owners.
 
 ## Mango9 application and Linphone iOS
@@ -13,7 +13,7 @@ respective owners.
   https://github.com/BelledonneCommunications/linphone-iphone
 - License text: `LICENSE.txt`
 - Mango9 corresponding source:
-  https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.0-build-5
+  https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.0-build-6
 
 Mango9 modified the upstream application in 2026. Mango9 is not affiliated
 with or endorsed by Belledonne Communications SARL.
@@ -24,7 +24,7 @@ with or endorsed by Belledonne Communications SARL.
 - Exact Swift package source:
   https://github.com/BelledonneCommunications/linphone-sdk-swift-ios/tree/5.5.5
 - Native SDK source and build manifests:
-  https://gitlab.linphone.org/BC/public/linphone-sdk/-/tree/5.5.5
+  https://github.com/BelledonneCommunications/linphone-sdk/tree/5.5.5
 - Third-party component inventory:
   https://wiki.linphone.org/xwiki/wiki/public/view/Linphone/Third%20party%20components%20/
 
