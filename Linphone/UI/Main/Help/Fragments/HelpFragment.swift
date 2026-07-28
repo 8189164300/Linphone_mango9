@@ -162,6 +162,41 @@ struct HelpFragment: View {
 											.resizable()
 											.foregroundStyle(Color.grayMain2c600)
 											.frame(width: 25, height: 25)
+										}
+									}
+
+								Button {
+									if let url = URL(
+										string: "mailto:support@mango9.com?subject=Mango9%20iOS%20account%20or%20safety%20support"
+									) {
+										UIApplication.shared.open(url)
+									}
+								} label: {
+									HStack {
+										Image(systemName: "person.crop.circle.badge.questionmark")
+											.resizable()
+											.scaledToFit()
+											.foregroundStyle(Color.orangeMain500)
+											.frame(width: 30, height: 30)
+
+										VStack {
+											Text("Account and safety support")
+												.default_text_style_700(styleSize: 14)
+												.frame(maxWidth: .infinity, alignment: .leading)
+												.multilineTextAlignment(.leading)
+
+											Text("Report abusive content or request account access or termination.")
+												.default_text_style(styleSize: 14)
+												.frame(maxWidth: .infinity, alignment: .leading)
+												.multilineTextAlignment(.leading)
+										}
+										.padding(.horizontal, 5)
+
+										Image("arrow-square-out")
+											.renderingMode(.template)
+											.resizable()
+											.foregroundStyle(Color.grayMain2c600)
+											.frame(width: 25, height: 25)
 									}
 								}
 								
@@ -270,6 +305,12 @@ private struct Mango9LicensingFragment: View {
 		
 		return URL(string: trimmedValue)
 	}
+
+	private var appVersionDescription: String {
+		let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+		let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
+		return "Public corresponding-source repository for Mango9 iOS \(version) (build \(build))"
+	}
 	
 	var body: some View {
 		ZStack {
@@ -336,7 +377,7 @@ private struct Mango9LicensingFragment: View {
 								title: "Mango9 corresponding source code",
 								subtitle: correspondingSourceURL == nil
 									? "Public repository URL must be configured before distribution"
-									: "Exact source snapshot for Mango9 iOS 6.2.0 (build 8)",
+									: appVersionDescription,
 								url: correspondingSourceURL
 							)
 							

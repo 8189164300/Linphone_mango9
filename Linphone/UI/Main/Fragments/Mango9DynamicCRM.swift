@@ -71,6 +71,66 @@ private enum Mango9ChatError: LocalizedError {
 }
 
 @MainActor
+private final class Mango9ChatModerationStore: ObservableObject {
+	static let shared = Mango9ChatModerationStore()
+
+	@Published private(set) var blockedUserIds: Set<Int>
+	@Published private(set) var hiddenMessageIds: Set<String>
+
+	private let blockedUsersKey = "mango9_chat_blocked_user_ids"
+	private let hiddenMessagesKey = "mango9_chat_hidden_message_ids"
+
+	private init() {
+		let storedValues = UserDefaults.standard.array(forKey: blockedUsersKey) ?? []
+		blockedUserIds = Set(
+			storedValues.compactMap { value in
+				if let number = value as? NSNumber {
+					return number.intValue
+				}
+				if let string = value as? String {
+					return Int(string)
+				}
+				return nil
+			}
+		)
+		hiddenMessageIds = Set(
+			UserDefaults.standard.stringArray(forKey: hiddenMessagesKey) ?? []
+		)
+	}
+
+	func isBlocked(_ userId: Int) -> Bool {
+		blockedUserIds.contains(userId)
+	}
+
+	func setBlocked(_ blocked: Bool, userId: Int) {
+		if blocked {
+			blockedUserIds.insert(userId)
+		} else {
+			blockedUserIds.remove(userId)
+		}
+		UserDefaults.standard.set(blockedUserIds.sorted(), forKey: blockedUsersKey)
+	}
+
+	func isHidden(_ messageId: String) -> Bool {
+		hiddenMessageIds.contains(messageId)
+	}
+
+	func setHidden(_ hidden: Bool, messageId: String) {
+		if hidden {
+			hiddenMessageIds.insert(messageId)
+		} else {
+			hiddenMessageIds.remove(messageId)
+		}
+		UserDefaults.standard.set(hiddenMessageIds.sorted(), forKey: hiddenMessagesKey)
+	}
+
+	func restoreMessages(_ messageIds: [String]) {
+		hiddenMessageIds.subtract(messageIds)
+		UserDefaults.standard.set(hiddenMessageIds.sorted(), forKey: hiddenMessagesKey)
+	}
+}
+
+@MainActor
 final class Mango9ChatStore: ObservableObject {
 	static let shared = Mango9ChatStore()
 
@@ -384,7 +444,14 @@ final class Mango9ChatStore: ObservableObject {
 	}
 
 	var unreadCount: Int {
-		rooms.reduce(0) { total, room in
+		rooms
+			.filter { room in
+				guard room.isDirect, let userId = room.userIds.first else {
+					return true
+				}
+				return !Mango9ChatModerationStore.shared.isBlocked(userId)
+			}
+			.reduce(0) { total, room in
 			total + max(0, room.unread)
 		}
 	}
@@ -1088,6 +1155,8 @@ private struct Mango9GroupChatRow: View {
 
 struct Mango9ChatFragment: View {
 	@ObservedObject private var store = Mango9ChatStore.shared
+	@ObservedObject private var moderation = Mango9ChatModerationStore.shared
+	@Environment(\.openURL) private var openURL
 	private let user: Mango9ChatUser?
 	private let room: Mango9ChatRoom?
 	private let onClose: (() -> Void)?
@@ -1100,6 +1169,8 @@ struct Mango9ChatFragment: View {
 	@State private var isShowingFilePicker = false
 	@State private var isRecordingVoice = false
 	@State private var isManagingMembers = false
+	@State private var isConfirmingReport = false
+	@State private var reportedMessage: Mango9ChatMessage?
 	@State private var displayedRoomId: String?
 	@FocusState private var composerFocused: Bool
 
@@ -1141,7 +1212,7 @@ struct Mango9ChatFragment: View {
 					}
 				},
 			trailing:
-				Group {
+				HStack(spacing: 14) {
 					if room?.isDirect == false {
 						Button {
 							isManagingMembers = true
@@ -1151,6 +1222,38 @@ struct Mango9ChatFragment: View {
 						}
 						.accessibilityLabel("Group members")
 					}
+
+					Menu {
+						Button {
+							reportedMessage = nil
+							isConfirmingReport = true
+						} label: {
+							Label("Report conversation", systemImage: "exclamationmark.bubble")
+						}
+
+						if hasHiddenMessages {
+							Button {
+								moderation.restoreMessages(store.messages.map(\.id))
+							} label: {
+								Label("Show hidden messages", systemImage: "eye")
+							}
+						}
+
+						if let directUserId {
+							Button(role: isDirectUserBlocked ? nil : .destructive) {
+								moderation.setBlocked(!isDirectUserBlocked, userId: directUserId)
+							} label: {
+								Label(
+									isDirectUserBlocked ? "Unblock user" : "Block user",
+									systemImage: isDirectUserBlocked ? "person.crop.circle.badge.checkmark" : "hand.raised"
+								)
+							}
+						}
+					} label: {
+						Image(systemName: "ellipsis.circle")
+							.foregroundStyle(Color.orangeMain500)
+					}
+					.accessibilityLabel("Conversation safety options")
 				}
 		)
 		.task(id: conversationKey) {
@@ -1218,6 +1321,17 @@ struct Mango9ChatFragment: View {
 				}
 			}
 		}
+		.alert(reportConfirmationTitle, isPresented: $isConfirmingReport) {
+			Button("Cancel", role: .cancel) {}
+			Button("Continue") {
+				openURL(reportURL)
+			}
+		} message: {
+			Text(
+				"Mango9 will open a pre-addressed email to support. "
+				+ "You can add details or screenshots before sending the report."
+			)
+		}
 	}
 
 	private var statusHeader: some View {
@@ -1242,13 +1356,22 @@ struct Mango9ChatFragment: View {
 		ScrollViewReader { proxy in
 			ScrollView {
 				LazyVStack(spacing: 8) {
+					if isDirectUserBlocked {
+						Label(
+							"This user is blocked. Their messages are hidden.",
+							systemImage: "hand.raised.fill"
+						)
+						.font(.system(size: 12, weight: .semibold))
+						.foregroundStyle(Color.grayMain2c600)
+						.padding(.vertical, 24)
+					}
 					if store.messages.isEmpty && store.activeRoomId != nil {
 						Text(emptyPrompt)
 							.default_text_style(styleSize: 12)
 							.foregroundStyle(Color.grayMain2c500)
 							.padding(.top, 36)
 					}
-					ForEach(store.messages) { message in
+					ForEach(visibleMessages) { message in
 						Mango9ChatBubble(
 							message: message,
 							isOutgoing: message.fromUserId == store.currentUserId,
@@ -1257,6 +1380,22 @@ struct Mango9ChatFragment: View {
 								: nil
 						)
 						.id(message.id)
+						.contextMenu {
+							if message.fromUserId != store.currentUserId {
+								Button {
+									moderation.setHidden(true, messageId: message.id)
+								} label: {
+									Label("Hide message", systemImage: "eye.slash")
+								}
+
+								Button {
+									reportedMessage = message
+									isConfirmingReport = true
+								} label: {
+									Label("Report message", systemImage: "exclamationmark.bubble")
+								}
+							}
+						}
 					}
 				}
 				.padding(.horizontal, 12)
@@ -1275,7 +1414,12 @@ struct Mango9ChatFragment: View {
 
 	private var composer: some View {
 		VStack(spacing: 7) {
-			if isRecordingVoice {
+			if isDirectUserBlocked {
+				Text("Unblock this user from the conversation menu to send a message.")
+					.font(.system(size: 12, weight: .medium))
+					.foregroundStyle(Color.grayMain2c600)
+					.frame(maxWidth: .infinity, minHeight: 40)
+			} else if isRecordingVoice {
 				Mango9VoiceRecorderComposer(
 					onCancel: {
 						isRecordingVoice = false
@@ -1410,6 +1554,9 @@ struct Mango9ChatFragment: View {
 	}
 
 	private var statusText: String {
+		if isDirectUserBlocked {
+			return "Blocked"
+		}
 		if let user {
 			return store.isTyping(user.id)
 				? "\(user.name) is typing…"
@@ -1439,6 +1586,76 @@ struct Mango9ChatFragment: View {
 		(!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !selectedMedia.isEmpty)
 			&& store.activeRoomId != nil
 			&& !isSending
+			&& !isDirectUserBlocked
+	}
+
+	private var directUserId: Int? {
+		if let user {
+			return user.id
+		}
+		guard let room, room.isDirect else {
+			return nil
+		}
+		return room.userIds.first
+	}
+
+	private var isDirectUserBlocked: Bool {
+		guard let directUserId else {
+			return false
+		}
+		return moderation.isBlocked(directUserId)
+	}
+
+	private var visibleMessages: [Mango9ChatMessage] {
+		store.messages.filter { message in
+			!moderation.isHidden(message.id)
+				&& (
+					message.fromUserId == store.currentUserId
+						|| !moderation.isBlocked(message.fromUserId)
+				)
+		}
+	}
+
+	private var hasHiddenMessages: Bool {
+		store.messages.contains { moderation.isHidden($0.id) }
+	}
+
+	private var reportConfirmationTitle: String {
+		reportedMessage == nil ? "Report this conversation?" : "Report this message?"
+	}
+
+	private var reportURL: URL {
+		let session = Mango9SessionStore.load()
+		var bodyLines = [
+			"Please describe the content or behavior you are reporting:",
+			"",
+			"Conversation: \(conversationTitle)",
+			"Room ID: \(store.activeRoomId ?? room?.id ?? "not available")",
+			"Reported user ID: \(reportedMessage.map { String($0.fromUserId) } ?? directUserId.map(String.init) ?? "group conversation")",
+			"CRM environment: \(session?.crmId ?? "not available")",
+			"Reporter user ID: \(session?.userId ?? "not available")",
+			"App version: \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown") "
+				+ "(\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"))",
+		]
+		if let reportedMessage {
+			bodyLines.insert("Message ID: \(reportedMessage.id)", at: 4)
+		}
+		bodyLines.append("")
+		bodyLines.append("Do not include passwords or SIP credentials.")
+
+		var components = URLComponents()
+		components.scheme = "mailto"
+		components.path = "support@mango9.com"
+		components.queryItems = [
+			URLQueryItem(
+				name: "subject",
+				value: reportedMessage == nil
+					? "Mango9 conversation safety report"
+					: "Mango9 message safety report"
+			),
+			URLQueryItem(name: "body", value: bodyLines.joined(separator: "\n")),
+		]
+		return components.url ?? URL(string: "https://www.mango9.com/support")!
 	}
 
 	private func sendCurrentMessage() {

@@ -20,15 +20,8 @@
 import SwiftUI
 
 struct AssistantView: View {
-	
-	@ObservedObject private var coreContext = CoreContext.shared
-	
 	var body: some View {
-		if SharedMainViewModel.shared.displayProfileMode && coreContext.loggedIn {
-			ProfileModeFragment()
-		} else {
-			LoginFragment()
-		}
+		LoginFragment()
 	}
 }
 
