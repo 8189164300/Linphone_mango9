@@ -43,13 +43,8 @@ class AccountModel: ObservableObject {
 	@Published var usernaneAvatar: String = ""
 	@Published var imagePathAvatar: URL?
 	
-	@Published var devices: [AccountDeviceModel] = []
-	
 	private var accountDelegate: AccountDelegate?
 	private var coreDelegate: CoreDelegate?
-	
-	private var accountManagerServices: AccountManagerServices?
-	private var requestDelegate: AccountManagerServicesRequestDelegate?
 	
 	init(account: Account, core: Core) {
 		self.account = account
@@ -202,85 +197,6 @@ class AccountModel: ObservableObject {
 		)
 		
 		return imagePath
-	}
-	
-	func requestDevicesList() {
-		if account.params != nil && account.params!.identityAddress != nil, let identityAddress = account.params!.identityAddress {
-			Log.info(
-				"\(AccountModel.TAG) Request devices list for identity address \(identityAddress.asStringUriOnly())"
-			)
-			CoreContext.shared.doOnCoreQueue { core in
-				do {
-					self.accountManagerServices = try core.createAccountManagerServices()
-					if self.accountManagerServices != nil {
-						self.accountManagerServices!.language = Locale.current.identifier
-						
-						do {
-							let request = try self.accountManagerServices!.createGetDevicesListRequest(sipIdentity: identityAddress)
-							self.addDelegate(request: request)
-						} catch {
-							print("\(AccountModel.TAG) Failed to create request: \(error.localizedDescription)")
-						}
-					}
-				} catch {
-					
-				}
-			}
-		}
-	}
-	
-	func addDelegate(request: AccountManagerServicesRequest) {
-		self.requestDelegate = AccountManagerServicesRequestDelegateStub(
-			onRequestSuccessful: { (request: AccountManagerServicesRequest, data: String) in
-				Log.info("\(AccountModel.TAG) Request \(request) was successful, data is \(data)")
-			}, onRequestError: { (request: AccountManagerServicesRequest, statusCode: Int, errorMessage: String, parameterErrors: Dictionary?) in
-				Log.error(
-					"\(AccountModel.TAG) Request \(request) returned an error with status code \(statusCode) and message \(errorMessage)"
-				)
-				// TODO Display Error Toast
-			}, onDevicesListFetched: { (request: AccountManagerServicesRequest, accountDevices: [AccountDevice]) in
-				Log.info("\(AccountModel.TAG) Fetched \(accountDevices.count) devices for our account")
-				var devicesList: [AccountDeviceModel] = []
-				accountDevices.forEach { accountDevice in
-					devicesList.append(AccountDeviceModel(accountDevice: accountDevice))
-				}
-				
-				request.removeDelegate(delegate: self.requestDelegate!)
-				DispatchQueue.main.async {
-					self.devices = devicesList
-				}
-			}
-		)
-		
-		request.addDelegate(delegate: self.requestDelegate!)
-		request.submit()
-	}
-	
-	func removeDevice(deviceIndex: Int) {
-		let removedDevice = self.devices[deviceIndex].accountDevice
-		self.devices.remove(at: deviceIndex)
-		if account.params != nil && account.params!.identityAddress != nil, let identityAddress = account.params!.identityAddress {
-			Log.info(
-				"\(AccountModel.TAG) Delete device for identity address \(identityAddress.asStringUriOnly())"
-			)
-			CoreContext.shared.doOnCoreQueue { core in
-				do {
-					self.accountManagerServices = try core.createAccountManagerServices()
-					if self.accountManagerServices != nil {
-						self.accountManagerServices!.language = Locale.current.identifier
-						
-						do {
-							let request = try self.accountManagerServices!.createDeleteDeviceRequest(sipIdentity: identityAddress, device: removedDevice)
-							self.addDelegate(request: request)
-						} catch {
-							print("\(AccountModel.TAG) Failed to create request: \(error.localizedDescription)")
-						}
-					}
-				} catch {
-					
-				}
-			}
-		}
 	}
 	
 	func logout() {

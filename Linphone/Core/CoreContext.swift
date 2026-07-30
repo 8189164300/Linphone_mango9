@@ -175,6 +175,14 @@ class CoreContext: ObservableObject {
 
 			MDMManager.shared.loadXMLConfigFromMdm(config: AppServices.config)
 
+			if !Mango9Configuration.appleTeamID.isEmpty {
+				AppServices.config.setString(
+					section: "app",
+					key: "team_id",
+					value: Mango9Configuration.appleTeamID
+				)
+			}
+
 			self.mCore = try? Factory.Instance.createSharedCoreWithConfig(config: AppServices.config, systemContext: Unmanaged.passUnretained(coreQueue).toOpaque(), appGroupId: SharedMainViewModel.appGroupName, mainCore: true)
 
 			MDMManager.shared.applyMdmConfigToCore(core: self.mCore)
@@ -277,21 +285,6 @@ class CoreContext: ObservableObject {
 			self.mCoreDelegate = CoreDelegateStub(onGlobalStateChanged: { (core: Core, state: GlobalState, _: String) in
 				if state == GlobalState.On {
 					self.enforceMango9AccountRouting(core: core)
-#if DEBUG
-					let pushEnvironment = ".dev"
-#else
-					let pushEnvironment = ""
-#endif
-					for account in core.accountList {
-						if account.params?.pushNotificationConfig?.provider != ("apns" + pushEnvironment) {
-							let newParams = account.params?.clone()
-							
-							Log.info("Account \(String(describing: newParams?.identityAddress?.asStringUriOnly())) - updating apple push provider from \(String(describing: newParams?.pushNotificationConfig?.provider)) to apns\(pushEnvironment)")
-							newParams?.pushNotificationConfig?.provider = "apns" + pushEnvironment
-							
-							account.params = newParams
-						}
-					}
 					
 					self.actionsToPerformOnCoreQueueWhenCoreIsStarted.forEach {	$0(core) }
 					self.actionsToPerformOnCoreQueueWhenCoreIsStarted.removeAll()
@@ -562,8 +555,7 @@ class CoreContext: ObservableObject {
 				try params.setServeraddress(newValue: serverAddress)
 				try params.setRoutesaddresses(newValue: [routeAddress])
 				params.registerEnabled = true
-				params.pushNotificationAllowed = true
-				params.remotePushNotificationAllowed = true
+				Mango9Configuration.configurePush(on: params)
 				account.params = params
 			} catch {
 				Log.error("[CoreContext] Failed to enforce Mango9 proxy routing: \(error)")

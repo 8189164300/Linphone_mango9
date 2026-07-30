@@ -39,17 +39,27 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	var launchNotificationLocalAddr: String?
 	var launchMango9LeadId: Int?
 	
-	var coreContext: CoreContext?
+	var coreContext: CoreContext? {
+		didSet {
+			forwardPendingRemotePushToken()
+		}
+	}
  	var navigationManager: NavigationManager?
+	private var pendingRemotePushToken: String?
 	
 	func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
 		let tokenStr = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
-		Log.info("Received remote push token : \(tokenStr)")
-		if let coreContext = coreContext {
-			coreContext.doOnCoreQueue { core in
-				Log.info("Forwarding remote push token to core")
-				core.didRegisterForRemotePushWithStringifiedToken(deviceTokenStr: tokenStr + ":remote")
-			}
+		Log.info("Received remote push token")
+		pendingRemotePushToken = tokenStr + ":remote"
+		forwardPendingRemotePushToken()
+	}
+
+	private func forwardPendingRemotePushToken() {
+		guard let coreContext, let token = pendingRemotePushToken else { return }
+		pendingRemotePushToken = nil
+		coreContext.doOnCoreQueue { core in
+			Log.info("Forwarding remote push token to core")
+			core.didRegisterForRemotePushWithStringifiedToken(deviceTokenStr: token)
 		}
 	}
 	

@@ -26,6 +26,34 @@ enum Mango9Configuration {
 	static let sipProxyHost = "proxy.mango9.com"
 	static let sipProxyPort = 5061
 	static let sipProxyURI = "sip:proxy.mango9.com:5061;transport=tls"
+	static let appleTeamID =
+		(Bundle.main.object(forInfoDictionaryKey: "Mango9AppleTeamID") as? String)?
+			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+	static let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.mango9.phone"
+
+#if DEBUG
+	static let applePushProvider = "apns.dev"
+#else
+	static let applePushProvider = "apns"
+#endif
+
+	static var applePushParam: String {
+		guard !appleTeamID.isEmpty else { return "" }
+		return "\(appleTeamID).\(bundleIdentifier).voip&remote"
+	}
+
+	static func configurePush(on params: AccountParams) {
+		params.pushNotificationAllowed = true
+		params.remotePushNotificationAllowed = true
+
+		guard let pushConfig = params.pushNotificationConfig else { return }
+		pushConfig.provider = applePushProvider
+		pushConfig.teamId = appleTeamID
+		pushConfig.bundleIdentifier = bundleIdentifier
+		if !applePushParam.isEmpty {
+			pushConfig.param = applePushParam
+		}
+	}
 
 	static func verifiedProvisioningURL(from rawValue: String) -> URL? {
 		guard var components = URLComponents(string: rawValue),

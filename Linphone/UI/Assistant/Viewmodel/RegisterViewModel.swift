@@ -290,6 +290,7 @@ class RegisterViewModel: ObservableObject {
 			
 			let accountParams = try core.createAccountParams()
 			try accountParams.setIdentityaddress(newValue: sipIdentity)
+			Mango9Configuration.configurePush(on: accountParams)
 			if dialPlan != nil {
 				let dialPlanTmp = dialPlan?.internationalCallPrefix ?? "Error international call prefix"
 				let isoCountryCodeTmp = dialPlan?.isoCountryCode ?? "Error iso country code"
@@ -322,12 +323,12 @@ class RegisterViewModel: ObservableObject {
 		
 		let pushConfig = core.pushNotificationConfig
 		if pushConfig != nil && self.accountManagerServices != nil {
-#if DEBUG
-					let pushEnvironment = ".dev"
-#else
-					let pushEnvironment = ""
-#endif
-			pushConfig!.provider = "apns\(pushEnvironment)"
+			pushConfig!.provider = Mango9Configuration.applePushProvider
+			pushConfig!.teamId = Mango9Configuration.appleTeamID
+			pushConfig!.bundleIdentifier = Mango9Configuration.bundleIdentifier
+			if !Mango9Configuration.applePushParam.isEmpty {
+				pushConfig!.param = Mango9Configuration.applePushParam
+			}
 			var formatedPnParam = pushConfig!.param
 			formatedPnParam = formatedPnParam?.replacingOccurrences(of: "voip&remote", with: "remote")
 			pushConfig!.param = formatedPnParam

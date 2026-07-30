@@ -109,17 +109,7 @@ class AccountLoginViewModel: ObservableObject {
 				
 				// And we ensure the account will start the registration process
 				accountParams.registerEnabled = true
-				
-				if accountParams.pushNotificationAllowed {
-					accountParams.pushNotificationAllowed = true
-					accountParams.remotePushNotificationAllowed = true
-				}
-#if DEBUG
-				let pushEnvironment = ".dev"
-#else
-				let pushEnvironment = ""
-#endif
-				accountParams.pushNotificationConfig?.provider = "apns" + pushEnvironment
+				Mango9Configuration.configurePush(on: accountParams)
 				
 				self.mCoreDelegate = CoreDelegateStub(onAccountRegistrationStateChanged: { (core: Core, account: Account, state: RegistrationState, message: String) in
 					

@@ -2198,6 +2198,7 @@ struct ContentView: View {
 					conversationsListVM.computeChatRoomsList()
 				}
 				Task {
+					await refreshMango9LineIdentity()
 					await mango9ChatStore.refreshAfterForeground()
 				}
 			}
@@ -2243,8 +2244,34 @@ struct ContentView: View {
 	}
 	
 	func openMenu() {
+		let willOpen = !sideMenuIsOpen
 		withAnimation {
 			self.sideMenuIsOpen.toggle()
+		}
+		if willOpen {
+			Task {
+				await refreshMango9LineIdentity()
+			}
+		}
+	}
+
+	private func refreshMango9LineIdentity() async {
+		guard var session = Mango9SessionStore.load() else {
+			return
+		}
+
+		do {
+			let lineIdentity: Mango9LineIdentity
+			do {
+				lineIdentity = try await Mango9CRMAPI.lineIdentity(session: session)
+			} catch Mango9CRMAPIError.unauthorized {
+				session = try await Mango9CRMAPI.refresh(session: session)
+				try Mango9SessionStore.save(session)
+				lineIdentity = try await Mango9CRMAPI.lineIdentity(session: session)
+			}
+			Mango9LineIdentityStore.save(lineIdentity)
+		} catch {
+			Log.error("[Mango9] Failed to refresh the active line identity: \(error)")
 		}
 	}
 	

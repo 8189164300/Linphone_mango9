@@ -141,11 +141,7 @@ struct SideMenuAccountRow: View {
 				}
 				
 				Button {
-					accountProfileViewModel.accountModelIndex = CoreContext.shared.accounts.firstIndex(where: {$0.displayName == model.displayName})
-					withAnimation {
-						isOpen = false
-						isShowAccountProfileFragment = true
-					}
+					openAccountProfile()
 				} label: {
 					Image("user-circle-gear")
 						.renderingMode(.template)
@@ -155,13 +151,6 @@ struct SideMenuAccountRow: View {
 						.frame(height: 25)
 				}
 				.frame(width: 30, height: 30)
-				.onTapGesture {
-					accountProfileViewModel.accountModelIndex = CoreContext.shared.accounts.firstIndex(where: {$0.displayName == model.displayName})
-					withAnimation {
-						isOpen = false
-						isShowAccountProfileFragment = true
-					}
-				}
 			}
 			.frame(alignment: .trailing)
 			.padding(.top, 12)
@@ -170,9 +159,6 @@ struct SideMenuAccountRow: View {
 		.frame(height: 61)
 		.padding(.horizontal, 16)
 		.background(model.isDefaultAccount ? Color.grayMain2c100 : .white)
-		.onTapGesture {
-			model.setAsDefault()
-		}
 	}
 
 	private var accountLineLabel: String {
@@ -182,5 +168,19 @@ struct SideMenuAccountRow: View {
 			return model.displayName
 		}
 		return "\(activeNumber) · Ext \(extensionNumber)"
+	}
+
+	private func openAccountProfile() {
+		guard let accountIndex = CoreContext.shared.accounts.firstIndex(where: {
+			$0 === model
+		}) else {
+			Log.error("[Mango9] Could not open account settings because the account was not found.")
+			return
+		}
+		accountProfileViewModel.accountModelIndex = accountIndex
+		withAnimation {
+			isOpen = false
+			isShowAccountProfileFragment = true
+		}
 	}
 }

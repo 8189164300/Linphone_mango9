@@ -3282,6 +3282,12 @@ final class Mango9CallSettingsViewModel: ObservableObject {
 		settings = loadedSettings
 		forwardingEnabled = loadedSettings.forwarding.enabled
 		forwardingDestination = loadedSettings.forwarding.destination
+		Mango9LineIdentityStore.save(
+			Mango9LineIdentity(
+				extensionNumber: loadedSettings.line.extension,
+				activeNumber: loadedSettings.line.activeNumber
+			)
+		)
 	}
 
 	private static func normalizedDigits(_ value: String) -> String {

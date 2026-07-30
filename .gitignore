@@ -6,3 +6,13 @@ Pods/
 .DS_Store
 build
 Linphone.xcodeproj/xcuserdata
+
+# Local signing, push, and service credentials must never enter the public repo.
+.env
+.env.*
+*.p8
+*.p12
+*.mobileprovision
+GoogleService-Info.plist
+firebase-service-account*.json
+Config/Secrets.xcconfig
