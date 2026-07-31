@@ -15,6 +15,7 @@ import AVFoundation
 import AVKit
 import PhotosUI
 import UniformTypeIdentifiers
+import MapKit
 import linphonesw
 
 struct Mango9LeadSchema: Decodable {
@@ -76,12 +77,55 @@ private final class Mango9ChatModerationStore: ObservableObject {
 
 	@Published private(set) var blockedUserIds: Set<Int>
 	@Published private(set) var hiddenMessageIds: Set<String>
+	@Published private(set) var deletedRoomIds: Set<String>
 
-	private let blockedUsersKey = "mango9_chat_blocked_user_ids"
-	private let hiddenMessagesKey = "mango9_chat_hidden_message_ids"
+	private let blockedUsersKeyPrefix = "mango9_chat_blocked_user_ids"
+	private let hiddenMessagesKeyPrefix = "mango9_chat_hidden_message_ids"
+	private let deletedRoomsKeyPrefix = "mango9_chat_deleted_room_ids"
+	private var accountContextObserver: NSObjectProtocol?
 
 	private init() {
-		let storedValues = UserDefaults.standard.array(forKey: blockedUsersKey) ?? []
+		blockedUserIds = []
+		hiddenMessageIds = []
+		deletedRoomIds = []
+		reloadForActiveAccount()
+		accountContextObserver = NotificationCenter.default.addObserver(
+			forName: .mango9AccountContextChanged,
+			object: nil,
+			queue: .main
+		) { [weak self] _ in
+			Task { @MainActor in
+				self?.reloadForActiveAccount()
+			}
+		}
+	}
+
+	deinit {
+		if let accountContextObserver {
+			NotificationCenter.default.removeObserver(accountContextObserver)
+		}
+	}
+
+	private var contextSuffix: String {
+		Mango9SessionStore.activeIdentity ?? "no-account"
+	}
+
+	private var blockedUsersKey: String {
+		"\(blockedUsersKeyPrefix).\(contextSuffix)"
+	}
+
+	private var hiddenMessagesKey: String {
+		"\(hiddenMessagesKeyPrefix).\(contextSuffix)"
+	}
+
+	private var deletedRoomsKey: String {
+		"\(deletedRoomsKeyPrefix).\(contextSuffix)"
+	}
+
+	private func reloadForActiveAccount() {
+		migrateLegacyValuesIfNeeded()
+		let storedValues =
+			UserDefaults.standard.array(forKey: blockedUsersKey) ?? []
 		blockedUserIds = Set(
 			storedValues.compactMap { value in
 				if let number = value as? NSNumber {
@@ -96,6 +140,23 @@ private final class Mango9ChatModerationStore: ObservableObject {
 		hiddenMessageIds = Set(
 			UserDefaults.standard.stringArray(forKey: hiddenMessagesKey) ?? []
 		)
+		deletedRoomIds = Set(
+			UserDefaults.standard.stringArray(forKey: deletedRoomsKey) ?? []
+		)
+	}
+
+	private func migrateLegacyValuesIfNeeded() {
+		let defaults = UserDefaults.standard
+		if defaults.object(forKey: blockedUsersKey) == nil,
+		   let legacy = defaults.array(forKey: blockedUsersKeyPrefix) {
+			defaults.set(legacy, forKey: blockedUsersKey)
+			defaults.removeObject(forKey: blockedUsersKeyPrefix)
+		}
+		if defaults.object(forKey: hiddenMessagesKey) == nil,
+		   let legacy = defaults.stringArray(forKey: hiddenMessagesKeyPrefix) {
+			defaults.set(legacy, forKey: hiddenMessagesKey)
+			defaults.removeObject(forKey: hiddenMessagesKeyPrefix)
+		}
 	}
 
 	func isBlocked(_ userId: Int) -> Bool {
@@ -128,6 +189,19 @@ private final class Mango9ChatModerationStore: ObservableObject {
 		hiddenMessageIds.subtract(messageIds)
 		UserDefaults.standard.set(hiddenMessageIds.sorted(), forKey: hiddenMessagesKey)
 	}
+
+	func isConversationDeleted(_ roomId: String) -> Bool {
+		deletedRoomIds.contains(roomId)
+	}
+
+	func setConversationDeleted(_ deleted: Bool, roomId: String) {
+		if deleted {
+			deletedRoomIds.insert(roomId)
+		} else {
+			deletedRoomIds.remove(roomId)
+		}
+		UserDefaults.standard.set(deletedRoomIds.sorted(), forKey: deletedRoomsKey)
+	}
 }
 
 @MainActor
@@ -158,27 +232,47 @@ final class Mango9ChatStore: ObservableObject {
 	private var chatToken: String?
 	private var chatTokenExpiresAt: Date?
 	private var uploadURL: URL?
+	private var connectionGeneration = 0
+	private var connectingIdentity: String?
+	private var connectedIdentity: String?
 
 	private init() {}
 
 	func connectIfNeeded(force: Bool = false) async {
-		if isConnected && !force {
-			return
-		}
-		if isConnecting {
-			return
-		}
-
-		guard var session = Mango9SessionStore.load() else {
+		guard var session = Mango9SessionStore.load(),
+			  let requestedIdentity = Mango9SessionStore.normalizedIdentity(
+				session.sipIdentity
+			  ),
+			  Mango9SessionStore.isActive(sipIdentity: requestedIdentity) else {
 			errorMessage = Mango9ChatError.noSession.localizedDescription
 			return
 		}
+		if isConnected,
+		   connectedIdentity == requestedIdentity,
+		   !force {
+			return
+		}
+		if isConnecting,
+		   connectingIdentity == requestedIdentity,
+		   !force {
+			return
+		}
+
+		if isConnecting || isConnected || socket != nil {
+			disconnect()
+		}
+		connectionGeneration += 1
+		let generation = connectionGeneration
+		connectingIdentity = requestedIdentity
 
 		isConnecting = true
 		errorMessage = nil
 		intentionallyDisconnected = false
 		defer {
-			isConnecting = false
+			if connectionGeneration == generation {
+				isConnecting = false
+				connectingIdentity = nil
+			}
 		}
 
 		do {
@@ -190,12 +284,17 @@ final class Mango9ChatStore: ObservableObject {
 				try Mango9SessionStore.save(session)
 				bootstrap = try await Mango9CRMAPI.chatBootstrap(session: session)
 			}
+			guard isCurrentConnection(
+				generation: generation,
+				identity: requestedIdentity
+			) else {
+				return
+			}
 
 			guard let websocketURL = URL(string: bootstrap.websocketUrl) else {
 				throw Mango9ChatError.invalidEndpoint
 			}
 
-			disconnect(clearData: false)
 			intentionallyDisconnected = false
 			currentUserId = bootstrap.userId
 			chatToken = bootstrap.token
@@ -212,23 +311,35 @@ final class Mango9ChatStore: ObservableObject {
 			socket = task
 			task.resume()
 			isConnected = true
+			connectedIdentity = requestedIdentity
 			receiveNext(on: task)
 
 			try await loadDirectory()
 		} catch {
+			guard isCurrentConnection(
+				generation: generation,
+				identity: requestedIdentity
+			) else {
+				return
+			}
 			isConnected = false
+			connectedIdentity = nil
 			errorMessage = error.localizedDescription
 			scheduleReconnect()
 		}
 	}
 
 	func disconnect(clearData: Bool = true) {
+		connectionGeneration += 1
 		intentionallyDisconnected = true
 		reconnectTask?.cancel()
 		reconnectTask = nil
 		socket?.cancel(with: .normalClosure, reason: nil)
 		socket = nil
+		isConnecting = false
 		isConnected = false
+		connectingIdentity = nil
+		connectedIdentity = nil
 		activeRoomId = nil
 		openingUserId = nil
 		chatToken = nil
@@ -245,6 +356,14 @@ final class Mango9ChatStore: ObservableObject {
 			onlineUserIds = []
 			typingUserIds = []
 		}
+	}
+
+	private func isCurrentConnection(
+		generation: Int,
+		identity: String
+	) -> Bool {
+		connectionGeneration == generation &&
+		Mango9SessionStore.isActive(sipIdentity: identity)
 	}
 
 	func refreshAfterForeground() async {
@@ -276,6 +395,18 @@ final class Mango9ChatStore: ObservableObject {
 		activeRoomId = nil
 		openingUserId = nil
 		messages = []
+	}
+
+	func deleteConversation(roomId: String) {
+		guard connectedIdentity == Mango9SessionStore.activeIdentity else {
+			errorMessage = Mango9ChatError.disconnected.localizedDescription
+			return
+		}
+		Mango9ChatModerationStore.shared.setConversationDeleted(true, roomId: roomId)
+		for message in messages where message.roomId == roomId {
+			Mango9ChatModerationStore.shared.setHidden(true, messageId: message.id)
+		}
+		closeConversation(roomId: roomId)
 	}
 
 	func openConversation(with userId: Int, fallbackName: String = "") async {
@@ -411,6 +542,10 @@ final class Mango9ChatStore: ObservableObject {
 				"sendChatMessage",
 				params: [roomId, message, files, UUID().uuidString.lowercased()]
 			)
+			Mango9ChatModerationStore.shared.setConversationDeleted(
+				false,
+				roomId: roomId
+			)
 			return true
 		} catch {
 			errorMessage = error.localizedDescription
@@ -440,12 +575,19 @@ final class Mango9ChatStore: ObservableObject {
 	}
 
 	func roomPreview(for userId: Int) -> Mango9ChatRoom? {
-		directRoom(with: userId)
+		guard let room = directRoom(with: userId),
+			  !Mango9ChatModerationStore.shared.isConversationDeleted(room.id) else {
+			return nil
+		}
+		return room
 	}
 
 	var unreadCount: Int {
 		rooms
 			.filter { room in
+				guard !Mango9ChatModerationStore.shared.isConversationDeleted(room.id) else {
+					return false
+				}
 				guard room.isDirect, let userId = room.userIds.first else {
 					return true
 				}
@@ -458,6 +600,9 @@ final class Mango9ChatStore: ObservableObject {
 
 	var inboxPreviewRoom: Mango9ChatRoom? {
 		rooms
+			.filter {
+				!Mango9ChatModerationStore.shared.isConversationDeleted($0.id)
+			}
 			.filter { $0.unread > 0 }
 			.max { $0.latest < $1.latest }
 			?? rooms.max { $0.latest < $1.latest }
@@ -550,6 +695,11 @@ final class Mango9ChatStore: ObservableObject {
 		guard var session = Mango9SessionStore.load() else {
 			throw Mango9ChatError.noSession
 		}
+		guard connectedIdentity == Mango9SessionStore.normalizedIdentity(
+			session.sipIdentity
+		) else {
+			throw Mango9ChatError.disconnected
+		}
 		let bootstrap: Mango9ChatBootstrap
 		do {
 			bootstrap = try await Mango9CRMAPI.chatBootstrap(session: session)
@@ -594,8 +744,17 @@ final class Mango9ChatStore: ObservableObject {
 			.sorted {
 				$0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
 			}
-		rooms = Self.array(from: rawRooms).compactMap(Self.room(from:))
+		let loadedRooms = Self.array(from: rawRooms).compactMap(Self.room(from:))
 			.sorted { $0.latest > $1.latest }
+		for room in loadedRooms
+			where room.unread > 0 &&
+				Mango9ChatModerationStore.shared.isConversationDeleted(room.id) {
+			Mango9ChatModerationStore.shared.setConversationDeleted(
+				false,
+				roomId: room.id
+			)
+		}
+		rooms = loadedRooms
 		applyPresence(Self.array(from: rawPresence))
 	}
 
@@ -643,7 +802,9 @@ final class Mango9ChatStore: ObservableObject {
 	}
 
 	private func rpcCall(_ method: String, params: [Any]) async throws -> Any {
-		guard let socket, isConnected else {
+		guard let socket,
+			  isConnected,
+			  connectedIdentity == Mango9SessionStore.activeIdentity else {
 			throw Mango9ChatError.disconnected
 		}
 		let id = UUID().uuidString.lowercased()
@@ -737,6 +898,10 @@ final class Mango9ChatStore: ObservableObject {
 			guard let message = params.first.flatMap(Self.message(from:)) else {
 				return
 			}
+			Mango9ChatModerationStore.shared.setConversationDeleted(
+				false,
+				roomId: message.roomId
+			)
 			upsert(message)
 			if message.roomId == activeRoomId,
 			   message.fromUserId != currentUserId {
@@ -1055,7 +1220,9 @@ struct Mango9TeamChatListFragment: View {
 	}
 
 	private var groupRooms: [Mango9ChatRoom] {
-		store.rooms.filter { !$0.isDirect }
+		store.rooms.filter {
+			!$0.isDirect && !Mango9ChatModerationStore.shared.isConversationDeleted($0.id)
+		}
 	}
 }
 
@@ -1157,6 +1324,7 @@ struct Mango9ChatFragment: View {
 	@ObservedObject private var store = Mango9ChatStore.shared
 	@ObservedObject private var moderation = Mango9ChatModerationStore.shared
 	@Environment(\.openURL) private var openURL
+	@Environment(\.dismiss) private var dismiss
 	private let user: Mango9ChatUser?
 	private let room: Mango9ChatRoom?
 	private let onClose: (() -> Void)?
@@ -1170,6 +1338,7 @@ struct Mango9ChatFragment: View {
 	@State private var isRecordingVoice = false
 	@State private var isManagingMembers = false
 	@State private var isConfirmingReport = false
+	@State private var isConfirmingDelete = false
 	@State private var reportedMessage: Mango9ChatMessage?
 	@State private var displayedRoomId: String?
 	@FocusState private var composerFocused: Bool
@@ -1247,6 +1416,15 @@ struct Mango9ChatFragment: View {
 									isDirectUserBlocked ? "Unblock user" : "Block user",
 									systemImage: isDirectUserBlocked ? "person.crop.circle.badge.checkmark" : "hand.raised"
 								)
+							}
+						}
+
+						if conversationRoomId != nil {
+							Divider()
+							Button(role: .destructive) {
+								isConfirmingDelete = true
+							} label: {
+								Label("Delete conversation", systemImage: "trash")
 							}
 						}
 					} label: {
@@ -1330,6 +1508,30 @@ struct Mango9ChatFragment: View {
 			Text(
 				"Mango9 will open a pre-addressed email to support. "
 				+ "You can add details or screenshots before sending the report."
+			)
+		}
+		.confirmationDialog(
+			"Delete this conversation?",
+			isPresented: $isConfirmingDelete,
+			titleVisibility: .visible
+		) {
+			Button("Delete conversation", role: .destructive) {
+				guard let roomId = conversationRoomId else {
+					return
+				}
+				store.deleteConversation(roomId: roomId)
+				displayedRoomId = nil
+				if let onClose {
+					onClose()
+				} else {
+					dismiss()
+				}
+			}
+			Button("Cancel", role: .cancel) {}
+		} message: {
+			Text(
+				"The conversation history will be removed from this app. "
+					+ "A new incoming message can start the conversation again."
 			)
 		}
 	}
@@ -1542,6 +1744,10 @@ struct Mango9ChatFragment: View {
 
 	private var conversationKey: String {
 		user.map { "user-\($0.id)" } ?? "room-\(room?.id ?? "")"
+	}
+
+	private var conversationRoomId: String? {
+		store.activeRoomId ?? displayedRoomId ?? room?.id
 	}
 
 	private var statusColor: Color {
@@ -2223,6 +2429,52 @@ struct Mango9Lead: Decodable, Identifiable {
 	let createdAt: String
 }
 
+enum Mango9CRMRecordKind {
+	case lead
+	case client
+
+	var singular: String { self == .lead ? "Lead" : "Client" }
+	var plural: String { self == .lead ? "Leads" : "Clients" }
+	var emptyName: String { self == .lead ? "Unnamed lead" : "Unnamed client" }
+	var changeNotification: Notification.Name {
+		self == .lead ? .mango9LeadDidChange : .mango9ClientDidChange
+	}
+}
+
+struct Mango9LeadGroup: Decodable, Identifiable {
+	let id: String
+	let name: String
+
+	private enum CodingKeys: String, CodingKey {
+		case id
+		case name
+	}
+
+	init(from decoder: Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		id = try container.decode(Mango9CRMFieldValue.self, forKey: .id).value
+		name = try container.decode(String.self, forKey: .name)
+	}
+}
+
+struct Mango9LeadGroupsPayload: Decodable {
+	let groups: [Mango9LeadGroup]
+
+	private enum CodingKeys: String, CodingKey {
+		case groups
+	}
+
+	init(from decoder: Decoder) throws {
+		if let container = try? decoder.singleValueContainer(),
+		   let groups = try? container.decode([Mango9LeadGroup].self) {
+			self.groups = groups
+			return
+		}
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		groups = try container.decodeIfPresent([Mango9LeadGroup].self, forKey: .groups) ?? []
+	}
+}
+
 enum Mango9CRMDateFilter: String, CaseIterable, Identifiable {
 	case all
 	case today
@@ -2254,6 +2506,19 @@ enum Mango9CRMDateFilter: String, CaseIterable, Identifiable {
 			return "7d"
 		case .last30Days:
 			return "30d"
+		}
+	}
+
+	var apiValue: String? {
+		switch self {
+		case .all:
+			return nil
+		case .today:
+			return "today"
+		case .last7Days:
+			return "last_7_days"
+		case .last30Days:
+			return "last_30_days"
 		}
 	}
 
@@ -2326,6 +2591,60 @@ struct Mango9LeadDetailPayload: Decodable {
 	let lead: Mango9Lead
 	let schemaVersion: String
 	let values: [String: String]
+
+	private enum CodingKeys: String, CodingKey {
+		case lead
+		case client
+		case schemaVersion
+		case values
+	}
+
+	init(from decoder: Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		if let decodedLead = try container.decodeIfPresent(Mango9Lead.self, forKey: .lead) {
+			lead = decodedLead
+		} else {
+			lead = try container.decode(Mango9Lead.self, forKey: .client)
+		}
+		schemaVersion = (
+			try container.decodeIfPresent(Mango9CRMFieldValue.self, forKey: .schemaVersion)
+		)?.value ?? ""
+		values = (
+			try container.decodeIfPresent(
+				[String: Mango9CRMFieldValue].self,
+				forKey: .values
+			)
+		)?.mapValues(\.value) ?? [:]
+	}
+}
+
+private struct Mango9EmptyPayload: Decodable {
+	init(from decoder: Decoder) throws {}
+}
+
+private struct Mango9CRMFieldValue: Decodable {
+	let value: String
+
+	init(from decoder: Decoder) throws {
+		let container = try decoder.singleValueContainer()
+		if container.decodeNil() {
+			value = ""
+		} else if let string = try? container.decode(String.self) {
+			value = string
+		} else if let integer = try? container.decode(Int.self) {
+			value = String(integer)
+		} else if let decimal = try? container.decode(Double.self) {
+			value = String(decimal)
+		} else if let boolean = try? container.decode(Bool.self) {
+			value = boolean ? "true" : "false"
+		} else if let strings = try? container.decode([String].self) {
+			value = strings.joined(separator: ", ")
+		} else {
+			// A new or unsupported CRM field type must not make the entire
+			// lead unreadable. It remains blank until the app supports it.
+			value = ""
+		}
+	}
 }
 
 struct Mango9TeamMember: Decodable, Identifiable {
@@ -2396,23 +2715,102 @@ enum Mango9CallSettingsAPIError: LocalizedError {
 enum Mango9LineIdentityStore {
 	static let extensionKey = "mango9_active_extension"
 	static let activeNumberKey = "mango9_active_number"
+	private static let perAccountPrefix = "mango9_line_identity."
 
-	static func save(_ identity: Mango9LineIdentity) {
+	static func save(
+		_ identity: Mango9LineIdentity,
+		sipIdentity: String? = Mango9SessionStore.activeIdentity
+	) {
 		let defaults = UserDefaults.standard
-		defaults.set(
-			identity.extensionNumber.trimmingCharacters(in: .whitespacesAndNewlines),
-			forKey: extensionKey
-		)
-		defaults.set(
-			formatPhoneNumber(identity.activeNumber ?? ""),
-			forKey: activeNumberKey
+		let extensionNumber = identity.extensionNumber
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+		let activeNumber = formatPhoneNumber(identity.activeNumber ?? "")
+		if let sipIdentity = Mango9SessionStore.normalizedIdentity(sipIdentity) {
+			defaults.set(
+				[
+					"extension": extensionNumber,
+					"active_number": activeNumber
+				],
+				forKey: storageKey(for: sipIdentity)
+			)
+			if sipIdentity == Mango9SessionStore.activeIdentity {
+				setActiveValues(
+					extensionNumber: extensionNumber,
+					activeNumber: activeNumber
+				)
+			}
+		} else {
+			setActiveValues(
+				extensionNumber: extensionNumber,
+				activeNumber: activeNumber
+			)
+		}
+		notifyChanged(sipIdentity)
+	}
+
+	static func load(sipIdentity: String) -> Mango9LineIdentity? {
+		guard let identity = Mango9SessionStore.normalizedIdentity(sipIdentity),
+			  let stored = UserDefaults.standard.dictionary(
+				forKey: storageKey(for: identity)
+			  ),
+			  let extensionNumber = stored["extension"] as? String else {
+			return nil
+		}
+		return Mango9LineIdentity(
+			extensionNumber: extensionNumber,
+			activeNumber: stored["active_number"] as? String
 		)
 	}
 
-	static func clear() {
+	static func activate(sipIdentity: String) {
+		if let identity = load(sipIdentity: sipIdentity) {
+			setActiveValues(
+				extensionNumber: identity.extensionNumber,
+				activeNumber: identity.activeNumber ?? ""
+			)
+		} else {
+			clearActiveValues()
+		}
+		notifyChanged(sipIdentity)
+	}
+
+	static func clear(sipIdentity: String? = Mango9SessionStore.activeIdentity) {
+		if let identity = Mango9SessionStore.normalizedIdentity(sipIdentity) {
+			UserDefaults.standard.removeObject(forKey: storageKey(for: identity))
+			if identity == Mango9SessionStore.activeIdentity {
+				clearActiveValues()
+			}
+		} else {
+			clearActiveValues()
+		}
+		notifyChanged(sipIdentity)
+	}
+
+	private static func setActiveValues(
+		extensionNumber: String,
+		activeNumber: String
+	) {
 		let defaults = UserDefaults.standard
-		defaults.removeObject(forKey: extensionKey)
-		defaults.removeObject(forKey: activeNumberKey)
+		defaults.set(extensionNumber, forKey: extensionKey)
+		defaults.set(activeNumber, forKey: activeNumberKey)
+	}
+
+	private static func clearActiveValues() {
+		UserDefaults.standard.removeObject(forKey: extensionKey)
+		UserDefaults.standard.removeObject(forKey: activeNumberKey)
+	}
+
+	private static func storageKey(for identity: String) -> String {
+		perAccountPrefix + identity
+	}
+
+	private static func notifyChanged(_ sipIdentity: String?) {
+		DispatchQueue.main.async {
+			NotificationCenter.default.post(
+				name: .mango9LineIdentityChanged,
+				object: sipIdentity
+			)
+		}
 	}
 
 	private static func formatPhoneNumber(_ raw: String) -> String {
@@ -2476,16 +2874,7 @@ struct Mango9ChatTarget: Identifiable, Equatable {
 	var id: Int { userId }
 }
 
-struct Mango9Client: Decodable, Identifiable {
-	let id: Int
-	let ownerUserId: Int
-	let ownerName: String
-	let name: String
-	let phone: String
-	let email: String
-	let source: String
-	let createdAt: String
-}
+typealias Mango9Client = Mango9Lead
 
 struct Mango9ClientListPayload: Decodable {
 	struct Pagination: Decodable {
@@ -2727,6 +3116,9 @@ extension Mango9CRMAPI {
 	static func clients(
 		session: Mango9Session,
 		search: String,
+		status: String = "",
+		groupId: String = "",
+		dateFilter: Mango9CRMDateFilter = .all,
 		page: Int = 1
 	) async throws -> Mango9ClientListPayload {
 		var query = [
@@ -2735,6 +3127,15 @@ extension Mango9CRMAPI {
 		]
 		if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
 			query.append(URLQueryItem(name: "search", value: search))
+		}
+		if !status.isEmpty {
+			query.append(URLQueryItem(name: "status", value: status))
+		}
+		if !groupId.isEmpty {
+			query.append(URLQueryItem(name: "group_id", value: groupId))
+		}
+		if let dateFilter = dateFilter.apiValue {
+			query.append(URLQueryItem(name: "date_filter", value: dateFilter))
 		}
 		let request = try authorizedRequest(
 			session: session,
@@ -2746,6 +3147,116 @@ extension Mango9CRMAPI {
 			throw Mango9CRMAPIError.server
 		}
 		return payload
+	}
+
+	static func clientSchema(session: Mango9Session) async throws -> Mango9LeadSchema {
+		let request = try authorizedRequest(
+			session: session,
+			path: ["mobile", "schema", "clients"]
+		)
+		let envelope: Envelope<Mango9LeadSchema> = try await send(request)
+		guard envelope.success, let schema = envelope.data else {
+			throw Mango9CRMAPIError.server
+		}
+		return schema
+	}
+
+	static func clientGroups(session: Mango9Session) async throws -> [Mango9LeadGroup] {
+		let request = try authorizedRequest(
+			session: session,
+			path: ["mobile", "clients", "groups"]
+		)
+		let envelope: Envelope<Mango9LeadGroupsPayload> = try await send(request)
+		guard envelope.success else {
+			throw Mango9CRMAPIError.server
+		}
+		return envelope.data?.groups ?? []
+	}
+
+	static func client(
+		session: Mango9Session,
+		id: Int
+	) async throws -> Mango9LeadDetailPayload {
+		let request = try authorizedRequest(
+			session: session,
+			path: ["mobile", "clients", String(id)]
+		)
+		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request)
+		guard envelope.success, let payload = envelope.data else {
+			throw Mango9CRMAPIError.server
+		}
+		return payload
+	}
+
+	static func createClient(
+		session: Mango9Session,
+		firstName: String,
+		lastName: String,
+		phone: String,
+		email: String,
+		groupId: String
+	) async throws -> Mango9LeadDetailPayload {
+		var request = try authorizedRequest(
+			session: session,
+			path: ["mobile", "clients"]
+		)
+		request.httpMethod = "POST"
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		let fullName = [firstName, lastName]
+			.filter { !$0.isEmpty }
+			.joined(separator: " ")
+		var body: [String: String] = [
+			"first_name": firstName,
+			"last_name": lastName,
+			"contact_name": fullName,
+			"phone": phone,
+			"email": email
+		]
+		if !groupId.isEmpty {
+			body["group_id"] = groupId
+		}
+		request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request)
+		guard envelope.success, let payload = envelope.data else {
+			throw Mango9CRMAPIError.server
+		}
+		return payload
+	}
+
+	static func updateClient(
+		session: Mango9Session,
+		id: Int,
+		values: [String: String]
+	) async throws -> Mango9LeadDetailPayload {
+		var request = try authorizedRequest(
+			session: session,
+			path: ["mobile", "clients", String(id)]
+		)
+		request.httpMethod = "PATCH"
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.httpBody = try JSONSerialization.data(withJSONObject: ["values": values])
+
+		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request)
+		guard envelope.success, let payload = envelope.data else {
+			throw Mango9CRMAPIError.server
+		}
+		return payload
+	}
+
+	static func deleteClient(
+		session: Mango9Session,
+		id: Int
+	) async throws {
+		var request = try authorizedRequest(
+			session: session,
+			path: ["mobile", "clients", String(id)]
+		)
+		request.httpMethod = "DELETE"
+		let envelope: Envelope<Mango9EmptyPayload> = try await send(request)
+		guard envelope.success else {
+			throw Mango9CRMAPIError.server
+		}
 	}
 
 	static func leadSchema(session: Mango9Session) async throws -> Mango9LeadSchema {
@@ -2764,6 +3275,8 @@ extension Mango9CRMAPI {
 		session: Mango9Session,
 		search: String,
 		status: String,
+		groupId: String = "",
+		dateFilter: Mango9CRMDateFilter = .all,
 		page: Int = 1
 	) async throws -> Mango9LeadListPayload {
 		var query = [
@@ -2775,6 +3288,12 @@ extension Mango9CRMAPI {
 		}
 		if !status.isEmpty {
 			query.append(URLQueryItem(name: "status", value: status))
+		}
+		if !groupId.isEmpty {
+			query.append(URLQueryItem(name: "group_id", value: groupId))
+		}
+		if let dateFilter = dateFilter.apiValue {
+			query.append(URLQueryItem(name: "date_filter", value: dateFilter))
 		}
 		let request = try authorizedRequest(
 			session: session,
@@ -2788,6 +3307,18 @@ extension Mango9CRMAPI {
 		return payload
 	}
 
+	static func leadGroups(session: Mango9Session) async throws -> [Mango9LeadGroup] {
+		let request = try authorizedRequest(
+			session: session,
+			path: ["mobile", "leads", "groups"]
+		)
+		let envelope: Envelope<Mango9LeadGroupsPayload> = try await send(request)
+		guard envelope.success else {
+			throw Mango9CRMAPIError.server
+		}
+		return envelope.data?.groups ?? []
+	}
+
 	static func lead(
 		session: Mango9Session,
 		id: Int
@@ -2796,6 +3327,42 @@ extension Mango9CRMAPI {
 			session: session,
 			path: ["mobile", "leads", String(id)]
 		)
+		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request)
+		guard envelope.success, let payload = envelope.data else {
+			throw Mango9CRMAPIError.server
+		}
+		return payload
+	}
+
+	static func createLead(
+		session: Mango9Session,
+		firstName: String,
+		lastName: String,
+		phone: String,
+		email: String,
+		groupId: String
+	) async throws -> Mango9LeadDetailPayload {
+		var request = try authorizedRequest(
+			session: session,
+			path: ["mobile", "leads"]
+		)
+		request.httpMethod = "POST"
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		let fullName = [firstName, lastName]
+			.filter { !$0.isEmpty }
+			.joined(separator: " ")
+		var body: [String: String] = [
+			"first_name": firstName,
+			"last_name": lastName,
+			"contact_name": fullName,
+			"phone": phone,
+			"email": email
+		]
+		if !groupId.isEmpty {
+			body["group_id"] = groupId
+		}
+		request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
 		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request)
 		guard envelope.success, let payload = envelope.data else {
 			throw Mango9CRMAPIError.server
@@ -2821,6 +3388,21 @@ extension Mango9CRMAPI {
 			throw Mango9CRMAPIError.server
 		}
 		return payload
+	}
+
+	static func deleteLead(
+		session: Mango9Session,
+		id: Int
+	) async throws {
+		var request = try authorizedRequest(
+			session: session,
+			path: ["mobile", "leads", String(id)]
+		)
+		request.httpMethod = "DELETE"
+		let envelope: Envelope<Mango9EmptyPayload> = try await send(request)
+		guard envelope.success else {
+			throw Mango9CRMAPIError.server
+		}
 	}
 
 	static func smsSenderIDs(session: Mango9Session) async throws -> [Mango9SMSSenderID] {
@@ -3261,7 +3843,10 @@ final class Mango9CallSettingsViewModel: ObservableObject {
 					destination: forwardingDestination
 				)
 			}
-			apply(updated)
+			guard Mango9SessionStore.isActive(session) else {
+				return
+			}
+			apply(updated, sipIdentity: session.sipIdentity)
 			statusMessage = forwardingEnabled
 				? "Call forwarding was enabled successfully."
 				: "Call forwarding was turned off successfully."
@@ -3275,10 +3860,17 @@ final class Mango9CallSettingsViewModel: ObservableObject {
 	}
 
 	private func load(session: Mango9Session) async throws {
-		apply(try await Mango9CRMAPI.callSettings(session: session))
+		let loaded = try await Mango9CRMAPI.callSettings(session: session)
+		guard Mango9SessionStore.isActive(session) else {
+			return
+		}
+		apply(loaded, sipIdentity: session.sipIdentity)
 	}
 
-	private func apply(_ loadedSettings: Mango9CallSettings) {
+	private func apply(
+		_ loadedSettings: Mango9CallSettings,
+		sipIdentity: String?
+	) {
 		settings = loadedSettings
 		forwardingEnabled = loadedSettings.forwarding.enabled
 		forwardingDestination = loadedSettings.forwarding.destination
@@ -3286,7 +3878,8 @@ final class Mango9CallSettingsViewModel: ObservableObject {
 			Mango9LineIdentity(
 				extensionNumber: loadedSettings.line.extension,
 				activeNumber: loadedSettings.line.activeNumber
-			)
+			),
+			sipIdentity: sipIdentity
 		)
 	}
 
@@ -3310,15 +3903,21 @@ final class Mango9CallSettingsViewModel: ObservableObject {
 final class Mango9LeadsViewModel: ObservableObject {
 	@Published private(set) var schema: Mango9LeadSchema?
 	@Published private(set) var leads: [Mango9Lead] = []
+	@Published private(set) var groups: [Mango9LeadGroup] = []
 	@Published private(set) var total = 0
 	@Published private(set) var isLoading = false
 	@Published private(set) var errorMessage: String?
 	@Published var searchText = ""
 	@Published var selectedStatus = ""
+	@Published var selectedGroupId = ""
 	@Published var selectedDateFilter: Mango9CRMDateFilter = .all
 
 	var filteredLeads: [Mango9Lead] {
 		leads.filter { selectedDateFilter.includes($0.createdAt) }
+	}
+
+	var selectedGroupName: String {
+		groups.first(where: { $0.id == selectedGroupId })?.name ?? "All"
 	}
 
 	func load() async {
@@ -3356,6 +3955,11 @@ final class Mango9LeadsViewModel: ObservableObject {
 		await reloadList()
 	}
 
+	func setGroup(_ groupId: String) async {
+		selectedGroupId = groupId
+		await reloadList()
+	}
+
 	func reloadList() async {
 		guard !isLoading else { return }
 		guard var session = Mango9SessionStore.load() else {
@@ -3387,6 +3991,17 @@ final class Mango9LeadsViewModel: ObservableObject {
 
 	private func load(session: Mango9Session) async throws {
 		schema = try await Mango9CRMAPI.leadSchema(session: session)
+		do {
+			groups = try await Mango9CRMAPI.leadGroups(session: session)
+		} catch {
+			// Group filtering is optional. Keep the core Leads module usable
+			// while an older CRM finishes adopting the groups endpoint.
+			Log.warn("[Mango9 CRM] Lead groups unavailable: \(String(reflecting: error))")
+			groups = []
+		}
+		if !selectedGroupId.isEmpty && !groups.contains(where: { $0.id == selectedGroupId }) {
+			selectedGroupId = ""
+		}
 		try await loadList(session: session)
 	}
 
@@ -3394,7 +4009,9 @@ final class Mango9LeadsViewModel: ObservableObject {
 		let payload = try await Mango9CRMAPI.leads(
 			session: session,
 			search: searchText,
-			status: selectedStatus
+			status: selectedStatus,
+			groupId: selectedGroupId,
+			dateFilter: selectedDateFilter
 		)
 		leads = payload.leads
 		total = payload.pagination.total
@@ -3405,6 +4022,9 @@ struct Mango9LeadsFragment: View {
 	@Environment(\.presentationMode) private var presentationMode
 	@StateObject private var viewModel = Mango9LeadsViewModel()
 	@State private var smsTarget: Mango9CommunicationTarget?
+	@State private var isShowingCreateLead = false
+	@State private var createdLeadPayload: Mango9LeadDetailPayload?
+	@State private var isShowingCreatedLead = false
 
 	var body: some View {
 		ZStack {
@@ -3433,7 +4053,13 @@ struct Mango9LeadsFragment: View {
 							emptyState
 						} else {
 							ForEach(viewModel.filteredLeads) { lead in
-								NavigationLink(destination: Mango9LeadDetailFragment(leadId: lead.id)) {
+								NavigationLink(
+									destination: Mango9LeadDetailFragment(
+										leadId: lead.id,
+										initialLead: lead,
+										initialSchema: viewModel.schema
+									)
+								) {
 									leadRow(lead)
 								}
 								.buttonStyle(.plain)
@@ -3457,6 +4083,23 @@ struct Mango9LeadsFragment: View {
 		}
 		.navigationTitle("")
 		.navigationBarHidden(true)
+		.background {
+			if let createdLeadPayload {
+				NavigationLink(
+					destination: Mango9LeadDetailFragment(
+						leadId: createdLeadPayload.lead.id,
+						initialLead: createdLeadPayload.lead,
+						initialSchema: viewModel.schema,
+						initialValues: createdLeadPayload.values,
+						startsInEditMode: true
+					),
+					isActive: $isShowingCreatedLead
+				) {
+					EmptyView()
+				}
+				.hidden()
+			}
+		}
 		.task {
 			await viewModel.load()
 		}
@@ -3465,6 +4108,19 @@ struct Mango9LeadsFragment: View {
 		}
 		.sheet(item: $smsTarget) { selected in
 			Mango9SMSComposer(target: selected)
+		}
+		.sheet(isPresented: $isShowingCreateLead) {
+			Mango9CreateLeadFragment(
+				groupId: viewModel.selectedGroupId,
+				groupName: viewModel.selectedGroupName
+			) { payload in
+				createdLeadPayload = payload
+				isShowingCreateLead = false
+				NotificationCenter.default.post(name: .mango9LeadDidChange, object: nil)
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+					isShowingCreatedLead = true
+				}
+			}
 		}
 	}
 
@@ -3491,19 +4147,21 @@ struct Mango9LeadsFragment: View {
 
 			Spacer()
 
-			dateFilterMenu
-
 			Button {
-				Task { await viewModel.reloadList() }
+				isShowingCreateLead = true
 			} label: {
-				Image("arrow-clockwise")
+				Image("plus")
 					.renderingMode(.template)
 					.resizable()
 					.foregroundStyle(Color.orangeMain500)
-					.frame(width: 22, height: 22)
-					.padding(10)
+					.frame(width: 21, height: 21)
+					.padding(9)
 			}
-			.disabled(viewModel.isLoading)
+			.accessibilityLabel("Add lead")
+
+			groupFilterMenu
+
+			dateFilterMenu
 		}
 		.frame(height: 58)
 		.padding(.horizontal, 6)
@@ -3513,11 +4171,66 @@ struct Mango9LeadsFragment: View {
 		}
 	}
 
+	private var groupFilterMenu: some View {
+		Menu {
+			Button {
+				Task { await viewModel.setGroup("") }
+			} label: {
+				if viewModel.selectedGroupId.isEmpty {
+					Label("All", systemImage: "checkmark")
+				} else {
+					Text("All")
+				}
+			}
+
+			ForEach(viewModel.groups) { group in
+				Button {
+					Task { await viewModel.setGroup(group.id) }
+				} label: {
+					if viewModel.selectedGroupId == group.id {
+						Label(group.name, systemImage: "checkmark")
+					} else {
+						Text(group.name)
+					}
+				}
+			}
+		} label: {
+			HStack(spacing: 4) {
+				Image("users-three")
+					.renderingMode(.template)
+					.resizable()
+					.foregroundStyle(Color.orangeMain500)
+					.frame(width: 18, height: 18)
+				Text(viewModel.selectedGroupName)
+					.font(.system(size: 11, weight: .semibold))
+					.foregroundStyle(Color.orangeMain500)
+					.lineLimit(1)
+					.frame(maxWidth: 62)
+				if !viewModel.groups.isEmpty {
+					Image("caret-down")
+						.renderingMode(.template)
+						.resizable()
+						.foregroundStyle(Color.orangeMain500)
+						.frame(width: 12, height: 12)
+				}
+			}
+			.padding(.horizontal, 8)
+			.frame(height: 36)
+			.background(Color.orangeMain100)
+			.cornerRadius(10)
+		}
+		.disabled(viewModel.groups.isEmpty)
+		.accessibilityLabel("Filter leads by CRM group")
+	}
+
 	private var dateFilterMenu: some View {
 		Menu {
 			ForEach(Mango9CRMDateFilter.allCases) { filter in
 				Button {
-					viewModel.selectedDateFilter = filter
+					Task {
+						viewModel.selectedDateFilter = filter
+						await viewModel.reloadList()
+					}
 				} label: {
 					if viewModel.selectedDateFilter == filter {
 						Label(filter.title, systemImage: "checkmark")
@@ -3733,19 +4446,321 @@ struct Mango9LeadsFragment: View {
 }
 
 @MainActor
+final class Mango9CreateLeadViewModel: ObservableObject {
+	@Published var firstName = ""
+	@Published var lastName = ""
+	@Published var phone = ""
+	@Published var email = ""
+	@Published private(set) var isCreating = false
+	@Published private(set) var errorMessage: String?
+
+	let groupId: String
+	let recordKind: Mango9CRMRecordKind
+
+	init(groupId: String, recordKind: Mango9CRMRecordKind = .lead) {
+		self.groupId = groupId
+		self.recordKind = recordKind
+	}
+
+	func create() async -> Mango9LeadDetailPayload? {
+		guard !isCreating else { return nil }
+		let trimmedFirstName = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
+		let trimmedLastName = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
+		let trimmedPhone = phone.trimmingCharacters(in: .whitespacesAndNewlines)
+		let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+
+		guard !trimmedFirstName.isEmpty else {
+			errorMessage = "First name is required."
+			return nil
+		}
+		guard !trimmedPhone.isEmpty || !trimmedEmail.isEmpty else {
+			errorMessage = "Add a phone number or email address."
+			return nil
+		}
+		guard var session = Mango9SessionStore.load() else {
+			errorMessage = "Connect your Mango9 account to add a \(recordKind.singular.lowercased())."
+			return nil
+		}
+
+		isCreating = true
+		errorMessage = nil
+		defer { isCreating = false }
+
+		do {
+			do {
+				return try await create(
+					session: session,
+					firstName: trimmedFirstName,
+					lastName: trimmedLastName,
+					phone: trimmedPhone,
+					email: trimmedEmail
+				)
+			} catch Mango9CRMAPIError.unauthorized {
+				session = try await Mango9CRMAPI.refresh(session: session)
+				try Mango9SessionStore.save(session)
+				return try await create(
+					session: session,
+					firstName: trimmedFirstName,
+					lastName: trimmedLastName,
+					phone: trimmedPhone,
+					email: trimmedEmail
+				)
+			}
+		} catch Mango9CRMAPIError.unauthorized {
+			errorMessage = "Your CRM session expired. Sign in again."
+		} catch {
+			Log.error("[Mango9 CRM] Unable to create \(recordKind.singular.lowercased()): \(String(reflecting: error))")
+			errorMessage = "The \(recordKind.singular.lowercased()) could not be created. Try again."
+		}
+		return nil
+	}
+
+	private func create(
+		session: Mango9Session,
+		firstName: String,
+		lastName: String,
+		phone: String,
+		email: String
+	) async throws -> Mango9LeadDetailPayload {
+		if recordKind == .client {
+			return try await Mango9CRMAPI.createClient(
+				session: session,
+				firstName: firstName,
+				lastName: lastName,
+				phone: phone,
+				email: email,
+				groupId: groupId
+			)
+		}
+		return try await Mango9CRMAPI.createLead(
+			session: session,
+			firstName: firstName,
+			lastName: lastName,
+			phone: phone,
+			email: email,
+			groupId: groupId
+		)
+	}
+}
+
+struct Mango9CreateLeadFragment: View {
+	@Environment(\.dismiss) private var dismiss
+	@StateObject private var viewModel: Mango9CreateLeadViewModel
+
+	let groupName: String
+	let onCreated: (Mango9LeadDetailPayload) -> Void
+
+	init(
+		groupId: String,
+		groupName: String,
+		recordKind: Mango9CRMRecordKind = .lead,
+		onCreated: @escaping (Mango9LeadDetailPayload) -> Void
+	) {
+		self.groupName = groupName
+		self.onCreated = onCreated
+		_viewModel = StateObject(
+			wrappedValue: Mango9CreateLeadViewModel(
+				groupId: groupId,
+				recordKind: recordKind
+			)
+		)
+	}
+
+	var body: some View {
+		NavigationView {
+			ZStack {
+				Color.gray100.ignoresSafeArea()
+
+				ScrollView {
+					VStack(spacing: 16) {
+						if groupName != "All" {
+							HStack(spacing: 8) {
+								Image("users-three")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.orangeMain500)
+									.frame(width: 18, height: 18)
+								Text("Adding to \(groupName)")
+									.default_text_style_700(styleSize: 12)
+								Spacer()
+							}
+							.padding(13)
+							.background(Color.orangeMain100)
+							.cornerRadius(12)
+						}
+
+						VStack(spacing: 18) {
+							leadField(
+								title: "First Name",
+								placeholder: "First name",
+								text: $viewModel.firstName,
+								contentType: .givenName,
+								keyboard: .default
+							)
+							leadField(
+								title: "Last Name",
+								placeholder: "Last name",
+								text: $viewModel.lastName,
+								contentType: .familyName,
+								keyboard: .default
+							)
+							leadField(
+								title: "Phone",
+								placeholder: "Phone number",
+								text: $viewModel.phone,
+								contentType: .telephoneNumber,
+								keyboard: .phonePad
+							)
+							leadField(
+								title: "Email",
+								placeholder: "Email address",
+								text: $viewModel.email,
+								contentType: .emailAddress,
+								keyboard: .emailAddress
+							)
+						}
+						.padding(16)
+						.background(Color.white)
+						.cornerRadius(16)
+						.overlay {
+							RoundedRectangle(cornerRadius: 16)
+								.stroke(Color.gray200, lineWidth: 1)
+						}
+
+						if let errorMessage = viewModel.errorMessage {
+							HStack(alignment: .top, spacing: 9) {
+								Image("warning-circle")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.redDanger500)
+									.frame(width: 20, height: 20)
+								Text(errorMessage)
+									.default_text_style(styleSize: 12)
+									.foregroundStyle(Color.grayMain2c500)
+								Spacer()
+							}
+							.padding(13)
+							.background(Color.redDanger200.opacity(0.45))
+							.cornerRadius(12)
+						}
+					}
+					.padding(16)
+				}
+			}
+			.navigationTitle("Add \(viewModel.recordKind.singular)")
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .cancellationAction) {
+					Button("Cancel") { dismiss() }
+						.disabled(viewModel.isCreating)
+				}
+				ToolbarItem(placement: .confirmationAction) {
+					Button {
+						Task {
+							if let payload = await viewModel.create() {
+								onCreated(payload)
+							}
+						}
+					} label: {
+						if viewModel.isCreating {
+							ProgressView().tint(Color.blueInfo500)
+						} else {
+							Image("check")
+								.renderingMode(.template)
+								.foregroundStyle(Color.blueInfo500)
+						}
+					}
+					.disabled(viewModel.isCreating)
+					.accessibilityLabel("Create \(viewModel.recordKind.singular.lowercased())")
+				}
+			}
+		}
+		.navigationViewStyle(.stack)
+	}
+
+	private func leadField(
+		title: String,
+		placeholder: String,
+		text: Binding<String>,
+		contentType: UITextContentType?,
+		keyboard: UIKeyboardType
+	) -> some View {
+		VStack(alignment: .leading, spacing: 7) {
+			Text(title)
+				.default_text_style_700(styleSize: 12)
+			TextField(placeholder, text: text)
+				.textContentType(contentType)
+				.keyboardType(keyboard)
+				.autocapitalization(keyboard == .emailAddress ? .none : .sentences)
+				.disableAutocorrection(keyboard == .emailAddress)
+				.default_text_style(styleSize: 14)
+				.padding(.horizontal, 13)
+				.frame(height: 46)
+				.background(Color.gray100)
+				.cornerRadius(11)
+		}
+	}
+}
+
+@MainActor
 final class Mango9ClientsViewModel: ObservableObject {
+	@Published private(set) var schema: Mango9LeadSchema?
 	@Published private(set) var clients: [Mango9Client] = []
+	@Published private(set) var groups: [Mango9LeadGroup] = []
 	@Published private(set) var total = 0
 	@Published private(set) var isLoading = false
 	@Published private(set) var errorMessage: String?
 	@Published var searchText = ""
+	@Published var selectedStatus = ""
+	@Published var selectedGroupId = ""
 	@Published var selectedDateFilter: Mango9CRMDateFilter = .all
 
 	var filteredClients: [Mango9Client] {
 		clients.filter { selectedDateFilter.includes($0.createdAt) }
 	}
 
+	var selectedGroupName: String {
+		groups.first(where: { $0.id == selectedGroupId })?.name ?? "All"
+	}
+
 	func load() async {
+		guard !isLoading else { return }
+		guard var session = Mango9SessionStore.load() else {
+			errorMessage = "Connect your Mango9 account to load clients."
+			return
+		}
+
+		isLoading = true
+		errorMessage = nil
+		defer { isLoading = false }
+
+		do {
+			do {
+				try await load(session: session)
+			} catch Mango9CRMAPIError.unauthorized {
+				session = try await Mango9CRMAPI.refresh(session: session)
+				try Mango9SessionStore.save(session)
+				try await load(session: session)
+			}
+		} catch Mango9CRMAPIError.unauthorized {
+			errorMessage = "Your CRM session expired. Sign in again."
+		} catch is CancellationError {
+			// Keep the last successful list when navigation supersedes this task.
+		} catch let error as URLError where error.code == .cancelled {
+			// URLSession reports normal task cancellation as NSURLErrorCancelled.
+		} catch {
+			Log.error("[Mango9 CRM] Unable to load clients: \(String(reflecting: error))")
+			errorMessage = "Clients could not be loaded. Check the connection and try again."
+		}
+	}
+
+	func setStatus(_ status: String) async {
+		selectedStatus = selectedStatus == status ? "" : status
+		await reloadList()
+	}
+
+	func setGroup(_ groupId: String) async {
+		selectedGroupId = groupId
 		await reloadList()
 	}
 
@@ -3761,22 +4776,13 @@ final class Mango9ClientsViewModel: ObservableObject {
 		defer { isLoading = false }
 
 		do {
-			let payload: Mango9ClientListPayload
 			do {
-				payload = try await Mango9CRMAPI.clients(
-					session: session,
-					search: searchText
-				)
+				try await loadList(session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
 				try Mango9SessionStore.save(session)
-				payload = try await Mango9CRMAPI.clients(
-					session: session,
-					search: searchText
-				)
+				try await loadList(session: session)
 			}
-			clients = payload.clients
-			total = payload.pagination.total
 		} catch Mango9CRMAPIError.unauthorized {
 			errorMessage = "Your CRM session expired. Sign in again."
 		} catch is CancellationError {
@@ -3784,14 +4790,45 @@ final class Mango9ClientsViewModel: ObservableObject {
 		} catch let error as URLError where error.code == .cancelled {
 			// URLSession reports normal Swift task cancellation as NSURLErrorCancelled.
 		} catch {
+			Log.error("[Mango9 CRM] Unable to reload clients: \(String(reflecting: error))")
 			errorMessage = "Clients could not be loaded. Check the connection and try again."
 		}
+	}
+
+	private func load(session: Mango9Session) async throws {
+		schema = try await Mango9CRMAPI.clientSchema(session: session)
+		do {
+			groups = try await Mango9CRMAPI.clientGroups(session: session)
+		} catch {
+			Log.warn("[Mango9 CRM] Client groups unavailable: \(String(reflecting: error))")
+			groups = []
+		}
+		if !selectedGroupId.isEmpty && !groups.contains(where: { $0.id == selectedGroupId }) {
+			selectedGroupId = ""
+		}
+		try await loadList(session: session)
+	}
+
+	private func loadList(session: Mango9Session) async throws {
+		let payload = try await Mango9CRMAPI.clients(
+			session: session,
+			search: searchText,
+			status: selectedStatus,
+			groupId: selectedGroupId,
+			dateFilter: selectedDateFilter
+		)
+		clients = payload.clients
+		total = payload.pagination.total
 	}
 }
 
 struct Mango9ClientsFragment: View {
 	@Environment(\.presentationMode) private var presentationMode
 	@StateObject private var viewModel = Mango9ClientsViewModel()
+	@State private var smsTarget: Mango9CommunicationTarget?
+	@State private var isShowingCreateClient = false
+	@State private var createdClientPayload: Mango9LeadDetailPayload?
+	@State private var isShowingCreatedClient = false
 
 	var body: some View {
 		ZStack {
@@ -3803,6 +4840,10 @@ struct Mango9ClientsFragment: View {
 				ScrollView {
 					LazyVStack(spacing: 12) {
 						searchCard
+
+						if let schema = viewModel.schema {
+							statusFilters(schema.statuses)
+						}
 
 						if let errorMessage = viewModel.errorMessage {
 							errorCard(errorMessage)
@@ -3816,7 +4857,24 @@ struct Mango9ClientsFragment: View {
 							emptyState
 						} else {
 							ForEach(viewModel.filteredClients) { client in
-								clientRow(client)
+								NavigationLink(
+									destination: Mango9LeadDetailFragment(
+										leadId: client.id,
+										recordKind: .client,
+										initialLead: client,
+										initialSchema: viewModel.schema
+									)
+								) {
+									clientRow(client)
+								}
+								.buttonStyle(.plain)
+								.contextMenu {
+									Mango9CommunicationButtons(
+										target: communicationTarget(for: client)
+									) {
+										smsTarget = $0
+									}
+								}
 							}
 						}
 					}
@@ -3830,8 +4888,46 @@ struct Mango9ClientsFragment: View {
 		}
 		.navigationTitle("")
 		.navigationBarHidden(true)
+		.background {
+			if let createdClientPayload {
+				NavigationLink(
+					destination: Mango9LeadDetailFragment(
+						leadId: createdClientPayload.lead.id,
+						recordKind: .client,
+						initialLead: createdClientPayload.lead,
+						initialSchema: viewModel.schema,
+						initialValues: createdClientPayload.values,
+						startsInEditMode: true
+					),
+					isActive: $isShowingCreatedClient
+				) {
+					EmptyView()
+				}
+				.hidden()
+			}
+		}
 		.task {
 			await viewModel.load()
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9ClientDidChange)) { _ in
+			Task { await viewModel.reloadList() }
+		}
+		.sheet(item: $smsTarget) { selected in
+			Mango9SMSComposer(target: selected)
+		}
+		.sheet(isPresented: $isShowingCreateClient) {
+			Mango9CreateLeadFragment(
+				groupId: viewModel.selectedGroupId,
+				groupName: viewModel.selectedGroupName,
+				recordKind: .client
+			) { payload in
+				createdClientPayload = payload
+				isShowingCreateClient = false
+				NotificationCenter.default.post(name: .mango9ClientDidChange, object: nil)
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+					isShowingCreatedClient = true
+				}
+			}
 		}
 	}
 
@@ -3858,19 +4954,21 @@ struct Mango9ClientsFragment: View {
 
 			Spacer()
 
-			dateFilterMenu
-
 			Button {
-				Task { await viewModel.reloadList() }
+				isShowingCreateClient = true
 			} label: {
-				Image("arrow-clockwise")
+				Image("plus")
 					.renderingMode(.template)
 					.resizable()
 					.foregroundStyle(Color.orangeMain500)
-					.frame(width: 22, height: 22)
-					.padding(10)
+					.frame(width: 21, height: 21)
+					.padding(9)
 			}
-			.disabled(viewModel.isLoading)
+			.accessibilityLabel("Add client")
+
+			groupFilterMenu
+
+			dateFilterMenu
 		}
 		.frame(height: 58)
 		.padding(.horizontal, 6)
@@ -3880,11 +4978,66 @@ struct Mango9ClientsFragment: View {
 		}
 	}
 
+	private var groupFilterMenu: some View {
+		Menu {
+			Button {
+				Task { await viewModel.setGroup("") }
+			} label: {
+				if viewModel.selectedGroupId.isEmpty {
+					Label("All", systemImage: "checkmark")
+				} else {
+					Text("All")
+				}
+			}
+
+			ForEach(viewModel.groups) { group in
+				Button {
+					Task { await viewModel.setGroup(group.id) }
+				} label: {
+					if viewModel.selectedGroupId == group.id {
+						Label(group.name, systemImage: "checkmark")
+					} else {
+						Text(group.name)
+					}
+				}
+			}
+		} label: {
+			HStack(spacing: 4) {
+				Image("users-three")
+					.renderingMode(.template)
+					.resizable()
+					.foregroundStyle(Color.orangeMain500)
+					.frame(width: 18, height: 18)
+				Text(viewModel.selectedGroupName)
+					.font(.system(size: 11, weight: .semibold))
+					.foregroundStyle(Color.orangeMain500)
+					.lineLimit(1)
+					.frame(maxWidth: 62)
+				if !viewModel.groups.isEmpty {
+					Image("caret-down")
+						.renderingMode(.template)
+						.resizable()
+						.foregroundStyle(Color.orangeMain500)
+						.frame(width: 12, height: 12)
+				}
+			}
+			.padding(.horizontal, 8)
+			.frame(height: 36)
+			.background(Color.orangeMain100)
+			.cornerRadius(10)
+		}
+		.disabled(viewModel.groups.isEmpty)
+		.accessibilityLabel("Filter clients by CRM group")
+	}
+
 	private var dateFilterMenu: some View {
 		Menu {
 			ForEach(Mango9CRMDateFilter.allCases) { filter in
 				Button {
-					viewModel.selectedDateFilter = filter
+					Task {
+						viewModel.selectedDateFilter = filter
+						await viewModel.reloadList()
+					}
 				} label: {
 					if viewModel.selectedDateFilter == filter {
 						Label(filter.title, systemImage: "checkmark")
@@ -3955,6 +5108,43 @@ struct Mango9ClientsFragment: View {
 		}
 	}
 
+	private func statusFilters(_ statuses: [String]) -> some View {
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: 8) {
+				statusButton(label: "All", value: "")
+				ForEach(statuses, id: \.self) { status in
+					statusButton(label: status, value: status)
+				}
+			}
+		}
+	}
+
+	private func statusButton(label: String, value: String) -> some View {
+		let selected = viewModel.selectedStatus == value
+		return Button {
+			Task {
+				if value.isEmpty {
+					viewModel.selectedStatus = ""
+					await viewModel.reloadList()
+				} else {
+					await viewModel.setStatus(value)
+				}
+			}
+		} label: {
+			Text(label)
+				.font(.system(size: 11, weight: .semibold))
+				.foregroundStyle(selected ? Color.white : Color.grayMain2c500)
+				.padding(.horizontal, 12)
+				.padding(.vertical, 8)
+				.background(selected ? Color.orangeMain500 : Color.white)
+				.cornerRadius(20)
+				.overlay {
+					Capsule()
+						.stroke(selected ? Color.orangeMain500 : Color.gray200, lineWidth: 1)
+				}
+		}
+	}
+
 	private func clientRow(_ client: Mango9Client) -> some View {
 		HStack(spacing: 13) {
 			ZStack {
@@ -3989,13 +5179,22 @@ struct Mango9ClientsFragment: View {
 
 			Spacer()
 
-			Text("CLIENT")
-				.font(.system(size: 9, weight: .bold))
-				.foregroundStyle(Color.orangeMain500)
-				.padding(.horizontal, 8)
-				.padding(.vertical, 5)
-				.background(Color.orangeMain100)
-				.cornerRadius(20)
+			VStack(alignment: .trailing, spacing: 7) {
+				Text(client.status.isEmpty ? "CLIENT" : client.status)
+					.font(.system(size: 9, weight: .bold))
+					.foregroundStyle(Color.orangeMain500)
+					.padding(.horizontal, 8)
+					.padding(.vertical, 5)
+					.background(Color.orangeMain100)
+					.cornerRadius(20)
+					.lineLimit(1)
+
+				Image("caret-right")
+					.renderingMode(.template)
+					.resizable()
+					.foregroundStyle(Color.grayMain2c500)
+					.frame(width: 18, height: 18)
+			}
 		}
 		.padding(14)
 		.background(Color.white)
@@ -4004,6 +5203,14 @@ struct Mango9ClientsFragment: View {
 			RoundedRectangle(cornerRadius: 15)
 				.stroke(Color.gray200, lineWidth: 1)
 		}
+	}
+
+	private func communicationTarget(for client: Mango9Client) -> Mango9CommunicationTarget {
+		Mango9CommunicationTarget(
+			name: client.name,
+			phone: client.phone,
+			email: client.email
+		)
 	}
 
 	private func initials(for name: String) -> String {
@@ -4050,26 +5257,41 @@ struct Mango9ClientsFragment: View {
 @MainActor
 final class Mango9LeadDetailViewModel: ObservableObject {
 	let leadId: Int
+	let recordKind: Mango9CRMRecordKind
 
 	@Published private(set) var schema: Mango9LeadSchema?
 	@Published private(set) var lead: Mango9Lead?
 	@Published var values: [String: String] = [:]
 	@Published private(set) var isLoading = false
 	@Published private(set) var isSaving = false
+	@Published private(set) var isDeleting = false
 	@Published var isEditing = false
 	@Published private(set) var errorMessage: String?
 	@Published private(set) var savedMessage: String?
 
 	private var originalValues: [String: String] = [:]
 
-	init(leadId: Int) {
+	init(
+		leadId: Int,
+		recordKind: Mango9CRMRecordKind = .lead,
+		initialLead: Mango9Lead? = nil,
+		initialSchema: Mango9LeadSchema? = nil,
+		initialValues: [String: String] = [:],
+		startsInEditMode: Bool = false
+	) {
 		self.leadId = leadId
+		self.recordKind = recordKind
+		lead = initialLead
+		schema = initialSchema
+		values = initialValues
+		originalValues = initialValues
+		isEditing = startsInEditMode
 	}
 
 	func load() async {
 		guard !isLoading else { return }
 		guard var session = Mango9SessionStore.load() else {
-			errorMessage = "Connect your Mango9 account to open this lead."
+			errorMessage = "Connect your Mango9 account to open this \(recordKind.singular.lowercased())."
 			return
 		}
 
@@ -4086,8 +5308,13 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 			}
 		} catch Mango9CRMAPIError.unauthorized {
 			errorMessage = "Your CRM session expired. Sign in again."
+		} catch is CancellationError {
+			// Normal when a navigation transition supersedes a view-bound task.
+		} catch let error as URLError where error.code == .cancelled {
+			// Normal when URLSession is superseded during a navigation transition.
 		} catch {
-			errorMessage = "This lead could not be loaded."
+			Log.error("[Mango9 CRM] Unable to load \(recordKind.singular.lowercased()) \(leadId): \(String(reflecting: error))")
+			errorMessage = "This \(recordKind.singular.lowercased()) could not be loaded."
 		}
 	}
 
@@ -4109,7 +5336,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 	}
 
 	func save() async {
-		guard !isSaving, let schema else { return }
+		guard !isSaving, !isDeleting, let schema else { return }
 		for field in schema.fields where field.required && field.editable && field.isVisible {
 			if (values[field.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
 				errorMessage = "\(field.label) is required."
@@ -4130,7 +5357,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 		}
 
 		guard var session = Mango9SessionStore.load() else {
-			errorMessage = "Connect your Mango9 account to save this lead."
+			errorMessage = "Connect your Mango9 account to save this \(recordKind.singular.lowercased())."
 			return
 		}
 		isSaving = true
@@ -4141,17 +5368,15 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 		do {
 			let payload: Mango9LeadDetailPayload
 			do {
-				payload = try await Mango9CRMAPI.updateLead(
+				payload = try await update(
 					session: session,
-					id: leadId,
 					values: changes
 				)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
 				try Mango9SessionStore.save(session)
-				payload = try await Mango9CRMAPI.updateLead(
+				payload = try await update(
 					session: session,
-					id: leadId,
 					values: changes
 				)
 			}
@@ -4159,22 +5384,90 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 			values = payload.values
 			originalValues = payload.values
 			isEditing = false
-			savedMessage = "Lead saved"
-			NotificationCenter.default.post(name: .mango9LeadDidChange, object: nil)
+			savedMessage = "\(recordKind.singular) saved"
+			NotificationCenter.default.post(name: recordKind.changeNotification, object: nil)
 		} catch Mango9CRMAPIError.unauthorized {
 			errorMessage = "Your CRM session expired. Sign in again."
 		} catch {
-			errorMessage = "The lead could not be saved. Try again."
+			errorMessage = "The \(recordKind.singular.lowercased()) could not be saved. Try again."
 		}
 	}
 
+	func delete() async -> Bool {
+		guard !isSaving, !isDeleting else { return false }
+		guard var session = Mango9SessionStore.load() else {
+			errorMessage = "Connect your Mango9 account to delete this \(recordKind.singular.lowercased())."
+			return false
+		}
+
+		isDeleting = true
+		errorMessage = nil
+		savedMessage = nil
+		defer { isDeleting = false }
+
+		do {
+			do {
+				try await delete(session: session)
+			} catch Mango9CRMAPIError.unauthorized {
+				session = try await Mango9CRMAPI.refresh(session: session)
+				try Mango9SessionStore.save(session)
+				try await delete(session: session)
+			}
+			NotificationCenter.default.post(name: recordKind.changeNotification, object: nil)
+			return true
+		} catch Mango9CRMAPIError.unauthorized {
+			errorMessage = "Your CRM session expired. Sign in again."
+		} catch {
+			Log.error("[Mango9 CRM] Unable to delete \(recordKind.singular.lowercased()) \(leadId): \(String(reflecting: error))")
+			errorMessage = "The \(recordKind.singular.lowercased()) could not be deleted. Try again."
+		}
+		return false
+	}
+
 	private func load(session: Mango9Session) async throws {
-		let loadedSchema = try await Mango9CRMAPI.leadSchema(session: session)
-		let payload = try await Mango9CRMAPI.lead(session: session, id: leadId)
-		schema = loadedSchema
+		let payload: Mango9LeadDetailPayload
+		if recordKind == .client {
+			payload = try await Mango9CRMAPI.client(session: session, id: leadId)
+		} else {
+			payload = try await Mango9CRMAPI.lead(session: session, id: leadId)
+		}
 		lead = payload.lead
 		values = payload.values
 		originalValues = payload.values
+
+		if schema == nil {
+			if recordKind == .client {
+				schema = try await Mango9CRMAPI.clientSchema(session: session)
+			} else {
+				schema = try await Mango9CRMAPI.leadSchema(session: session)
+			}
+		}
+	}
+
+	private func update(
+		session: Mango9Session,
+		values: [String: String]
+	) async throws -> Mango9LeadDetailPayload {
+		if recordKind == .client {
+			return try await Mango9CRMAPI.updateClient(
+				session: session,
+				id: leadId,
+				values: values
+			)
+		}
+		return try await Mango9CRMAPI.updateLead(
+			session: session,
+			id: leadId,
+			values: values
+		)
+	}
+
+	private func delete(session: Mango9Session) async throws {
+		if recordKind == .client {
+			try await Mango9CRMAPI.deleteClient(session: session, id: leadId)
+		} else {
+			try await Mango9CRMAPI.deleteLead(session: session, id: leadId)
+		}
 	}
 }
 
@@ -4184,9 +5477,26 @@ struct Mango9LeadDetailFragment: View {
 	@State private var communicationTarget: Mango9CommunicationTarget?
 	@State private var smsTarget: Mango9CommunicationTarget?
 	@State private var isShowingCommunicationActions = false
+	@State private var isShowingDeleteConfirmation = false
 
-	init(leadId: Int) {
-		_viewModel = StateObject(wrappedValue: Mango9LeadDetailViewModel(leadId: leadId))
+	init(
+		leadId: Int,
+		recordKind: Mango9CRMRecordKind = .lead,
+		initialLead: Mango9Lead? = nil,
+		initialSchema: Mango9LeadSchema? = nil,
+		initialValues: [String: String] = [:],
+		startsInEditMode: Bool = false
+	) {
+		_viewModel = StateObject(
+			wrappedValue: Mango9LeadDetailViewModel(
+				leadId: leadId,
+				recordKind: recordKind,
+				initialLead: initialLead,
+				initialSchema: initialSchema,
+				initialValues: initialValues,
+				startsInEditMode: startsInEditMode
+			)
+		)
 	}
 
 	var body: some View {
@@ -4216,9 +5526,10 @@ struct Mango9LeadDetailFragment: View {
 
 							if let schema = viewModel.schema {
 								ForEach(schema.sections) { section in
-									let fields = schema.fields.filter {
-										$0.section == section.id && $0.isVisible
-									}
+									let fields = visibleFields(
+										for: section,
+										schemaFields: schema.fields
+									)
 									if !fields.isEmpty {
 										fieldSection(section: section, fields: fields)
 									}
@@ -4263,6 +5574,22 @@ struct Mango9LeadDetailFragment: View {
 		.sheet(item: $smsTarget) { selected in
 			Mango9SMSComposer(target: selected)
 		}
+		.confirmationDialog(
+			"Delete this \(viewModel.recordKind.singular.lowercased())?",
+			isPresented: $isShowingDeleteConfirmation,
+			titleVisibility: .visible
+		) {
+			Button("Delete \(viewModel.recordKind.singular)", role: .destructive) {
+				Task {
+					if await viewModel.delete() {
+						presentationMode.wrappedValue.dismiss()
+					}
+				}
+			}
+			Button("Cancel", role: .cancel) {}
+		} message: {
+			Text("This removes the \(viewModel.recordKind.singular.lowercased()) from the CRM and cannot be undone.")
+		}
 	}
 
 	private var header: some View {
@@ -4283,7 +5610,7 @@ struct Mango9LeadDetailFragment: View {
 			}
 
 			VStack(alignment: .leading, spacing: 1) {
-				Text(viewModel.isEditing ? "Edit Lead" : "Lead")
+				Text(viewModel.isEditing ? "Edit \(viewModel.recordKind.singular)" : viewModel.recordKind.singular)
 					.default_text_style_orange_800(styleSize: 18)
 				Text(viewModel.lead?.name.isEmpty == false ? viewModel.lead?.name ?? "" : "CRM record")
 					.default_text_style(styleSize: 11)
@@ -4295,25 +5622,47 @@ struct Mango9LeadDetailFragment: View {
 
 			if viewModel.lead != nil {
 				if viewModel.isEditing {
-					Button {
-						Task { await viewModel.save() }
-					} label: {
-						if viewModel.isSaving {
-							ProgressView()
-								.tint(Color.white)
-								.frame(width: 58, height: 34)
-								.background(Color.orangeMain500)
-								.cornerRadius(18)
-						} else {
-							Text("Save")
-								.font(.system(size: 12, weight: .bold))
-								.foregroundStyle(Color.white)
-								.frame(width: 58, height: 34)
-								.background(Color.orangeMain500)
-								.cornerRadius(18)
+					HStack(spacing: 2) {
+						Button {
+							isShowingDeleteConfirmation = true
+						} label: {
+							if viewModel.isDeleting {
+								ProgressView()
+									.tint(Color.redDanger500)
+									.frame(width: 21, height: 21)
+									.padding(10)
+							} else {
+								Image("trash-simple")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.redDanger500)
+									.frame(width: 21, height: 21)
+									.padding(10)
+							}
 						}
+						.disabled(viewModel.isSaving || viewModel.isDeleting)
+						.accessibilityLabel("Delete \(viewModel.recordKind.singular.lowercased())")
+
+						Button {
+							Task { await viewModel.save() }
+						} label: {
+							if viewModel.isSaving {
+								ProgressView()
+									.tint(Color.blueInfo500)
+									.frame(width: 21, height: 21)
+									.padding(10)
+							} else {
+								Image("check")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.blueInfo500)
+									.frame(width: 21, height: 21)
+									.padding(10)
+							}
+						}
+						.disabled(viewModel.isSaving || viewModel.isDeleting)
+						.accessibilityLabel("Save \(viewModel.recordKind.singular.lowercased())")
 					}
-					.disabled(viewModel.isSaving)
 				} else {
 					Button {
 						viewModel.isEditing = true
@@ -4349,7 +5698,7 @@ struct Mango9LeadDetailFragment: View {
 			.frame(width: 54, height: 54)
 
 			VStack(alignment: .leading, spacing: 4) {
-				Text(lead.name.isEmpty ? "Unnamed lead" : lead.name)
+				Text(lead.name.isEmpty ? viewModel.recordKind.emptyName : lead.name)
 					.default_text_style_800(styleSize: 16)
 					.lineLimit(1)
 				if !lead.phone.isEmpty {
@@ -4436,6 +5785,34 @@ struct Mango9LeadDetailFragment: View {
 					Divider().padding(.leading, 14)
 				}
 			}
+
+			if section.id == "location" {
+				Divider().padding(.leading, 14)
+				ZStack(alignment: .bottomTrailing) {
+					Mango9LocationMapView(address: appleMapsAddress)
+
+					Button {
+						openAppleMaps()
+					} label: {
+						Image(systemName: "arrow.up.right")
+							.font(.system(size: 16, weight: .bold))
+							.foregroundStyle(Color.white)
+							.frame(width: 42, height: 42)
+							.background(Color.blueInfo500)
+							.clipShape(Circle())
+							.shadow(color: Color.black.opacity(0.18), radius: 5, x: 0, y: 2)
+					}
+					.accessibilityLabel(
+						appleMapsAddress.isEmpty
+							? "Open Apple Maps"
+							: "Open \(appleMapsAddress) in Apple Maps"
+					)
+					.padding(12)
+				}
+				.frame(height: 360)
+				.clipShape(RoundedRectangle(cornerRadius: 12))
+				.padding(14)
+			}
 		}
 		.background(Color.white)
 		.cornerRadius(15)
@@ -4443,6 +5820,56 @@ struct Mango9LeadDetailFragment: View {
 			RoundedRectangle(cornerRadius: 15)
 				.stroke(Color.gray200, lineWidth: 1)
 		}
+	}
+
+	private func visibleFields(
+		for section: Mango9LeadSchema.Section,
+		schemaFields: [Mango9LeadSchema.Field]
+	) -> [Mango9LeadSchema.Field] {
+		let hiddenMobileFields: Set<String> = [
+			"utm_source",
+			"utm_medium",
+			"utm_campaign"
+		]
+		var fields = schemaFields.filter {
+			$0.section == section.id
+				&& $0.isVisible
+				&& !hiddenMobileFields.contains($0.key)
+		}
+
+		if section.id == "personal",
+		   fields.contains(where: { $0.key == "first_name" }),
+		   fields.contains(where: { $0.key == "last_name" }) {
+			fields.removeAll(where: { $0.key == "contact_name" })
+		}
+		return fields
+	}
+
+	private var appleMapsAddress: String {
+		["address", "city", "state", "zip_code", "country"]
+			.compactMap { key in
+				let value = (viewModel.values[key] ?? "")
+					.trimmingCharacters(in: .whitespacesAndNewlines)
+				return value.isEmpty ? nil : value
+			}
+			.joined(separator: ", ")
+	}
+
+	private func openAppleMaps() {
+		if appleMapsAddress.isEmpty {
+			guard let mapsURL = URL(string: "maps://") else { return }
+			UIApplication.shared.open(mapsURL)
+			return
+		}
+
+		var components = URLComponents()
+		components.scheme = "https"
+		components.host = "maps.apple.com"
+		components.queryItems = [
+			URLQueryItem(name: "q", value: appleMapsAddress)
+		]
+		guard let mapsURL = components.url else { return }
+		UIApplication.shared.open(mapsURL)
 	}
 
 	@ViewBuilder
@@ -4600,5 +6027,68 @@ struct Mango9LeadDetailFragment: View {
 		.padding(12)
 		.background(isError ? Color.redDanger200.opacity(0.45) : Color.greenSuccess200.opacity(0.45))
 		.cornerRadius(12)
+	}
+}
+
+private struct Mango9LocationMapView: View {
+	private struct Marker: Identifiable {
+		let id = UUID()
+		let coordinate: CLLocationCoordinate2D
+	}
+
+	let address: String
+
+	@State private var region = MKCoordinateRegion(
+		center: CLLocationCoordinate2D(latitude: 39.8283, longitude: -98.5795),
+		span: MKCoordinateSpan(latitudeDelta: 45, longitudeDelta: 55)
+	)
+	@State private var markers: [Marker] = []
+
+	var body: some View {
+		Map(
+			coordinateRegion: $region,
+			annotationItems: markers
+		) { marker in
+			MapMarker(
+				coordinate: marker.coordinate,
+				tint: Color.blueInfo500
+			)
+		}
+		.task(id: address) {
+			await resolveAddress()
+		}
+		.accessibilityLabel(
+			address.isEmpty ? "Apple Maps preview" : "Map of \(address)"
+		)
+	}
+
+	@MainActor
+	private func resolveAddress() async {
+		let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !normalized.isEmpty else {
+			markers = []
+			region = MKCoordinateRegion(
+				center: CLLocationCoordinate2D(latitude: 39.8283, longitude: -98.5795),
+				span: MKCoordinateSpan(latitudeDelta: 45, longitudeDelta: 55)
+			)
+			return
+		}
+
+		do {
+			guard let coordinate = try await CLGeocoder()
+				.geocodeAddressString(normalized)
+				.first?
+				.location?
+				.coordinate else {
+				return
+			}
+			markers = [Marker(coordinate: coordinate)]
+			region = MKCoordinateRegion(
+				center: coordinate,
+				span: MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012)
+			)
+		} catch {
+			Log.warn("[Mango9 CRM] Apple Maps could not resolve \(normalized)")
+		}
 	}
 }

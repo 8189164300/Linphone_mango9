@@ -375,7 +375,9 @@ struct CallView: View {
 						.frame(height: topBarHeight)
 						.zIndex(1)
 						
-						if !telecomManager.outgoingCallStarted && telecomManager.callInProgress {
+						if !telecomManager.outgoingCallStarted
+							&& telecomManager.callInProgress
+							&& callViewModel.isMediaEncrypted {
 							// Compute the image, text, and color before the HStack
 							let encryptionInfo: (image: String, textKey: LocalizedStringKey, color: Color) = {
 								if callViewModel.isMediaEncrypted && callViewModel.isRemoteDeviceTrusted && callViewModel.isZrtp {
@@ -407,13 +409,8 @@ struct CallView: View {
 									// ZRTP warning
 									return ("warning-circle", LocalizedStringKey("call_zrtp_sas_validation_required"), Color.orangeWarning600)
 									
-								} else if callViewModel.isNotEncrypted {
-									// Not encrypted
-									return ("lock-simple-open", LocalizedStringKey("call_not_encrypted"), .white)
-									
 								} else {
-									// Waiting for encryption info
-									return ("progress", LocalizedStringKey("call_waiting_for_encryption_info"), .white)
+									return ("lock_simple", LocalizedStringKey("call_srtp_point_to_point_encrypted"), Color.blueInfo500)
 								}
 							}()
 

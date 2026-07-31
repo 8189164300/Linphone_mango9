@@ -2108,6 +2108,10 @@ struct ContentView: View {
 			}
 			.onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("DefaultAccountChanged"))) { _ in
                 accountProfileViewModel.defaultAccountModelIndex = CoreContext.shared.accounts.firstIndex(where: {$0.isDefaultAccount})
+				isShowCRMFragment = false
+				mango9ChatTarget = nil
+				Mango9ChatStore.shared.disconnect()
+				ContactsManager.shared.syncMango9Team([])
 								
 				accountProfileViewModel.accountError = CoreContext.shared.accounts.contains {
 					($0.registrationState == .Cleared && $0.isDefaultAccount) ||
@@ -2134,6 +2138,10 @@ struct ContentView: View {
 				
 				if meetingsListViewModel != nil {
                     meetingsListViewModel = MeetingsListViewModel()
+				}
+
+				Task {
+					await refreshActiveMango9AccountContext()
 				}
 			}
 			.onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("PasswordUpdate")).compactMap { $0.userInfo?["address"] as? String }) { address in
@@ -2222,18 +2230,26 @@ struct ContentView: View {
 					let team: [Mango9TeamMember]
 					do {
 						if let lineIdentity = try? await Mango9CRMAPI.lineIdentity(session: session) {
-							Mango9LineIdentityStore.save(lineIdentity)
+							Mango9LineIdentityStore.save(
+								lineIdentity,
+								sipIdentity: session.sipIdentity
+							)
 						}
 						team = try await Mango9CRMAPI.teamMembers(session: session)
 					} catch Mango9CRMAPIError.unauthorized {
 						session = try await Mango9CRMAPI.refresh(session: session)
 						try Mango9SessionStore.save(session)
 						if let lineIdentity = try? await Mango9CRMAPI.lineIdentity(session: session) {
-							Mango9LineIdentityStore.save(lineIdentity)
+							Mango9LineIdentityStore.save(
+								lineIdentity,
+								sipIdentity: session.sipIdentity
+							)
 						}
 						team = try await Mango9CRMAPI.teamMembers(session: session)
 					}
-					ContactsManager.shared.syncMango9Team(team)
+					if Mango9SessionStore.isActive(session) {
+						ContactsManager.shared.syncMango9Team(team)
+					}
 				} catch {
 					Log.error("[Mango9] Failed to refresh the CRM teammate directory: \(error)")
 				}
@@ -2269,9 +2285,52 @@ struct ContentView: View {
 				try Mango9SessionStore.save(session)
 				lineIdentity = try await Mango9CRMAPI.lineIdentity(session: session)
 			}
-			Mango9LineIdentityStore.save(lineIdentity)
+			Mango9LineIdentityStore.save(
+				lineIdentity,
+				sipIdentity: session.sipIdentity
+			)
 		} catch {
 			Log.error("[Mango9] Failed to refresh the active line identity: \(error)")
+		}
+	}
+
+	private func refreshActiveMango9AccountContext() async {
+		guard var session = Mango9SessionStore.load() else {
+			return
+		}
+
+		do {
+			let team: [Mango9TeamMember]
+			do {
+				if let lineIdentity = try? await Mango9CRMAPI.lineIdentity(
+					session: session
+				) {
+					Mango9LineIdentityStore.save(
+						lineIdentity,
+						sipIdentity: session.sipIdentity
+					)
+				}
+				team = try await Mango9CRMAPI.teamMembers(session: session)
+			} catch Mango9CRMAPIError.unauthorized {
+				session = try await Mango9CRMAPI.refresh(session: session)
+				try Mango9SessionStore.save(session)
+				if let lineIdentity = try? await Mango9CRMAPI.lineIdentity(
+					session: session
+				) {
+					Mango9LineIdentityStore.save(
+						lineIdentity,
+						sipIdentity: session.sipIdentity
+					)
+				}
+				team = try await Mango9CRMAPI.teamMembers(session: session)
+			}
+			guard Mango9SessionStore.isActive(session) else {
+				return
+			}
+			ContactsManager.shared.syncMango9Team(team)
+			await Mango9ChatStore.shared.connectIfNeeded(force: true)
+		} catch {
+			Log.error("[Mango9] Failed to switch CRM account context: \(error)")
 		}
 	}
 	

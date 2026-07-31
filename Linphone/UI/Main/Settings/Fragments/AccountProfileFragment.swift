@@ -274,7 +274,7 @@ struct AccountProfileFragment: View {
 															Text(String(localized: "sip_address") + ":")
 																.default_text_style_700(styleSize: 15)
 															
-															Text(accountModel.avatarModel!.address)
+															Text(accountModel.usernaneAvatar)
 																.foregroundStyle(Color.grayMain2c700)
 																.default_text_style(styleSize: 15)
 																.frame(maxWidth: .infinity, alignment: .leading)
@@ -282,7 +282,7 @@ struct AccountProfileFragment: View {
 															
 															Button(action: {
 																UIPasteboard.general.setValue(
-																	accountModel.avatarModel!.address,
+																	accountModel.usernaneAvatar,
 																	forPasteboardType: UTType.plainText.identifier
 																)
 																
@@ -424,21 +424,37 @@ struct AccountProfileFragment: View {
 									
 									VStack(spacing: 0) {
 										VStack(spacing: 18) {
-											HStack {
-												Image("lock-simple")
-													.renderingMode(.template)
-													.resizable()
-													.foregroundStyle(Color.grayMain2c700)
-													.frame(width: 25, height: 25)
+											if accountProfileViewModel.accountModelIndex != nil
+												&& CoreContext.shared.accounts.count > accountProfileViewModel.accountModelIndex! {
+												NavigationLink(
+													destination: AccountSettingsFragment(
+														accountModel: CoreContext.shared.accounts[accountProfileViewModel.accountModelIndex!]
+													),
+													label: {
+														HStack {
+															Image("gear")
+																.renderingMode(.template)
+																.resizable()
+																.foregroundStyle(Color.grayMain2c700)
+																.frame(width: 25, height: 25)
 
-												Text("Account and proxy settings are managed by Mango9")
-													.foregroundStyle(Color.grayMain2c700)
-													.default_text_style(styleSize: 16)
-													.frame(maxWidth: .infinity, alignment: .leading)
+															Text("settings_advanced_title")
+																.foregroundStyle(Color.grayMain2c700)
+																.default_text_style(styleSize: 16)
+																.frame(maxWidth: .infinity, alignment: .leading)
+
+															Image("caret-right")
+																.renderingMode(.template)
+																.resizable()
+																.foregroundStyle(Color.grayMain2c600)
+																.frame(width: 25, height: 25)
+														}
+													}
+												)
 											}
-											
+
 											Divider()
-											
+
 											Button(action: {
 												isShowLogoutPopup = true
 											}, label: {
@@ -448,7 +464,7 @@ struct AccountProfileFragment: View {
 														.resizable()
 														.foregroundStyle(Color.redDanger500)
 														.frame(width: 25, height: 25)
-													
+
 													Text("manage_account_delete")
 														.foregroundStyle(Color.redDanger500)
 														.default_text_style(styleSize: 16)
@@ -500,12 +516,20 @@ struct AccountProfileFragment: View {
 						titleSecondButton: Text("manage_account_delete"),
 						actionSecondButton: {
 							if accountProfileViewModel.accountModelIndex != nil {
-								CoreContext.shared.accounts[accountProfileViewModel.accountModelIndex!].logout()
+								let accountToRemove = CoreContext.shared.accounts[
+									accountProfileViewModel.accountModelIndex!
+								]
+								let nextAccount = CoreContext.shared.accounts.first {
+									$0 !== accountToRemove
+								}?.account
+								accountToRemove.logout()
 								isShowAccountProfileFragment = false
-								if let firstAccount = CoreContext.shared.accounts.first?.account {
+								if let nextAccount {
 									CoreContext.shared.doOnCoreQueue { core in
-										core.defaultAccount = firstAccount
+										core.defaultAccount = nextAccount
 									}
+								} else {
+									Mango9SessionStore.activate(sipIdentity: nil)
 								}
 							}
 						},

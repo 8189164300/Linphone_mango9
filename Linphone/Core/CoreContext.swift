@@ -150,6 +150,19 @@ class CoreContext: ObservableObject {
 	
 	func initialiseCore() throws {
 		Log.info("Initialising core")
+		let configuredProvisioningURI = AppServices.config.getString(
+			section: "misc",
+			key: "config-uri",
+			defaultString: ""
+		)
+		if Mango9Configuration.isOneTimeEnrollmentURL(configuredProvisioningURI) {
+			Log.info("[CoreContext] Clearing redeemed one-time Mango9 enrollment URL")
+			AppServices.config.setString(
+				section: "misc",
+				key: "config-uri",
+				value: nil
+			)
+		}
 		monitor.pathUpdateHandler = { path in
 			let isConnected = path.status == .satisfied
 			if self.networkStatusIsConnected != isConnected {
@@ -285,6 +298,10 @@ class CoreContext: ObservableObject {
 			self.mCoreDelegate = CoreDelegateStub(onGlobalStateChanged: { (core: Core, state: GlobalState, _: String) in
 				if state == GlobalState.On {
 					self.enforceMango9AccountRouting(core: core)
+					Mango9SessionStore.activate(
+						sipIdentity: core.defaultAccount?.params?
+							.identityAddress?.asStringUriOnly()
+					)
 					
 					self.actionsToPerformOnCoreQueueWhenCoreIsStarted.forEach {	$0(core) }
 					self.actionsToPerformOnCoreQueueWhenCoreIsStarted.removeAll()
@@ -403,29 +420,30 @@ class CoreContext: ObservableObject {
 				}
 				
 				TelecomManager.shared.onAccountRegistrationStateChanged(core: core, account: account, state: state, message: message)
+				let isDefaultAccount =
+					core.defaultAccount.map { $0 == account } ?? false
+				let hasConnectedAccount = core.accountList.contains {
+					$0.state == .Ok
+				}
 				
 				DispatchQueue.main.async {
-					if state == .Ok {
-						self.loggingInProgress = false
-						self.loggedIn = true
-					} else if state == .Progress || state == .Refreshing {
-						self.loggingInProgress = true
-					} else if state == .Cleared {
-						self.loggingInProgress = false
-						self.loggedIn = false
-					} else {
-						self.loggingInProgress = false
-						self.loggedIn = false
-						if self.networkStatusIsConnected {
+					self.loggedIn = hasConnectedAccount
+					self.loggingInProgress =
+						isDefaultAccount &&
+						(state == .Progress || state == .Refreshing)
+					if state == .Failed,
+					   isDefaultAccount,
+					   self.networkStatusIsConnected {
 							// If network is disconnected, a toast message with key "Unavailable_network" should already be displayed
 							ToastViewModel.shared.show("Registration_failed")
-						}
-						
 					}
 				}
 			}, onDefaultAccountChanged: { (_: Core, account: Account?) in
 				if let account = account, self.mCore.globalState == GlobalState.On {
 					Log.info("[CoreContext][onDefaultAccountChanged] Default account set to: \(account.displayName())")
+					Mango9SessionStore.activate(
+						sipIdentity: account.params?.identityAddress?.asStringUriOnly()
+					)
 					DispatchQueue.main.async {
 						for accountModel in self.accounts {
 							accountModel.isDefaultAccount = accountModel.account == account

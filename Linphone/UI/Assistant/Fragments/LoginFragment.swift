@@ -19,6 +19,7 @@
 
 import Security
 import SwiftUI
+import linphonesw
 
 /// Mango9-managed enrollment.
 ///
@@ -317,18 +318,13 @@ struct LoginFragment: View {
 
 		Task {
 			do {
-				let provisioningURL = try await Mango9LoginService.signIn(
+				try await Mango9LoginService.signIn(
 					username: normalizedUsername,
 					password: submittedPassword,
 					rememberLogin: rememberLogin
 				)
 				password = ""
-				coreContext.loggingInProgress = true
-				coreContext.doOnCoreQueue { core in
-					try? core.setProvisioninguri(newValue: provisioningURL.absoluteString)
-					core.stop()
-					try? core.start()
-				}
+				ToastViewModel.shared.show("Mango9 account connected")
 			} catch {
 				signInError = Mango9LoginService.userFacingMessage(for: error)
 			}
@@ -429,7 +425,7 @@ private enum Mango9LoginService {
 		username: String,
 		password: String,
 		rememberLogin: Bool
-	) async throws -> URL {
+	) async throws {
 		let endpoint = Mango9Configuration.provisioningBaseURL
 			.appendingPathComponent("v1/mobile/login")
 		var request = URLRequest(url: endpoint)
@@ -471,6 +467,9 @@ private enum Mango9LoginService {
 		guard let provisioningURL = Mango9Configuration.verifiedProvisioningURL(from: login.enrollmentUrl) else {
 			throw URLError(.badServerResponse)
 		}
+		let enrollment = try await Mango9AccountProvisioner.fetchEnrollment(
+			from: provisioningURL
+		)
 		let session = Mango9Session(
 			crmId: login.crm.id,
 			crmBaseUrl: login.crm.baseUrl,
@@ -484,17 +483,39 @@ private enum Mango9LoginService {
 			refreshToken: login.tokens.refreshToken,
 			smsChatApi: login.services.smsChatApi,
 			connectWebsocket: login.services.connectWebsocket,
-			enrollmentExpiresAt: Date().addingTimeInterval(TimeInterval(login.expiresIn))
+			enrollmentExpiresAt: Date().addingTimeInterval(TimeInterval(login.expiresIn)),
+			sipIdentity: enrollment.identity
 		)
-		try Mango9SessionStore.save(session, persist: rememberLogin)
-		if let lineIdentity = try? await Mango9CRMAPI.lineIdentity(session: session) {
-			Mango9LineIdentityStore.save(lineIdentity)
+		let previousIdentity = Mango9SessionStore.activeIdentity
+		try Mango9SessionStore.save(
+			session,
+			for: enrollment.identity,
+			persist: rememberLogin,
+			makeActive: true
+		)
+		CoreContext.shared.loggingInProgress = true
+		do {
+			try await Mango9AccountProvisioner.install(
+				enrollment,
+				displayName: login.user.name
+			)
+		} catch {
+			Mango9SessionStore.remove(for: enrollment.identity)
+			Mango9SessionStore.activate(sipIdentity: previousIdentity)
+			CoreContext.shared.loggingInProgress = false
+			throw error
 		}
-		if let team = try? await Mango9CRMAPI.teamMembers(session: session) {
+		if let lineIdentity = try? await Mango9CRMAPI.lineIdentity(session: session) {
+			Mango9LineIdentityStore.save(
+				lineIdentity,
+				sipIdentity: enrollment.identity
+			)
+		}
+		if let team = try? await Mango9CRMAPI.teamMembers(session: session),
+		   Mango9SessionStore.isActive(session) {
 			ContactsManager.shared.syncMango9Team(team)
 		}
 		await Mango9ChatStore.shared.connectIfNeeded(force: true)
-		return provisioningURL
 	}
 }
 
@@ -512,28 +533,68 @@ struct Mango9Session: Codable {
 	let smsChatApi: String
 	let connectWebsocket: String
 	let enrollmentExpiresAt: Date
+	let sipIdentity: String?
+
+	func associated(with identity: String) -> Mango9Session {
+		Mango9Session(
+			crmId: crmId,
+			crmBaseUrl: crmBaseUrl,
+			crmApiBaseUrl: crmApiBaseUrl,
+			userId: userId,
+			parentClientId: parentClientId,
+			role: role,
+			loginId: loginId,
+			displayName: displayName,
+			accessToken: accessToken,
+			refreshToken: refreshToken,
+			smsChatApi: smsChatApi,
+			connectWebsocket: connectWebsocket,
+			enrollmentExpiresAt: enrollmentExpiresAt,
+			sipIdentity: identity
+		)
+	}
 }
 
 enum Mango9SessionStore {
 	private static let rememberLoginKey = "mango9_remember_login"
+	private static let activeIdentityKey = "mango9_active_sip_identity"
+	private static let identitiesKey = "mango9_crm_session_identities"
 	private static let service =
 		(Bundle.main.bundleIdentifier ?? "com.mango9.linphone") + ".crm-session"
-	private static let account = "current"
-	private static var volatileSession: Mango9Session?
+	private static let legacyAccount = "current"
+	private static var volatileSessions: [String: Mango9Session] = [:]
+	private static let volatileSessionsLock = NSLock()
 
-	static func save(_ session: Mango9Session, persist: Bool? = nil) throws {
-		volatileSession = session
+	static func save(
+		_ session: Mango9Session,
+		for sipIdentity: String? = nil,
+		persist: Bool? = nil,
+		makeActive: Bool = false
+	) throws {
+		guard let identity = normalizedIdentity(
+			sipIdentity ?? session.sipIdentity ?? activeIdentity
+		) else {
+			throw Mango9SessionStoreError.missingIdentity
+		}
+		let associatedSession = session.associated(with: identity)
+		setVolatileSession(associatedSession, for: identity)
+		var identities = storedIdentities
+		identities.insert(identity)
+		storeIdentities(identities)
+		if makeActive {
+			setActiveIdentity(identity)
+		}
 		let shouldPersist = persist ?? rememberedLoginIsEnabled
 		guard shouldPersist else {
-			deletePersistentSession()
+			deletePersistentSession(for: identity)
 			return
 		}
 
-		let data = try JSONEncoder().encode(session)
+		let data = try JSONEncoder().encode(associatedSession)
 		let key: [String: Any] = [
 			kSecClass as String: kSecClassGenericPassword,
 			kSecAttrService as String: service,
-			kSecAttrAccount as String: account
+			kSecAttrAccount as String: identity
 		]
 		let attributes: [String: Any] = [
 			kSecValueData as String: data,
@@ -557,13 +618,146 @@ enum Mango9SessionStore {
 	}
 
 	static func load() -> Mango9Session? {
-		if let volatileSession {
-			return volatileSession
+		if let activeIdentity {
+			return load(for: activeIdentity)
+		}
+		return loadLegacySession()
+	}
+
+	static func load(for sipIdentity: String) -> Mango9Session? {
+		guard let identity = normalizedIdentity(sipIdentity) else {
+			return nil
+		}
+		if let session = volatileSession(for: identity) {
+			return session
 		}
 		guard rememberedLoginIsEnabled else {
 			return nil
 		}
 
+		if let session = loadPersistentSession(account: identity) {
+			let associatedSession = session.associated(with: identity)
+			setVolatileSession(associatedSession, for: identity)
+			return associatedSession
+		}
+
+		// Migrate the pre-multi-account "current" record to the active SIP
+		// identity the first time this version runs.
+		guard let legacy = loadLegacySession() else {
+			return nil
+		}
+		let migrated = legacy.associated(with: identity)
+		try? save(migrated, for: identity)
+		deletePersistentSession(account: legacyAccount)
+		return migrated
+	}
+
+	static func activate(sipIdentity: String?) {
+		guard let identity = normalizedIdentity(sipIdentity) else {
+			UserDefaults.standard.removeObject(forKey: activeIdentityKey)
+			notifyContextChanged()
+			return
+		}
+		setActiveIdentity(identity)
+		_ = load(for: identity)
+		notifyContextChanged()
+	}
+
+	static func remove(for sipIdentity: String) {
+		guard let identity = normalizedIdentity(sipIdentity) else { return }
+		setVolatileSession(nil, for: identity)
+		deletePersistentSession(for: identity)
+		var identities = storedIdentities
+		identities.remove(identity)
+		storeIdentities(identities)
+		Mango9LineIdentityStore.clear(sipIdentity: identity)
+		if activeIdentity == identity {
+			UserDefaults.standard.removeObject(forKey: activeIdentityKey)
+			notifyContextChanged()
+		}
+	}
+
+	static func clear() {
+		if let activeIdentity {
+			remove(for: activeIdentity)
+		} else {
+			deletePersistentSession(account: legacyAccount)
+			notifyContextChanged()
+		}
+	}
+
+	static var activeIdentity: String? {
+		normalizedIdentity(
+			UserDefaults.standard.string(forKey: activeIdentityKey)
+		)
+	}
+
+	static func isActive(_ session: Mango9Session) -> Bool {
+		isActive(sipIdentity: session.sipIdentity)
+	}
+
+	static func isActive(sipIdentity: String?) -> Bool {
+		guard let identity = normalizedIdentity(sipIdentity) else {
+			return false
+		}
+		return identity == activeIdentity
+	}
+
+	static func identity(forCRMId crmId: String) -> String? {
+		let normalizedCRMId = crmId
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+			.lowercased()
+		guard !normalizedCRMId.isEmpty else { return nil }
+		let matches = storedIdentities.filter { identity in
+			load(for: identity)?.crmId
+				.trimmingCharacters(in: .whitespacesAndNewlines)
+				.lowercased() == normalizedCRMId
+		}
+		if let activeIdentity, matches.contains(activeIdentity) {
+			return activeIdentity
+		}
+		// A CRM instance can contain more than one mobile user. Without a
+		// user-specific identifier in the push payload, choosing an arbitrary
+		// account would risk opening another user's CRM context.
+		return matches.count == 1 ? matches.first : nil
+	}
+
+	private static var rememberedLoginIsEnabled: Bool {
+		let defaults = UserDefaults.standard
+		guard defaults.object(forKey: rememberLoginKey) != nil else {
+			return true
+		}
+		return defaults.bool(forKey: rememberLoginKey)
+	}
+
+	private static func loadLegacySession() -> Mango9Session? {
+		if let legacy = volatileSession(for: legacyAccount) {
+			return legacy
+		}
+		guard rememberedLoginIsEnabled,
+			  let legacy = loadPersistentSession(account: legacyAccount) else {
+			return nil
+		}
+		setVolatileSession(legacy, for: legacyAccount)
+		return legacy
+	}
+
+	private static func volatileSession(for identity: String) -> Mango9Session? {
+		volatileSessionsLock.lock()
+		defer { volatileSessionsLock.unlock() }
+		return volatileSessions[identity]
+	}
+
+	private static func setVolatileSession(
+		_ session: Mango9Session?,
+		for identity: String
+	) {
+		volatileSessionsLock.lock()
+		defer { volatileSessionsLock.unlock() }
+		volatileSessions[identity] = session
+	}
+
+	private static func loadPersistentSession(account: String) -> Mango9Session? {
 		let query: [String: Any] = [
 			kSecClass as String: kSecClassGenericPassword,
 			kSecAttrService as String: service,
@@ -576,26 +770,14 @@ enum Mango9SessionStore {
 			  let data = result as? Data else {
 			return nil
 		}
-		let session = try? JSONDecoder().decode(Mango9Session.self, from: data)
-		volatileSession = session
-		return session
+		return try? JSONDecoder().decode(Mango9Session.self, from: data)
 	}
 
-	static func clear() {
-		volatileSession = nil
-		deletePersistentSession()
-		Mango9LineIdentityStore.clear()
+	private static func deletePersistentSession(for sipIdentity: String) {
+		deletePersistentSession(account: sipIdentity)
 	}
 
-	private static var rememberedLoginIsEnabled: Bool {
-		let defaults = UserDefaults.standard
-		guard defaults.object(forKey: rememberLoginKey) != nil else {
-			return true
-		}
-		return defaults.bool(forKey: rememberLoginKey)
-	}
-
-	private static func deletePersistentSession() {
+	private static func deletePersistentSession(account: String) {
 		let query: [String: Any] = [
 			kSecClass as String: kSecClassGenericPassword,
 			kSecAttrService as String: service,
@@ -603,10 +785,244 @@ enum Mango9SessionStore {
 		]
 		SecItemDelete(query as CFDictionary)
 	}
+
+	private static func setActiveIdentity(_ identity: String) {
+		UserDefaults.standard.set(identity, forKey: activeIdentityKey)
+		Mango9LineIdentityStore.activate(sipIdentity: identity)
+	}
+
+	private static var storedIdentities: Set<String> {
+		Set(
+			UserDefaults.standard.stringArray(forKey: identitiesKey) ?? []
+		)
+	}
+
+	private static func storeIdentities(_ identities: Set<String>) {
+		UserDefaults.standard.set(
+			identities.sorted(),
+			forKey: identitiesKey
+		)
+	}
+
+	static func normalizedIdentity(_ rawValue: String?) -> String? {
+		guard var value = rawValue?
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+			.lowercased(),
+			  !value.isEmpty else {
+			return nil
+		}
+		if let openingBracket = value.firstIndex(of: "<"),
+		   let closingBracket = value[openingBracket...].firstIndex(of: ">") {
+			value = String(
+				value[
+					value.index(after: openingBracket)..<closingBracket
+				]
+			)
+		}
+		if let parameterIndex = value.firstIndex(of: ";") {
+			value = String(value[..<parameterIndex])
+		}
+		return value
+	}
+
+	private static func notifyContextChanged() {
+		DispatchQueue.main.async {
+			NotificationCenter.default.post(
+				name: .mango9AccountContextChanged,
+				object: activeIdentity
+			)
+		}
+	}
 }
 
 private enum Mango9SessionStoreError: Error {
 	case keychain(OSStatus)
+	case missingIdentity
+}
+
+struct Mango9SIPEnrollment {
+	let identity: String
+	let username: String
+	let domain: String
+	let realm: String
+	let ha1: String
+}
+
+enum Mango9AccountProvisioningError: LocalizedError {
+	case invalidResponse
+	case coreUnavailable
+
+	var errorDescription: String? {
+		switch self {
+		case .invalidResponse:
+			return "The Mango9 provisioning response is invalid."
+		case .coreUnavailable:
+			return "The phone service is not ready. Please try again."
+		}
+	}
+}
+
+@MainActor
+enum Mango9AccountProvisioner {
+	static func fetchEnrollment(from url: URL) async throws -> Mango9SIPEnrollment {
+		let (data, response) = try await URLSession.shared.data(from: url)
+		guard let httpResponse = response as? HTTPURLResponse,
+			  (200..<300).contains(httpResponse.statusCode) else {
+			throw Mango9AccountProvisioningError.invalidResponse
+		}
+		return try parseEnrollment(data)
+	}
+
+	static func parseEnrollment(_ data: Data) throws -> Mango9SIPEnrollment {
+		try Mango9EnrollmentXMLParser.parse(data)
+	}
+
+	static func install(
+		_ enrollment: Mango9SIPEnrollment,
+		displayName: String?
+	) async throws {
+		try await withCheckedThrowingContinuation { continuation in
+			CoreContext.shared.doOnCoreQueue { core in
+				do {
+					guard core.globalState == .On else {
+						throw Mango9AccountProvisioningError.coreUnavailable
+					}
+					let identity = try Factory.Instance.createAddress(
+						addr: enrollment.identity
+					)
+					if let displayName = displayName?
+						.trimmingCharacters(in: .whitespacesAndNewlines),
+					   !displayName.isEmpty {
+						try identity.setDisplayname(newValue: displayName)
+					}
+
+					let authInfo = try Factory.Instance.createAuthInfo(
+						username: enrollment.username,
+						userid: nil,
+						passwd: nil,
+						ha1: enrollment.ha1,
+						realm: enrollment.realm,
+						domain: enrollment.domain,
+						algorithm: "MD5"
+					)
+					let params = try core.createAccountParams()
+					try params.setIdentityaddress(newValue: identity)
+					let serverAddress = try Factory.Instance.createAddress(
+						addr: Mango9Configuration.sipProxyURI
+					)
+					try params.setServeraddress(newValue: serverAddress)
+					let routeAddress = try Factory.Instance.createAddress(
+						addr: Mango9Configuration.sipProxyURI
+					)
+					try params.setRoutesaddresses(newValue: [routeAddress])
+					params.registerEnabled = true
+					Mango9Configuration.configurePush(on: params)
+
+					let existingAccount = core.accountList.first {
+						guard let existingIdentity = $0.params?.identityAddress else {
+							return false
+						}
+						return existingIdentity.weakEqual(address2: identity)
+					}
+					let selectedAccount: Account
+					if let existingAccount {
+						if let oldAuthInfo = existingAccount.findAuthInfo() {
+							core.removeAuthInfo(info: oldAuthInfo)
+						}
+						core.addAuthInfo(info: authInfo)
+						existingAccount.params = params
+						selectedAccount = existingAccount
+					} else {
+						let account = try core.createAccount(params: params)
+						core.addAuthInfo(info: authInfo)
+						try core.addAccount(account: account)
+						selectedAccount = account
+					}
+
+					core.defaultAccount = selectedAccount
+					core.config?.setString(
+						section: "misc",
+						key: "config-uri",
+						value: nil
+					)
+					try core.setProvisioninguri(newValue: nil)
+					continuation.resume()
+				} catch {
+					continuation.resume(throwing: error)
+				}
+			}
+		}
+	}
+}
+
+private final class Mango9EnrollmentXMLParser: NSObject, XMLParserDelegate {
+	private var values: [String: [String: String]] = [:]
+	private var section: String?
+	private var entry: String?
+	private var text = ""
+
+	static func parse(_ data: Data) throws -> Mango9SIPEnrollment {
+		let delegate = Mango9EnrollmentXMLParser()
+		let parser = XMLParser(data: data)
+		parser.delegate = delegate
+		guard parser.parse() else {
+			throw parser.parserError ?? Mango9AccountProvisioningError.invalidResponse
+		}
+		guard let proxy = delegate.values["proxy_0"],
+			  let auth = delegate.values["auth_info_0"],
+			  let rawIdentity = proxy["reg_identity"],
+			  let identity = Mango9SessionStore.normalizedIdentity(rawIdentity),
+			  let username = auth["username"], !username.isEmpty,
+			  let domain = auth["domain"], !domain.isEmpty,
+			  let realm = auth["realm"], !realm.isEmpty,
+			  let ha1 = auth["ha1"], !ha1.isEmpty else {
+			throw Mango9AccountProvisioningError.invalidResponse
+		}
+		return Mango9SIPEnrollment(
+			identity: identity,
+			username: username,
+			domain: domain,
+			realm: realm,
+			ha1: ha1
+		)
+	}
+
+	func parser(
+		_ parser: XMLParser,
+		didStartElement elementName: String,
+		namespaceURI: String?,
+		qualifiedName qName: String?,
+		attributes attributeDict: [String: String] = [:]
+	) {
+		if elementName == "section" {
+			section = attributeDict["name"]
+		} else if elementName == "entry" {
+			entry = attributeDict["name"]
+			text = ""
+		}
+	}
+
+	func parser(_ parser: XMLParser, foundCharacters string: String) {
+		if entry != nil {
+			text.append(string)
+		}
+	}
+
+	func parser(
+		_ parser: XMLParser,
+		didEndElement elementName: String,
+		namespaceURI: String?,
+		qualifiedName qName: String?
+	) {
+		if elementName == "entry", let section, let entry {
+			values[section, default: [:]][entry] =
+				text.trimmingCharacters(in: .whitespacesAndNewlines)
+			self.entry = nil
+			text = ""
+		} else if elementName == "section" {
+			section = nil
+		}
+	}
 }
 
 #Preview {

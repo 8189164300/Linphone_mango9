@@ -70,6 +70,14 @@ enum Mango9Configuration {
 		components.fragment = nil
 		return components.url
 	}
+
+	static func isOneTimeEnrollmentURL(_ rawValue: String?) -> Bool {
+		guard let rawValue,
+			  let url = verifiedProvisioningURL(from: rawValue) else {
+			return false
+		}
+		return url.path.hasPrefix("/v1/enroll/")
+	}
 }
 
 class CorePreferences: ObservableObject {

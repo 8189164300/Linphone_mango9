@@ -19,80 +19,106 @@
 
 import SwiftUI
 import linphonesw
-import UniformTypeIdentifiers
 
 struct SideMenuAccountRow: View {
-	@ObservedObject var contactsManager = ContactsManager.shared
-	
 	@ObservedObject var model: AccountModel
+	let accountNumber: Int
 	@EnvironmentObject var accountProfileViewModel: AccountProfileViewModel
 	
-	@State private var navigateToOption = false
 	@Binding var isOpen: Bool
 	@Binding var isShowAccountProfileFragment: Bool
-	@AppStorage(Mango9LineIdentityStore.extensionKey) private var mango9Extension = ""
-	@AppStorage(Mango9LineIdentityStore.activeNumberKey) private var mango9ActiveNumber = ""
+	@State private var mango9Extension = ""
+	@State private var mango9ActiveNumber = ""
 	
 	private let avatarSize = 45.0
 	
 	var body: some View {
-		HStack {
-			AsyncImage(url: model.imagePathAvatar) { image in
-				switch image {
-				case .empty:
-					ProgressView()
-						.frame(width: avatarSize, height: avatarSize)
-				case .success(let image):
-					image
-						.resizable()
-						.aspectRatio(contentMode: .fill)
-						.frame(width: avatarSize, height: avatarSize)
-						.clipShape(Circle())
-				case .failure:
-					Image(uiImage: contactsManager.textToImage(
-						firstName: model.avatarModel?.name ?? "",
-						lastName: ""))
-					.resizable()
+		HStack(spacing: 0) {
+			Button {
+				selectAccount()
+			} label: {
+				HStack {
+					ZStack {
+						Circle()
+							.fill(Color.grayMain2c200)
+						Text(String(accountNumber))
+							.default_text_style_800(styleSize: 17)
+							.foregroundStyle(Color.grayMain2c600)
+					}
 					.frame(width: avatarSize, height: avatarSize)
-					.clipShape(Circle())
-				@unknown default:
-					EmptyView()
-				}
-			}
-			.padding(.leading, 6)
-			
-			VStack {
-				Text(accountLineLabel)
-					.default_text_style_grey_400(styleSize: 14)
-					.lineLimit(1)
-					.minimumScaleFactor(0.72)
-					.frame(maxWidth: .infinity, alignment: .leading)
-				
-				VStack {
-					Text(model.humanReadableRegistrationState)
-						.default_text_style_uncolored(styleSize: 12)
-						.foregroundStyle(model.registrationStateAssociatedUIColor)
-						.onChange(of: model.registrationStateAssociatedUIColor) { _ in
-							accountProfileViewModel.accountError = CoreContext.shared.accounts.contains {
-								($0.registrationState == .Cleared && $0.isDefaultAccount) ||
-								$0.registrationState == .Failed
+					.padding(.leading, 6)
+
+					VStack(alignment: .leading, spacing: 3) {
+						Text(accountLineLabel)
+							.default_text_style_grey_400(styleSize: 14)
+							.lineLimit(1)
+							.minimumScaleFactor(0.72)
+							.frame(maxWidth: .infinity, alignment: .leading)
+
+						HStack(spacing: 5) {
+							ZStack {
+								if model.isDefaultAccount {
+									Image(systemName: "checkmark.circle.fill")
+										.resizable()
+										.scaledToFit()
+										.foregroundStyle(Color.orangeMain500)
+								}
 							}
+							.frame(width: 12, height: 12)
+							.accessibilityLabel(
+								model.isDefaultAccount
+									? "Selected account"
+									: ""
+							)
+
+							Text(pbxCompanyName)
+								.default_text_style_uncolored(styleSize: 11)
+								.foregroundStyle(Color.grayMain2c500)
+								.lineLimit(1)
+								.minimumScaleFactor(0.75)
+
+							Circle()
+								.fill(model.registrationStateAssociatedUIColor)
+								.frame(width: 8, height: 8)
+								.accessibilityLabel(
+									model.humanReadableRegistrationState
+								)
 						}
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.onChange(
+							of: model.registrationStateAssociatedUIColor
+						) { _ in
+							accountProfileViewModel.accountError =
+								CoreContext.shared.accounts.contains {
+									($0.registrationState == .Cleared &&
+									 $0.isDefaultAccount) ||
+									$0.registrationState == .Failed
+								}
+						}
+					}
+					.padding(.leading, 4)
+
+					Spacer(minLength: 4)
 				}
-				.padding(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
-				.background(Color.grayMain2c200)
-				.cornerRadius(12)
-				.frame(height: 20)
-				.frame(maxWidth: .infinity, alignment: .leading)
-				.onTapGesture {
-					model.refreshRegiter()
-				}
+				.contentShape(Rectangle())
 			}
-			.padding(.leading, 4)
+			.frame(maxWidth: .infinity)
+			.buttonStyle(.plain)
+			.accessibilityLabel(
+				"Account \(accountNumber), \(pbxCompanyName), \(accountLineLabel)"
+			)
+			.accessibilityValue(
+				model.isDefaultAccount
+					? "Selected, \(model.humanReadableRegistrationState)"
+					: model.humanReadableRegistrationState
+			)
+			.accessibilityHint(
+				model.isDefaultAccount
+					? "Current Mango9 account"
+					: "Double tap to use this Mango9 account"
+			)
 			
-			Spacer()
-			
-			HStack {
+			HStack(spacing: 4) {
 				if model.voicemailCount > 0 {
 					Button {
 						model.callVoicemailUri()
@@ -124,6 +150,7 @@ struct SideMenuAccountRow: View {
 							model.callVoicemailUri()
 						}
 					)
+					.buttonStyle(.plain)
 				}
 				
 				if model.notificationsCount > 0 && !AppServices.corePreferences.disableChatFeature {
@@ -151,6 +178,8 @@ struct SideMenuAccountRow: View {
 						.frame(height: 25)
 				}
 				.frame(width: 30, height: 30)
+				.buttonStyle(.plain)
+				.accessibilityLabel("View account \(accountNumber)")
 			}
 			.frame(alignment: .trailing)
 			.padding(.top, 12)
@@ -159,6 +188,22 @@ struct SideMenuAccountRow: View {
 		.frame(height: 61)
 		.padding(.horizontal, 16)
 		.background(model.isDefaultAccount ? Color.grayMain2c100 : .white)
+		.onAppear {
+			refreshLineIdentity()
+		}
+		.onReceive(
+			NotificationCenter.default.publisher(for: .mango9LineIdentityChanged)
+		) { _ in
+			refreshLineIdentity()
+		}
+	}
+
+	private func selectAccount() {
+		guard !model.isDefaultAccount else { return }
+		model.setAsDefault()
+		withAnimation {
+			isOpen = false
+		}
 	}
 
 	private var accountLineLabel: String {
@@ -168,6 +213,41 @@ struct SideMenuAccountRow: View {
 			return model.displayName
 		}
 		return "\(activeNumber) · Ext \(extensionNumber)"
+	}
+
+	private var pbxCompanyName: String {
+		let identity = model.account.params?.identityAddress
+		let sipIdentity = identity?.asStringUriOnly() ?? ""
+		let sessionName = Mango9SessionStore.load(for: sipIdentity)?
+			.displayName?
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+		let domain = identity?.domain?
+			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		let tenant = domain.split(separator: ".").first.map(String.init) ?? ""
+
+		if !tenant.isEmpty,
+		   let firstNamePart = sessionName?.split(separator: " ").first.map(String.init),
+		   normalizedCompanyToken(firstNamePart) == normalizedCompanyToken(tenant) {
+			return firstNamePart
+		}
+
+		let formattedTenant = tenant
+			.replacingOccurrences(of: "-", with: " ")
+			.replacingOccurrences(of: "_", with: " ")
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+		if !formattedTenant.isEmpty {
+			return formattedTenant.capitalized
+		}
+		return domain.isEmpty ? "Mango9 PBX" : domain
+	}
+
+	private func normalizedCompanyToken(_ value: String) -> String {
+		value
+			.lowercased()
+			.unicodeScalars
+			.filter(CharacterSet.alphanumerics.contains)
+			.map(String.init)
+			.joined()
 	}
 
 	private func openAccountProfile() {
@@ -181,6 +261,21 @@ struct SideMenuAccountRow: View {
 		withAnimation {
 			isOpen = false
 			isShowAccountProfileFragment = true
+		}
+	}
+
+	private func refreshLineIdentity() {
+		let sipIdentity =
+			model.account.params?.identityAddress?.asStringUriOnly() ?? ""
+		if let identity = Mango9LineIdentityStore.load(
+			sipIdentity: sipIdentity
+		) {
+			mango9Extension = identity.extensionNumber
+			mango9ActiveNumber = identity.activeNumber ?? ""
+		} else {
+			mango9Extension =
+				model.account.params?.identityAddress?.username ?? ""
+			mango9ActiveNumber = ""
 		}
 	}
 }

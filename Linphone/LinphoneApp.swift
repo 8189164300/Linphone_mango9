@@ -28,8 +28,13 @@ var displayedChatroomPeerAddr: String?
 
 extension Notification.Name {
 	static let mango9LeadDidChange = Notification.Name("mango9LeadDidChange")
+	static let mango9ClientDidChange = Notification.Name("mango9ClientDidChange")
 	static let mango9OpenLead = Notification.Name("mango9OpenLead")
 	static let mango9OpenChat = Notification.Name("mango9OpenChat")
+	static let mango9AccountContextChanged =
+		Notification.Name("mango9AccountContextChanged")
+	static let mango9LineIdentityChanged =
+		Notification.Name("mango9LineIdentityChanged")
 }
 
 class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
@@ -92,6 +97,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	// Called when the user interacts with the notification
 	func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
 		let userInfo = response.notification.request.content.userInfo
+		activateMango9AccountIfNeeded(from: userInfo)
 
 		if let leadId = mango9LeadId(from: userInfo) {
 			if navigationManager == nil {
@@ -172,6 +178,32 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 			return Int(leadId)
 		}
 		return nil
+	}
+
+	private func activateMango9AccountIfNeeded(
+		from userInfo: [AnyHashable: Any]
+	) {
+		let nested = userInfo["mango9"] as? [String: Any]
+		let crmId = (nested?["crm_id"] as? String)
+			?? (nested?["crmId"] as? String)
+			?? (userInfo["crm_id"] as? String)
+			?? (userInfo["crmId"] as? String)
+		guard let crmId,
+			  let identity = Mango9SessionStore.identity(forCRMId: crmId) else {
+			return
+		}
+
+		Mango9SessionStore.activate(sipIdentity: identity)
+		CoreContext.shared.doOnCoreQueue { core in
+			guard let account = core.accountList.first(where: {
+				Mango9SessionStore.normalizedIdentity(
+					$0.params?.identityAddress?.asStringUriOnly()
+				) == identity
+			}) else {
+				return
+			}
+			core.defaultAccount = account
+		}
 	}
 	
 	func application(_ application: UIApplication,

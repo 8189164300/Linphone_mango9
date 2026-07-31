@@ -202,6 +202,10 @@ class AccountModel: ObservableObject {
 	func logout() {
 		CoreContext.shared.doOnCoreQueue { core in
 			Log.info("Account \(self.account.displayName()) has been removed")
+			if let sipIdentity = self.account.params?
+				.identityAddress?.asStringUriOnly() {
+				Mango9SessionStore.remove(for: sipIdentity)
+			}
 			core.removeAccountWithData(account: self.account)
 			
 			if let authInfo = self.account.findAuthInfo() {
@@ -234,7 +238,7 @@ class AccountModel: ObservableObject {
 	
 	func setAsDefault() {
 		CoreContext.shared.doOnCoreQueue { core in
-			if core.defaultAccount?.displayName() != self.account.displayName() {
+			if core.defaultAccount.map({ $0 === self.account }) != true {
 				core.defaultAccount = self.account
 				
 				for friendList in core.friendsLists {

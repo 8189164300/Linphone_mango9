@@ -48,13 +48,9 @@ class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
 	@Binding var scanResult: String
 	private var lastResult: String = ""
 	
-	private var mCoreDelegate: CoreDelegate?
-	
 	init(_ scanResult: Binding<String>) {
 		self._scanResult = scanResult
 		super.init()
-		
-		addDelegate()
 	}
 	
 	func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
@@ -85,43 +81,24 @@ class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
 					self.scanResult = "Connecting to Mango9…"
 					self.coreContext.loggingInProgress = true
 				}
-				coreContext.doOnCoreQueue { core in
-					try? core.setProvisioninguri(newValue: provisioningURL.absoluteString)
-					core.stop()
-					try? core.start()
+				Task { @MainActor in
+					do {
+						let enrollment =
+							try await Mango9AccountProvisioner.fetchEnrollment(
+								from: provisioningURL
+							)
+						try await Mango9AccountProvisioner.install(
+							enrollment,
+							displayName: nil
+						)
+						ToastViewModel.shared.show("Mango9 account connected")
+					} catch {
+						self.coreContext.loggingInProgress = false
+						self.lastResult = ""
+						ToastViewModel.shared.show("Mango9 provisioning failed")
+					}
 				}
 			}
-		}
-	}
-	
-	func addDelegate() {
-		mCoreDelegate = CoreDelegateStub(
-			onConfiguringStatus: { (_: Core, status: ConfiguringState, _: String) in
-				Log.info("New configuration state is \(status)")
-				self.handleConfigurationChanged(status: status)
-			}
-		)
-		
-		if let delegate = mCoreDelegate {
-			coreContext.doOnCoreQueue { core in
-				core.addDelegate(delegate: delegate)
-			}
-		}
-	}
-	
-	func handleConfigurationChanged(status: ConfiguringState) {
-		switch status {
-		case .Successful:
-			DispatchQueue.main.async {
-				ToastViewModel.shared.show("Mango9 account connected")
-			}
-		case .Failed:
-			DispatchQueue.main.async {
-				self.coreContext.loggingInProgress = false
-				ToastViewModel.shared.show("Mango9 provisioning failed")
-			}
-		default:
-			break
 		}
 	}
 }

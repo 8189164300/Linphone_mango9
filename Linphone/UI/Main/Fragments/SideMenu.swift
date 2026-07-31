@@ -74,7 +74,12 @@ struct SideMenu: View {
 					
 					List {
 						ForEach(0..<CoreContext.shared.accounts.count, id: \.self) { index in
-							SideMenuAccountRow(model: CoreContext.shared.accounts[index], isOpen: $isOpen, isShowAccountProfileFragment: $isShowAccountProfileFragment)
+							SideMenuAccountRow(
+								model: CoreContext.shared.accounts[index],
+								accountNumber: index + 1,
+								isOpen: $isOpen,
+								isShowAccountProfileFragment: $isShowAccountProfileFragment
+							)
 							.background()
 							.listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
 							.listRowSeparator(.hidden)
@@ -93,23 +98,23 @@ struct SideMenu: View {
 							.renderingMode(.template)
 							.resizable()
 							.foregroundStyle(Color.orangeMain500)
-							.frame(width: 20, height: 20)
+							.frame(width: 17, height: 17)
 						
 						Text("drawer_menu_add_account")
-							.default_text_style_orange_600(styleSize: 20)
-							.frame(height: 35)
+							.default_text_style_orange_600(styleSize: 17)
+							.frame(height: 30)
 					}
 					.frame(maxWidth: .infinity)
 					.padding(.horizontal, 20)
-					.padding(.vertical, 10)
+					.padding(.vertical, 7)
 					.cornerRadius(60)
 					.overlay(
 						RoundedRectangle(cornerRadius: 60)
 							.inset(by: 0.5)
 							.stroke(Color.orangeMain500, lineWidth: 1)
 					)
-					.padding(.leading, 16)
-					.padding(.trailing, 16)
+					.padding(.leading, 30)
+					.padding(.trailing, 30)
 					.padding(.bottom, 23)
 					.background()
 					.onTapGesture {

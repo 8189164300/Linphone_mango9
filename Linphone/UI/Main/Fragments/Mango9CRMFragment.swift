@@ -88,6 +88,13 @@ struct Mango9CRMFragment: View {
 		.task {
 			await viewModel.reload()
 		}
+		.onReceive(
+			NotificationCenter.default.publisher(for: .mango9AccountContextChanged)
+		) { _ in
+			Task {
+				await viewModel.reload()
+			}
+		}
 		.onChange(of: initialLeadId) { leadId in
 			guard let leadId else { return }
 			pushedLeadId = leadId
@@ -119,22 +126,6 @@ struct Mango9CRMFragment: View {
 			}
 
 			Spacer()
-
-			if viewModel.session != nil {
-				Button {
-					Task {
-						await viewModel.reload()
-					}
-				} label: {
-					Image("arrow-clockwise")
-						.renderingMode(.template)
-						.resizable()
-						.foregroundStyle(Color.orangeMain500)
-						.frame(width: 22, height: 22)
-						.padding(10)
-				}
-				.disabled(viewModel.isLoading)
-			}
 		}
 		.frame(height: 58)
 		.padding(.horizontal, 6)
@@ -208,16 +199,25 @@ struct Mango9CRMFragment: View {
 				.frame(maxWidth: .infinity, alignment: .leading)
 
 			LazyVGrid(columns: columns, spacing: 12) {
-				metricCard(
-					icon: "users-three-square",
-					title: "Leads",
-					value: viewModel.dashboard?.leads.description ?? "—"
-				)
-				metricCard(
-					icon: "address-book",
-					title: "Clients",
-					value: viewModel.dashboard?.clients.description ?? "—"
-				)
+				NavigationLink(destination: Mango9LeadsFragment()) {
+					metricCard(
+						icon: "users-three-square",
+						title: "Leads",
+						value: viewModel.dashboard?.leads.description ?? "—"
+					)
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel("Open Leads")
+
+				NavigationLink(destination: Mango9ClientsFragment()) {
+					metricCard(
+						icon: "address-book",
+						title: "Clients",
+						value: viewModel.dashboard?.clients.description ?? "—"
+					)
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel("Open Clients")
 			}
 		}
 	}
@@ -400,39 +400,77 @@ final class Mango9CRMViewModel: ObservableObject {
 	@Published private(set) var dashboard: Mango9CRMDashboard?
 	@Published private(set) var isLoading = false
 	@Published private(set) var errorMessage: String?
+	private var reloadGeneration = 0
 
 	func reload() async {
-		session = Mango9SessionStore.load()
-		dashboard = nil
+		reloadGeneration += 1
+		let generation = reloadGeneration
+		let storedSession = Mango9SessionStore.load()
+		session = storedSession
 		errorMessage = nil
 
-		guard var currentSession = session else {
+		guard var currentSession = storedSession else {
+			dashboard = nil
+			isLoading = false
 			return
 		}
 
 		isLoading = true
 		defer {
-			isLoading = false
+			if reloadGeneration == generation {
+				isLoading = false
+			}
 		}
 
 		do {
+			let context: (
+				dashboard: Mango9CRMDashboard,
+				team: [Mango9TeamMember]
+			)
 			do {
-				dashboard = try await Mango9CRMAPI.dashboard(session: currentSession)
-				let team = try await Mango9CRMAPI.teamMembers(session: currentSession)
-				ContactsManager.shared.syncMango9Team(team)
+				context = try await loadContext(session: currentSession)
 			} catch Mango9CRMAPIError.unauthorized {
 				currentSession = try await Mango9CRMAPI.refresh(session: currentSession)
 				try Mango9SessionStore.save(currentSession)
-				session = currentSession
-				dashboard = try await Mango9CRMAPI.dashboard(session: currentSession)
-				let team = try await Mango9CRMAPI.teamMembers(session: currentSession)
-				ContactsManager.shared.syncMango9Team(team)
+				context = try await loadContext(session: currentSession)
 			}
+			guard reloadGeneration == generation,
+				  Mango9SessionStore.isActive(currentSession) else {
+				return
+			}
+			session = currentSession
+			dashboard = context.dashboard
+			ContactsManager.shared.syncMango9Team(context.team)
 		} catch Mango9CRMAPIError.unauthorized {
-			errorMessage = "Your CRM session has expired. Connect the Mango9 account again."
+			if reloadGeneration == generation,
+			   Mango9SessionStore.isActive(currentSession) {
+				errorMessage =
+					"Your CRM session has expired. Connect the Mango9 account again."
+			}
+		} catch is CancellationError {
+			// Navigation and view refreshes routinely cancel view-bound work.
+		} catch let error as URLError where error.code == .cancelled {
+			// Keep the last dashboard instead of presenting a false network error.
 		} catch {
-			errorMessage = "Check the network connection and try again."
+			if reloadGeneration == generation,
+			   Mango9SessionStore.isActive(currentSession) {
+				Log.error(
+					"[Mango9 CRM] Dashboard reload failed: \(String(reflecting: error))"
+				)
+				errorMessage = "Check the network connection and try again."
+			}
 		}
+	}
+
+	private func loadContext(
+		session: Mango9Session
+	) async throws -> (
+		dashboard: Mango9CRMDashboard,
+		team: [Mango9TeamMember]
+	) {
+		let dashboard = try await Mango9CRMAPI.dashboard(session: session)
+		let team = try await Mango9CRMAPI.teamMembers(session: session)
+		return (dashboard, team)
 	}
 }
 
@@ -515,7 +553,8 @@ enum Mango9CRMAPI {
 			refreshToken: tokens.refreshToken,
 			smsChatApi: session.smsChatApi,
 			connectWebsocket: session.connectWebsocket,
-			enrollmentExpiresAt: session.enrollmentExpiresAt
+			enrollmentExpiresAt: session.enrollmentExpiresAt,
+			sipIdentity: session.sipIdentity
 		)
 	}
 
