@@ -2261,8 +2261,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Linphone/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Mango 9";
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = YES;
-				INFOPLIST_KEY_ITSEncryptionExportComplianceCode = "b5cb085f-772a-4a4f-8c77-5d1332b1f93f";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Mango 9 accesses your calendar only when you choose to add a call or meeting event.";
 				INFOPLIST_KEY_NSCalendarsWriteOnlyAccessUsageDescription = "Mango 9 adds a call or meeting event to your calendar only when you request it.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Mango 9 uses the camera to scan provisioning QR codes, make video calls, and attach a photo or video you choose.";
@@ -2320,8 +2319,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Linphone/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Mango 9";
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = YES;
-				INFOPLIST_KEY_ITSEncryptionExportComplianceCode = "b5cb085f-772a-4a4f-8c77-5d1332b1f93f";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Mango 9 accesses your calendar only when you choose to add a call or meeting event.";
 				INFOPLIST_KEY_NSCalendarsWriteOnlyAccessUsageDescription = "Mango 9 adds a call or meeting event to your calendar only when you request it.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Mango 9 uses the camera to scan provisioning QR codes, make video calls, and attach a photo or video you choose.";
