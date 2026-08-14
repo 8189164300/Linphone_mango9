@@ -206,9 +206,14 @@ class AccountModel: ObservableObject {
 				.identityAddress?.asStringUriOnly() {
 				Mango9SessionStore.remove(for: sipIdentity)
 			}
-			core.removeAccountWithData(account: self.account)
-			
-			if let authInfo = self.account.findAuthInfo() {
+			// removeAccountWithData() deletes associated authentication only when
+			// the asynchronous unregister finishes. If the same Mango9 line is
+			// provisioned again before then, that delayed cleanup can delete the
+			// replacement credential and leave the new account in a 401 loop.
+			// Remove this account and its current credential synchronously instead.
+			let authInfo = self.account.findAuthInfo()
+			core.removeAccount(account: self.account)
+			if let authInfo {
 				core.removeAuthInfo(info: authInfo)
 			}
 		}

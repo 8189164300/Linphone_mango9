@@ -2113,10 +2113,7 @@ struct ContentView: View {
 				Mango9ChatStore.shared.disconnect()
 				ContactsManager.shared.syncMango9Team([])
 								
-				accountProfileViewModel.accountError = CoreContext.shared.accounts.contains {
-					($0.registrationState == .Cleared && $0.isDefaultAccount) ||
-					$0.registrationState == .Failed
-				}
+				accountProfileViewModel.refreshAccountError()
 				
                 withAnimation {
                     if self.sideMenuIsOpen {

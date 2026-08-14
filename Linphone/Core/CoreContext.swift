@@ -354,7 +354,7 @@ class CoreContext: ObservableObject {
 				}
 				
 				if method == .HttpDigest {
-					guard core.accountList.contains(where: {
+					guard let matchingAccount = core.accountList.first(where: {
 						$0.params?.identityAddress?.username == authInfo.username &&
 						$0.params?.identityAddress?.domain == authInfo.domain
 					}) else {
@@ -363,8 +363,14 @@ class CoreContext: ObservableObject {
 					}
 
 					Log.warn("[CoreContext] Managed SIP credentials were rejected; Mango9 reprovisioning is required")
-					DispatchQueue.main.async {
-						ToastViewModel.shared.show("Your Mango9 account needs to be connected again")
+					DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+						let isStillSelected =
+							core.defaultAccount.map { $0 == matchingAccount } ?? false
+						if isStillSelected,
+						   matchingAccount.state == .Failed,
+						   self.networkStatusIsConnected {
+							ToastViewModel.shared.show("Your Mango9 account needs to be connected again")
+						}
 					}
 				}
 			}, onTransferStateChanged: { (_: Core, transferred: Call, callState: Call.State) in
@@ -434,8 +440,18 @@ class CoreContext: ObservableObject {
 					if state == .Failed,
 					   isDefaultAccount,
 					   self.networkStatusIsConnected {
-							// If network is disconnected, a toast message with key "Unavailable_network" should already be displayed
-							ToastViewModel.shared.show("Registration_failed")
+						// A SIP account can briefly enter Failed while the proxy/PBX
+						// connection is being retried. Only surface the error when it
+						// persists, so a successful retry does not leave a false warning.
+						DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+							let isStillDefaultAccount =
+								core.defaultAccount.map { $0 == account } ?? false
+							if account.state == .Failed,
+							   isStillDefaultAccount,
+							   self.networkStatusIsConnected {
+								ToastViewModel.shared.show("Registration_failed")
+							}
+						}
 					}
 				}
 			}, onDefaultAccountChanged: { (_: Core, account: Account?) in

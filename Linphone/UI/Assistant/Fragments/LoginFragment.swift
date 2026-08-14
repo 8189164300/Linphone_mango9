@@ -324,7 +324,7 @@ struct LoginFragment: View {
 					rememberLogin: rememberLogin
 				)
 				password = ""
-				ToastViewModel.shared.show("Mango9 account connected")
+				ToastViewModel.shared.show("Success_mango9_account_connected")
 			} catch {
 				signInError = Mango9LoginService.userFacingMessage(for: error)
 			}
@@ -851,6 +851,8 @@ struct Mango9SIPEnrollment {
 enum Mango9AccountProvisioningError: LocalizedError {
 	case invalidResponse
 	case coreUnavailable
+	case registrationFailed
+	case registrationTimedOut
 
 	var errorDescription: String? {
 		switch self {
@@ -858,6 +860,10 @@ enum Mango9AccountProvisioningError: LocalizedError {
 			return "The Mango9 provisioning response is invalid."
 		case .coreUnavailable:
 			return "The phone service is not ready. Please try again."
+		case .registrationFailed:
+			return "The Mango9 extension could not register. Please try again."
+		case .registrationTimedOut:
+			return "The Mango9 extension registration timed out. Please try again."
 		}
 	}
 }
@@ -881,6 +887,10 @@ enum Mango9AccountProvisioner {
 		_ enrollment: Mango9SIPEnrollment,
 		displayName: String?
 	) async throws {
+		guard let normalizedEnrollmentIdentity =
+			Mango9SessionStore.normalizedIdentity(enrollment.identity) else {
+			throw Mango9AccountProvisioningError.invalidResponse
+		}
 		try await withCheckedThrowingContinuation { continuation in
 			CoreContext.shared.doOnCoreQueue { core in
 				do {
@@ -918,14 +928,23 @@ enum Mango9AccountProvisioner {
 					params.registerEnabled = true
 					Mango9Configuration.configurePush(on: params)
 
-					let existingAccount = core.accountList.first {
-						guard let existingIdentity = $0.params?.identityAddress else {
-							return false
-						}
-						return existingIdentity.weakEqual(address2: identity)
+					let matchingAccounts = core.accountList.filter {
+						Mango9SessionStore.normalizedIdentity(
+							$0.params?.identityAddress?.asStringUriOnly()
+						) == normalizedEnrollmentIdentity
 					}
+					let existingAccount = matchingAccounts.first { account in
+						core.defaultAccount.map { $0 == account } ?? false
+					} ?? matchingAccounts.first
 					let selectedAccount: Account
 					if let existingAccount {
+						// A SIP identity represents one line. Older multi-account builds
+						// could save the same identity more than once, leaving a stale
+						// registration that continued to raise global connection errors.
+						for duplicateAccount in matchingAccounts
+						where duplicateAccount !== existingAccount {
+							core.removeAccount(account: duplicateAccount)
+						}
 						if let oldAuthInfo = existingAccount.findAuthInfo() {
 							core.removeAuthInfo(info: oldAuthInfo)
 						}
@@ -940,6 +959,7 @@ enum Mango9AccountProvisioner {
 					}
 
 					core.defaultAccount = selectedAccount
+					selectedAccount.refreshRegister()
 					core.config?.setString(
 						section: "misc",
 						key: "config-uri",
@@ -952,6 +972,48 @@ enum Mango9AccountProvisioner {
 				}
 			}
 		}
+		try await waitForRegistration(
+			identity: normalizedEnrollmentIdentity,
+			timeout: 15
+		)
+	}
+
+	private static func waitForRegistration(
+		identity: String,
+		timeout: TimeInterval
+	) async throws {
+		let deadline = Date().addingTimeInterval(timeout)
+		var failedSince: Date?
+		while Date() < deadline {
+			let state: RegistrationState? = await withCheckedContinuation {
+				continuation in
+				CoreContext.shared.doOnCoreQueue { core in
+					let account = core.accountList.first {
+						Mango9SessionStore.normalizedIdentity(
+							$0.params?.identityAddress?.asStringUriOnly()
+						) == identity
+					}
+					continuation.resume(returning: account?.state)
+				}
+			}
+			switch state {
+			case .Ok:
+				return
+			case .Failed:
+				if let failedSince,
+				   Date().timeIntervalSince(failedSince) >= 1 {
+					throw Mango9AccountProvisioningError.registrationFailed
+				}
+				failedSince = failedSince ?? Date()
+			case nil:
+				throw Mango9AccountProvisioningError.invalidResponse
+			default:
+				failedSince = nil
+				break
+			}
+			try await Task.sleep(nanoseconds: 250_000_000)
+		}
+		throw Mango9AccountProvisioningError.registrationTimedOut
 	}
 }
 

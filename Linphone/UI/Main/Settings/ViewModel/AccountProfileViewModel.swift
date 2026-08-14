@@ -31,10 +31,41 @@ class AccountProfileViewModel: ObservableObject {
     @Published var defaultAccountModelIndex: Int? = 0
 	@Published var accountError: Bool = false
 	@Published var nonDefaultAccountNotificationsCount: Int = 0
+	private var accountErrorWorkItem: DispatchWorkItem?
 	
 	init() {
 		SharedMainViewModel.shared.getDialPlansList()
 		computeNonDefaultAccountNotificationsCount()
+	}
+
+	func refreshAccountError(gracePeriod: TimeInterval = 8) {
+		accountErrorWorkItem?.cancel()
+
+		let selectedAccountHasError = Self.selectedAccountHasError()
+		guard selectedAccountHasError else {
+			accountError = false
+			return
+		}
+
+		let workItem = DispatchWorkItem { [weak self] in
+			guard let self else { return }
+			self.accountError = Self.selectedAccountHasError()
+		}
+		accountErrorWorkItem = workItem
+		DispatchQueue.main.asyncAfter(
+			deadline: .now() + gracePeriod,
+			execute: workItem
+		)
+	}
+
+	private static func selectedAccountHasError() -> Bool {
+		guard let selectedAccount = CoreContext.shared.accounts.first(
+			where: { $0.isDefaultAccount }
+		) else {
+			return false
+		}
+		return selectedAccount.registrationState == .Cleared ||
+			selectedAccount.registrationState == .Failed
 	}
 	
 	func saveChangesWhenLeaving() {

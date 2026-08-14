@@ -91,7 +91,7 @@ class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
 							enrollment,
 							displayName: nil
 						)
-						ToastViewModel.shared.show("Mango9 account connected")
+						ToastViewModel.shared.show("Success_mango9_account_connected")
 					} catch {
 						self.coreContext.loggingInProgress = false
 						self.lastResult = ""

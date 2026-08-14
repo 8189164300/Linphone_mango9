@@ -64,6 +64,13 @@ struct ToastView: View {
 					}
 					
 					switch toast.message {
+					case "Success_mango9_account_connected":
+						Text("Mango9 account connected")
+							.multilineTextAlignment(.center)
+							.foregroundStyle(Color.greenSuccess500)
+							.default_text_style(styleSize: 15)
+							.padding(8)
+
 					case "Success_qr_code_validated":
 						Text("qr_code_validated")
 							.multilineTextAlignment(.center)
