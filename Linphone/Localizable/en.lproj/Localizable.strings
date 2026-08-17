@@ -89,7 +89,7 @@
 "assistant_permissions_access_camera_title" = "**Access camera:** To capture video during video calls and conferences.";
 "assistant_permissions_grant_all_of_them" = "OK";
 "assistant_permissions_post_notifications_title" = "**Post notifications:** To be informed when you receive a message or a call.";
-"assistant_permissions_read_contacts_title" = "**Read contacts:** To display your contacts and find whom is using %@.";
+"assistant_permissions_read_contacts_title" = "**Read contacts:** To display names for calling and messaging. Contacts stay on this device unless you explicitly add one to the CRM.";
 "assistant_permissions_record_audio_title" = "**Record audio:** So your correspondent can hear you and to record voice messages.";
 "assistant_permissions_skip_permissions" = "Do it later";
 "assistant_permissions_subtitle" = "To fully enjoy %@ we need you to grant us the following permissions :";

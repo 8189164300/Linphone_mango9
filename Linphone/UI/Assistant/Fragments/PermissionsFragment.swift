@@ -23,8 +23,6 @@ struct PermissionsFragment: View {
 	
 	var permissionManager = PermissionManager.shared
 	
-	@Environment(\.dismiss) var dismiss
-	
 	var body: some View {
 		GeometryReader { geometry in
 			if #available(iOS 16.4, *) {
@@ -53,25 +51,8 @@ struct PermissionsFragment: View {
 	
 	func innerScrollView(geometry: GeometryProxy) -> some View {
 		VStack {
-			ZStack {
-				HStack {
-					Image("caret-left")
-						.renderingMode(.template)
-						.resizable()
-						.foregroundStyle(Color.grayMain2c500)
-						.frame(width: 25, height: 25)
-						.padding(.all, 10)
-						.onTapGesture {
-							withAnimation {
-								dismiss()
-							}
-						}
-					Spacer()
-				}
-				
-				Text("assistant_permissions_title")
-					.default_text_style_800(styleSize: 20)
-			}
+			Text("assistant_permissions_title")
+				.default_text_style_800(styleSize: 20)
 			.frame(width: geometry.size.width)
 			.padding(.top, 10)
 			.padding(.bottom, 20)
@@ -160,32 +141,10 @@ struct PermissionsFragment: View {
 			
 			Spacer()
 			
-			Button(action: {
-				withAnimation {
-					SharedMainViewModel.shared.changeWelcomeView()
-				}
-			}, label: {
-				Text("assistant_permissions_skip_permissions")
-					.default_text_style_orange_600(styleSize: 20)
-					.frame(height: 35)
-					.frame(maxWidth: .infinity)
-			})
-			.padding(.horizontal, 20)
-			.padding(.vertical, 10)
-			.cornerRadius(60)
-			.overlay(
-				RoundedRectangle(cornerRadius: 60)
-					.inset(by: 0.5)
-					.stroke(Color.orangeMain500, lineWidth: 1)
-			)
-			.frame(maxWidth: SharedMainViewModel.shared.maxWidth)
-			.padding(.horizontal)
-			.accessibilityIdentifier("permissions_skip_button")
-			
 			Button {
 				permissionManager.getPermissions()
 			} label: {
-				Text("assistant_permissions_grant_all_of_them")
+				Text("Continue")
 					.default_text_style_white_600(styleSize: 20)
 					.frame(height: 35)
 					.frame(maxWidth: .infinity)
