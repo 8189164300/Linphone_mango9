@@ -455,6 +455,14 @@ class ConversationsListViewModel: ObservableObject {
 	}
 	
 	func changeDisplayedChatRoomWithoutCore(core: Core, conversationModel: ConversationModel) {
+		if !conversationModel.isGroup,
+		   let remote = conversationModel.chatRoom.peerAddress,
+		   Mango9SMSRouting.openIfNeeded(remote: remote, fallbackName: conversationModel.subject) {
+			DispatchQueue.main.async {
+				self.sharedMainViewModel.displayedConversation = nil
+			}
+			return
+		}
 		if let _ = core.searchChatRoomByIdentifier(identifier: conversationModel.id) {
 			if self.sharedMainViewModel.displayedConversation == nil {
 				DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -478,6 +486,14 @@ class ConversationsListViewModel: ObservableObject {
 	}
 	
 	func changeDisplayedChatRoom(conversationModel: ConversationModel) {
+		if !conversationModel.isGroup,
+		   let remote = conversationModel.chatRoom.peerAddress,
+		   Mango9SMSRouting.openIfNeeded(remote: remote, fallbackName: conversationModel.subject) {
+			DispatchQueue.main.async {
+				self.sharedMainViewModel.displayedConversation = nil
+			}
+			return
+		}
 		CoreContext.shared.doOnCoreQueue { core in
 			if let _ = core.searchChatRoomByIdentifier(identifier: conversationModel.id) {
 				if self.sharedMainViewModel.displayedConversation == nil {
@@ -504,6 +520,9 @@ class ConversationsListViewModel: ObservableObject {
 	
 	func createOneToOneChatRoomWith(remote: Address) {
 		if Mango9ChatRouting.openIfNeeded(remote: remote) {
+			return
+		}
+		if Mango9SMSRouting.openIfNeeded(remote: remote) {
 			return
 		}
 		CoreContext.shared.doOnCoreQueue { core in

@@ -68,6 +68,13 @@ class ProviderDelegate: NSObject {
 		super.init()
 		provider.setDelegate(self, queue: nil)
 	}
+
+	private func callHandle(_ value: String) -> CXHandle {
+		if let phoneNumber = Mango9CallerIdentity.externalPhoneNumber(value) {
+			return CXHandle(type: .phoneNumber, value: phoneNumber)
+		}
+		return CXHandle(type: .generic, value: value)
+	}
 	
 	static var providerConfiguration: CXProviderConfiguration {
 		let providerConfiguration = CXProviderConfiguration()
@@ -87,7 +94,7 @@ class ProviderDelegate: NSObject {
 	
 	func reportIncomingCall(call: Call?, uuid: UUID, handle: String, hasVideo: Bool, displayName: String) {
 		let update = CXCallUpdate()
-		update.remoteHandle = CXHandle(type: .generic, value: handle)
+		update.remoteHandle = callHandle(handle)
 		update.hasVideo = hasVideo
 		update.localizedCallerName = displayName
 		
@@ -141,7 +148,7 @@ class ProviderDelegate: NSObject {
 	
 	func updateCall(uuid: UUID, handle: String, hasVideo: Bool = false, displayName: String) {
 		let update = CXCallUpdate()
-		update.remoteHandle = CXHandle(type: .generic, value: handle)
+		update.remoteHandle = callHandle(handle)
 		update.localizedCallerName = displayName
 		update.hasVideo = hasVideo
 		provider.reportCall(with: uuid, updated: update)

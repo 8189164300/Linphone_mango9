@@ -1116,6 +1116,47 @@ enum Mango9ChatRouting {
 	}
 }
 
+struct Mango9SMSTarget: Identifiable {
+	let phone: String
+	let name: String
+
+	var id: String { phone }
+}
+
+enum Mango9SMSRouting {
+	static func openIfNeeded(remote: linphonesw.Address, fallbackName: String = "") -> Bool {
+		guard Mango9SessionStore.load() != nil,
+			  let target = target(remote: remote, fallbackName: fallbackName) else {
+			return false
+		}
+		DispatchQueue.main.async {
+			NotificationCenter.default.post(name: .mango9OpenSMS, object: target)
+		}
+		return true
+	}
+
+	static func target(
+		remote: linphonesw.Address,
+		fallbackName: String = ""
+	) -> Mango9SMSTarget? {
+		let raw = remote.username?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		guard let phone = Mango9CallerIdentity.externalPhoneNumber(raw),
+			  phone.filter(\.isNumber).count >= 10 else {
+			return nil
+		}
+
+		let ownName = Mango9CallerIdentity.normalizedLabel(Mango9SessionStore.load()?.displayName)?
+			.lowercased()
+		let displayName = Mango9CallerIdentity.normalizedLabel(remote.displayName)
+		let fallback = Mango9CallerIdentity.normalizedLabel(fallbackName)
+		let preferredName = [displayName, fallback]
+			.compactMap { $0 }
+			.first { $0.lowercased() != ownName }
+		let name = preferredName ?? Mango9CallerIdentity.formattedPhoneNumber(phone)
+		return Mango9SMSTarget(phone: phone, name: name)
+	}
+}
+
 struct Mango9TeamChatListFragment: View {
 	@ObservedObject private var store = Mango9ChatStore.shared
 	@State private var isShowingCreateGroup = false
@@ -2890,8 +2931,89 @@ struct Mango9ClientListPayload: Decodable {
 
 struct Mango9SMSSenderID: Decodable, Identifiable {
 	let senderId: String
+	let status: String
 
 	var id: String { senderId }
+	var isApproved: Bool {
+		let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+		return normalized == "1" || normalized == "approved" || normalized == "active"
+	}
+
+	private enum CodingKeys: String, CodingKey {
+		case senderId
+		case status
+	}
+
+	init(from decoder: Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		senderId = try container.decode(String.self, forKey: .senderId)
+		if let value = try? container.decode(String.self, forKey: .status) {
+			status = value
+		} else if let value = try? container.decode(Int.self, forKey: .status) {
+			status = String(value)
+		} else {
+			status = ""
+		}
+	}
+}
+
+struct Mango9SMSRecord: Decodable {
+	let id: String
+	let smsType: String
+	let smsText: String
+	let senderId: String
+	let sentTo: String
+	let sendingTime: String
+	let status: String
+
+	private enum CodingKeys: String, CodingKey {
+		case id
+		case smsType
+		case smsText
+		case senderId
+		case sentTo
+		case sendingTime
+		case status
+	}
+
+	init(from decoder: Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		id = Self.string(in: container, forKey: .id)
+		smsType = Self.string(in: container, forKey: .smsType)
+		smsText = Self.string(in: container, forKey: .smsText)
+		senderId = Self.string(in: container, forKey: .senderId)
+		sentTo = Self.string(in: container, forKey: .sentTo)
+		sendingTime = Self.string(in: container, forKey: .sendingTime)
+		status = Self.string(in: container, forKey: .status)
+	}
+
+	private static func string(
+		in container: KeyedDecodingContainer<CodingKeys>,
+		forKey key: CodingKeys
+	) -> String {
+		if let value = try? container.decode(String.self, forKey: key) {
+			return value
+		}
+		if let value = try? container.decode(Int.self, forKey: key) {
+			return String(value)
+		}
+		if let value = try? container.decode(Double.self, forKey: key) {
+			return String(value)
+		}
+		return ""
+	}
+}
+
+struct Mango9SMSListPayload: Decodable {
+	let messages: [Mango9SMSRecord]
+}
+
+private struct Mango9SMSThreadMessage: Identifiable {
+	let id: String
+	let text: String
+	let timestamp: String
+	let status: String
+	let isIncoming: Bool
 }
 
 private struct Mango9ActionEnvelope: Decodable {
@@ -3414,7 +3536,33 @@ extension Mango9CRMAPI {
 		guard envelope.success else {
 			throw Mango9CRMAPIError.server
 		}
-		return envelope.data ?? []
+		return envelope.data?.filter(\.isApproved) ?? []
+	}
+
+	static func smsMessages(session: Mango9Session) async throws -> [Mango9SMSRecord] {
+		let request = try authorizedRequest(
+			session: session,
+			path: ["messages"],
+			query: [URLQueryItem(name: "limit", value: "100")]
+		)
+		let envelope: Envelope<Mango9SMSListPayload> = try await send(request)
+		guard envelope.success else {
+			throw Mango9CRMAPIError.server
+		}
+		return envelope.data?.messages ?? []
+	}
+
+	static func smsInbox(session: Mango9Session) async throws -> [Mango9SMSRecord] {
+		let request = try authorizedRequest(
+			session: session,
+			path: ["inbox"],
+			query: [URLQueryItem(name: "limit", value: "100")]
+		)
+		let envelope: Envelope<Mango9SMSListPayload> = try await send(request)
+		guard envelope.success else {
+			throw Mango9CRMAPIError.server
+		}
+		return envelope.data?.messages ?? []
 	}
 
 	static func sendSMS(
@@ -3488,6 +3636,7 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 	@Published var message = ""
 	@Published var selectedSenderID = ""
 	@Published private(set) var senderIDs: [Mango9SMSSenderID] = []
+	@Published private(set) var threadMessages: [Mango9SMSThreadMessage] = []
 	@Published private(set) var isLoading = false
 	@Published private(set) var isSending = false
 	@Published private(set) var errorMessage: String?
@@ -3509,17 +3658,19 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 
 		do {
 			do {
-				senderIDs = try await Mango9CRMAPI.smsSenderIDs(session: session)
+				try await loadRemoteData(session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
 				try Mango9SessionStore.save(session)
-				senderIDs = try await Mango9CRMAPI.smsSenderIDs(session: session)
+				try await loadRemoteData(session: session)
 			}
 			if selectedSenderID.isEmpty {
 				selectedSenderID = senderIDs.first?.senderId ?? ""
 			}
 		} catch Mango9CRMAPIError.unauthorized {
 			errorMessage = "Your CRM session expired. Sign in again."
+		} catch Mango9CRMAPIError.serverMessage(let message) {
+			errorMessage = message
 		} catch {
 			errorMessage = "Mango9 SMS numbers could not be loaded."
 		}
@@ -3528,6 +3679,10 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 	func send() async -> Bool {
 		let outgoing = message.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !outgoing.isEmpty, !isSending else { return false }
+		guard !selectedSenderID.isEmpty else {
+			errorMessage = "No approved Mango9 SMS number is available for this account."
+			return false
+		}
 		guard var session = Mango9SessionStore.load() else {
 			errorMessage = "Connect your Mango9 account to send SMS."
 			return false
@@ -3555,27 +3710,110 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 					senderID: selectedSenderID
 				)
 			}
+			message = ""
+			await refreshThread(session: session)
 			return true
 		} catch Mango9CRMAPIError.unauthorized {
 			errorMessage = "Your CRM session expired. Sign in again."
+		} catch Mango9CRMAPIError.serverMessage(let message) {
+			errorMessage = message
+		} catch Mango9MessagingAPIError.message(let message) {
+			errorMessage = message
 		} catch {
-			errorMessage = error.localizedDescription
+			errorMessage = "Mango9 could not send this SMS."
 		}
 		return false
 	}
+
+	private func loadRemoteData(session: Mango9Session) async throws {
+		async let loadedSenderIDs = Mango9CRMAPI.smsSenderIDs(session: session)
+		async let loadedMessages = try? Mango9CRMAPI.smsMessages(session: session)
+		async let loadedInbox = try? Mango9CRMAPI.smsInbox(session: session)
+		let (newSenderIDs, messages, inbox) = try await (
+			loadedSenderIDs,
+			loadedMessages,
+			loadedInbox
+		)
+		senderIDs = newSenderIDs
+		threadMessages = Self.makeThread(
+			messages: messages ?? [],
+			inbox: inbox ?? [],
+			phone: phone
+		)
+	}
+
+	private func refreshThread(session: Mango9Session) async {
+		do {
+			async let loadedMessages = Mango9CRMAPI.smsMessages(session: session)
+			async let loadedInbox = Mango9CRMAPI.smsInbox(session: session)
+			let (messages, inbox) = try await (loadedMessages, loadedInbox)
+			threadMessages = Self.makeThread(
+				messages: messages,
+				inbox: inbox,
+				phone: phone
+			)
+		} catch {
+			Log.warn("[Mango9 SMS] Sent message but could not refresh the thread: \(error)")
+		}
+	}
+
+	private static func makeThread(
+		messages: [Mango9SMSRecord],
+		inbox: [Mango9SMSRecord],
+		phone: String
+	) -> [Mango9SMSThreadMessage] {
+		let remoteNumber = normalizedNumber(phone)
+		let inboundIds = Set(inbox.map(\.id))
+		let outgoing = messages.filter {
+			!inboundIds.contains($0.id)
+				&& normalizedNumber($0.sentTo) == remoteNumber
+		}.map {
+			Mango9SMSThreadMessage(
+				id: "out-\($0.id)",
+				text: $0.smsText,
+				timestamp: $0.sendingTime,
+				status: $0.status,
+				isIncoming: false
+			)
+		}
+		let incoming = inbox.filter {
+			normalizedNumber($0.senderId) == remoteNumber
+		}.map {
+			Mango9SMSThreadMessage(
+				id: "in-\($0.id)",
+				text: $0.smsText,
+				timestamp: $0.sendingTime,
+				status: $0.status,
+				isIncoming: true
+			)
+		}
+		return (outgoing + incoming).sorted { $0.timestamp < $1.timestamp }
+	}
+
+	private static func normalizedNumber(_ value: String) -> String {
+		let digits = value.filter(\.isNumber)
+		if digits.count > 10 {
+			return String(digits.suffix(10))
+		}
+		return digits
+	}
 }
 
-private struct Mango9SMSComposer: View {
+struct Mango9SMSComposer: View {
 	@Environment(\.dismiss) private var dismiss
 	@StateObject private var viewModel: Mango9SMSComposerViewModel
 
-	init(target: Mango9CommunicationTarget) {
+	init(recipientName: String, phone: String) {
 		_viewModel = StateObject(
 			wrappedValue: Mango9SMSComposerViewModel(
-				recipientName: target.displayName,
-				phone: target.phone
+				recipientName: recipientName,
+				phone: phone
 			)
 		)
+	}
+
+	fileprivate init(target: Mango9CommunicationTarget) {
+		self.init(recipientName: target.displayName, phone: target.phone)
 	}
 
 	var body: some View {
@@ -3588,6 +3826,33 @@ private struct Mango9SMSComposer: View {
 						Text(viewModel.phone)
 							.default_text_style(styleSize: 13)
 							.foregroundStyle(Color.grayMain2c500)
+					}
+
+					if !viewModel.threadMessages.isEmpty {
+						VStack(spacing: 10) {
+							ForEach(viewModel.threadMessages) { message in
+								HStack {
+									if !message.isIncoming { Spacer(minLength: 48) }
+									VStack(
+										alignment: message.isIncoming ? .leading : .trailing,
+										spacing: 4
+									) {
+										Text(message.text)
+											.default_text_style(styleSize: 14)
+											.foregroundStyle(message.isIncoming ? Color.grayMain2c700 : Color.white)
+										Text(message.timestamp)
+											.default_text_style(styleSize: 10)
+											.foregroundStyle(message.isIncoming ? Color.grayMain2c500 : Color.white.opacity(0.8))
+									}
+									.padding(.horizontal, 13)
+									.padding(.vertical, 10)
+									.background(message.isIncoming ? Color.grayMain2c200 : Color.blue)
+									.cornerRadius(16)
+									if message.isIncoming { Spacer(minLength: 48) }
+								}
+							}
+						}
+						.padding(.vertical, 4)
 					}
 
 					VStack(alignment: .leading, spacing: 7) {
@@ -3658,7 +3923,6 @@ private struct Mango9SMSComposer: View {
 						Task {
 							if await viewModel.send() {
 								ToastViewModel.shared.show("SMS sent with Mango9")
-								dismiss()
 							}
 						}
 					} label: {
@@ -3687,6 +3951,9 @@ private struct Mango9SMSComposer: View {
 					)
 				}
 				.padding(20)
+			}
+			.refreshable {
+				await viewModel.load()
 			}
 			.background(Color.white)
 			.navigationTitle("Mango9 SMS")

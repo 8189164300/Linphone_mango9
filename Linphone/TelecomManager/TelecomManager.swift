@@ -28,6 +28,102 @@ import CallKit
 import AVFoundation
 import SwiftUI
 
+enum Mango9CallerIdentity {
+	private static let unusableLabels: Set<String> = [
+		"anonymous",
+		"anonymous caller",
+		"call from mango9",
+		"calling",
+		"mango 9",
+		"mango9",
+		"no caller id",
+		"private",
+		"restricted",
+		"unavailable",
+		"unknown"
+	]
+
+	static func normalizedLabel(_ value: String?) -> String? {
+		guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+			  !value.isEmpty,
+			  !unusableLabels.contains(value.lowercased()) else {
+			return nil
+		}
+		return value
+	}
+
+	static func externalPhoneNumber(_ rawValue: String?) -> String? {
+		guard var value = normalizedLabel(rawValue) else { return nil }
+		if value.lowercased().hasPrefix("sip:") {
+			value.removeFirst(4)
+		}
+		if let bracket = value.lastIndex(of: "<") {
+			value = String(value[value.index(after: bracket)...])
+			if value.lowercased().hasPrefix("sip:") {
+				value.removeFirst(4)
+			}
+		}
+		value = String(value.split(separator: "@", maxSplits: 1).first ?? Substring(value))
+		value = String(value.split(separator: ";", maxSplits: 1).first ?? Substring(value))
+
+		let phoneCharacters = CharacterSet(charactersIn: "+0123456789-(). ")
+		guard value.unicodeScalars.allSatisfy({ phoneCharacters.contains($0) }) else { return nil }
+		let digits = value.filter(\.isNumber)
+		guard digits.count >= 7, digits.count <= 15 else { return nil }
+		if digits.count == 10 {
+			return "+1" + digits
+		}
+		if digits.count == 11, digits.first == "1" {
+			return "+" + digits
+		}
+		return value.hasPrefix("+") ? "+" + digits : digits
+	}
+
+	static func externalPhoneNumber(for address: Address?) -> String? {
+		externalPhoneNumber(address?.username)
+	}
+
+	static func formattedPhoneNumber(_ number: String) -> String {
+		var digits = number.filter(\.isNumber)
+		if digits.count == 11, digits.first == "1" {
+			digits.removeFirst()
+		}
+		guard digits.count == 10 else { return number }
+		let areaEnd = digits.index(digits.startIndex, offsetBy: 3)
+		let prefixEnd = digits.index(areaEnd, offsetBy: 3)
+		return "\(digits[..<areaEnd])-\(digits[areaEnd..<prefixEnd])-\(digits[prefixEnd...])"
+	}
+
+	static func displayName(for address: Address?, contactName: String? = nil) -> String {
+		guard let address else { return "Unknown" }
+		if let phoneNumber = externalPhoneNumber(for: address) {
+			let ownName = normalizedLabel(Mango9SessionStore.load()?.displayName)?.lowercased()
+			if let contactName = normalizedLabel(contactName), contactName.lowercased() != ownName {
+				return contactName
+			}
+			return formattedPhoneNumber(phoneNumber)
+		}
+		if let contactName = normalizedLabel(contactName) {
+			return contactName
+		}
+		if let displayName = normalizedLabel(address.displayName) {
+			return displayName
+		}
+		if let username = normalizedLabel(address.username) {
+			return username
+		}
+		let uri = address.asStringUriOnly()
+		return uri.lowercased().hasPrefix("sip:") ? String(uri.dropFirst(4)) : uri
+	}
+
+	static func callKitHandle(for address: Address?) -> String {
+		guard let address else { return "Incoming call" }
+		return externalPhoneNumber(for: address)
+			?? normalizedLabel(address.username)
+			?? address.asStringUriOnly()
+	}
+}
+
 class CallAppData: NSObject {
 	var batteryWarningShown = false
 	var videoRequested = false /*set when user has requested for video*/
@@ -412,26 +508,18 @@ class TelecomManager: ObservableObject {
 	
 	func incomingDisplayName(call: Call, completion: @escaping (String) -> Void) {
 		CoreContext.shared.doOnCoreQueue { _ in
-			ContactsManager.shared.getFriendWithAddressInCoreQueue(address: call.remoteAddress!) { friendResult in
-				if call.remoteAddress != nil {
-					if call.callLog?.wasConference() != true {
-						if let addressFriend = friendResult {
-							completion(addressFriend.name!)
-						} else if let remoteAddress = call.remoteAddress {
-							if remoteAddress.displayName != nil {
-								completion(remoteAddress.displayName!)
-							} else if remoteAddress.username != nil {
-								completion(remoteAddress.username!)
-							} else {
-								completion(String(remoteAddress.asStringUriOnly().dropFirst(4)))
-							}
-						}
-					} else {
-						completion(call.callLog?.conferenceInfo?.subject ?? "Error Conference Name")
-					}
-				} else {
-					completion("IncomingDisplayName")
+			guard let remoteAddress = call.remoteAddress else {
+				completion("Unknown")
+				return
+			}
+			ContactsManager.shared.getFriendWithAddressInCoreQueue(address: remoteAddress) { friendResult in
+				if call.callLog?.wasConference() == true {
+					completion(call.callLog?.conferenceInfo?.subject ?? "Conference")
+					return
 				}
+				let contactName = Mango9CallerIdentity.normalizedLabel(friendResult?.name)
+					?? Mango9CallerIdentity.normalizedLabel(friendResult?.address?.displayName)
+				completion(Mango9CallerIdentity.displayName(for: remoteAddress, contactName: contactName))
 			}
 		}
 	}
@@ -523,7 +611,14 @@ class TelecomManager: ObservableObject {
 		
 		if cstate == .PushIncomingReceived {
 			Log.info("PushIncomingReceived in core delegate, display callkit call")
-			TelecomManager.shared.displayIncomingCall(call: call, handle: "Calling", hasVideo: false, callId: callId, displayName: "Calling")
+			let address = call.remoteAddress
+			TelecomManager.shared.displayIncomingCall(
+				call: call,
+				handle: Mango9CallerIdentity.callKitHandle(for: address),
+				hasVideo: false,
+				callId: callId,
+				displayName: Mango9CallerIdentity.displayName(for: address)
+			)
 		} else {
 			// let oldRemoteConfVideo = self.remoteConfVideo
 			
@@ -635,12 +730,12 @@ class TelecomManager: ObservableObject {
 						
 						if uuid != nil {
 							// Tha app is now registered, updated the call already existed.
-							self.providerDelegate.updateCall(uuid: uuid!, handle: addr!.asStringUriOnly(), hasVideo: self.remoteConfVideo, displayName: displayName)
+							self.providerDelegate.updateCall(uuid: uuid!, handle: Mango9CallerIdentity.callKitHandle(for: addr), hasVideo: self.remoteConfVideo, displayName: displayName)
 						} else {
 							let videoEnabled = call.remoteParams?.videoEnabled ?? false
 							let isConference = call.callLog?.wasConference() ?? false
 							let videoDir = call.remoteParams?.videoDirection != MediaDirection.Inactive
-							self.displayIncomingCall(call: call, handle: addr!.asStringUriOnly(), hasVideo: videoEnabled && videoDir && !isConference, callId: callId, displayName: displayName)
+							self.displayIncomingCall(call: call, handle: Mango9CallerIdentity.callKitHandle(for: addr), hasVideo: videoEnabled && videoDir && !isConference, callId: callId, displayName: displayName)
 						}
 					}
 				}

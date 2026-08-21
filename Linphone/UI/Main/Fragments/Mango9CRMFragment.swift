@@ -569,6 +569,11 @@ enum Mango9CRMAPI {
 			throw Mango9CRMAPIError.unauthorized
 		}
 		guard (200..<300).contains(httpResponse.statusCode) else {
+			if let payload = try? JSONDecoder().decode(Mango9CRMErrorPayload.self, from: data),
+			   let message = payload.message?.trimmingCharacters(in: .whitespacesAndNewlines),
+			   !message.isEmpty {
+				throw Mango9CRMAPIError.serverMessage(message)
+			}
 			throw Mango9CRMAPIError.server
 		}
 
@@ -578,10 +583,15 @@ enum Mango9CRMAPI {
 	}
 }
 
+private struct Mango9CRMErrorPayload: Decodable {
+	let message: String?
+}
+
 enum Mango9CRMAPIError: Error {
 	case unauthorized
 	case invalidConfiguration
 	case server
+	case serverMessage(String)
 }
 
 #Preview {

@@ -323,27 +323,20 @@ class CallViewModel: ObservableObject {
 				
 				if self.currentCall?.conference != nil {
 					displayNameTmp = self.currentCall?.conference?.subject ?? ""
-				} else if self.currentCall?.remoteAddress != nil {
-					let friend = ContactsManager.shared.getFriendWithAddress(address: self.currentCall!.remoteAddress)
-					if friend != nil && friend!.address != nil && friend!.address!.displayName != nil {
-						displayNameTmp = friend!.address!.displayName!
-					}  else if friend != nil && friend?.name != nil {
-						displayNameTmp = friend?.name ?? "No name"
-					}  else {
-						if self.currentCall!.remoteAddress!.displayName != nil {
-							displayNameTmp = self.currentCall!.remoteAddress!.displayName!
-						} else if self.currentCall!.remoteAddress!.username != nil && displayNameTmp.isEmpty {
-							displayNameTmp = self.currentCall!.remoteAddress!.username!
-						} else if displayNameTmp.isEmpty {
-							displayNameTmp = String(self.currentCall!.remoteAddress!.asStringUriOnly().dropFirst(4))
-						}
-					}
+				} else if let remoteAddress = self.currentCall?.remoteAddress {
+					let friend = ContactsManager.shared.getFriendWithAddress(address: remoteAddress)
+					let contactName = Mango9CallerIdentity.normalizedLabel(friend?.name)
+						?? Mango9CallerIdentity.normalizedLabel(friend?.address?.displayName)
+					displayNameTmp = Mango9CallerIdentity.displayName(
+						for: remoteAddress,
+						contactName: contactName
+					)
 					
 					DispatchQueue.main.async {
 						self.displayName = displayNameTmp
 					}
 					
-					ContactAvatarModel.getAvatarModelFromAddress(address: self.currentCall!.remoteAddress!) { avatarResult in
+					ContactAvatarModel.getAvatarModelFromAddress(address: remoteAddress) { avatarResult in
 						DispatchQueue.main.async {
 							self.avatarModel = avatarResult
 						}

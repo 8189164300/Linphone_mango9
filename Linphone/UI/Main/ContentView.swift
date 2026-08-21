@@ -78,6 +78,7 @@ struct ContentView: View {
 	@State var isShowCRMFragment = false
 	@State private var crmDeepLinkLeadId: Int?
 	@State private var mango9ChatTarget: Mango9ChatTarget?
+	@State private var mango9SMSTarget: Mango9SMSTarget?
 	
 	@State var fullscreenVideo = false
 	
@@ -2102,6 +2103,7 @@ struct ContentView: View {
                 accountProfileViewModel.defaultAccountModelIndex = CoreContext.shared.accounts.firstIndex(where: {$0.isDefaultAccount})
 				isShowCRMFragment = false
 				mango9ChatTarget = nil
+				mango9SMSTarget = nil
 				Mango9ChatStore.shared.disconnect()
 				ContactsManager.shared.syncMango9Team([])
 								
@@ -2170,6 +2172,9 @@ struct ContentView: View {
 				.presentationDetents([.medium])
 			}
 		})
+		.sheet(item: $mango9SMSTarget) { target in
+			Mango9SMSComposer(recipientName: target.name, phone: target.phone)
+		}
 		.overlay {
 			if isMenuOpen {
 				Color.white.opacity(0.001)
@@ -2212,6 +2217,10 @@ struct ContentView: View {
 			withAnimation {
 				mango9ChatTarget = target
 			}
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenSMS)) { notification in
+			guard let target = notification.object as? Mango9SMSTarget else { return }
+			mango9SMSTarget = target
 		}
 		.task {
 			if var session = Mango9SessionStore.load() {

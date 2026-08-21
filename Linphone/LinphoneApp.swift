@@ -31,6 +31,7 @@ extension Notification.Name {
 	static let mango9ClientDidChange = Notification.Name("mango9ClientDidChange")
 	static let mango9OpenLead = Notification.Name("mango9OpenLead")
 	static let mango9OpenChat = Notification.Name("mango9OpenChat")
+	static let mango9OpenSMS = Notification.Name("mango9OpenSMS")
 	static let mango9AccountContextChanged =
 		Notification.Name("mango9AccountContextChanged")
 	static let mango9LineIdentityChanged =

@@ -238,6 +238,9 @@ class HistoryListViewModel: ObservableObject {
 		if Mango9ChatRouting.openIfNeeded(remote: remote) {
 			return
 		}
+		if Mango9SMSRouting.openIfNeeded(remote: remote) {
+			return
+		}
 		CoreContext.shared.doOnCoreQueue { core in
 			let account = core.defaultAccount
 			if account == nil {
