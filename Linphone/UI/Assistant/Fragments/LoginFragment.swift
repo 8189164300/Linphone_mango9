@@ -17,6 +17,7 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+import CryptoKit
 import Security
 import SwiftUI
 import linphonesw
@@ -80,7 +81,28 @@ struct LoginFragment: View {
 			   username.isEmpty,
 			   let session = Mango9SessionStore.load() {
 				username = session.loginId
+				if !isShowBack {
+					restoreSavedAccount(session)
+				}
 			}
+		}
+	}
+
+	private func restoreSavedAccount(_ session: Mango9Session) {
+		guard !isSigningIn else { return }
+		isSigningIn = true
+		signInError = nil
+
+		Task {
+			do {
+				try await Mango9LoginService.restore(session: session)
+				ToastViewModel.shared.show("Success_mango9_account_connected")
+			} catch Mango9CRMAPIError.unauthorized {
+				signInError = "Your saved Mango9 session has expired. Enter your password to connect again."
+			} catch {
+				signInError = Mango9LoginService.userFacingMessage(for: error)
+			}
+			isSigningIn = false
 		}
 	}
 
@@ -413,6 +435,19 @@ private enum Mango9LoginService {
 		let category: String
 	}
 
+	private struct StoredProvisioning: Decodable {
+		struct SIP: Decodable {
+			let identity: String
+			let username: String
+			let activeNumber: String?
+			let password: String
+			let domain: String
+			let realm: String
+		}
+
+		let sip: SIP
+	}
+
 	static func userFacingMessage(for error: Error) -> String {
 		if let localizedError = error as? LocalizedError,
 		   let message = localizedError.errorDescription {
@@ -516,6 +551,94 @@ private enum Mango9LoginService {
 			ContactsManager.shared.syncMango9Team(team)
 		}
 		await Mango9ChatStore.shared.connectIfNeeded(force: true)
+	}
+
+	static func restore(session: Mango9Session) async throws {
+		CoreContext.shared.loggingInProgress = true
+		defer { CoreContext.shared.loggingInProgress = false }
+
+		var currentSession = session
+		let provisioning: StoredProvisioning
+		do {
+			provisioning = try await storedProvisioning(session: currentSession)
+		} catch Mango9CRMAPIError.unauthorized {
+			currentSession = try await Mango9CRMAPI.refresh(session: currentSession)
+			try Mango9SessionStore.save(
+				currentSession,
+				for: currentSession.sipIdentity,
+				persist: true
+			)
+			provisioning = try await storedProvisioning(session: currentSession)
+		}
+
+		let sip = provisioning.sip
+		let identity = sip.identity.trimmingCharacters(in: .whitespacesAndNewlines)
+		let username = sip.username.trimmingCharacters(in: .whitespacesAndNewlines)
+		let password = sip.password
+		let domain = sip.domain.trimmingCharacters(in: .whitespacesAndNewlines)
+		let realm = sip.realm.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !identity.isEmpty,
+			  !username.isEmpty,
+			  !password.isEmpty,
+			  !domain.isEmpty,
+			  !realm.isEmpty else {
+			throw SignInFailure.accountNotProvisionable
+		}
+
+		let digestInput = Data("\(username):\(realm):\(password)".utf8)
+		let ha1 = Insecure.MD5.hash(data: digestInput)
+			.map { String(format: "%02x", $0) }
+			.joined()
+		let enrollment = Mango9SIPEnrollment(
+			identity: identity,
+			username: username,
+			domain: domain,
+			realm: realm,
+			ha1: ha1
+		)
+
+		let associatedSession = currentSession.associated(with: identity)
+		try Mango9SessionStore.save(
+			associatedSession,
+			for: identity,
+			persist: true,
+			makeActive: true
+		)
+		try await Mango9AccountProvisioner.install(
+			enrollment,
+			displayName: associatedSession.displayName
+		)
+		Mango9LineIdentityStore.save(
+			Mango9LineIdentity(
+				extensionNumber: username,
+				activeNumber: sip.activeNumber
+			),
+			sipIdentity: identity
+		)
+		await Mango9ChatStore.shared.connectIfNeeded(force: true)
+	}
+
+	private static func storedProvisioning(
+		session: Mango9Session
+	) async throws -> StoredProvisioning {
+		guard let baseURL = URL(string: session.crmApiBaseUrl) else {
+			throw Mango9CRMAPIError.invalidConfiguration
+		}
+		var request = URLRequest(
+			url: baseURL.appendingPathComponent("provisioning")
+		)
+		request.httpMethod = "GET"
+		request.setValue("application/json", forHTTPHeaderField: "Accept")
+		request.setValue(
+			"Bearer \(session.accessToken)",
+			forHTTPHeaderField: "Authorization"
+		)
+		let envelope: Mango9CRMAPI.Envelope<StoredProvisioning> =
+			try await Mango9CRMAPI.send(request)
+		guard envelope.success, let provisioning = envelope.data else {
+			throw SignInFailure.accountNotProvisionable
+		}
+		return provisioning
 	}
 }
 
@@ -766,11 +889,22 @@ enum Mango9SessionStore {
 			kSecMatchLimit as String: kSecMatchLimitOne
 		]
 		var result: CFTypeRef?
-		guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+		let status = SecItemCopyMatching(query as CFDictionary, &result)
+		guard status == errSecSuccess,
 			  let data = result as? Data else {
+			if status != errSecItemNotFound {
+				Log.warn("[Mango9 Session] Keychain lookup failed for the stored account (status: \(status))")
+			}
 			return nil
 		}
-		return try? JSONDecoder().decode(Mango9Session.self, from: data)
+		do {
+			return try JSONDecoder().decode(Mango9Session.self, from: data)
+		} catch {
+			let keys = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?
+				.keys.sorted().joined(separator: ",") ?? "unreadable"
+			Log.error("[Mango9 Session] Stored session could not be decoded (keys: \(keys), error: \(error))")
+			return nil
+		}
 	}
 
 	private static func deletePersistentSession(for sipIdentity: String) {
