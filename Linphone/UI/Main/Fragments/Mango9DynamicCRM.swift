@@ -559,6 +559,30 @@ final class Mango9ChatStore: ObservableObject {
 		return try await upload(attachments)
 	}
 
+	func sendSMS(
+		to phone: String,
+		from senderID: String,
+		message: String,
+		attachments: [Attachment] = []
+	) async throws {
+		await connectIfNeeded()
+		guard isConnected,
+			  connectedIdentity == Mango9SessionStore.activeIdentity else {
+			throw Mango9ChatError.disconnected
+		}
+		let files = try await upload(attachments)
+		_ = try await rpcCall(
+			"sendSmsMessage",
+			params: [
+				phone,
+				senderID,
+				message,
+				files,
+				UUID().uuidString.lowercased(),
+			]
+		)
+	}
+
 	func notifyTyping() {
 		guard let roomId = activeRoomId else {
 			return
@@ -3696,7 +3720,7 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 			errorMessage = "No approved Mango9 SMS number is available for this account."
 			return false
 		}
-		guard var session = Mango9SessionStore.load() else {
+		guard let session = Mango9SessionStore.load() else {
 			errorMessage = "Connect your Mango9 account to send SMS."
 			return false
 		}
@@ -3706,26 +3730,12 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 		defer { isSending = false }
 
 		do {
-			let media = try await Mango9ChatStore.shared.uploadForMessaging(attachments)
-			do {
-				try await Mango9CRMAPI.sendSMS(
-					session: session,
-					to: phone,
-					message: outgoing,
-					senderID: selectedSenderID,
-					media: media
-				)
-			} catch Mango9CRMAPIError.unauthorized {
-				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
-				try await Mango9CRMAPI.sendSMS(
-					session: session,
-					to: phone,
-					message: outgoing,
-					senderID: selectedSenderID,
-					media: media
-				)
-			}
+			try await Mango9ChatStore.shared.sendSMS(
+				to: phone,
+				from: selectedSenderID,
+				message: outgoing,
+				attachments: attachments
+			)
 			message = ""
 			await refreshThread(session: session)
 			return true
@@ -3735,6 +3745,8 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 			errorMessage = message
 		} catch Mango9MessagingAPIError.message(let message) {
 			errorMessage = message
+		} catch let error as Mango9ChatError {
+			errorMessage = error.localizedDescription
 		} catch {
 			errorMessage = "Mango9 could not send this SMS."
 		}
