@@ -44,7 +44,6 @@ class SharedMainViewModel: ObservableObject {
 	@Published var displayedFriend: ContactAvatarModel?
 	@Published var displayedCall: HistoryModel?
 	@Published var displayedConversation: ConversationModel?
-	@Published var displayedSMS: Mango9SMSTarget?
 	@Published var displayedMeeting: MeetingModel?
 	
 	@Published var displayedFriendExistingChatRoom: ConversationModel?
@@ -172,9 +171,6 @@ class SharedMainViewModel: ObservableObject {
 		let preferences = UserDefaults.standard
 		
 		indexView = indexViewInt
-		if indexViewInt != 2 {
-			displayedSMS = nil
-		}
 		preferences.set(indexView, forKey: indexViewKey)
 	}
 	

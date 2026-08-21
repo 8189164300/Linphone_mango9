@@ -78,6 +78,7 @@ struct ContentView: View {
 	@State var isShowCRMFragment = false
 	@State private var crmDeepLinkLeadId: Int?
 	@State private var mango9ChatTarget: Mango9ChatTarget?
+	@State private var mango9SMSTarget: Mango9SMSTarget?
 	
 	@State var fullscreenVideo = false
 	
@@ -1202,7 +1203,7 @@ struct ContentView: View {
 						}
 					}
 					
-					if sharedMainViewModel.displayedFriend != nil || sharedMainViewModel.displayedCall != nil || sharedMainViewModel.displayedConversation != nil || sharedMainViewModel.displayedSMS != nil ||
+					if sharedMainViewModel.displayedFriend != nil || sharedMainViewModel.displayedCall != nil || sharedMainViewModel.displayedConversation != nil ||
 						sharedMainViewModel.displayedMeeting != nil {
 						HStack(spacing: 0) {
 							Spacer()
@@ -1255,16 +1256,6 @@ struct ContentView: View {
 										)
 									}
 								}
-								.frame(maxWidth: .infinity)
-								.background(Color.gray100)
-								.ignoresSafeArea(.keyboard)
-							} else if let target = sharedMainViewModel.displayedSMS,
-									  sharedMainViewModel.indexView == 2 {
-								Mango9SMSConversationFragment(
-									recipientName: target.name,
-									phone: target.phone
-								)
-								.id(target.id)
 								.frame(maxWidth: .infinity)
 								.background(Color.gray100)
 								.ignoresSafeArea(.keyboard)
@@ -2109,7 +2100,7 @@ struct ContentView: View {
                 accountProfileViewModel.defaultAccountModelIndex = CoreContext.shared.accounts.firstIndex(where: {$0.isDefaultAccount})
 				isShowCRMFragment = false
 				mango9ChatTarget = nil
-				sharedMainViewModel.displayedSMS = nil
+				mango9SMSTarget = nil
 				Mango9ChatStore.shared.disconnect()
 				ContactsManager.shared.syncMango9Team([])
 								
@@ -2145,6 +2136,9 @@ struct ContentView: View {
 				passwordUpdateAddress = address
 				isShowUpdatePasswordPopup = true
 			}
+		}
+		.fullScreenCover(item: $mango9SMSTarget) { target in
+			Mango9SMSComposer(recipientName: target.name, phone: target.phone)
 		}
 		.overlay {
 			if isMenuOpen {
@@ -2191,17 +2185,7 @@ struct ContentView: View {
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenSMS)) { notification in
 			guard let target = notification.object as? Mango9SMSTarget else { return }
-			resetFilter()
-			isShowCRMFragment = false
-			mango9ChatTarget = nil
-			sharedMainViewModel.displayedFriend = nil
-			sharedMainViewModel.displayedCall = nil
-			sharedMainViewModel.displayedConversation = nil
-			sharedMainViewModel.displayedMeeting = nil
-			sharedMainViewModel.changeIndexView(indexViewInt: 2)
-			withAnimation {
-				sharedMainViewModel.displayedSMS = target
-			}
+			mango9SMSTarget = target
 		}
 		.task {
 			if var session = Mango9SessionStore.load() {

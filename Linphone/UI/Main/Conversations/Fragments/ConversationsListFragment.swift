@@ -37,22 +37,6 @@ struct ConversationsListFragment: View {
 	var body: some View {
 		VStack {
 			List {
-				ForEach(visibleSMSParties) { party in
-					Mango9SMSConversationRow(party: party)
-						.contentShape(Rectangle())
-						.onTapGesture {
-							Mango9SMSRouting.open(
-								Mango9SMSTarget(
-									phone: party.phone,
-									name: Mango9CallerIdentity.formattedPhoneNumber(party.phone)
-								)
-							)
-						}
-						.listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 14))
-						.listRowSeparator(.hidden)
-						.listRowBackground(Color.white)
-				}
-
 				if hasMango9Inbox {
 					NavigationLink(destination: Mango9TeamChatListFragment()) {
 						Mango9InboxConversationRow()
@@ -62,7 +46,7 @@ struct ConversationsListFragment: View {
 					.listRowBackground(Color.white)
 				}
 
-				ForEach(visibleSIPConversations) { conversation in
+				ForEach(conversationsListViewModel.conversationsList) { conversation in
 					ConversationRow(
 						navigationManager: _navigationManager,
 						conversation: conversation,
@@ -106,8 +90,7 @@ struct ConversationsListFragment: View {
 			.listStyle(.plain)
 			.overlay(
 				VStack {
-					if visibleSIPConversations.isEmpty &&
-						visibleSMSParties.isEmpty &&
+					if conversationsListViewModel.conversationsList.isEmpty &&
 						!hasMango9Inbox &&
 						(
 							conversationsListViewModel.currentFilter.isEmpty ||
@@ -145,42 +128,11 @@ struct ConversationsListFragment: View {
 				}
 			}
 		}
-		.task {
-			if Mango9SessionStore.load() != nil {
-				await mango9ChatStore.refreshSMSDirectory()
-			}
-		}
 	}
 
 	private var hasMango9Inbox: Bool {
 		Mango9SessionStore.load() != nil
 			&& conversationsListViewModel.currentFilter.isEmpty
-	}
-
-	private var visibleSMSParties: [Mango9SMSParty] {
-		guard Mango9SessionStore.load() != nil else { return [] }
-		let query = conversationsListViewModel.currentFilter
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !query.isEmpty else { return mango9ChatStore.smsParties }
-		return mango9ChatStore.smsParties.filter {
-			Mango9CallerIdentity.formattedPhoneNumber($0.phone)
-				.localizedCaseInsensitiveContains(query)
-			|| $0.lastMessage.localizedCaseInsensitiveContains(query)
-		}
-	}
-
-	private var visibleSIPConversations: [ConversationModel] {
-		conversationsListViewModel.conversationsList.filter { conversation in
-			guard Mango9SessionStore.load() != nil,
-				  !conversation.isGroup,
-				  let remote = conversation.chatRoom.peerAddress else {
-				return true
-			}
-			return Mango9SMSRouting.target(
-				remote: remote,
-				fallbackName: conversation.subject
-			) == nil
-		}
 	}
 	
 	var suggestionsList: some View {
@@ -255,15 +207,15 @@ private struct Mango9InboxConversationRow: View {
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 
-			if store.teamUnreadCount > 0 {
-				Text(store.teamUnreadCount < 100 ? String(store.teamUnreadCount) : "99+")
+			if store.unreadCount > 0 {
+				Text(store.unreadCount < 100 ? String(store.unreadCount) : "99+")
 					.font(.system(size: 10, weight: .bold))
 					.foregroundStyle(Color.white)
 					.frame(minWidth: 22, minHeight: 22)
-					.padding(.horizontal, store.teamUnreadCount > 9 ? 4 : 0)
+					.padding(.horizontal, store.unreadCount > 9 ? 4 : 0)
 					.background(Color.redDanger500)
 					.clipShape(Capsule())
-					.accessibilityLabel("\(store.teamUnreadCount) unread Mango9 messages")
+					.accessibilityLabel("\(store.unreadCount) unread Mango9 messages")
 			}
 		}
 		.frame(minHeight: 50)
@@ -276,65 +228,6 @@ private struct Mango9InboxConversationRow: View {
 		let message = room.lastMessage.trimmingCharacters(in: .whitespacesAndNewlines)
 		let preview = message.isEmpty ? "Attachment" : message
 		return "\(store.roomTitle(room)): \(preview)"
-	}
-}
-
-private struct Mango9SMSConversationRow: View {
-	let party: Mango9SMSParty
-
-	var body: some View {
-		HStack(spacing: 12) {
-			ZStack {
-				Circle()
-					.fill(Color(uiColor: .systemBlue).opacity(0.12))
-					.frame(width: 50, height: 50)
-				Text(String(party.phone.suffix(10).first ?? "#"))
-					.font(.system(size: 20, weight: .bold))
-					.foregroundStyle(Color.grayMain2c700)
-			}
-
-			VStack(alignment: .leading, spacing: 4) {
-				Text(Mango9CallerIdentity.formattedPhoneNumber(party.phone))
-					.if(party.unread > 0) { $0.default_text_style_700(styleSize: 14) }
-					.default_text_style(styleSize: 14)
-					.foregroundStyle(Color.grayMain2c800)
-					.lineLimit(1)
-				Text(party.lastMessage.isEmpty ? "Attachment" : party.lastMessage)
-					.default_text_style(styleSize: 13)
-					.foregroundStyle(Color.grayMain2c400)
-					.lineLimit(1)
-			}
-			.frame(maxWidth: .infinity, alignment: .leading)
-
-			VStack(alignment: .trailing, spacing: 7) {
-				Text(displayTime(party.latest))
-					.default_text_style(styleSize: 11)
-					.foregroundStyle(Color.grayMain2c400)
-				if party.unread > 0 {
-					Text(party.unread < 100 ? String(party.unread) : "99+")
-						.font(.system(size: 10, weight: .bold))
-						.foregroundStyle(Color.white)
-						.frame(minWidth: 20, minHeight: 20)
-						.background(Color.redDanger500)
-						.clipShape(Capsule())
-				}
-			}
-		}
-		.frame(minHeight: 50)
-	}
-
-	private func displayTime(_ value: String) -> String {
-		let formatter = DateFormatter()
-		formatter.locale = Locale(identifier: "en_US_POSIX")
-		for format in ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ssXXXXX"] {
-			formatter.dateFormat = format
-			if let date = formatter.date(from: value) {
-				formatter.dateStyle = Calendar.current.isDateInToday(date) ? .none : .short
-				formatter.timeStyle = Calendar.current.isDateInToday(date) ? .short : .none
-				return formatter.string(from: date)
-			}
-		}
-		return ""
 	}
 }
 
