@@ -102,8 +102,6 @@ struct ContentView: View {
 	@State var showDeleteConversationPopup: Bool = false
 	@State var showDeleteConversationHistoryPopup: Bool = false
 	
-	@State private var securitySheet = false
-
 	private var combinedUnreadMessages: Int {
 		let mango9Unread = Mango9SessionStore.load() == nil ? 0 : mango9ChatStore.unreadCount
 		return max(0, sharedMainViewModel.unreadMessages) + mango9Unread
@@ -1276,8 +1274,7 @@ struct ContentView: View {
 									isShowRemoveParticipantPopup: $isShowRemoveParticipantPopup,
 									showLeaveConversationPopup: $showLeaveConversationPopup,
 									showDeleteConversationPopup: $showDeleteConversationPopup,
-									showDeleteConversationHistoryPopup: $showDeleteConversationHistoryPopup,
-									securitySheet: $securitySheet
+									showDeleteConversationHistoryPopup: $showDeleteConversationHistoryPopup
 								)
 								.environmentObject(conversationsListVM)
 								.environmentObject(accountProfileViewModel)
@@ -2140,39 +2137,7 @@ struct ContentView: View {
 				isShowUpdatePasswordPopup = true
 			}
 		}
-		.sheet(isPresented: $securitySheet, onDismiss: {
-			securitySheet = false
-		}, content: {
-			if #available(iOS 16.0, *) {
-				VStack {
-					Text("conversation_end_to_end_encrypted_bottom_sheet_title")
-						.default_text_style_700(styleSize: 18)
-						.multilineTextAlignment(.center)
-					
-					Spacer()
-					
-					Image("profile-secure-logo")
-							  .resizable()
-							  .frame(width: 100, height: 100)
-					
-					Spacer()
-					
-					Text("conversation_end_to_end_encrypted_bottom_sheet_message")
-						.default_text_style(styleSize: 14)
-						.multilineTextAlignment(.center)
-					
-					Spacer()
-					
-					Text("conversation_end_to_end_encrypted_bottom_sheet_link")
-						.default_text_style(styleSize: 14)
-						.underline()
-				}
-				.padding(.vertical, 20)
-				.padding(.horizontal, 30)
-				.presentationDetents([.medium])
-			}
-		})
-		.sheet(item: $mango9SMSTarget) { target in
+		.fullScreenCover(item: $mango9SMSTarget) { target in
 			Mango9SMSComposer(recipientName: target.name, phone: target.phone)
 		}
 		.overlay {

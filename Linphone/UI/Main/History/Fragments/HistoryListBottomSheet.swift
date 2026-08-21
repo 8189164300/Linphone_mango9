@@ -129,55 +129,6 @@ struct HistoryListBottomSheet: View {
 			}
 			
 			Button {
-				if historyListViewModel.selectedCall != nil && historyListViewModel.selectedCall!.isOutgoing {
-					UIPasteboard.general.setValue(
-						historyListViewModel.selectedCall!.address.dropFirst(4),
-						forPasteboardType: UTType.plainText.identifier
-					)
-				} else {
-					UIPasteboard.general.setValue(
-						historyListViewModel.selectedCall!.address.dropFirst(4),
-						forPasteboardType: UTType.plainText.identifier
-					)
-				}
-				
-				if #available(iOS 16.0, *) {
-					if idiom != .pad {
-						showingSheet.toggle()
-					} else {
-						showingSheet.toggle()
-						dismiss()
-					}
-				} else {
-					showingSheet.toggle()
-					dismiss()
-				}
-				
-				ToastViewModel.shared.show("Success_address_copied_into_clipboard")
-				
-			} label: {
-				HStack {
-					Image("copy")
-						.renderingMode(.template)
-						.resizable()
-						.foregroundStyle(Color.grayMain2c500)
-						.frame(width: 25, height: 25, alignment: .leading)
-						.padding(.all, 10)
-					Text("menu_copy_sip_address")
-						.default_text_style(styleSize: 16)
-					Spacer()
-				}
-				.frame(maxHeight: .infinity)
-			}
-			.padding(.horizontal, 30)
-			.background(Color.gray100)
-			
-			VStack {
-				Divider()
-			}
-			.frame(maxWidth: .infinity)
-			
-			Button {
 				if historyListViewModel.selectedCall != nil {
 					historyListViewModel.removeCallLog(historyModel: historyListViewModel.selectedCall!)
 				}

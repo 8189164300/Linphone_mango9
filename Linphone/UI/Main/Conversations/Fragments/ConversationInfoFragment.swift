@@ -48,14 +48,26 @@ struct ConversationInfoFragment: View {
 	@Binding var isShowScheduleMeetingFragmentParticipants: [SelectedAddressModel]
 	
 	@State private var participantListIsOpen = true
-	@State private var displayPeerAddress = false
-	
 	@Binding var isShowConversationInfoPopup: Bool
 	@Binding var conversationInfoPopupText: String
 	
 	@Binding var showLeaveConversationPopup: Bool
 	@Binding var showDeleteConversationPopup: Bool
 	@Binding var showDeleteConversationHistoryPopup: Bool
+
+	private var displayedNumber: String {
+		let candidates = [
+			conversationViewModel.participantConversationModel.first?.address,
+			conversationViewModel.peerAddress,
+			SharedMainViewModel.shared.displayedConversation?.remoteSipUri
+		]
+		for candidate in candidates {
+			if let number = Mango9CallerIdentity.dialedNumber(candidate) {
+				return number
+			}
+		}
+		return SharedMainViewModel.shared.displayedConversation?.avatarModel.name ?? ""
+	}
 	
 	var body: some View {
 		let accountModel = CoreContext.shared.accounts[accountProfileViewModel.accountModelIndex ?? 0]
@@ -88,9 +100,6 @@ struct ConversationInfoFragment: View {
 							Rectangle()
 								.foregroundColor(.white)
 								.frame(width: 45, height: 45)
-								.onLongPressGesture(minimumDuration: 0.3) {
-									displayPeerAddress = true
-								}
 						}
 						.frame(maxWidth: .infinity)
 						.frame(height: 50)
@@ -113,61 +122,24 @@ struct ConversationInfoFragment: View {
 											Avatar(contactAvatarModel: SharedMainViewModel.shared.displayedConversation!.avatarModel, avatarSize: 100)
 												.padding(.top, 4)
 											
-											Text(SharedMainViewModel.shared.displayedConversation!.avatarModel.name)
-												.foregroundStyle(Color.grayMain2c700)
-												.multilineTextAlignment(.center)
-												.default_text_style(styleSize: 14)
-												.frame(maxWidth: .infinity)
+											Button {
+												UIPasteboard.general.setValue(
+													displayedNumber,
+													forPasteboardType: UTType.plainText.identifier
+												)
+												ToastViewModel.shared.show("Success_address_copied_into_clipboard")
+											} label: {
+												HStack(spacing: 6) {
+													Text(displayedNumber)
+														.foregroundStyle(Color.grayMain2c700)
+														.default_text_style(styleSize: 14)
+													Image("copy")
+														.renderingMode(.template)
+														.resizable()
+														.foregroundStyle(Color.grayMain2c500)
+														.frame(width: 20, height: 20)
+												}
 												.padding(.top, 10)
-											
-											if !AppServices.corePreferences.hideSipAddresses {
-												Button {
-													UIPasteboard.general.setValue(
-														conversationViewModel.participantConversationModel.first?.address ?? "",
-														forPasteboardType: UTType.plainText.identifier
-													)
-													
-													ToastViewModel.shared.show("Success_address_copied_into_clipboard")
-												} label: {
-													HStack {
-														Text(conversationViewModel.participantConversationModel.first?.address ?? "")
-															.foregroundStyle(Color.grayMain2c700)
-															.default_text_style(styleSize: 14)
-															.padding(.top, 5)
-														
-														Image("copy")
-															.renderingMode(.template)
-															.resizable()
-															.foregroundStyle(Color.grayMain2c500)
-															.frame(width: 25, height: 25)
-													}
-												}
-												.padding(.horizontal, 10)
-											}
-											
-											if displayPeerAddress {
-												Button {
-													UIPasteboard.general.setValue(
-														conversationViewModel.peerAddress,
-														forPasteboardType: UTType.plainText.identifier
-													)
-													
-													ToastViewModel.shared.show("Success_address_copied_into_clipboard")
-												} label: {
-													HStack {
-														Text(conversationViewModel.peerAddress)
-															.foregroundStyle(Color.grayMain2c700)
-															.default_text_style(styleSize: 14)
-															.padding(.top, 5)
-														
-														Image("copy")
-															.renderingMode(.template)
-															.resizable()
-															.foregroundStyle(Color.grayMain2c500)
-															.frame(width: 25, height: 25, alignment: .leading)
-													}
-												}
-												.padding(.horizontal, 10)
 											}
 											
 											if !SharedMainViewModel.shared.displayedConversation!.avatarModel.lastPresenceInfo.isEmpty {
@@ -216,30 +188,6 @@ struct ConversationInfoFragment: View {
 											}
 											.padding(.leading, conversationViewModel.isUserAdmin ? 20 : 0)
 											
-											if displayPeerAddress {
-												Button {
-													UIPasteboard.general.setValue(
-														conversationViewModel.peerAddress,
-														forPasteboardType: UTType.plainText.identifier
-													)
-													
-													ToastViewModel.shared.show("Success_address_copied_into_clipboard")
-												} label: {
-													HStack {
-														Text(conversationViewModel.peerAddress)
-															.foregroundStyle(Color.grayMain2c700)
-															.default_text_style(styleSize: 14)
-															.padding(.top, 5)
-														
-														Image("copy")
-															.renderingMode(.template)
-															.resizable()
-															.foregroundStyle(Color.grayMain2c500)
-															.frame(width: 25, height: 25, alignment: .leading)
-													}
-												}
-												.padding(.horizontal, 10)
-											}
 										}
 									}
 									.frame(minHeight: 150)

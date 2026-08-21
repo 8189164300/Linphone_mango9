@@ -52,7 +52,7 @@ enum Mango9CallerIdentity {
 		return value
 	}
 
-	static func externalPhoneNumber(_ rawValue: String?) -> String? {
+	private static func addressUser(_ rawValue: String?) -> String? {
 		guard var value = normalizedLabel(rawValue) else { return nil }
 		if value.lowercased().hasPrefix("sip:") {
 			value.removeFirst(4)
@@ -65,9 +65,22 @@ enum Mango9CallerIdentity {
 		}
 		value = String(value.split(separator: "@", maxSplits: 1).first ?? Substring(value))
 		value = String(value.split(separator: ";", maxSplits: 1).first ?? Substring(value))
+		return normalizedLabel(value)
+	}
 
+	/// Returns only the dialable user portion of a SIP URI, without its scheme,
+	/// domain, parameters, or presentation punctuation.
+	static func dialedNumber(_ rawValue: String?) -> String? {
+		guard let value = addressUser(rawValue) else { return nil }
 		let phoneCharacters = CharacterSet(charactersIn: "+0123456789-(). ")
 		guard value.unicodeScalars.allSatisfy({ phoneCharacters.contains($0) }) else { return nil }
+		let digits = value.filter(\.isNumber)
+		guard !digits.isEmpty else { return nil }
+		return value.hasPrefix("+") ? "+" + digits : digits
+	}
+
+	static func externalPhoneNumber(_ rawValue: String?) -> String? {
+		guard let value = dialedNumber(rawValue) else { return nil }
 		let digits = value.filter(\.isNumber)
 		guard digits.count >= 7, digits.count <= 15 else { return nil }
 		if digits.count == 10 {

@@ -106,27 +106,6 @@ struct HistoryContactFragment: View {
 							}
 						}
 						
-						Button {
-							isMenuOpen = false
-							
-							UIPasteboard.general.setValue(
-								historyModel.displayAddress,
-								forPasteboardType: UTType.plainText.identifier
-							)
-							
-							ToastViewModel.shared.show("Success_address_copied_into_clipboard")
-							
-						} label: {
-							HStack {
-								Text("Copy number")
-								Spacer()
-								Image("copy")
-									.resizable()
-									.frame(width: 25, height: 25, alignment: .leading)
-									.padding(.all, 10)
-							}
-						}
-						
 						Button(role: .destructive) {
 							isMenuOpen = false
 							historyListViewModel.callLogsAddressToDelete = historyModel.address
@@ -176,12 +155,25 @@ struct HistoryContactFragment: View {
 										Avatar(contactAvatarModel: avatarModel, avatarSize: 100)
 									}
 									
-									Text(historyModel.addressName)
-										.foregroundStyle(Color.grayMain2c700)
-										.multilineTextAlignment(.center)
-										.default_text_style(styleSize: 14)
-										.frame(maxWidth: .infinity)
+									Button {
+										UIPasteboard.general.setValue(
+											historyModel.displayAddress,
+											forPasteboardType: UTType.plainText.identifier
+										)
+										ToastViewModel.shared.show("Success_address_copied_into_clipboard")
+									} label: {
+										HStack(spacing: 6) {
+											Text(historyModel.displayAddress)
+												.foregroundStyle(Color.grayMain2c700)
+												.default_text_style(styleSize: 14)
+											Image("copy")
+												.renderingMode(.template)
+												.resizable()
+												.foregroundStyle(Color.grayMain2c500)
+												.frame(width: 20, height: 20)
+										}
 										.padding(.top, 10)
+									}
 									
 									if let avatar = historyModel.avatarModel {
 										AvatarPresenceView(avatarModel: avatar)

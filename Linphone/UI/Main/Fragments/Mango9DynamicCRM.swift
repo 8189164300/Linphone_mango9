@@ -553,6 +553,12 @@ final class Mango9ChatStore: ObservableObject {
 		}
 	}
 
+	func uploadForMessaging(_ attachments: [Attachment]) async throws -> [String] {
+		guard !attachments.isEmpty else { return [] }
+		await connectIfNeeded()
+		return try await upload(attachments)
+	}
+
 	func notifyTyping() {
 		guard let roomId = activeRoomId else {
 			return
@@ -2965,6 +2971,7 @@ struct Mango9SMSRecord: Decodable {
 	let sentTo: String
 	let sendingTime: String
 	let status: String
+	let media: String
 
 	private enum CodingKeys: String, CodingKey {
 		case id
@@ -2974,6 +2981,7 @@ struct Mango9SMSRecord: Decodable {
 		case sentTo
 		case sendingTime
 		case status
+		case media
 	}
 
 	init(from decoder: Decoder) throws {
@@ -2985,6 +2993,7 @@ struct Mango9SMSRecord: Decodable {
 		sentTo = Self.string(in: container, forKey: .sentTo)
 		sendingTime = Self.string(in: container, forKey: .sendingTime)
 		status = Self.string(in: container, forKey: .status)
+		media = Self.string(in: container, forKey: .media)
 	}
 
 	private static func string(
@@ -3014,6 +3023,7 @@ private struct Mango9SMSThreadMessage: Identifiable {
 	let timestamp: String
 	let status: String
 	let isIncoming: Bool
+	let media: String
 }
 
 private struct Mango9ActionEnvelope: Decodable {
@@ -3569,7 +3579,8 @@ extension Mango9CRMAPI {
 		session: Mango9Session,
 		to: String,
 		message: String,
-		senderID: String
+		senderID: String,
+		media: [String] = []
 	) async throws {
 		var request = try authorizedRequest(
 			session: session,
@@ -3577,13 +3588,15 @@ extension Mango9CRMAPI {
 		)
 		request.httpMethod = "POST"
 		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-		request.httpBody = try JSONSerialization.data(
-			withJSONObject: [
-				"to": to,
-				"message": message,
-				"sender_id": senderID
-			]
-		)
+		var body: [String: Any] = [
+			"to": to,
+			"message": message,
+			"sender_id": senderID
+		]
+		if !media.isEmpty {
+			body["media"] = media
+		}
+		request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
 		let (data, response) = try await URLSession.shared.data(for: request)
 		guard let httpResponse = response as? HTTPURLResponse else {
@@ -3676,9 +3689,9 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 		}
 	}
 
-	func send() async -> Bool {
+	func send(attachments: [Attachment] = []) async -> Bool {
 		let outgoing = message.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !outgoing.isEmpty, !isSending else { return false }
+		guard (!outgoing.isEmpty || !attachments.isEmpty), !isSending else { return false }
 		guard !selectedSenderID.isEmpty else {
 			errorMessage = "No approved Mango9 SMS number is available for this account."
 			return false
@@ -3693,12 +3706,14 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 		defer { isSending = false }
 
 		do {
+			let media = try await Mango9ChatStore.shared.uploadForMessaging(attachments)
 			do {
 				try await Mango9CRMAPI.sendSMS(
 					session: session,
 					to: phone,
 					message: outgoing,
-					senderID: selectedSenderID
+					senderID: selectedSenderID,
+					media: media
 				)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
@@ -3707,7 +3722,8 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 					session: session,
 					to: phone,
 					message: outgoing,
-					senderID: selectedSenderID
+					senderID: selectedSenderID,
+					media: media
 				)
 			}
 			message = ""
@@ -3773,7 +3789,8 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 				text: $0.smsText,
 				timestamp: $0.sendingTime,
 				status: $0.status,
-				isIncoming: false
+				isIncoming: false,
+				media: $0.media
 			)
 		}
 		let incoming = inbox.filter {
@@ -3784,7 +3801,8 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 				text: $0.smsText,
 				timestamp: $0.sendingTime,
 				status: $0.status,
-				isIncoming: true
+				isIncoming: true,
+				media: $0.media
 			)
 		}
 		return (outgoing + incoming).sorted { $0.timestamp < $1.timestamp }
@@ -3802,6 +3820,12 @@ private final class Mango9SMSComposerViewModel: ObservableObject {
 struct Mango9SMSComposer: View {
 	@Environment(\.dismiss) private var dismiss
 	@StateObject private var viewModel: Mango9SMSComposerViewModel
+	@State private var selectedMedia: [Attachment] = []
+	@State private var isShowingAttachmentMenu = false
+	@State private var isShowingPhotoPicker = false
+	@State private var isShowingFilePicker = false
+	@State private var isRecordingVoice = false
+	@FocusState private var composerFocused: Bool
 
 	init(recipientName: String, phone: String) {
 		_viewModel = StateObject(
@@ -3818,175 +3842,323 @@ struct Mango9SMSComposer: View {
 
 	var body: some View {
 		NavigationView {
-			ScrollView {
-				VStack(alignment: .leading, spacing: 18) {
-					VStack(alignment: .leading, spacing: 4) {
-						Text(viewModel.recipientName)
-							.default_text_style_800(styleSize: 18)
-						Text(viewModel.phone)
-							.default_text_style(styleSize: 13)
-							.foregroundStyle(Color.grayMain2c500)
-					}
-
-					if !viewModel.threadMessages.isEmpty {
-						VStack(spacing: 10) {
-							ForEach(viewModel.threadMessages) { message in
-								HStack {
-									if !message.isIncoming { Spacer(minLength: 48) }
-									VStack(
-										alignment: message.isIncoming ? .leading : .trailing,
-										spacing: 4
-									) {
-										Text(message.text)
-											.default_text_style(styleSize: 14)
-											.foregroundStyle(message.isIncoming ? Color.grayMain2c700 : Color.white)
-										Text(message.timestamp)
-											.default_text_style(styleSize: 10)
-											.foregroundStyle(message.isIncoming ? Color.grayMain2c500 : Color.white.opacity(0.8))
-									}
-									.padding(.horizontal, 13)
-									.padding(.vertical, 10)
-									.background(message.isIncoming ? Color.grayMain2c200 : Color.blue)
-									.cornerRadius(16)
-									if message.isIncoming { Spacer(minLength: 48) }
-								}
-							}
-						}
-						.padding(.vertical, 4)
-					}
-
-					VStack(alignment: .leading, spacing: 7) {
-						Text("Send from")
-							.default_text_style_700(styleSize: 12)
-						if viewModel.isLoading {
-							ProgressView()
-								.tint(Color.orangeMain500)
-								.frame(maxWidth: .infinity, minHeight: 48)
-						} else if viewModel.senderIDs.isEmpty {
-							Text("Automatic Mango9 number")
-								.default_text_style(styleSize: 14)
-								.frame(maxWidth: .infinity, alignment: .leading)
-								.padding(.horizontal, 14)
-								.frame(height: 48)
-								.background(Color.gray100)
-								.cornerRadius(12)
-						} else {
-							Picker("Send from", selection: $viewModel.selectedSenderID) {
-								ForEach(viewModel.senderIDs) { sender in
-									Text(sender.senderId).tag(sender.senderId)
-								}
-							}
-							.pickerStyle(.menu)
-							.tint(Color.orangeMain500)
-							.frame(maxWidth: .infinity, alignment: .leading)
-							.padding(.horizontal, 10)
-							.frame(height: 48)
-							.background(Color.gray100)
-							.cornerRadius(12)
-						}
-					}
-
-					VStack(alignment: .leading, spacing: 7) {
-						Text("Message")
-							.default_text_style_700(styleSize: 12)
-						ZStack(alignment: .topLeading) {
-							if viewModel.message.isEmpty {
-								Text("Write an SMS")
-									.default_text_style(styleSize: 14)
-									.foregroundStyle(Color.grayMain2c500)
-									.padding(.horizontal, 12)
-									.padding(.vertical, 14)
-							}
-							messageEditor
-						}
-						.background(Color.gray100)
-						.cornerRadius(12)
-					}
-
-					if let errorMessage = viewModel.errorMessage {
-						HStack(alignment: .top, spacing: 9) {
-							Image("warning-circle")
-								.renderingMode(.template)
-								.resizable()
-								.foregroundStyle(Color.redDanger500)
-								.frame(width: 20, height: 20)
-							Text(errorMessage)
-								.default_text_style(styleSize: 12)
-							Spacer()
-						}
-						.padding(12)
-						.background(Color.redDanger200.opacity(0.45))
-						.cornerRadius(12)
-					}
-
-					Button {
-						Task {
-							if await viewModel.send() {
-								ToastViewModel.shared.show("SMS sent with Mango9")
-							}
-						}
-					} label: {
-						Group {
-							if viewModel.isSending {
-								ProgressView().tint(Color.white)
-							} else {
-								Text("Send with Mango9")
-									.font(.system(size: 15, weight: .bold))
-									.foregroundStyle(Color.white)
-							}
-						}
-						.frame(maxWidth: .infinity)
-						.frame(height: 50)
-						.background(Color.orangeMain500)
-						.cornerRadius(25)
-					}
-					.disabled(
-						viewModel.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-						|| viewModel.isSending
-					)
-					.opacity(
-						viewModel.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-						? 0.55
-						: 1
-					)
+			VStack(spacing: 0) {
+				senderHeader
+				Divider()
+				messageList
+				if let errorMessage = viewModel.errorMessage {
+					errorBanner(errorMessage)
 				}
-				.padding(20)
+				Divider()
+				composer
 			}
-			.refreshable {
-				await viewModel.load()
-			}
-			.background(Color.white)
-			.navigationTitle("Mango9 SMS")
+			.background(Color.gray100)
+			.navigationTitle(viewModel.recipientName)
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) {
-					Button("Cancel") {
+					Button {
 						dismiss()
+					} label: {
+						Image("caret-left")
+							.renderingMode(.template)
+							.foregroundStyle(Color.orangeMain500)
+					}
+				}
+				ToolbarItem(placement: .primaryAction) {
+					Button {
+						Mango9CommunicationRouter.callWithMango9(
+							Mango9CommunicationTarget(
+								name: viewModel.recipientName,
+								phone: viewModel.phone,
+								email: ""
+							)
+						)
+					} label: {
+						Image("phone")
+							.renderingMode(.template)
+							.foregroundStyle(Color.grayMain2c600)
 					}
 				}
 			}
 		}
 		.navigationViewStyle(.stack)
+		.confirmationDialog(
+			"Add an attachment",
+			isPresented: $isShowingAttachmentMenu,
+			titleVisibility: .visible
+		) {
+			Button("Photo or video library") { isShowingPhotoPicker = true }
+			Button("Browse files") { isShowingFilePicker = true }
+		}
+		.sheet(isPresented: $isShowingPhotoPicker) {
+			PhotoPicker(filter: .any(of: [.images, .videos])) { results in
+				PhotoPicker.convertToAttachmentArray(fromResults: results) { attachments, error in
+					if let attachments {
+						selectedMedia.append(contentsOf: attachments)
+					} else if let error {
+						Log.error("[Mango9 SMS] Photo attachment failed: \(error)")
+					}
+				}
+				isShowingPhotoPicker = false
+			}
+		}
+		.sheet(isPresented: $isShowingFilePicker) {
+			FilePicker { urls in
+				FilePicker.convertToAttachmentArray(fromResults: urls) { attachments, error in
+					if let attachments {
+						selectedMedia.append(contentsOf: attachments)
+					} else if let error {
+						Log.error("[Mango9 SMS] File attachment failed: \(error)")
+					}
+				}
+				isShowingFilePicker = false
+			}
+		}
 		.task {
 			await viewModel.load()
 		}
 	}
 
-	@ViewBuilder
-	private var messageEditor: some View {
-		if #available(iOS 16.0, *) {
-			TextEditor(text: $viewModel.message)
-				.default_text_style(styleSize: 14)
-				.scrollContentBackground(.hidden)
-				.padding(8)
-				.frame(minHeight: 150)
-				.background(Color.clear)
+	private var senderHeader: some View {
+		HStack(spacing: 8) {
+			Text(viewModel.phone)
+				.default_text_style(styleSize: 11)
+				.foregroundStyle(Color.grayMain2c500)
+			Spacer()
+			if viewModel.isLoading {
+				ProgressView().tint(Color.orangeMain500)
+			} else if viewModel.senderIDs.count > 1 {
+				Picker("Send from", selection: $viewModel.selectedSenderID) {
+					ForEach(viewModel.senderIDs) { sender in
+						Text(sender.senderId).tag(sender.senderId)
+					}
+				}
+				.pickerStyle(.menu)
+				.tint(Color.orangeMain500)
+			} else {
+				Text(viewModel.selectedSenderID.isEmpty ? "SMS" : "From \(viewModel.selectedSenderID)")
+					.font(.system(size: 10, weight: .semibold))
+					.foregroundStyle(Color.orangeMain500)
+			}
+		}
+		.padding(.horizontal, 16)
+		.frame(height: 34)
+		.background(Color.white)
+	}
+
+	private var messageList: some View {
+		ScrollViewReader { proxy in
+			ScrollView {
+				LazyVStack(spacing: 8) {
+					if viewModel.isLoading && viewModel.threadMessages.isEmpty {
+						ProgressView().tint(Color.orangeMain500).padding(.top, 36)
+					} else if viewModel.threadMessages.isEmpty {
+						Text("Start an SMS conversation with \(viewModel.recipientName).")
+							.default_text_style(styleSize: 12)
+							.foregroundStyle(Color.grayMain2c500)
+							.padding(.top, 36)
+					}
+					ForEach(viewModel.threadMessages) { message in
+						Mango9SMSBubble(message: message).id(message.id)
+					}
+				}
+				.padding(.horizontal, 12)
+				.padding(.vertical, 14)
+			}
+			.refreshable { await viewModel.load() }
+			.onChange(of: viewModel.threadMessages.count) { _ in
+				guard let lastId = viewModel.threadMessages.last?.id else { return }
+				withAnimation { proxy.scrollTo(lastId, anchor: .bottom) }
+			}
+		}
+	}
+
+	private func errorBanner(_ message: String) -> some View {
+		HStack(alignment: .top, spacing: 9) {
+			Image("warning-circle")
+				.renderingMode(.template)
+				.resizable()
+				.foregroundStyle(Color.redDanger500)
+				.frame(width: 18, height: 18)
+			Text(message).default_text_style(styleSize: 11)
+			Spacer()
+		}
+		.padding(.horizontal, 12)
+		.padding(.vertical, 8)
+		.background(Color.redDanger200.opacity(0.45))
+	}
+
+	private var composer: some View {
+		VStack(spacing: 7) {
+			if isRecordingVoice {
+				Mango9VoiceRecorderComposer(
+					onCancel: { isRecordingVoice = false },
+					onComplete: { attachment in
+						selectedMedia.append(attachment)
+						isRecordingVoice = false
+					}
+				)
 		} else {
-			TextEditor(text: $viewModel.message)
-				.default_text_style(styleSize: 14)
-				.padding(8)
-				.frame(minHeight: 150)
-				.background(Color.clear)
+				if !selectedMedia.isEmpty {
+					Mango9PendingAttachmentStrip(attachments: $selectedMedia)
+				}
+				HStack(alignment: .bottom, spacing: 8) {
+					Button { isShowingAttachmentMenu = true } label: {
+						Image(systemName: "paperclip")
+							.font(.system(size: 19, weight: .semibold))
+							.foregroundStyle(Color.grayMain2c700)
+							.frame(width: 34, height: 40)
+					}
+					.disabled(viewModel.isSending)
+					.accessibilityLabel("Attach photo, video, or file")
+
+					smsMessageInput
+						.padding(.horizontal, 14)
+						.padding(.vertical, 6)
+						.background(Color.gray100)
+						.cornerRadius(20)
+
+					Button { isRecordingVoice = true } label: {
+						Image(systemName: "mic.fill")
+							.font(.system(size: 18, weight: .semibold))
+							.foregroundStyle(Color.grayMain2c700)
+							.frame(width: 32, height: 40)
+					}
+					.disabled(viewModel.isSending)
+					.accessibilityLabel("Record a voice message")
+
+					Button { sendCurrentMessage() } label: {
+						Group {
+							if viewModel.isSending {
+								ProgressView().tint(Color.white)
+							} else {
+								Image("paper-plane-tilt")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.white)
+									.frame(width: 21, height: 21)
+							}
+						}
+						.frame(width: 21, height: 21)
+						.padding(10)
+						.background(canSend ? Color.orangeMain500 : Color.grayMain2c400)
+						.clipShape(Circle())
+					}
+					.disabled(!canSend)
+				}
+			}
+		}
+		.padding(.horizontal, 12)
+		.padding(.vertical, 9)
+		.background(Color.white)
+	}
+
+	@ViewBuilder
+	private var smsMessageInput: some View {
+		if #available(iOS 16.0, *) {
+			TextField("Write a message", text: $viewModel.message, axis: .vertical)
+				.lineLimit(1...5)
+				.default_text_style_uncolored(styleSize: 14)
+				.focused($composerFocused)
+		} else {
+			ZStack(alignment: .topLeading) {
+				if viewModel.message.isEmpty {
+					Text("Write a message")
+						.default_text_style_uncolored(styleSize: 14)
+						.foregroundStyle(Color.grayMain2c400)
+						.padding(.leading, 4)
+						.padding(.top, 8)
+						.allowsHitTesting(false)
+				}
+				TextEditor(text: $viewModel.message)
+					.frame(minHeight: 24, maxHeight: 108)
+					.fixedSize(horizontal: false, vertical: true)
+					.default_text_style_uncolored(styleSize: 14)
+					.focused($composerFocused)
+					.background(Color.clear)
+			}
+			.frame(minHeight: 28, maxHeight: 108)
+		}
+	}
+
+	private var canSend: Bool {
+		(!viewModel.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+			|| !selectedMedia.isEmpty)
+			&& !viewModel.selectedSenderID.isEmpty
+			&& !viewModel.isSending
+	}
+
+	private func sendCurrentMessage() {
+		let pendingAttachments = selectedMedia
+		Task {
+			if await viewModel.send(attachments: pendingAttachments) {
+				selectedMedia.removeAll()
+				ToastViewModel.shared.show(
+					pendingAttachments.isEmpty ? "SMS sent with Mango9" : "MMS sent with Mango9"
+				)
+			}
+		}
+	}
+}
+
+private struct Mango9SMSBubble: View {
+	let message: Mango9SMSThreadMessage
+
+	var body: some View {
+		HStack {
+			if !message.isIncoming { Spacer(minLength: 52) }
+			VStack(alignment: message.isIncoming ? .leading : .trailing, spacing: 4) {
+				VStack(alignment: .leading, spacing: 8) {
+					ForEach(Mango9ChatMedia.parse(message.media)) { media in
+						Mango9ChatMediaView(media: media)
+					}
+					if !message.text.isEmpty {
+						Text(message.text)
+							.default_text_style(styleSize: 14)
+							.foregroundStyle(Color.white)
+					}
+				}
+				.padding(.horizontal, 13)
+				.padding(.vertical, 9)
+				.background(message.isIncoming ? Color.grayMain2c600 : Color(uiColor: .systemBlue))
+				.clipShape(RoundedRectangle(cornerRadius: 16))
+
+				HStack(spacing: 4) {
+					Text(shortTime(message.timestamp))
+					if !message.isIncoming && !message.status.isEmpty {
+						Text(statusLabel(message.status))
+					}
+				}
+				.font(.system(size: 9))
+				.foregroundStyle(Color.grayMain2c500)
+			}
+			if message.isIncoming { Spacer(minLength: 52) }
+		}
+		.frame(maxWidth: .infinity)
+	}
+
+	private func shortTime(_ value: String) -> String {
+		let formats = ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ssXXXXX"]
+		let formatter = DateFormatter()
+		formatter.locale = Locale(identifier: "en_US_POSIX")
+		for format in formats {
+			formatter.dateFormat = format
+			if let date = formatter.date(from: value) {
+				formatter.timeStyle = .short
+				formatter.dateStyle = Calendar.current.isDateInToday(date) ? .none : .short
+				return formatter.string(from: date)
+			}
+		}
+		return value
+	}
+
+	private func statusLabel(_ value: String) -> String {
+		switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+		case "3", "delivered": return "Delivered"
+		case "4", "read": return "Read"
+		case "0", "1", "2", "sent", "submitted": return "Sent"
+		default: return value.capitalized
 		}
 	}
 }
@@ -4373,7 +4545,7 @@ struct Mango9LeadsFragment: View {
 		.onReceive(NotificationCenter.default.publisher(for: .mango9LeadDidChange)) { _ in
 			Task { await viewModel.reloadList() }
 		}
-		.sheet(item: $smsTarget) { selected in
+		.fullScreenCover(item: $smsTarget) { selected in
 			Mango9SMSComposer(target: selected)
 		}
 		.sheet(isPresented: $isShowingCreateLead) {
@@ -5179,7 +5351,7 @@ struct Mango9ClientsFragment: View {
 		.onReceive(NotificationCenter.default.publisher(for: .mango9ClientDidChange)) { _ in
 			Task { await viewModel.reloadList() }
 		}
-		.sheet(item: $smsTarget) { selected in
+		.fullScreenCover(item: $smsTarget) { selected in
 			Mango9SMSComposer(target: selected)
 		}
 		.sheet(isPresented: $isShowingCreateClient) {
@@ -5838,7 +6010,7 @@ struct Mango9LeadDetailFragment: View {
 				)
 			}
 		}
-		.sheet(item: $smsTarget) { selected in
+		.fullScreenCover(item: $smsTarget) { selected in
 			Mango9SMSComposer(target: selected)
 		}
 		.confirmationDialog(

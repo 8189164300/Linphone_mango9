@@ -109,7 +109,6 @@ struct UIList: UIViewRepresentable {
 	let geometryProxy: GeometryProxy
 	let sections: [MessagesSection]
 	
-	@Binding var securitySheet: Bool
     @Binding var isMessageTextFocused: Bool
 	
 	@State private var isScrolledToTop = false
@@ -135,15 +134,6 @@ struct UIList: UIViewRepresentable {
 		tableView.keyboardDismissMode = .interactive
 		tableView.backgroundColor = UIColor(.white)
 		tableView.scrollsToTop = true
-		
-		if let displayedConversation = SharedMainViewModel.shared.displayedConversation, displayedConversation.isEndToEndEncryptionAvailable {
-			let footerView = Self.makeFooterView {
-				securitySheet = true
-			}
-			footerView.frame = CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 80)
-			footerView.transform = CGAffineTransformMakeScale(1, -1)
-			tableView.tableFooterView = footerView
-		}
 		
 		// Create the floating UIButton
 		let button = FloatingButton(frame: CGRect(x: 0, y: 0, width: 60, height: 60))
@@ -180,51 +170,6 @@ struct UIList: UIViewRepresentable {
 		context.coordinator.geometryProxy = geometryProxy
 
 		return containerView
-	}
-	
-	static func makeFooterView(onTap: @escaping () -> Void) -> UIView {
-		let encryptionEnabled = SharedMainViewModel.shared.displayedConversation!.encryptionEnabled
-		let host = UIHostingController(
-			rootView:
-				VStack {
-					HStack {
-						Image(encryptionEnabled ? "lock-simple-bold" : "lock-simple-open")
-							.renderingMode(.template)
-							.resizable()
-							.foregroundStyle(encryptionEnabled ? Color.blueInfo500 : Color.orangeWarning600)
-							.frame(width: 25, height: 25)
-							.padding(10)
-						
-						VStack(spacing: 5) {
-							Text(encryptionEnabled ? "conversation_end_to_end_encrypted_event_title" : "conversation_warning_disabled_because_not_secured_title")
-								.foregroundStyle(encryptionEnabled ? Color.blueInfo500 : Color.orangeWarning600)
-								.default_text_style_700(styleSize: 14)
-								.frame(maxWidth: .infinity, alignment: .leading)
-								.multilineTextAlignment(.leading)
-							
-							Text(encryptionEnabled ? "conversation_end_to_end_encrypted_event_subtitle" : "conversation_warning_disabled_because_not_secured_subtitle")
-								.foregroundStyle(Color.gray400)
-								.default_text_style(styleSize: 12)
-								.frame(maxWidth: .infinity, alignment: .leading)
-								.multilineTextAlignment(.leading)
-						}
-					}
-					.padding(10)
-					.cornerRadius(10)
-					.overlay(
-						RoundedRectangle(cornerRadius: 10)
-							.inset(by: 0.5)
-							.stroke(encryptionEnabled ? Color.blueInfo500 : Color.orangeWarning600, lineWidth: 0.5)
-					)
-                    .padding(.horizontal, 10)
-				}
-				.onTapGesture {
-					onTap()
-				}
-				.frame(height: 80)
-		)
-		host.view.backgroundColor = .clear
-		return host.view
 	}
 	
 	// func updateUIView(_ tableView: UITableView, context: Context) {
