@@ -345,14 +345,25 @@ final class ContactsManager: ObservableObject {
 	}
 	
 	func textToImage(firstName: String?, lastName: String?) -> UIImage {
+		func firstLetter(in value: String) -> String {
+			var identity = value[...]
+			if identity.lowercased().hasPrefix("sip:") {
+				identity = identity.dropFirst(4)
+			}
+			if let domainSeparator = identity.firstIndex(of: "@") {
+				identity = identity[..<domainSeparator]
+			}
+			return identity.first(where: \.isLetter).map(String.init) ?? ""
+		}
+
 		let firstParts = firstName?
 			.split(separator: " ")
 			.map(String.init) ?? []
 
-		let firstInitial = firstParts.first?.first.map(String.init) ?? ""
-		let secondInitial = firstParts.count > 1 ? firstParts[1].first.map(String.init) ?? "" : ""
+		let firstInitial = firstParts.first.map(firstLetter(in:)) ?? ""
+		let secondInitial = firstParts.count > 1 ? firstLetter(in: firstParts[1]) : ""
 
-		let lastInitial = lastName?.first.map(String.init) ?? ""
+		let lastInitial = lastName.map(firstLetter(in:)) ?? ""
 
 		let textToDisplay: String
 
@@ -362,6 +373,11 @@ final class ContactsManager: ObservableObject {
 			textToDisplay = firstInitial.uppercased() + lastInitial.uppercased()
 		} else {
 			textToDisplay = lastInitial.uppercased()
+		}
+
+		if textToDisplay.isEmpty,
+		   let defaultAvatar = UIImage(named: "profil-picture-default") {
+			return defaultAvatar
 		}
 
 		let size = CGSize(width: 200, height: 200)

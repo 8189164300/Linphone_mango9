@@ -571,52 +571,64 @@ struct ContentView: View {
                                                    index < coreContext.accounts.count {
                                                     
                                                     let account = coreContext.accounts[index]
-                                                    let imagePath = account.getImagePath()
-                                                    let finalUrl = imagePath.appendingQueryItem("v", value: UUID().uuidString)
+                                                    if account.usesGeneratedDefaultAvatar {
+                                                        Image(uiImage: contactsManager.textToImage(
+                                                            firstName: account.avatarModel?.name,
+                                                            lastName: ""))
+                                                            .resizable()
+                                                            .frame(width: avatarSize, height: avatarSize)
+                                                            .clipShape(Circle())
+                                                            .onTapGesture {
+                                                                openMenu()
+                                                            }
+                                                    } else {
+                                                        let imagePath = account.getImagePath()
+                                                        let finalUrl = imagePath.appendingQueryItem("v", value: UUID().uuidString)
 
-                                                    AsyncImage(url: finalUrl)
-                                                        { image in
-                                                            switch image {
-                                                            case .empty:
-                                                                ProgressView()
-                                                                    .frame(width: avatarSize, height: avatarSize)
-                                                            case .success(let image):
-                                                                image
-                                                                    .resizable()
-                                                                    .aspectRatio(contentMode: .fill)
-                                                                    .frame(width: avatarSize, height: avatarSize)
-                                                                    .clipShape(Circle())
-                                                                    .onAppear {
-                                                                        imageTmp = image
-                                                                    }
-                                                            case .failure:
-                                                                if let avatar = account.avatarModel {
-                                                                    let tmpImage = contactsManager.textToImage(firstName: avatar.name, lastName: "")
-                                                                    Image(uiImage: tmpImage)
-                                                                        .resizable()
+                                                        AsyncImage(url: finalUrl)
+                                                            { image in
+                                                                switch image {
+                                                                case .empty:
+                                                                    ProgressView()
                                                                         .frame(width: avatarSize, height: avatarSize)
-                                                                        .clipShape(Circle())
-                                                                } else if let cachedImage = imageTmp {
-                                                                    cachedImage
+                                                                case .success(let image):
+                                                                    image
                                                                         .resizable()
                                                                         .aspectRatio(contentMode: .fill)
                                                                         .frame(width: avatarSize, height: avatarSize)
                                                                         .clipShape(Circle())
-                                                                } else {
-                                                                    ProgressView()
-                                                                        .frame(width: avatarSize, height: avatarSize)
+                                                                        .onAppear {
+                                                                            imageTmp = image
+                                                                        }
+                                                                case .failure:
+                                                                    if let avatar = account.avatarModel {
+                                                                        let tmpImage = contactsManager.textToImage(firstName: avatar.name, lastName: "")
+                                                                        Image(uiImage: tmpImage)
+                                                                            .resizable()
+                                                                            .frame(width: avatarSize, height: avatarSize)
+                                                                            .clipShape(Circle())
+                                                                    } else if let cachedImage = imageTmp {
+                                                                        cachedImage
+                                                                            .resizable()
+                                                                            .aspectRatio(contentMode: .fill)
+                                                                            .frame(width: avatarSize, height: avatarSize)
+                                                                            .clipShape(Circle())
+                                                                    } else {
+                                                                        ProgressView()
+                                                                            .frame(width: avatarSize, height: avatarSize)
+                                                                    }
+                                                                @unknown default:
+                                                                    EmptyView()
                                                                 }
-                                                            @unknown default:
-                                                                EmptyView()
                                                             }
-                                                        }
-                                                        .id(imagePath)
-                                                        .onTapGesture {
-                                                            openMenu()
-                                                        }
-                                                        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImageChanged"))) { _ in
-                                                            imageTmp = nil
-                                                        }
+                                                            .id(imagePath)
+                                                            .onTapGesture {
+                                                                openMenu()
+                                                            }
+                                                            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImageChanged"))) { _ in
+                                                                imageTmp = nil
+                                                            }
+                                                    }
                                                     
                                                 } else if let cachedImage = imageTmp {
                                                     cachedImage

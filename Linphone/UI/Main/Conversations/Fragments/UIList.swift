@@ -248,7 +248,14 @@ struct UIList: UIViewRepresentable {
 		case .insert(let section, let row):
 			tableView.insertRows(at: [IndexPath(row: row, section: section)], with: .top)
 		case .edit(let section, let row):
-			tableView.reloadRows(at: [IndexPath(row: row, section: section)], with: .none)
+			let indexPath = IndexPath(row: row, section: section)
+			if conversationViewModel.isSMSConversation {
+				UIView.performWithoutAnimation {
+					tableView.reconfigureRows(at: [indexPath])
+				}
+			} else {
+				tableView.reloadRows(at: [indexPath], with: .none)
+			}
 		case .swap(let section, let rowFrom, let rowTo):
 			tableView.deleteRows(at: [IndexPath(row: rowFrom, section: section)], with: .top)
 			tableView.insertRows(at: [IndexPath(row: rowTo, section: section)], with: .top)

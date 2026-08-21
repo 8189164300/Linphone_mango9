@@ -333,26 +333,35 @@ struct ConversationInfoFragment: View {
 															Avatar(contactAvatarModel: participantConversationModel, avatarSize: 50)
 														} else {
 															let avatarSize = 50.0
-															AsyncImage(url: CoreContext.shared.accounts[accountProfileViewModel.accountModelIndex!].imagePathAvatar) { image in
-																switch image {
-																case .empty:
-																	ProgressView()
-																		.frame(width: avatarSize, height: avatarSize)
-																case .success(let image):
-																	image
+															if accountModel.usesGeneratedDefaultAvatar {
+																Image(uiImage: contactsManager.textToImage(
+																	firstName: accountModel.avatarModel?.name,
+																	lastName: ""))
+																.resizable()
+																.frame(width: avatarSize, height: avatarSize)
+																.clipShape(Circle())
+															} else {
+																AsyncImage(url: CoreContext.shared.accounts[accountProfileViewModel.accountModelIndex!].imagePathAvatar) { image in
+																	switch image {
+																	case .empty:
+																		ProgressView()
+																			.frame(width: avatarSize, height: avatarSize)
+																	case .success(let image):
+																		image
+																			.resizable()
+																			.aspectRatio(contentMode: .fill)
+																			.frame(width: avatarSize, height: avatarSize)
+																			.clipShape(Circle())
+																	case .failure:
+																		Image(uiImage: contactsManager.textToImage(
+																			firstName: accountModel.avatarModel?.name,
+																			lastName: ""))
 																		.resizable()
-																		.aspectRatio(contentMode: .fill)
 																		.frame(width: avatarSize, height: avatarSize)
 																		.clipShape(Circle())
-																case .failure:
-																	Image(uiImage: contactsManager.textToImage(
-																		firstName: accountModel.avatarModel?.name ?? "",
-																		lastName: ""))
-																	.resizable()
-																	.frame(width: avatarSize, height: avatarSize)
-																	.clipShape(Circle())
-																@unknown default:
-																	EmptyView()
+																	@unknown default:
+																		EmptyView()
+																	}
 																}
 															}
 														}

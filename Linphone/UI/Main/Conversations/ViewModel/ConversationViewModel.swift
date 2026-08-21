@@ -240,6 +240,7 @@ class ConversationViewModel: ObservableObject {
 	private var sharedMainViewModel = SharedMainViewModel.shared
 	private(set) var smsAdapter: Mango9SMSConversationAdapter?
 	private var smsSubscriptions = Set<AnyCancellable>()
+	private let smsSectionDate = Date()
 
 	@Published private(set) var smsSenderIDs: [Mango9ServerSMSSender] = []
 	@Published var smsSelectedSenderID = ""
@@ -445,7 +446,7 @@ class ConversationViewModel: ObservableObject {
 				}
 				self.conversationMessagesSection = rows.isEmpty
 					? []
-					: [MessagesSection(date: Date(), chatRoomID: adapter.id, rows: rows)]
+					: [MessagesSection(date: self.smsSectionDate, chatRoomID: adapter.id, rows: rows)]
 				self.displayedConversationHistorySize = messages.count
 				self.displayedConversationUnreadMessagesCount = 0
 				self.attachments = messages.flatMap(\.attachments)

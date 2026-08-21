@@ -98,6 +98,7 @@ struct AccountProfileFragment: View {
 										if accountModel.avatarModel != nil
 											&& accountModel.photoAvatarModel != nil
 											&& !accountModel.photoAvatarModel!.isEmpty
+											&& !accountModel.usesGeneratedDefaultAvatar
 											&& selectedImage == nil && !removedImage {
 											
 											AsyncImage(url: CoreContext.shared.accounts[accountProfileViewModel.accountModelIndex!].imagePathAvatar) { image in

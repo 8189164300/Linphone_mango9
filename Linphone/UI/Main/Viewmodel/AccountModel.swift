@@ -42,6 +42,11 @@ class AccountModel: ObservableObject {
 	@Published var displayNameAvatar: String = ""
 	@Published var usernaneAvatar: String = ""
 	@Published var imagePathAvatar: URL?
+
+	var usesGeneratedDefaultAvatar: Bool {
+		guard let photoAvatarModel, !photoAvatarModel.isEmpty else { return true }
+		return photoAvatarModel.hasSuffix("-default.png")
+	}
 	
 	private var accountDelegate: AccountDelegate?
 	private var coreDelegate: CoreDelegate?

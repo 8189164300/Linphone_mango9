@@ -284,14 +284,10 @@ private struct Mango9SMSConversationRow: View {
 
 	var body: some View {
 		HStack(spacing: 12) {
-			ZStack {
-				Circle()
-					.fill(Color(uiColor: .systemBlue).opacity(0.12))
-					.frame(width: 50, height: 50)
-				Text(String(party.phone.suffix(10).first ?? "#"))
-					.font(.system(size: 20, weight: .bold))
-					.foregroundStyle(Color.grayMain2c700)
-			}
+			Image("profil-picture-default")
+				.resizable()
+				.frame(width: 50, height: 50)
+				.clipShape(Circle())
 
 			VStack(alignment: .leading, spacing: 4) {
 				Text(Mango9CallerIdentity.formattedPhoneNumber(party.phone))
