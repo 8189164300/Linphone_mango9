@@ -359,8 +359,8 @@ struct ChatBubbleView: View {
 													
 												Text(conversationViewModel.getMessageTime(startDate: eventLogMessage.message.dateReceived))
 														.foregroundStyle(
-															conversationViewModel.isSMSConversation && eventLogMessage.message.isOutgoing
-																? Color.white.opacity(0.8)
+															conversationViewModel.isSMSConversation
+																? Color.white
 																: Color.grayMain2c500
 														)
 														.default_text_style_300(styleSize: 12)
@@ -370,8 +370,8 @@ struct ChatBubbleView: View {
 												if let delivery = conversationViewModel.smsDeliveryLabel(for: eventLogMessage.message) {
 													Text(delivery)
 														.foregroundStyle(
-															conversationViewModel.isSMSConversation && eventLogMessage.message.isOutgoing
-																? Color.white.opacity(0.8)
+															conversationViewModel.isSMSConversation
+																? Color.white
 																: Color.grayMain2c500
 														)
 														.default_text_style_300(styleSize: 12)
