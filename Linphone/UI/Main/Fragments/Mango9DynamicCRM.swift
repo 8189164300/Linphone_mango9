@@ -4389,13 +4389,13 @@ private struct Mango9SMSBubble: View {
 					}
 					if !message.text.isEmpty {
 						Text(message.text)
-							.default_text_style(styleSize: 14)
-							.foregroundStyle(Color.white)
+							.default_text_style_uncolored(styleSize: 14)
+							.foregroundStyle(message.isIncoming ? Color.grayMain2c800 : Color.white)
 					}
 				}
 				.padding(.horizontal, 13)
 				.padding(.vertical, 9)
-				.background(message.isIncoming ? Color.grayMain2c600 : Color(uiColor: .systemBlue))
+				.background(message.isIncoming ? Color(uiColor: .systemGray5) : Color(uiColor: .systemBlue))
 				.clipShape(RoundedRectangle(cornerRadius: 16))
 
 				HStack(spacing: 4) {
@@ -4413,18 +4413,36 @@ private struct Mango9SMSBubble: View {
 	}
 
 	private func shortTime(_ value: String) -> String {
-		let formats = ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ssXXXXX"]
-		let formatter = DateFormatter()
-		formatter.locale = Locale(identifier: "en_US_POSIX")
-		for format in formats {
-			formatter.dateFormat = format
-			if let date = formatter.date(from: value) {
-				formatter.timeStyle = .short
-				formatter.dateStyle = Calendar.current.isDateInToday(date) ? .none : .short
-				return formatter.string(from: date)
+		let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+		let fractionalISO8601 = ISO8601DateFormatter()
+		fractionalISO8601.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+		var date = fractionalISO8601.date(from: trimmed)
+			?? ISO8601DateFormatter().date(from: trimmed)
+
+		if date == nil {
+			let serverFormatter = DateFormatter()
+			serverFormatter.locale = Locale(identifier: "en_US_POSIX")
+			serverFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+			for format in [
+				"yyyy-MM-dd HH:mm:ss.SSS",
+				"yyyy-MM-dd HH:mm:ss",
+				"yyyy-MM-dd'T'HH:mm:ss.SSS",
+				"yyyy-MM-dd'T'HH:mm:ss"
+			] {
+				serverFormatter.dateFormat = format
+				if let parsed = serverFormatter.date(from: trimmed) {
+					date = parsed
+					break
+				}
 			}
 		}
-		return value
+
+		guard let date else { return "" }
+		let displayFormatter = DateFormatter()
+		displayFormatter.locale = Locale(identifier: "en_US_POSIX")
+		displayFormatter.timeZone = .autoupdatingCurrent
+		displayFormatter.dateFormat = "MM-dd-yyyy h:mma"
+		return displayFormatter.string(from: date)
 	}
 
 	private func statusLabel(_ value: Int) -> String {
