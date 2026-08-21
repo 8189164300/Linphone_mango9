@@ -21,18 +21,297 @@ import Foundation
 import linphonesw
 import SwiftUI
 import AVFoundation
+import Combine
 
 // swiftlint:disable line_length
 // swiftlint:disable file_length
 // swiftlint:disable type_body_length
 // swiftlint:disable cyclomatic_complexity
 
+@MainActor
+final class Mango9SMSConversationAdapter: ObservableObject {
+	let target: Mango9SMSTarget
+
+	@Published private(set) var messages: [Message] = []
+	@Published private(set) var senderIDs: [Mango9ServerSMSSender] = []
+	@Published var selectedSenderID = ""
+	@Published private(set) var isLoading = false
+	@Published private(set) var isSending = false
+	@Published private(set) var errorMessage: String?
+	@Published private(set) var isMuted: Bool
+
+	private let store = Mango9ChatStore.shared
+	private var subscriptions = Set<AnyCancellable>()
+	private var hiddenMessageIDs: Set<String>
+
+	init(target: Mango9SMSTarget) {
+		self.target = target
+		self.isMuted = UserDefaults.standard.bool(forKey: Self.muteKey(for: target.phone))
+		self.hiddenMessageIDs = Set(
+			UserDefaults.standard.stringArray(forKey: Self.hiddenKey(for: target.phone)) ?? []
+		)
+
+		store.$smsMessages
+			.receive(on: RunLoop.main)
+			.sink { [weak self] _ in self?.synchronize() }
+			.store(in: &subscriptions)
+		store.$smsSenders
+			.receive(on: RunLoop.main)
+			.sink { [weak self] _ in self?.synchronize() }
+			.store(in: &subscriptions)
+	}
+
+	var id: String { "sms:\(Self.normalizedPhone(target.phone))" }
+
+	func open() async {
+		isLoading = true
+		errorMessage = nil
+		await store.openSMSConversation(phone: target.phone)
+		synchronize()
+		if !store.isConnected {
+			errorMessage = store.errorMessage ?? "Mango9 SMS is unavailable."
+		}
+		isLoading = false
+	}
+
+	func close() {
+		store.closeSMSConversation(phone: target.phone)
+	}
+
+	func refresh() async {
+		await store.refreshSMSConversation()
+		synchronize()
+	}
+
+	func send(text: String, attachments: [Attachment]) async -> Bool {
+		let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard (!body.isEmpty || !attachments.isEmpty), !isSending else { return false }
+		guard !selectedSenderID.isEmpty else {
+			errorMessage = "No approved Mango9 SMS number is available for this account."
+			return false
+		}
+
+		isSending = true
+		errorMessage = nil
+		defer { isSending = false }
+		do {
+			try await store.sendSMS(
+				to: target.phone,
+				from: selectedSenderID,
+				message: body,
+				attachments: attachments
+			)
+			synchronize()
+			return true
+		} catch {
+			errorMessage = error.localizedDescription
+			return false
+		}
+	}
+
+	func toggleMute() {
+		isMuted.toggle()
+		UserDefaults.standard.set(isMuted, forKey: Self.muteKey(for: target.phone))
+	}
+
+	func deleteLocally(messageID: String) {
+		hiddenMessageIDs.insert(messageID)
+		UserDefaults.standard.set(
+			hiddenMessageIDs.sorted(),
+			forKey: Self.hiddenKey(for: target.phone)
+		)
+		synchronize()
+	}
+
+	func statusLabel(for message: Message) -> String? {
+		guard message.isOutgoing else { return nil }
+		switch message.status {
+		case .read: return "Delivered"
+		case .received: return "Delivered"
+		case .sent: return "Sent"
+		case .sending: return "Sending"
+		case .error: return "Failed"
+		case nil: return nil
+		}
+	}
+
+	private func synchronize() {
+		senderIDs = store.smsSenders
+		if selectedSenderID.isEmpty || !senderIDs.contains(where: { $0.senderID == selectedSenderID }) {
+			selectedSenderID = senderIDs.first?.senderID ?? ""
+		}
+
+		var previousIncoming: Bool?
+		messages = store.smsMessages.compactMap { record in
+			guard !hiddenMessageIDs.contains(record.id) else { return nil }
+			let isFirst = previousIncoming != record.isIncoming
+			previousIncoming = record.isIncoming
+			let date = Self.date(from: record.time) ?? Date()
+			let attachments = Mango9ChatMedia.parse(record.files).map { media in
+				let type: AttachmentType
+				switch media.kind {
+				case .image:
+					type = media.url.pathExtension.lowercased() == "gif" ? .gif : .image
+				case .video: type = .video
+				case .audio: type = .audio
+				case .file:
+					type = media.mimeType == "application/pdf" || media.url.pathExtension.lowercased() == "pdf"
+						? .pdf
+						: .other
+				}
+				return Attachment(
+					id: media.id,
+					name: media.name,
+					url: media.url,
+					type: type
+				)
+			}
+			return Message(
+				id: record.id,
+				status: Self.messageStatus(for: record),
+				createdAt: date,
+				isOutgoing: !record.isIncoming,
+				isEditable: false,
+				isRetractable: true,
+				isEdited: false,
+				isRetracted: false,
+				dateReceived: time_t(date.timeIntervalSince1970),
+				address: Self.normalizedPhone(record.phone),
+				isFirstMessage: isFirst,
+				text: record.text,
+				attachmentsNames: attachments.map(\.name).joined(separator: ", "),
+				attachments: attachments
+			)
+		}
+		errorMessage = store.errorMessage
+	}
+
+	private static func messageStatus(for message: Mango9ServerSMSMessage) -> Message.Status {
+		if message.isIncoming { return .received }
+		switch message.status {
+		case 99: return .error
+		case 2...: return .received
+		case 1: return .sent
+		default: return .sending
+		}
+	}
+
+	static func date(from value: String) -> Date? {
+		let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+		let fractional = ISO8601DateFormatter()
+		fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+		if let date = fractional.date(from: trimmed) ?? ISO8601DateFormatter().date(from: trimmed) {
+			return date
+		}
+		let formatter = DateFormatter()
+		formatter.locale = Locale(identifier: "en_US_POSIX")
+		formatter.timeZone = TimeZone(secondsFromGMT: 0)
+		for format in ["yyyy-MM-dd HH:mm:ss.SSS", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss"] {
+			formatter.dateFormat = format
+			if let date = formatter.date(from: trimmed) { return date }
+		}
+		return nil
+	}
+
+	private static func normalizedPhone(_ value: String) -> String {
+		let digits = value.filter(\.isNumber)
+		return digits.count == 10 ? "1\(digits)" : digits
+	}
+
+	private static func contextSuffix() -> String {
+		Mango9SessionStore.activeIdentity ?? "no-account"
+	}
+
+	private static func muteKey(for phone: String) -> String {
+		"mango9_sms_muted.\(contextSuffix()).\(normalizedPhone(phone))"
+	}
+
+	private static func hiddenKey(for phone: String) -> String {
+		"mango9_sms_hidden_messages.\(contextSuffix()).\(normalizedPhone(phone))"
+	}
+}
+
+@MainActor
 class ConversationViewModel: ObservableObject {
 	
 	static let TAG = "[ConversationViewModel]"
 	
 	private var coreContext = CoreContext.shared
 	private var sharedMainViewModel = SharedMainViewModel.shared
+	private(set) var smsAdapter: Mango9SMSConversationAdapter?
+	private var smsSubscriptions = Set<AnyCancellable>()
+
+	@Published private(set) var smsSenderIDs: [Mango9ServerSMSSender] = []
+	@Published var smsSelectedSenderID = ""
+	@Published private(set) var smsErrorMessage: String?
+	@Published private(set) var smsIsMuted = false
+	@Published var requestedComposerText: String?
+
+	var isSMSConversation: Bool { smsAdapter != nil }
+	var smsTarget: Mango9SMSTarget? { smsAdapter?.target }
+	var conversationID: String {
+		smsAdapter?.id ?? sharedMainViewModel.displayedConversation?.id ?? ""
+	}
+	var conversationTitle: String {
+		smsTarget?.name ?? sharedMainViewModel.displayedConversation?.subject ?? ""
+	}
+	var conversationAddress: String {
+		smsTarget.map { Mango9CallerIdentity.formattedPhoneNumber($0.phone) }
+			?? sharedMainViewModel.displayedConversation?.remoteSipUri
+			?? ""
+	}
+	var conversationIsGroup: Bool {
+		isSMSConversation ? false : (sharedMainViewModel.displayedConversation?.isGroup ?? false)
+	}
+	var conversationIsReadOnly: Bool {
+		isSMSConversation ? false : (sharedMainViewModel.displayedConversation?.isReadOnly ?? false)
+	}
+	var conversationIsMuted: Bool {
+		isSMSConversation ? smsIsMuted : (sharedMainViewModel.displayedConversation?.isMuted ?? false)
+	}
+	var conversationAvatar: ContactAvatarModel {
+		if let target = smsTarget {
+			return ContactAvatarModel(
+				friend: nil,
+				name: target.name,
+				address: target.phone,
+				withPresence: false
+			)
+		}
+		return sharedMainViewModel.displayedConversation?.avatarModel
+			?? ContactAvatarModel(friend: nil, name: "", address: "", withPresence: false)
+	}
+
+	func closeActiveConversation() {
+		if let smsAdapter {
+			smsAdapter.close()
+			sharedMainViewModel.displayedSMS = nil
+		} else {
+			sharedMainViewModel.displayedConversation = nil
+		}
+	}
+
+	func toggleConversationMute() {
+		if let smsAdapter {
+			smsAdapter.toggleMute()
+		} else {
+			sharedMainViewModel.displayedConversation?.toggleMute()
+		}
+	}
+
+	func callActiveConversation() {
+		if let target = smsTarget {
+			Mango9CommunicationRouter.callWithMango9(
+				Mango9CommunicationTarget(name: target.name, phone: target.phone, email: "")
+			)
+		} else {
+			sharedMainViewModel.displayedConversation?.call()
+		}
+	}
+
+	func smsDeliveryLabel(for message: Message) -> String? {
+		smsAdapter?.statusLabel(for: message)
+	}
 	
 	@Published var displayedConversationHistorySize: Int = 0
 	@Published var displayedConversationUnreadMessagesCount: Int = 0
@@ -130,10 +409,66 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	init() {
-		if let chatroom = self.sharedMainViewModel.displayedConversation?.chatRoom {
+		if let target = self.sharedMainViewModel.displayedSMS {
+			let pendingComposerText = self.sharedMainViewModel.pendingSMSComposerText
+			self.sharedMainViewModel.pendingSMSComposerText = nil
+			let adapter = Mango9SMSConversationAdapter(target: target)
+			self.smsAdapter = adapter
+			self.peerAddress = target.phone
+			self.participantConversationModel = [
+				ContactAvatarModel(
+					friend: nil,
+					name: target.name,
+					address: target.phone,
+					withPresence: false
+				)
+			]
+			bindSMSAdapter(adapter)
+			requestedComposerText = pendingComposerText
+			Task { await adapter.open() }
+		} else if let chatroom = self.sharedMainViewModel.displayedConversation?.chatRoom {
 			self.addConversationDelegate(chatRoom: chatroom)
 			self.getMessages()
 		}
+	}
+
+	private func bindSMSAdapter(_ adapter: Mango9SMSConversationAdapter) {
+		adapter.$messages
+			.receive(on: RunLoop.main)
+			.sink { [weak self] messages in
+				guard let self else { return }
+				let rows = messages.reversed().map {
+					EventLogMessage(
+						eventModel: EventModel(carrierMessageId: $0.id),
+						message: $0
+					)
+				}
+				self.conversationMessagesSection = rows.isEmpty
+					? []
+					: [MessagesSection(date: Date(), chatRoomID: adapter.id, rows: rows)]
+				self.displayedConversationHistorySize = messages.count
+				self.displayedConversationUnreadMessagesCount = 0
+				self.attachments = messages.flatMap(\.attachments)
+			}
+			.store(in: &smsSubscriptions)
+		adapter.$senderIDs
+			.receive(on: RunLoop.main)
+			.sink { [weak self] senders in
+				self?.smsSenderIDs = senders
+				if self?.smsSelectedSenderID.isEmpty == true {
+					self?.smsSelectedSenderID = senders.first?.senderID ?? ""
+				}
+			}
+			.store(in: &smsSubscriptions)
+		adapter.$selectedSenderID
+			.receive(on: RunLoop.main)
+			.assign(to: &$smsSelectedSenderID)
+		adapter.$errorMessage
+			.receive(on: RunLoop.main)
+			.assign(to: &$smsErrorMessage)
+		adapter.$isMuted
+			.receive(on: RunLoop.main)
+			.assign(to: &$smsIsMuted)
 	}
 	
 	func addConversationDelegate(chatRoom: ChatRoom) {
@@ -579,6 +914,10 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func removeConversationDelegate() {
+		if let smsAdapter {
+			smsAdapter.close()
+			return
+		}
 		coreContext.doOnCoreQueue { _ in
 			self.chatRoomDelegateHolder = nil
 			self.chatMessageDelegateHolders.removeAll()
@@ -586,6 +925,10 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func getHistorySize() {
+		if let smsAdapter {
+			displayedConversationHistorySize = smsAdapter.messages.count
+			return
+		}
 		if self.sharedMainViewModel.displayedConversation != nil {
 			let historySize = self.sharedMainViewModel.displayedConversation!.chatRoom.historyEventsSize
 			DispatchQueue.main.async {
@@ -595,6 +938,10 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func getUnreadMessagesCount() {
+		if isSMSConversation {
+			displayedConversationUnreadMessagesCount = 0
+			return
+		}
 		if self.sharedMainViewModel.displayedConversation != nil {
 			let unreadMessagesCount = self.sharedMainViewModel.displayedConversation!.chatRoom.unreadMessagesCount
 			DispatchQueue.main.async {
@@ -604,6 +951,10 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func markAsRead() {
+		if isSMSConversation {
+			displayedConversationUnreadMessagesCount = 0
+			return
+		}
 		coreContext.doOnCoreQueue { _ in
 			if self.sharedMainViewModel.displayedConversation != nil {
 				let unreadMessagesCount = self.sharedMainViewModel.displayedConversation!.chatRoom.unreadMessagesCount
@@ -679,6 +1030,10 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func getMessages() {
+		if let smsAdapter {
+			Task { await smsAdapter.refresh() }
+			return
+		}
 		self.mediasToSend.removeAll()
 		self.messageToReply = nil
 		
@@ -959,6 +1314,7 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func getOldMessages() {
+		guard !isSMSConversation else { return }
 		coreContext.doOnCoreQueue { _ in
 			if self.sharedMainViewModel.displayedConversation != nil && !self.conversationMessagesSection.isEmpty
 				&& self.displayedConversationHistorySize > self.conversationMessagesSection[0].rows.count && !self.oldMessageReceived {
@@ -1826,6 +2182,17 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func resendMessage(chatMessage: EventLogMessage) {
+		if let smsAdapter {
+			smsAdapter.selectedSenderID = smsSelectedSenderID
+			Task {
+				_ = await smsAdapter.send(
+					text: chatMessage.message.text,
+					attachments: chatMessage.message.attachments
+				)
+				selectedMessage = nil
+			}
+			return
+		}
 		coreContext.doOnCoreQueue { _ in
 			if let message = chatMessage.eventModel.eventLog.chatMessage {
 				if message.state == .NotDelivered {
@@ -2141,6 +2508,38 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func sendMessage(messageText: String, audioRecorder: AudioRecorder? = nil) {
+		if let smsAdapter {
+			let body: String
+			if let reply = messageToReply {
+				let quoted = reply.message.text.isEmpty ? reply.message.attachmentsNames : reply.message.text
+				body = "> \(quoted)\n\(messageText)"
+			} else {
+				body = messageText
+			}
+			var outgoingAttachments = mediasToSend
+			if let audioRecorder, let recordingURL = audioRecorder.audioFilename {
+				audioRecorder.stopVoiceRecorder()
+				outgoingAttachments.append(
+					Attachment(
+						id: UUID().uuidString,
+						name: recordingURL.lastPathComponent,
+						url: recordingURL,
+						type: .voiceRecording
+					)
+				)
+			}
+			smsAdapter.selectedSenderID = smsSelectedSenderID
+			Task {
+				if await smsAdapter.send(text: body, attachments: outgoingAttachments) {
+					messageToReply = nil
+					messageToEdit = nil
+					withAnimation { mediasToSend.removeAll() }
+				} else if let error = smsAdapter.errorMessage {
+					ToastViewModel.shared.show(error)
+				}
+			}
+			return
+		}
 		if self.sharedMainViewModel.displayedConversation != nil {
 			coreContext.doOnCoreQueue { _ in
 				do {
@@ -2292,6 +2691,10 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func resetDisplayedChatRoom() {
+		if let smsAdapter {
+			Task { await smsAdapter.refresh() }
+			return
+		}
 		if let displayedConversation = self.sharedMainViewModel.displayedConversation {
 			CoreContext.shared.doOnCoreQueue { core in
 				let nilParams: ConferenceParams? = nil
@@ -2399,6 +2802,14 @@ class ConversationViewModel: ObservableObject {
 		let timeInterval = TimeInterval(startDate)
 		
 		let myNSDate = Date(timeIntervalSince1970: timeInterval)
+
+		if isSMSConversation {
+			let formatter = DateFormatter()
+			formatter.locale = Locale(identifier: "en_US_POSIX")
+			formatter.timeZone = .autoupdatingCurrent
+			formatter.dateFormat = "MM-dd-yyyy h:mma"
+			return formatter.string(from: myNSDate)
+		}
 		
 		if Calendar.current.isDateInToday(myNSDate) {
 			let formatter = DateFormatter()
@@ -2431,6 +2842,11 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func removeReaction() {
+		guard !isSMSConversation else {
+			selectedMessageToDisplayDetails = nil
+			isShowSelectedMessageToDisplayDetails = false
+			return
+		}
 		if self.sharedMainViewModel.displayedConversation != nil {
 			coreContext.doOnCoreQueue { _ in
 				if self.selectedMessageToDisplayDetails != nil {
@@ -2468,6 +2884,23 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func sendReaction(emoji: String) {
+		if isSMSConversation, let selectedMessage {
+			let description: String
+			switch emoji {
+			case "👍": description = "Liked"
+			case "❤️": description = "Loved"
+			case "😂": description = "Laughed at"
+			case "😮": description = "Emphasized"
+			case "😢": description = "Disliked"
+			default: description = emoji
+			}
+			let quoted = selectedMessage.message.text.isEmpty
+				? selectedMessage.message.attachmentsNames
+				: selectedMessage.message.text
+			requestedComposerText = "\(description) “\(quoted)”"
+			self.selectedMessage = nil
+			return
+		}
 		coreContext.doOnCoreQueue { _ in
 			if self.selectedMessage != nil {
 				Log.info("[ConversationViewModel] Sending reaction \(emoji) to message with ID \(self.selectedMessage!.message.id)")
@@ -2513,6 +2946,30 @@ class ConversationViewModel: ObservableObject {
 	
 	func prepareBottomSheetForDeliveryStatus() {
 		self.sheetCategories.removeAll()
+		if isSMSConversation,
+		   let target = smsTarget,
+		   let selected = selectedMessageToDisplayDetails {
+			let status = smsAdapter?.statusLabel(for: selected.message) ?? "Received"
+			let contact = ContactAvatarModel(
+				friend: nil,
+				name: target.name,
+				address: target.phone,
+				withPresence: false
+			)
+			sheetCategories = [
+				SheetCategory(
+					name: "\(status) 1",
+					innerCategory: [
+						InnerSheetCategory(
+							contact: contact,
+							detail: getMessageTime(startDate: selected.message.dateReceived)
+						)
+					]
+				)
+			]
+			isShowSelectedMessageToDisplayDetails = true
+			return
+		}
 		coreContext.doOnCoreQueue { _ in
 			let chatMessageToDisplay = self.sharedMainViewModel.displayedConversation!.chatRoom.findEventLog(messageId: self.selectedMessageToDisplayDetails!.eventModel.eventLogId)?.chatMessage
 			if self.selectedMessageToDisplayDetails != nil && chatMessageToDisplay != nil {
@@ -2692,6 +3149,7 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func compose(stop: Bool, cachedConversation: ConversationModel? = nil) {
+		guard !isSMSConversation else { return }
 		coreContext.doOnCoreQueue { _ in
 			if let displayedConversation = self.sharedMainViewModel.displayedConversation {
 				if stop {
@@ -2988,6 +3446,12 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func deleteMessage() {
+		if let smsAdapter, let selectedMessage {
+			smsAdapter.deleteLocally(messageID: selectedMessage.message.id)
+			self.selectedMessage = nil
+			ToastViewModel.shared.show("Success_message_deleted")
+			return
+		}
 		coreContext.doOnCoreQueue { _ in
 			if let displayedConversation = self.sharedMainViewModel.displayedConversation,
 			   let selectedMessage = self.selectedMessage,
@@ -3015,6 +3479,10 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func deleteMessageForEveryone(){
+		if isSMSConversation {
+			deleteMessage()
+			return
+		}
 		coreContext.doOnCoreQueue { _ in
 			if let displayedConversation = self.sharedMainViewModel.displayedConversation,
 			   let selectedMessage = self.selectedMessage,
@@ -3029,6 +3497,38 @@ class ConversationViewModel: ObservableObject {
 	
 	func searchChatMessage(direction: SearchDirection, textToSearch: String) {
 		let textToSearch = textToSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+		if isSMSConversation {
+			guard !textToSearch.isEmpty,
+				  let rows = conversationMessagesSection.first?.rows else { return }
+			let matchingIndexes = rows.indices.filter {
+				rows[$0].message.text.localizedCaseInsensitiveContains(textToSearch)
+			}
+			guard !matchingIndexes.isEmpty else {
+				ToastViewModel.shared.show("Failed_search_no_match_found")
+				return
+			}
+			let currentIndex = latestMatch.flatMap { match in
+				rows.firstIndex(where: { $0.message.id == match.message.id })
+			}
+			let matchIndex: Int
+			if direction == .Up {
+				matchIndex = matchingIndexes.first(where: { $0 > (currentIndex ?? -1) })
+					?? matchingIndexes.first!
+			} else {
+				matchIndex = matchingIndexes.reversed().first(where: { $0 < (currentIndex ?? rows.count) })
+					?? matchingIndexes.last!
+			}
+			latestMatch = rows[matchIndex]
+			searchText = textToSearch
+			highlightedMessageID = rows[matchIndex].message.id
+			canSearchDown = matchingIndexes.count > 1
+			NotificationCenter.default.post(
+				name: .onScrollToIndex,
+				object: nil,
+				userInfo: ["index": matchIndex, "animated": true]
+			)
+			return
+		}
 		if let displayedConversation = self.sharedMainViewModel.displayedConversation {
 			CoreContext.shared.doOnCoreQueue { core in
 				if let match = displayedConversation.chatRoom.searchChatMessageByText(text: textToSearch, from: self.latestMatch?.eventModel.eventLog ?? nil, direction: direction) {

@@ -24,17 +24,33 @@ class EventModel: ObservableObject {
 	@Published var text: String
 	@Published var icon: Image?
 
-	var eventLog: EventLog
+	private var sourceEventLog: EventLog?
+	var eventLog: EventLog {
+		guard let sourceEventLog else {
+			preconditionFailure("Carrier messages do not have a Linphone EventLog")
+		}
+		return sourceEventLog
+	}
+	var chatMessage: ChatMessage? { sourceEventLog?.chatMessage }
+	var isCarrierMessage: Bool { sourceEventLog == nil }
 	var eventLogId: String
 	var eventLogType: EventLog.Kind
 
 	init(eventLog: EventLog) {
-		self.eventLog = eventLog
+		self.sourceEventLog = eventLog
 		self.eventLogId = eventLog.chatMessage != nil ? eventLog.chatMessage!.messageId : String(eventLog.notifyId)
 		self.eventLogType = eventLog.type
 		self.text = ""
 		self.icon = nil
 		setupEventData(eventLog: eventLog)
+	}
+
+	init(carrierMessageId: String) {
+		self.sourceEventLog = nil
+		self.eventLogId = carrierMessageId
+		self.eventLogType = .ConferenceChatMessage
+		self.text = ""
+		self.icon = nil
 	}
 	
 	private func setupEventData(eventLog: EventLog) {

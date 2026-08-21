@@ -31,6 +31,7 @@ struct ConversationInfoFragment: View {
 	@EnvironmentObject var accountProfileViewModel: AccountProfileViewModel
 	
 	@State var addParticipantsViewModel = AddParticipantsViewModel()
+	var smsTarget: Mango9SMSTarget? = nil
 	
 	@Binding var isMuted: Bool
 	@Binding var isShowEphemeralFragment: Bool
@@ -73,7 +74,9 @@ struct ConversationInfoFragment: View {
 		let accountModel = CoreContext.shared.accounts[accountProfileViewModel.accountModelIndex ?? 0]
 		NavigationView {
 			GeometryReader { geometry in
-				if SharedMainViewModel.shared.displayedConversation != nil {
+				if let smsTarget {
+					smsConversationInfo(target: smsTarget, geometry: geometry)
+				} else if SharedMainViewModel.shared.displayedConversation != nil {
 					VStack(spacing: 1) {
 						Rectangle()
 							.foregroundColor(Color.orangeMain500)
@@ -800,6 +803,123 @@ struct ConversationInfoFragment: View {
 			}
 		}
 		.navigationViewStyle(.stack)
+	}
+
+	private func smsConversationInfo(target: Mango9SMSTarget, geometry: GeometryProxy) -> some View {
+		VStack(spacing: 1) {
+			Rectangle()
+				.foregroundColor(Color.orangeMain500)
+				.edgesIgnoringSafeArea(.top)
+				.frame(height: 0)
+
+			HStack {
+				Image("caret-left")
+					.renderingMode(.template)
+					.resizable()
+					.foregroundStyle(Color.orangeMain500)
+					.frame(width: 25, height: 25)
+					.padding(10)
+					.padding(.leading, -10)
+					.onTapGesture {
+						withAnimation { isShowInfoConversationFragment = false }
+					}
+				Spacer()
+				Rectangle().foregroundColor(.white).frame(width: 45, height: 45)
+			}
+			.frame(height: 50)
+			.padding(.horizontal)
+			.background(.white)
+
+			ScrollView {
+				VStack(spacing: 0) {
+					VStack(spacing: 8) {
+						Avatar(contactAvatarModel: conversationViewModel.conversationAvatar, avatarSize: 100)
+						Text(target.name)
+							.default_text_style_800(styleSize: 18)
+						Button {
+							UIPasteboard.general.setValue(
+								target.phone,
+								forPasteboardType: UTType.plainText.identifier
+							)
+							ToastViewModel.shared.show("Success_address_copied_into_clipboard")
+						} label: {
+							HStack(spacing: 6) {
+								Text(Mango9CallerIdentity.formattedPhoneNumber(target.phone))
+									.default_text_style(styleSize: 14)
+								Image("copy")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.grayMain2c500)
+									.frame(width: 20, height: 20)
+							}
+						}
+					}
+					.padding(.vertical, 20)
+					.frame(maxWidth: .infinity)
+					.background(Color.gray100)
+
+					HStack {
+						Spacer()
+						Button {
+							conversationViewModel.toggleConversationMute()
+							isMuted = conversationViewModel.conversationIsMuted
+						} label: {
+							VStack {
+								Image(isMuted ? "bell-simple" : "bell-simple-slash")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.grayMain2c600)
+									.frame(width: 25, height: 25)
+									.padding(16)
+									.background(Color.grayMain2c200)
+									.clipShape(Circle())
+								Text(isMuted ? "conversation_action_unmute" : "conversation_action_mute")
+									.default_text_style(styleSize: 14)
+							}
+						}
+						.frame(width: geometry.size.width / 3)
+						Spacer()
+						Button { conversationViewModel.callActiveConversation() } label: {
+							VStack {
+								Image("phone")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.grayMain2c600)
+									.frame(width: 25, height: 25)
+									.padding(16)
+									.background(Color.grayMain2c200)
+									.clipShape(Circle())
+								Text("conversation_action_call")
+									.default_text_style(styleSize: 14)
+							}
+						}
+						.frame(width: geometry.size.width / 3)
+						Spacer()
+					}
+					.padding(.vertical, 20)
+
+					VStack(spacing: 0) {
+						Button { isShowMediaFilesFragment = true } label: {
+							Label("conversation_menu_media_files", image: "image")
+								.default_text_style(styleSize: 15)
+								.frame(maxWidth: .infinity, alignment: .leading)
+								.padding(18)
+						}
+						Divider().padding(.horizontal, 18)
+						Button { isShowDocumentsFilesFragment = true } label: {
+							Label("conversation_menu_documents_files", image: "file-pdf")
+								.default_text_style(styleSize: 15)
+								.frame(maxWidth: .infinity, alignment: .leading)
+								.padding(18)
+						}
+					}
+					.background(.white)
+					.cornerRadius(14)
+					.padding(20)
+				}
+			}
+			.background(Color.gray100)
+		}
 	}
 }
 

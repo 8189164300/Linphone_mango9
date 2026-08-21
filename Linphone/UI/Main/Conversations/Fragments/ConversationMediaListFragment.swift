@@ -22,7 +22,7 @@ import linphonesw
 
 struct ConversationMediaListFragment: View {
 	@StateObject private var conversationMediaListViewModel = ConversationMediaListViewModel()
-	
+	var carrierAttachments: [Attachment]? = nil
 	@Binding var isShowMediaFilesFragment: Bool
 	
 	var body: some View {
@@ -64,7 +64,11 @@ struct ConversationMediaListFragment: View {
 						.padding(.bottom, 4)
 						.background(.white)
 						
-						ConversationMediaGridView(viewModel: conversationMediaListViewModel)
+						if let carrierAttachments {
+							CarrierConversationMediaGrid(attachments: carrierAttachments)
+						} else {
+							ConversationMediaGridView(viewModel: conversationMediaListViewModel)
+						}
 					}
 					.background(Color.gray100)
 					
@@ -83,6 +87,54 @@ struct ConversationMediaListFragment: View {
 			}
 		}
 		.navigationViewStyle(StackNavigationViewStyle())
+	}
+}
+
+private struct CarrierConversationMediaGrid: View {
+	let attachments: [Attachment]
+	@State private var selectedURL: URL?
+
+	private var media: [Attachment] {
+		attachments.filter { [.image, .gif, .video, .audio, .voiceRecording].contains($0.type) }
+	}
+
+	var body: some View {
+		if media.isEmpty {
+			VStack {
+				Spacer()
+				Text("conversation_no_media_found")
+					.default_text_style_800(styleSize: 16)
+				Spacer()
+			}
+		} else {
+			ScrollView {
+				LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 4), spacing: 2) {
+					ForEach(media) { attachment in
+						ZStack {
+							if attachment.type == .image || attachment.type == .gif {
+								AsyncImage(url: attachment.thumbnail) { image in
+									image.resizable().scaledToFill()
+								} placeholder: {
+									ProgressView()
+								}
+							} else {
+								Rectangle().fill(Color.grayMain2c200)
+								Image(attachment.type == .video ? "play-fill" : "microphone")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.grayMain2c600)
+									.frame(width: 28, height: 28)
+							}
+						}
+						.aspectRatio(1, contentMode: .fit)
+						.clipped()
+						.onTapGesture { selectedURL = attachment.full }
+					}
+				}
+				.padding(2)
+			}
+			.quickLookPreview($selectedURL, in: media.map(\.full))
+		}
 	}
 }
 

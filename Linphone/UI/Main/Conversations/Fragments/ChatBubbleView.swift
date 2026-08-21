@@ -58,7 +58,7 @@ struct ChatBubbleView: View {
 							if eventLogMessage.message.isOutgoing {
 								Spacer()
 							}
-							if SharedMainViewModel.shared.displayedConversation != nil && SharedMainViewModel.shared.displayedConversation!.isGroup
+							if conversationViewModel.conversationIsGroup
 								&& !eventLogMessage.message.isOutgoing && eventLogMessage.message.isFirstMessage {
 								VStack {
 									Avatar(
@@ -68,15 +68,14 @@ struct ChatBubbleView: View {
 									)
 									.padding(.top, 30)
 								}
-							} else if SharedMainViewModel.shared.displayedConversation != nil
-										&& SharedMainViewModel.shared.displayedConversation!.isGroup && !eventLogMessage.message.isOutgoing {
+							} else if conversationViewModel.conversationIsGroup && !eventLogMessage.message.isOutgoing {
 								VStack {
 								}
 								.padding(.leading, 43)
 							}
 							
 							VStack(alignment: .leading, spacing: 0) {
-								if SharedMainViewModel.shared.displayedConversation != nil && SharedMainViewModel.shared.displayedConversation!.isGroup
+								if conversationViewModel.conversationIsGroup
 									&& !eventLogMessage.message.isOutgoing && eventLogMessage.message.isFirstMessage {
 									Text(conversationViewModel.participantConversationModel.first(where: {$0.address == eventLogMessage.message.address})?.name ?? "")
 										.default_text_style(styleSize: 12)
@@ -181,12 +180,18 @@ struct ChatBubbleView: View {
 												}
 												
 												if !eventLogMessage.message.text.isEmpty {
-													DynamicLinkText(
-														text: eventLogMessage.message.text,
-														isMessageId: eventLogMessage.message.id == conversationViewModel.highlightedMessageID,
-														searchText: conversationViewModel.searchText,
-														participantConversationModel: conversationViewModel.participantConversationModel
-													)
+											DynamicLinkText(
+												text: eventLogMessage.message.text,
+												isMessageId: eventLogMessage.message.id == conversationViewModel.highlightedMessageID,
+												searchText: conversationViewModel.searchText,
+												participantConversationModel: conversationViewModel.participantConversationModel,
+												foregroundColor: conversationViewModel.isSMSConversation && eventLogMessage.message.isOutgoing
+													? .white
+													: Color.grayMain2c700,
+												linkColor: conversationViewModel.isSMSConversation && eventLogMessage.message.isOutgoing
+													? .white
+													: .blue
+											)
 												} else if eventLogMessage.message.isRetracted {
 													Text(eventLogMessage.message.isOutgoing ? "conversation_message_content_deleted_by_us_label" : "conversation_message_content_deleted_label")
 														.italic()
@@ -352,14 +357,29 @@ struct ChatBubbleView: View {
 														 .padding(.trailing, -4)
 													}
 													
-													Text(conversationViewModel.getMessageTime(startDate: eventLogMessage.message.dateReceived))
-														.foregroundStyle(Color.grayMain2c500)
+												Text(conversationViewModel.getMessageTime(startDate: eventLogMessage.message.dateReceived))
+														.foregroundStyle(
+															conversationViewModel.isSMSConversation && eventLogMessage.message.isOutgoing
+																? Color.white.opacity(0.8)
+																: Color.grayMain2c500
+														)
 														.default_text_style_300(styleSize: 12)
 														.padding(.top, 1)
-														.padding(.trailing, -4)
+													.padding(.trailing, -4)
+
+												if let delivery = conversationViewModel.smsDeliveryLabel(for: eventLogMessage.message) {
+													Text(delivery)
+														.foregroundStyle(
+															conversationViewModel.isSMSConversation && eventLogMessage.message.isOutgoing
+																? Color.white.opacity(0.8)
+																: Color.grayMain2c500
+														)
+														.default_text_style_300(styleSize: 12)
+														.padding(.top, 1)
+												}
 													
-													if (SharedMainViewModel.shared.displayedConversation != nil && SharedMainViewModel.shared.displayedConversation!.isGroup)
-														|| eventLogMessage.message.isOutgoing {
+											if !conversationViewModel.isSMSConversation
+												&& (conversationViewModel.conversationIsGroup || eventLogMessage.message.isOutgoing) {
 														if eventLogMessage.message.status == .sending {
 															ProgressView()
 																.controlSize(.mini)
@@ -415,9 +435,13 @@ struct ChatBubbleView: View {
 												}
 												.disabled(conversationViewModel.selectedMessage != nil)
 												.padding(.top, -4)
-											}
-											.padding(.all, 15)
-											.background(eventLogMessage.message.isOutgoing ? Color.orangeMain100 : Color.grayMain2c100)
+															}
+										.padding(.all, 15)
+										.background(
+											conversationViewModel.isSMSConversation
+												? (eventLogMessage.message.isOutgoing ? Color(uiColor: .systemBlue) : Color(uiColor: .systemGray5))
+												: (eventLogMessage.message.isOutgoing ? Color.orangeMain100 : Color.grayMain2c100)
+										)
 											.clipShape(RoundedRectangle(cornerRadius: 3))
 											.roundedCorner(
 												16,
@@ -958,6 +982,8 @@ struct DynamicLinkText: View {
 	let isMessageId: Bool
 	let searchText: String
 	let participantConversationModel: [ContactAvatarModel]
+	var foregroundColor: Color = Color.grayMain2c700
+	var linkColor: Color = .blue
 	
 	var body: some View {
 		Text(makeAttributedString(from: text))
@@ -1003,7 +1029,7 @@ struct DynamicLinkText: View {
 		{
 			var link = AttributedString(word)
 			link.link = url
-			link.foregroundColor = .blue
+			link.foregroundColor = linkColor
 			link.underlineStyle = .single
 			result.append(link)
 			return
@@ -1026,7 +1052,7 @@ struct DynamicLinkText: View {
 		
 		// Text
 		var normal = AttributedString(word)
-		normal.foregroundColor = Color.grayMain2c700
+		normal.foregroundColor = foregroundColor
 		result.append(normal)
 	}
 	

@@ -23,7 +23,7 @@ import linphonesw
 struct ConversationDocumentsListFragment: View {
 	
 	@StateObject private var conversationDocumentsListViewModel = ConversationDocumentsListViewModel()
-	
+	var carrierAttachments: [Attachment]? = nil
 	@Binding var isShowDocumentsFilesFragment: Bool
 	
 	var body: some View {
@@ -65,6 +65,9 @@ struct ConversationDocumentsListFragment: View {
 						.padding(.bottom, 4)
 						.background(.white)
 						
+						if let carrierAttachments {
+							CarrierConversationDocumentsList(attachments: carrierAttachments)
+						} else {
 						VStack(spacing: 0) {
 							List {
 								ForEach(conversationDocumentsListViewModel.documentsList, id: \.path) { file in
@@ -100,6 +103,7 @@ struct ConversationDocumentsListFragment: View {
 							)
 						}
 						.frame(maxWidth: .infinity)
+						}
 					}
 					.background(Color.gray100)
 					
@@ -118,6 +122,67 @@ struct ConversationDocumentsListFragment: View {
 			}
 		}
 		.navigationViewStyle(StackNavigationViewStyle())
+	}
+}
+
+private struct CarrierConversationDocumentsList: View {
+	let attachments: [Attachment]
+	@State private var selectedURL: URL?
+
+	private var documents: [Attachment] {
+		attachments.filter { ![.image, .gif, .video, .audio, .voiceRecording].contains($0.type) }
+	}
+
+	var body: some View {
+		VStack(spacing: 0) {
+			if documents.isEmpty {
+				Spacer()
+				Text("conversation_no_document_found")
+					.multilineTextAlignment(.center)
+					.default_text_style_800(styleSize: 16)
+				Spacer()
+			} else {
+				List {
+					ForEach(documents) { attachment in
+						HStack {
+							ZStack {
+								Color.grayMain2c200
+								Image(systemName: attachment.type == .pdf ? "doc.richtext.fill" : "doc.fill")
+									.resizable()
+									.scaledToFit()
+									.foregroundStyle(Color.grayMain2c700)
+									.frame(width: 32, height: 32)
+							}
+							.frame(width: 72, height: 72)
+
+							VStack(alignment: .leading, spacing: 5) {
+								Text(attachment.name)
+									.default_text_style_600(styleSize: 14)
+									.foregroundStyle(Color.grayMain2c700)
+									.lineLimit(1)
+									.truncationMode(.middle)
+								if attachment.size > 0 {
+									Text(attachment.size.formatBytes())
+										.default_text_style_300(styleSize: 14)
+								}
+							}
+							Spacer()
+						}
+						.padding(10)
+						.background(.white)
+						.clipShape(RoundedRectangle(cornerRadius: 10))
+						.listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+						.listRowSeparator(.hidden)
+						.listRowBackground(Color.clear)
+						.contentShape(Rectangle())
+						.onTapGesture { selectedURL = attachment.full }
+					}
+				}
+				.listStyle(.plain)
+			}
+		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
+		.quickLookPreview($selectedURL, in: documents.map(\.full))
 	}
 }
 

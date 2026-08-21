@@ -24,6 +24,7 @@ struct ConversationForwardMessageFragment: View {
 	
 	@ObservedObject var contactsManager = ContactsManager.shared
 	@ObservedObject var magicSearch = MagicSearchSingleton.shared
+	@ObservedObject private var mango9ChatStore = Mango9ChatStore.shared
 	
 	@EnvironmentObject var conversationViewModel: ConversationViewModel
 	@EnvironmentObject var conversationsListViewModel: ConversationsListViewModel
@@ -36,6 +37,20 @@ struct ConversationForwardMessageFragment: View {
 	@State private var delayedColor = Color.white
 	
 	@FocusState var isMessageTextFocused: Bool
+
+	private var isCarrierForward: Bool {
+		conversationForwardMessageViewModel.selectedMessage?.eventModel.isCarrierMessage == true
+	}
+
+	private var filteredSMSParties: [Mango9SMSParty] {
+		let query = conversationForwardMessageViewModel.searchField
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !query.isEmpty else { return mango9ChatStore.smsParties }
+		return mango9ChatStore.smsParties.filter {
+			Mango9CallerIdentity.formattedPhoneNumber($0.phone)
+				.localizedCaseInsensitiveContains(query)
+		}
+	}
 	
 	init(conversationsList: [ConversationModel], selectedMessage: EventLogMessage?, isShowConversationForwardMessageFragment: Binding<Bool>) {
 		_conversationForwardMessageViewModel = StateObject(wrappedValue: ConversationForwardMessageViewModel(conversationsList: conversationsList, selectedMessage: selectedMessage))
@@ -93,6 +108,7 @@ struct ConversationForwardMessageFragment: View {
 								.focused($isSearchFieldFocused)
 								.padding(.horizontal, 30)
 								.onChange(of: conversationForwardMessageViewModel.searchField) { newValue in
+									guard !isCarrierForward else { return }
 									if newValue.isEmpty {
 										conversationForwardMessageViewModel.resetFilterConversations()
 									} else {
@@ -143,7 +159,16 @@ struct ConversationForwardMessageFragment: View {
 						
 						ZStack {
 							ScrollView {
-								if !conversationForwardMessageViewModel.conversationsList.isEmpty {
+								if isCarrierForward {
+									HStack(alignment: .center) {
+										Text("bottom_navigation_conversations_label")
+											.default_text_style_800(styleSize: 16)
+										Spacer()
+									}
+									.padding(.vertical, 10)
+									.padding(.horizontal, 16)
+									carrierConversationsList
+								} else if !conversationForwardMessageViewModel.conversationsList.isEmpty {
 									HStack(alignment: .center) {
 										Text("bottom_navigation_conversations_label")
 											.default_text_style_800(styleSize: 16)
@@ -156,7 +181,7 @@ struct ConversationForwardMessageFragment: View {
 									conversationsList
 								}
 								
-								if !ContactsManager.shared.lastSearch.isEmpty {
+								if !isCarrierForward && !ContactsManager.shared.lastSearch.isEmpty {
 									HStack(alignment: .center) {
 										Text("contacts_list_all_contacts_title")
 											.default_text_style_800(styleSize: 16)
@@ -167,6 +192,7 @@ struct ConversationForwardMessageFragment: View {
 									.padding(.horizontal, 16)
 								}
 								
+								if !isCarrierForward {
 								ContactsListFragment(showingSheet: .constant(false), startCallFunc: { addr in
 									withAnimation {
 										conversationForwardMessageViewModel.createOneToOneChatRoomWith(remote: addr)
@@ -174,8 +200,9 @@ struct ConversationForwardMessageFragment: View {
 									
 								})
 								.padding(.horizontal, 16)
+								}
 								
-								if !contactsManager.lastSearchSuggestions.isEmpty {
+								if !isCarrierForward && !contactsManager.lastSearchSuggestions.isEmpty {
 									HStack(alignment: .center) {
 										Text("generic_address_picker_suggestions_list_title")
 											.default_text_style_800(styleSize: 16)
@@ -189,7 +216,7 @@ struct ConversationForwardMessageFragment: View {
 								}
 							}
 							
-							if magicSearch.isLoading {
+							if !isCarrierForward && magicSearch.isLoading {
 								ProgressView()
 									.controlSize(.large)
 									.progressViewStyle(CircularProgressViewStyle(tint: .orangeMain500))
@@ -228,6 +255,10 @@ struct ConversationForwardMessageFragment: View {
 			.navigationTitle("")
 			.navigationBarHidden(true)
 			.onAppear {
+				if isCarrierForward {
+					Task { await mango9ChatStore.refreshSMSDirectory() }
+					return
+				}
 				if !magicSearch.currentFilter.isEmpty || (self.contactsManager.lastSearch.isEmpty && self.contactsManager.lastSearchSuggestions.isEmpty) {
 					magicSearch.currentFilter = ""
 					magicSearch.searchForContacts()
@@ -268,6 +299,47 @@ struct ConversationForwardMessageFragment: View {
 				.buttonStyle(.borderless)
 				.listRowSeparator(.hidden)
 			}
+		}
+	}
+
+	var carrierConversationsList: some View {
+		ForEach(filteredSMSParties) { party in
+			Button {
+				guard let message = conversationForwardMessageViewModel.selectedMessage else { return }
+				SharedMainViewModel.shared.pendingSMSComposerText = message.message.text
+				Mango9SMSRouting.open(
+					Mango9SMSTarget(
+						phone: party.phone,
+						name: Mango9CallerIdentity.formattedPhoneNumber(party.phone)
+					)
+				)
+				conversationForwardMessageViewModel.selectedMessage = nil
+				withAnimation { isShowConversationForwardMessageFragment = false }
+			} label: {
+				HStack(spacing: 12) {
+					Avatar(
+						contactAvatarModel: ContactAvatarModel(
+							friend: nil,
+							name: Mango9CallerIdentity.formattedPhoneNumber(party.phone),
+							address: party.phone,
+							withPresence: false
+						),
+						avatarSize: 50
+					)
+					VStack(alignment: .leading, spacing: 3) {
+						Text(Mango9CallerIdentity.formattedPhoneNumber(party.phone))
+							.default_text_style(styleSize: 16)
+							.foregroundStyle(Color.grayMain2c800)
+						Text(party.lastMessage.isEmpty ? "Attachment" : party.lastMessage)
+							.default_text_style(styleSize: 13)
+							.foregroundStyle(Color.grayMain2c400)
+							.lineLimit(1)
+					}
+					Spacer()
+				}
+				.padding(.horizontal)
+			}
+			.buttonStyle(.borderless)
 		}
 	}
 	

@@ -307,6 +307,51 @@ struct ConversationFragment: View {
 				SharedMainViewModel.shared.fileUrlsToShare.removeAll()
 			}
 		}
+		.onReceive(conversationViewModel.$requestedComposerText.compactMap { $0 }) { text in
+			messageText = text
+			conversationViewModel.requestedComposerText = nil
+			isMessageTextFocused = true
+		}
+		.onReceive(conversationViewModel.$smsErrorMessage.compactMap { $0 }) { error in
+			guard conversationViewModel.isSMSConversation else { return }
+			ToastViewModel.shared.show(error)
+		}
+	}
+
+	private var hasActiveConversation: Bool {
+		conversationViewModel.isSMSConversation
+			|| SharedMainViewModel.shared.displayedConversation != nil
+			|| cachedConversation != nil
+	}
+
+	private var activeConversationTitle: String {
+		if conversationViewModel.isSMSConversation {
+			return conversationViewModel.conversationTitle
+		}
+		return SharedMainViewModel.shared.displayedConversation?.subject
+			?? cachedConversation?.subject
+			?? ""
+	}
+
+	private var activeConversationAvatar: ContactAvatarModel {
+		if conversationViewModel.isSMSConversation {
+			return conversationViewModel.conversationAvatar
+		}
+		return SharedMainViewModel.shared.displayedConversation?.avatarModel
+			?? cachedConversation?.avatarModel
+			?? ContactAvatarModel(friend: nil, name: "", address: "", withPresence: false)
+	}
+
+	private var activeConversationIsGroup: Bool {
+		conversationViewModel.isSMSConversation
+			? false
+			: (SharedMainViewModel.shared.displayedConversation?.isGroup ?? cachedConversation?.isGroup ?? false)
+	}
+
+	private var activeConversationIsReadOnly: Bool {
+		conversationViewModel.isSMSConversation
+			? false
+			: (SharedMainViewModel.shared.displayedConversation?.isReadOnly ?? cachedConversation?.isReadOnly ?? true)
 	}
 	
 	// swiftlint:disable cyclomatic_complexity
@@ -315,7 +360,7 @@ struct ConversationFragment: View {
 	func innerView(geometry: GeometryProxy) -> some View {
 		ZStack {
 			VStack(spacing: 1) {
-				if SharedMainViewModel.shared.displayedConversation != nil || cachedConversation != nil {
+				if hasActiveConversation {
 					Rectangle()
 						.foregroundColor(Color.orangeMain500)
 						.edgesIgnoringSafeArea(.top)
@@ -338,16 +383,16 @@ struct ConversationFragment: View {
 											if isShowConversationFragment {
 												isShowConversationFragment = false
 											}
-											SharedMainViewModel.shared.displayedConversation = nil
+											conversationViewModel.closeActiveConversation()
 										}
 									}
 							}
 							
-							Avatar(contactAvatarModel: SharedMainViewModel.shared.displayedConversation?.avatarModel ?? cachedConversation!.avatarModel, avatarSize: 50)
+							Avatar(contactAvatarModel: activeConversationAvatar, avatarSize: 50)
 								.padding(.top, 4)
 							
 							VStack(spacing: 1) {
-								Text(SharedMainViewModel.shared.displayedConversation?.subject ?? cachedConversation!.subject)
+								Text(activeConversationTitle)
 									.default_text_style(styleSize: 16)
 									.frame(maxWidth: .infinity, alignment: .leading)
 									.padding(.top, 4)
@@ -391,12 +436,12 @@ struct ConversationFragment: View {
 							
 							Spacer()
 							
-							if !(SharedMainViewModel.shared.displayedConversation?.isReadOnly ?? cachedConversation!.isReadOnly) {
+							if !activeConversationIsReadOnly {
 								Button {
-									if SharedMainViewModel.shared.displayedConversation!.isGroup {
+									if activeConversationIsGroup {
 										isShowStartCallGroupPopup.toggle()
 									} else {
-										SharedMainViewModel.shared.displayedConversation!.call()
+										conversationViewModel.callActiveConversation()
 									}
 								} label: {
 									Image("phone")
@@ -446,12 +491,21 @@ struct ConversationFragment: View {
 											.padding(.all, 10)
 									}
 								}
+
+								if conversationViewModel.isSMSConversation && conversationViewModel.smsSenderIDs.count > 1 {
+									Picker("Send from", selection: $conversationViewModel.smsSelectedSenderID) {
+										ForEach(conversationViewModel.smsSenderIDs) { sender in
+											Text(Mango9CallerIdentity.formattedPhoneNumber(sender.senderID))
+												.tag(sender.senderID)
+										}
+									}
+								}
 								
-								if !(SharedMainViewModel.shared.displayedConversation?.isReadOnly ?? cachedConversation!.isReadOnly) {
+								if !activeConversationIsReadOnly {
 									Button {
 										isMenuOpen = false
-										SharedMainViewModel.shared.displayedConversation!.toggleMute()
-										isMuted = !isMuted
+										conversationViewModel.toggleConversationMute()
+										isMuted = conversationViewModel.conversationIsMuted
 									} label: {
 										HStack {
 											Text(isMuted ? "conversation_action_unmute" : "conversation_action_mute")
@@ -467,8 +521,10 @@ struct ConversationFragment: View {
 									
 									Button {
 										isMenuOpen = false
-										withAnimation {
-											isShowEphemeralFragment = true
+										if conversationViewModel.isSMSConversation {
+											ToastViewModel.shared.show("Ephemeral messages are not supported by carrier SMS.")
+										} else {
+											withAnimation { isShowEphemeralFragment = true }
 										}
 									} label: {
 										HStack {
@@ -529,7 +585,7 @@ struct ConversationFragment: View {
 									.padding(.top, 4)
 									.onChange(of: isMuted) { _ in }
 									.onAppear {
-										isMuted = SharedMainViewModel.shared.displayedConversation!.isMuted
+										isMuted = conversationViewModel.conversationIsMuted
 									}
 							}
 							.onTapGesture {
@@ -741,7 +797,7 @@ struct ConversationFragment: View {
 						.transition(.move(edge: .bottom))
 					}
 					
-                    if !(SharedMainViewModel.shared.displayedConversation?.isReadOnly ?? cachedConversation!.isReadOnly) && !isSearchVisible {
+					if !activeConversationIsReadOnly && !isSearchVisible {
 						if conversationViewModel.messageToReply != nil {
 							ZStack(alignment: .top) {
 								HStack {
@@ -1025,7 +1081,7 @@ struct ConversationFragment: View {
 							.transition(.move(edge: .bottom))
 						}
 						
-						if mentionIsOpen && SharedMainViewModel.shared.displayedConversation!.isGroup {
+						if mentionIsOpen && activeConversationIsGroup {
 							ZStack(alignment: .top) {
 								ScrollView {
 									LazyVStack(alignment: .leading, spacing: 0) {
@@ -1236,8 +1292,8 @@ struct ConversationFragment: View {
 			}
 			.blur(radius: conversationViewModel.selectedMessage != nil ? 8 : 0)
 			
-			if conversationViewModel.selectedMessage != nil && SharedMainViewModel.shared.displayedConversation != nil {
-				let iconSize = ((geometry.size.width - (SharedMainViewModel.shared.displayedConversation!.isGroup ? 43 : 10) - 10) / 6) - 30
+			if conversationViewModel.selectedMessage != nil && hasActiveConversation {
+				let iconSize = ((geometry.size.width - (activeConversationIsGroup ? 43 : 10) - 10) / 6) - 30
 				
 				ScrollView {
 					VStack {
@@ -1327,7 +1383,7 @@ struct ConversationFragment: View {
 								}
 								.frame(maxWidth: .infinity)
 								.padding(.horizontal, 10)
-								.padding(.leading, SharedMainViewModel.shared.displayedConversation!.isGroup ? 43 : 0)
+								.padding(.leading, activeConversationIsGroup ? 43 : 0)
 								.shadow(color: .black.opacity(0.1), radius: 10)
 							}
 							
@@ -1388,7 +1444,7 @@ struct ConversationFragment: View {
 										}
 										
 										if conversationViewModel.selectedMessage!.message.isOutgoing
-											&& !(SharedMainViewModel.shared.displayedConversation?.isReadOnly ?? cachedConversation!.isReadOnly)
+											&& !activeConversationIsReadOnly
 											&& conversationViewModel.selectedMessage!.message.isEditable {
 											Button {
 												if let chatMessage = conversationViewModel.selectedMessage {
@@ -1476,9 +1532,7 @@ struct ConversationFragment: View {
 										
 										if !conversationViewModel.selectedMessage!.message.isRetracted {
 											Button {
-												withAnimation {
-													isShowConversationForwardMessageFragment = true
-												}
+												withAnimation { isShowConversationForwardMessageFragment = true }
 											} label: {
 												HStack {
 													Text("menu_forward_chat_message")
@@ -1496,8 +1550,10 @@ struct ConversationFragment: View {
 										}
 										
 										Button {
-											if conversationViewModel.selectedMessage!.message.isOutgoing
-												&& !(SharedMainViewModel.shared.displayedConversation?.isReadOnly ?? cachedConversation!.isReadOnly) && !conversationViewModel.selectedMessage!.message.isRetracted {
+											if conversationViewModel.isSMSConversation {
+												conversationViewModel.deleteMessage()
+											} else if conversationViewModel.selectedMessage!.message.isOutgoing
+												&& !activeConversationIsReadOnly && !conversationViewModel.selectedMessage!.message.isRetracted {
 												isShowDeleteMessagePopup = true
 											} else {
 												conversationViewModel.deleteMessage()
@@ -1530,7 +1586,7 @@ struct ConversationFragment: View {
 								.frame(maxWidth: .infinity)
 								.padding(.horizontal, 10)
 								.padding(.bottom, 20)
-								.padding(.leading, SharedMainViewModel.shared.displayedConversation!.isGroup ? 43 : 0)
+								.padding(.leading, activeConversationIsGroup ? 43 : 0)
 								.shadow(color: .black.opacity(0.1), radius: 10)
 							}
 						}
@@ -1578,6 +1634,7 @@ struct ConversationFragment: View {
 			
 			if isShowInfoConversationFragment {
 				ConversationInfoFragment(
+					smsTarget: conversationViewModel.smsTarget,
 					isMuted: $isMuted,
 					isShowEphemeralFragment: $isShowEphemeralFragment,
 					isShowMediaFilesFragment: $isShowMediaFilesFragment,
@@ -1612,6 +1669,7 @@ struct ConversationFragment: View {
 			
 			if isShowMediaFilesFragment {
 				ConversationMediaListFragment(
+					carrierAttachments: conversationViewModel.isSMSConversation ? conversationViewModel.attachments : nil,
 					isShowMediaFilesFragment: $isShowMediaFilesFragment
 				)
 				.zIndex(5)
@@ -1620,6 +1678,7 @@ struct ConversationFragment: View {
 			
 			if isShowDocumentsFilesFragment {
 				ConversationDocumentsListFragment(
+					carrierAttachments: conversationViewModel.isSMSConversation ? conversationViewModel.attachments : nil,
 					isShowDocumentsFilesFragment: $isShowDocumentsFilesFragment
 				)
 				.zIndex(5)
