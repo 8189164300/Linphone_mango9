@@ -37,6 +37,26 @@ class EditContactViewModel: ObservableObject {
 		self.selectedEditFriend = contactAvatarModel
 		resetValues()
 	}
+
+	static func extensionValue(from address: String) -> String {
+		var value = address.trimmingCharacters(in: .whitespacesAndNewlines)
+		if let openingBracket = value.firstIndex(of: "<"),
+		   let closingBracket = value[openingBracket...].firstIndex(of: ">") {
+			value = String(value[value.index(after: openingBracket)..<closingBracket])
+		}
+		if value.lowercased().hasPrefix("sips:") {
+			value = String(value.dropFirst(5))
+		} else if value.lowercased().hasPrefix("sip:") {
+			value = String(value.dropFirst(4))
+		}
+		if let domainSeparator = value.firstIndex(of: "@") {
+			value = String(value[..<domainSeparator])
+		}
+		if let parameterSeparator = value.firstIndex(of: ";") {
+			value = String(value[..<parameterSeparator])
+		}
+		return value.trimmingCharacters(in: .whitespacesAndNewlines)
+	}
 	
 	func resetValues() {
 		CoreContext.shared.doOnCoreQueue { _ in
@@ -52,7 +72,7 @@ class EditContactViewModel: ObservableObject {
 			
 			if self.selectedEditFriend != nil {
 				self.selectedEditFriend?.addresses.forEach({ address in
-					sipAddressesTmp.append(String(address.dropFirst(4)))
+					sipAddressesTmp.append(Self.extensionValue(from: address))
 				})
 				
 				self.selectedEditFriend?.phoneNumbersWithLabel.forEach({ phoneNumber in

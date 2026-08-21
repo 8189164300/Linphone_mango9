@@ -542,7 +542,9 @@ struct EditContactFragment: View {
 		.onAppear {
 			if !self.isShowEditContactFragmentAddress.isEmpty {
 				DispatchQueue.main.async {
-					editContactViewModel.sipAddresses[0] = isShowEditContactFragmentAddress
+					editContactViewModel.sipAddresses[0] = EditContactViewModel.extensionValue(
+						from: isShowEditContactFragmentAddress
+					)
 					editContactViewModel.sipAddresses.append("")
 				}
 			}
