@@ -7,8 +7,8 @@ Do not press **Submit for Review** until every required item below is complete.
 
 - App name: `Mango9`
 - Bundle ID: `com.mango9.phone`
-- Version: `6.2.0`
-- Current build: `12`
+- Version: `6.2.1`
+- Current build: `15`
 - Primary category: `Business`
 - Price: `Free`
 - Release method: `Manually release this version`
