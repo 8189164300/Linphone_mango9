@@ -14,6 +14,12 @@ Do not press **Submit for Review** until every required item below is complete.
 - Release method: `Manually release this version`
 - Seller/signing identity: George Gabrielyan (individual Apple Developer account)
 
+## What's New in 6.2.1
+
+Smoother SMS conversations, cleaner contact and number display, consistent
+profile avatars, and reliability improvements for account routing, caller
+identity, and inbound communications.
+
 ## Business model statement
 
 Use this wording in App Review Notes:
