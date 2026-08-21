@@ -400,7 +400,7 @@ struct ConversationFragment: View {
 									}
 								}
 							}
-							.background(.white)
+							.background(Color.white, ignoresSafeAreaEdges: [])
 							.onTapGesture {
 								withAnimation {
 									isShowInfoConversationFragment = true

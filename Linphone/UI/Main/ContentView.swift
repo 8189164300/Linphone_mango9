@@ -1238,6 +1238,25 @@ struct ContentView: View {
 								)
 								.environmentObject(historyListVM)
 								.environmentObject(displayedCall)
+								.onReceive(historyListVM.$displayedConversation) { displayedConversation in
+									guard let displayedConversation,
+										  let conversationsListVM = conversationsListViewModel,
+										  !sharedMainViewModel.disableChatFeature else {
+										return
+									}
+
+									historyListVM.displayedConversation = nil
+									resetFilter()
+									sharedMainViewModel.displayedFriend = nil
+									sharedMainViewModel.displayedCall = nil
+									sharedMainViewModel.changeIndexView(indexViewInt: 2)
+
+									withAnimation {
+										conversationsListVM.changeDisplayedChatRoom(
+											conversationModel: displayedConversation
+										)
+									}
+								}
 								.frame(maxWidth: .infinity)
 								.background(Color.gray100)
 								.ignoresSafeArea(.keyboard)
@@ -1631,33 +1650,6 @@ struct ContentView: View {
                                                     }
                                                 }
                                                 contactsListVM.displayedConversation = nil
-                                            }
-                                        }
-                                    }
-								} else if let historyListVM = historyListViewModel, let displayedConversation = historyListVM.displayedConversation {
-                                    
-                                    if !sharedMainViewModel.disableChatFeature {
-										resetFilter()
-										
-                                        sharedMainViewModel.displayedFriend = nil
-                                        sharedMainViewModel.displayedCall = nil
-                                        sharedMainViewModel.changeIndexView(indexViewInt: 2)
-                                        
-                                        if let conversationsListVM = self.conversationsListViewModel {
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                                withAnimation {
-                                                    conversationsListVM.changeDisplayedChatRoom(conversationModel: displayedConversation)
-                                                }
-                                                historyListVM.displayedConversation = nil
-                                            }
-                                        } else {
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                                if let conversationsListVM = self.conversationsListViewModel {
-                                                    withAnimation {
-                                                        conversationsListVM.changeDisplayedChatRoom(conversationModel: displayedConversation)
-                                                    }
-                                                }
-                                                historyListVM.displayedConversation = nil
                                             }
                                         }
                                     }
