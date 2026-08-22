@@ -8,6 +8,8 @@
 	<string>$(MANGO9_SOURCE_CODE_URL)</string>
 	<key>Mango9AppleTeamID</key>
 	<string>$(MANGO9_DEVELOPMENT_TEAM)</string>
+	<key>Mango9APSEnvironment</key>
+	<string>$(MANGO9_APS_ENVIRONMENT)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

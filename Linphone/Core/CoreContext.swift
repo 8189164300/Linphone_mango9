@@ -200,6 +200,7 @@ class CoreContext: ObservableObject {
 
 			MDMManager.shared.applyMdmConfigToCore(core: self.mCore)
 			self.startObservingMDMConfigurationUpdates()
+			self.resetPushTokensAfterEnvironmentChange(core: self.mCore)
 			
 			
 			self.mCore.callkitEnabled = true
@@ -577,6 +578,58 @@ class CoreContext: ObservableObject {
 			newParams?.remotePushNotificationAllowed = params.pushNotificationAllowed
 			account.params = newParams
 		}
+	}
+
+	func updateVoipPushToken(_ token: String) {
+		doOnCoreQueue { core in
+			Log.info("[CoreContext] Forwarding early VoIP push token to the Linphone core")
+			core.pushNotificationConfig?.voipToken = token
+
+			for account in core.accountList {
+				guard let params = account.params?.clone(),
+					  let pushConfig = params.pushNotificationConfig else { continue }
+				pushConfig.voipToken = token
+				pushConfig.prid = nil
+				Mango9Configuration.configurePush(on: params)
+				account.params = params
+			}
+		}
+	}
+
+	private func resetPushTokensAfterEnvironmentChange(core: Core) {
+		let providerKey = "mango9_last_push_provider"
+		let previousProvider = AppServices.config.getString(
+			section: "app",
+			key: providerKey,
+			defaultString: ""
+		)
+		let currentProvider = Mango9Configuration.applePushProvider
+		guard previousProvider != currentProvider else { return }
+
+		Log.info(
+			"[CoreContext] APS environment changed from \(previousProvider.isEmpty ? "unknown" : previousProvider) " +
+			"to \(currentProvider); clearing cached push tokens"
+		)
+
+		if let pushConfig = core.pushNotificationConfig {
+			pushConfig.provider = currentProvider
+			pushConfig.voipToken = nil
+			pushConfig.remoteToken = nil
+			pushConfig.prid = nil
+		}
+
+		for account in core.accountList {
+			guard let params = account.params?.clone(),
+				  let pushConfig = params.pushNotificationConfig else { continue }
+			pushConfig.provider = currentProvider
+			pushConfig.voipToken = nil
+			pushConfig.remoteToken = nil
+			pushConfig.prid = nil
+			Mango9Configuration.configurePush(on: params)
+			account.params = params
+		}
+
+		AppServices.config.setString(section: "app", key: providerKey, value: currentProvider)
 	}
 
 	private func enforceMango9AccountRouting(core: Core) {

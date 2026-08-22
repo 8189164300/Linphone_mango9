@@ -31,11 +31,17 @@ enum Mango9Configuration {
 			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 	static let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.mango9.phone"
 
-#if DEBUG
-	static let applePushProvider = "apns.dev"
-#else
-	static let applePushProvider = "apns"
-#endif
+	static var applePushProvider: String {
+		applePushProvider(forAPSEnvironment: signedAPSEnvironment)
+	}
+
+	static func applePushProvider(forAPSEnvironment environment: String?) -> String {
+		environment?.lowercased() == "development" ? "apns.dev" : "apns"
+	}
+
+	private static var signedAPSEnvironment: String? {
+		Bundle.main.object(forInfoDictionaryKey: "Mango9APSEnvironment") as? String
+	}
 
 	static var applePushParam: String {
 		guard !appleTeamID.isEmpty else { return "" }

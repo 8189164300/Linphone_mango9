@@ -301,7 +301,8 @@ struct LinphoneApp: App {
 
 	private func waitForConfig() {
 		if AppServices.configIfAvailable != nil {
-			let _ = CoreContext.shared
+			let coreContext = CoreContext.shared
+			earlyPushDelegate.handOff(to: coreContext)
 			configAvailable = true
 		} else {
 			Log.warn("AppServices.config not available yet, retrying in 1s...")

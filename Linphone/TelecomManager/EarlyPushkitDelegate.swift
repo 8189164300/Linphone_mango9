@@ -23,6 +23,13 @@ import UserNotifications
 
 class EarlyPushkitDelegate: NSObject, PKPushRegistryDelegate, CXProviderDelegate {
 	private var activeCalls: [String: (uuid: UUID, provider: CXProvider)] = [:]
+	private weak var coreContext: CoreContext?
+	private var pendingVoipPushToken: String?
+
+	func handOff(to coreContext: CoreContext) {
+		self.coreContext = coreContext
+		forwardPendingVoipPushToken()
+	}
 
 	func providerDidReset(_ provider: CXProvider) {}
 
@@ -35,7 +42,17 @@ class EarlyPushkitDelegate: NSObject, PKPushRegistryDelegate, CXProviderDelegate
 	}
 
 	func pushRegistry(_ registry: PKPushRegistry, didUpdate pushCredentials: PKPushCredentials, for type: PKPushType) {
-		Log.info("[EarlyPushkitDelegate] Received push credentials, ignoring until core is ready")
+		guard type == .voIP else { return }
+		let token = pushCredentials.token.map { String(format: "%02X", $0) }.joined() + ":voip"
+		Log.info("[EarlyPushkitDelegate] Received VoIP push credentials")
+		pendingVoipPushToken = token
+		forwardPendingVoipPushToken()
+	}
+
+	private func forwardPendingVoipPushToken() {
+		guard let coreContext, let token = pendingVoipPushToken else { return }
+		pendingVoipPushToken = nil
+		coreContext.updateVoipPushToken(token)
 	}
 
 	func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload, for type: PKPushType, completion: @escaping () -> Void) {

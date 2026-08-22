@@ -154,4 +154,19 @@ final class Mango9MultiAccountTests: XCTestCase {
 			)
 		)
 	}
+
+	func testApplePushProviderUsesSignedAPSEnvironment() {
+		XCTAssertEqual(
+			Mango9Configuration.applePushProvider(forAPSEnvironment: "development"),
+			"apns.dev"
+		)
+		XCTAssertEqual(
+			Mango9Configuration.applePushProvider(forAPSEnvironment: "production"),
+			"apns"
+		)
+		XCTAssertEqual(
+			Mango9Configuration.applePushProvider(forAPSEnvironment: nil),
+			"apns"
+		)
+	}
 }

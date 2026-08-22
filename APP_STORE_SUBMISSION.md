@@ -8,7 +8,7 @@ Do not press **Submit for Review** until every required item below is complete.
 - App name: `Mango9`
 - Bundle ID: `com.mango9.phone`
 - Version: `6.2.1`
-- Current build: `15`
+- Current build: `16`
 - Primary category: `Business`
 - Price: `Free`
 - Release method: `Manually release this version`
@@ -16,9 +16,9 @@ Do not press **Submit for Review** until every required item below is complete.
 
 ## What's New in 6.2.1
 
-Smoother SMS conversations, cleaner contact and number display, consistent
-profile avatars, and reliability improvements for account routing, caller
-identity, and inbound communications.
+More reliable incoming calls, including improved VoIP push registration and
+background wake-up. Also includes smoother SMS conversations, cleaner contact
+and number display, and account reliability improvements.
 
 ## Business model statement
 
