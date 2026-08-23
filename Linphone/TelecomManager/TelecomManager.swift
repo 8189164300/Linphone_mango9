@@ -31,6 +31,7 @@ import SwiftUI
 enum Mango9CallerIdentity {
 	private static let unusableLabels: Set<String> = [
 		"anonymous",
+		"anonymous@anonymous.invalid",
 		"anonymous caller",
 		"call from mango9",
 		"calling",
@@ -45,8 +46,17 @@ enum Mango9CallerIdentity {
 
 	static func normalizedLabel(_ value: String?) -> String? {
 		guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
-			  !value.isEmpty,
-			  !unusableLabels.contains(value.lowercased()) else {
+			  !value.isEmpty else {
+			return nil
+		}
+		let lowercased = value.lowercased()
+		let uri = lowercased.hasPrefix("sip:")
+			? String(lowercased.dropFirst(4))
+			: lowercased
+		let uriUser = uri.split(separator: "@", maxSplits: 1).first.map(String.init)
+		guard !unusableLabels.contains(lowercased),
+			  uriUser != "anonymous",
+			  uriUser != "anonimous" else {
 			return nil
 		}
 		return value
@@ -126,14 +136,84 @@ enum Mango9CallerIdentity {
 			return username
 		}
 		let uri = address.asStringUriOnly()
-		return uri.lowercased().hasPrefix("sip:") ? String(uri.dropFirst(4)) : uri
+		guard let safeURI = normalizedLabel(uri) else { return "Incoming call" }
+		return safeURI.lowercased().hasPrefix("sip:") ? String(safeURI.dropFirst(4)) : safeURI
 	}
 
 	static func callKitHandle(for address: Address?) -> String {
 		guard let address else { return "Incoming call" }
 		return externalPhoneNumber(for: address)
 			?? normalizedLabel(address.username)
-			?? address.asStringUriOnly()
+			?? normalizedLabel(address.asStringUriOnly())
+			?? "Incoming call"
+	}
+}
+
+struct Mango9PushCallerIdentity: Equatable {
+	let callId: String
+	let handle: String
+	let displayName: String
+
+	static func parse(payload: String) -> Mango9PushCallerIdentity? {
+		guard let data = payload.data(using: .utf8),
+			  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+			return nil
+		}
+
+		let aps = root["aps"] as? [String: Any] ?? [:]
+		let alert = aps["alert"] as? [String: Any] ?? [:]
+		let dictionaries = [root, aps, alert]
+
+		guard let callId = firstString(
+			in: dictionaries,
+			keys: ["call-id", "call_id", "callId"]
+		) else {
+			return nil
+		}
+
+		let locArgs = (aps["loc-args"] as? [String])
+			?? (alert["loc-args"] as? [String])
+			?? []
+		let fromValue = firstString(
+			in: dictionaries,
+			keys: ["from-uri", "from_uri", "from"]
+		) ?? locArgs.first
+		let pushedDisplayName = firstString(
+			in: dictionaries,
+			keys: ["display-name", "display_name", "caller-name", "caller_name"]
+		)
+
+		guard let identityValue = Mango9CallerIdentity.normalizedLabel(fromValue)
+				?? Mango9CallerIdentity.normalizedLabel(pushedDisplayName) else {
+			return nil
+		}
+
+		let phoneNumber = Mango9CallerIdentity.externalPhoneNumber(identityValue)
+		let handle = phoneNumber ?? identityValue
+		let displayName = Mango9CallerIdentity.normalizedLabel(pushedDisplayName)
+			?? phoneNumber.map(Mango9CallerIdentity.formattedPhoneNumber)
+			?? identityValue
+
+		return Mango9PushCallerIdentity(
+			callId: callId,
+			handle: handle,
+			displayName: displayName
+		)
+	}
+
+	private static func firstString(
+		in dictionaries: [[String: Any]],
+		keys: [String]
+	) -> String? {
+		for dictionary in dictionaries {
+			for key in keys {
+				if let value = dictionary[key] as? String,
+				   !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+					return value
+				}
+			}
+		}
+		return nil
 	}
 }
 
@@ -179,10 +259,53 @@ class TelecomManager: ObservableObject {
 	var referedFromCall: String?
 	var referedToCall: String?
 	var actionsToPerformOnceWhenCoreIsOn: [(() -> Void)] = []
+	private let pushCallerIdentityLock = NSLock()
+	private var pushCallerIdentities: [String: (identity: Mango9PushCallerIdentity, receivedAt: Date)] = [:]
 	
 	private init() {
 		providerDelegate = ProviderDelegate()
 		callController = CXCallController()
+	}
+
+	func cacheIncomingPushPayload(_ payload: String) {
+		guard let identity = Mango9PushCallerIdentity.parse(payload: payload) else {
+			Log.warn("[CallKit] Incoming push did not contain a usable caller identity")
+			return
+		}
+
+		pushCallerIdentityLock.lock()
+		prunePushCallerIdentities(now: Date())
+		pushCallerIdentities[identity.callId] = (identity, Date())
+		pushCallerIdentityLock.unlock()
+
+		Log.info("[CallKit] Cached caller identity from push for call-id \(identity.callId)")
+		if let uuid = providerDelegate.uuids[identity.callId] {
+			providerDelegate.updateCall(
+				uuid: uuid,
+				handle: identity.handle,
+				displayName: identity.displayName
+			)
+			Log.info("[CallKit] Updated the push placeholder with caller identity")
+		}
+	}
+
+	private func pushedCallerIdentity(for callId: String) -> Mango9PushCallerIdentity? {
+		pushCallerIdentityLock.lock()
+		defer { pushCallerIdentityLock.unlock() }
+		prunePushCallerIdentities(now: Date())
+		return pushCallerIdentities[callId]?.identity
+	}
+
+	private func removePushedCallerIdentity(for callId: String) {
+		pushCallerIdentityLock.lock()
+		defer { pushCallerIdentityLock.unlock() }
+		pushCallerIdentities.removeValue(forKey: callId)
+	}
+
+	private func prunePushCallerIdentities(now: Date) {
+		pushCallerIdentities = pushCallerIdentities.filter {
+			now.timeIntervalSince($0.value.receivedAt) < 120
+		}
 	}
 	
 	func addAllToLocalConference(core: Core) {
@@ -625,12 +748,13 @@ class TelecomManager: ObservableObject {
 		if cstate == .PushIncomingReceived {
 			Log.info("PushIncomingReceived in core delegate, display callkit call")
 			let address = call.remoteAddress
+			let pushedIdentity = pushedCallerIdentity(for: callId)
 			TelecomManager.shared.displayIncomingCall(
 				call: call,
-				handle: Mango9CallerIdentity.callKitHandle(for: address),
+				handle: pushedIdentity?.handle ?? Mango9CallerIdentity.callKitHandle(for: address),
 				hasVideo: false,
 				callId: callId,
-				displayName: Mango9CallerIdentity.displayName(for: address)
+				displayName: pushedIdentity?.displayName ?? Mango9CallerIdentity.displayName(for: address)
 			)
 		} else {
 			// let oldRemoteConfVideo = self.remoteConfVideo
@@ -803,6 +927,7 @@ class TelecomManager: ObservableObject {
 				}
 			case .End,
 					.Error:
+				removePushedCallerIdentity(for: callId)
 				
 				UIDevice.current.isProximityMonitoringEnabled = false
 				if core.callsNb == 0 {
@@ -901,6 +1026,7 @@ class TelecomManager: ObservableObject {
 					}
 				}
 			case .Released:
+				removePushedCallerIdentity(for: callId)
 				TelecomManager.setAppData(sCall: call, appData: nil)
 				if core.callsNb == 0 {
 					UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["linphone-earpiece-enforcement"])

@@ -7,18 +7,18 @@ Do not press **Submit for Review** until every required item below is complete.
 
 - App name: `Mango9`
 - Bundle ID: `com.mango9.phone`
-- Version: `6.2.1`
-- Current build: `16`
+- Version: `6.2.3`
+- Current build: `18`
 - Primary category: `Business`
 - Price: `Free`
 - Release method: `Manually release this version`
 - Seller/signing identity: George Gabrielyan (individual Apple Developer account)
 
-## What's New in 6.2.1
+## What's New in 6.2.3
 
-More reliable incoming calls, including improved VoIP push registration and
-background wake-up. Also includes smoother SMS conversations, cleaner contact
-and number display, and account reliability improvements.
+Improved SIP registration across Mango9 tenant domains, more reliable incoming
+caller ID, and persistent DID and extension details during temporary connection
+interruptions. Also includes SMS conversation and account display fixes.
 
 ## Business model statement
 

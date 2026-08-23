@@ -521,13 +521,21 @@ private enum Mango9LoginService {
 			enrollmentExpiresAt: Date().addingTimeInterval(TimeInterval(login.expiresIn)),
 			sipIdentity: enrollment.identity
 		)
-		let previousIdentity = Mango9SessionStore.activeIdentity
 		try Mango9SessionStore.save(
 			session,
 			for: enrollment.identity,
 			persist: rememberLogin,
 			makeActive: true
 		)
+		// CRM authentication and SIP registration are separate service lanes.
+		// Persist the line identity before attempting SIP so a temporary proxy
+		// outage cannot make an authenticated account lose its DID/extension.
+		if let lineIdentity = try? await Mango9CRMAPI.lineIdentity(session: session) {
+			Mango9LineIdentityStore.save(
+				lineIdentity,
+				sipIdentity: enrollment.identity
+			)
+		}
 		CoreContext.shared.loggingInProgress = true
 		do {
 			try await Mango9AccountProvisioner.install(
@@ -535,16 +543,15 @@ private enum Mango9LoginService {
 				displayName: login.user.name
 			)
 		} catch {
-			Mango9SessionStore.remove(for: enrollment.identity)
-			Mango9SessionStore.activate(sipIdentity: previousIdentity)
+			// Do not roll back a valid CRM session because the independent SIP
+			// service is temporarily unavailable. Linphone retains the account
+			// and retries registration; the user can still see the correct line.
+			Log.warn(
+				"[Mango9 Login] SIP setup failed after CRM authentication; " +
+				"preserving the CRM session and line identity for retry"
+			)
 			CoreContext.shared.loggingInProgress = false
 			throw error
-		}
-		if let lineIdentity = try? await Mango9CRMAPI.lineIdentity(session: session) {
-			Mango9LineIdentityStore.save(
-				lineIdentity,
-				sipIdentity: enrollment.identity
-			)
 		}
 		if let team = try? await Mango9CRMAPI.teamMembers(session: session),
 		   Mango9SessionStore.isActive(session) {
@@ -604,16 +611,16 @@ private enum Mango9LoginService {
 			persist: true,
 			makeActive: true
 		)
-		try await Mango9AccountProvisioner.install(
-			enrollment,
-			displayName: associatedSession.displayName
-		)
 		Mango9LineIdentityStore.save(
 			Mango9LineIdentity(
 				extensionNumber: username,
 				activeNumber: sip.activeNumber
 			),
 			sipIdentity: identity
+		)
+		try await Mango9AccountProvisioner.install(
+			enrollment,
+			displayName: associatedSession.displayName
 		)
 		await Mango9ChatStore.shared.connectIfNeeded(force: true)
 	}
@@ -921,6 +928,9 @@ enum Mango9SessionStore {
 	}
 
 	private static func setActiveIdentity(_ identity: String) {
+		Mango9LineIdentityStore.migrateLegacyActiveValuesIfNeeded(
+			sipIdentity: identity
+		)
 		UserDefaults.standard.set(identity, forKey: activeIdentityKey)
 		Mango9LineIdentityStore.activate(sipIdentity: identity)
 	}

@@ -325,6 +325,8 @@ class CoreContext: ObservableObject {
 					}
 				}
 				
+			}, onPushNotificationReceived: { (_: Core, payload: String) in
+				TelecomManager.shared.cacheIncomingPushPayload(payload)
 			}, onCallStateChanged: { (core: Core, call: Call, cstate: Call.State, message: String) in
 				TelecomManager.shared.onCallStateChanged(core: core, call: call, state: cstate, message: message)
 				

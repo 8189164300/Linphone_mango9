@@ -135,6 +135,77 @@ final class Mango9MultiAccountTests: XCTestCase {
 		)
 	}
 
+	func testSideMenuKeepsExtensionVisibleWithoutActiveNumber() {
+		XCTAssertEqual(
+			SideMenuAccountRow.accountLineLabel(
+				extensionNumber: "700",
+				activeNumber: "",
+				fallback: "Gevorg Stepanyan"
+			),
+			"Ext 700"
+		)
+		XCTAssertEqual(
+			SideMenuAccountRow.accountLineLabel(
+				extensionNumber: "700",
+				activeNumber: "818-900-7897",
+				fallback: "Gevorg Stepanyan"
+			),
+			"818-900-7897 · Ext 700"
+		)
+	}
+
+	func testLegacyLineIdentityMigratesToDefaultSIPAccount() {
+		let defaults = UserDefaults.standard
+		let migrationKey = "mango9_line_identity_legacy_migrated_v1"
+		let account = "sip:700@\(UUID().uuidString.lowercased()).example.com"
+		let previousExtension = defaults.object(
+			forKey: Mango9LineIdentityStore.extensionKey
+		)
+		let previousActiveNumber = defaults.object(
+			forKey: Mango9LineIdentityStore.activeNumberKey
+		)
+		let previousMigration = defaults.object(forKey: migrationKey)
+		defer {
+			Mango9LineIdentityStore.clear(sipIdentity: account)
+			restore(
+				previousExtension,
+				forKey: Mango9LineIdentityStore.extensionKey,
+				in: defaults
+			)
+			restore(
+				previousActiveNumber,
+				forKey: Mango9LineIdentityStore.activeNumberKey,
+				in: defaults
+			)
+			restore(previousMigration, forKey: migrationKey, in: defaults)
+		}
+
+		defaults.removeObject(forKey: migrationKey)
+		defaults.set("700", forKey: Mango9LineIdentityStore.extensionKey)
+		defaults.set("8189007897", forKey: Mango9LineIdentityStore.activeNumberKey)
+
+		Mango9LineIdentityStore.migrateLegacyActiveValuesIfNeeded(
+			sipIdentity: account
+		)
+
+		let migrated = Mango9LineIdentityStore.load(sipIdentity: account)
+		XCTAssertEqual(migrated?.extensionNumber, "700")
+		XCTAssertEqual(migrated?.activeNumber, "818-900-7897")
+		XCTAssertTrue(defaults.bool(forKey: migrationKey))
+	}
+
+	private func restore(
+		_ value: Any?,
+		forKey key: String,
+		in defaults: UserDefaults
+	) {
+		if let value {
+			defaults.set(value, forKey: key)
+		} else {
+			defaults.removeObject(forKey: key)
+		}
+	}
+
 	func testOnlyEnrollmentURLsAreMarkedOneTime() {
 		let enrollmentURL = Mango9Configuration.provisioningBaseURL
 			.appendingPathComponent("v1/enroll/example-token")

@@ -202,12 +202,34 @@ struct SideMenuAccountRow: View {
 	}
 
 	private var accountLineLabel: String {
-		let extensionNumber = mango9Extension.trimmingCharacters(in: .whitespacesAndNewlines)
-		let activeNumber = mango9ActiveNumber.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !extensionNumber.isEmpty, !activeNumber.isEmpty else {
-			return model.displayName
+		Self.accountLineLabel(
+			extensionNumber: mango9Extension,
+			activeNumber: mango9ActiveNumber,
+			fallback: model.displayName
+		)
+	}
+
+	static func accountLineLabel(
+		extensionNumber: String,
+		activeNumber: String,
+		fallback: String
+	) -> String {
+		let extensionNumber = extensionNumber.trimmingCharacters(
+			in: .whitespacesAndNewlines
+		)
+		let activeNumber = activeNumber.trimmingCharacters(
+			in: .whitespacesAndNewlines
+		)
+		if !extensionNumber.isEmpty, !activeNumber.isEmpty {
+			return "\(activeNumber) · Ext \(extensionNumber)"
 		}
-		return "\(activeNumber) · Ext \(extensionNumber)"
+		if !extensionNumber.isEmpty {
+			return "Ext \(extensionNumber)"
+		}
+		if !activeNumber.isEmpty {
+			return activeNumber
+		}
+		return fallback
 	}
 
 	private var pbxCompanyName: String {

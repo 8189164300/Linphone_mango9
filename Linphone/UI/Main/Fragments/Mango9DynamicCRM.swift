@@ -2984,6 +2984,35 @@ enum Mango9LineIdentityStore {
 	static let extensionKey = "mango9_active_extension"
 	static let activeNumberKey = "mango9_active_number"
 	private static let perAccountPrefix = "mango9_line_identity."
+	private static let legacyMigrationKey =
+		"mango9_line_identity_legacy_migrated_v1"
+
+	static func migrateLegacyActiveValuesIfNeeded(sipIdentity: String) {
+		let defaults = UserDefaults.standard
+		guard !defaults.bool(forKey: legacyMigrationKey) else { return }
+		defer { defaults.set(true, forKey: legacyMigrationKey) }
+
+		guard let identity = Mango9SessionStore.normalizedIdentity(sipIdentity),
+			  load(sipIdentity: identity) == nil else {
+			return
+		}
+		let extensionNumber = defaults.string(forKey: extensionKey)?
+			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		let activeNumber = defaults.string(forKey: activeNumberKey)?
+			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		guard !extensionNumber.isEmpty else { return }
+
+		defaults.set(
+			[
+				"extension": extensionNumber,
+				"active_number": formatPhoneNumber(activeNumber)
+			],
+			forKey: storageKey(for: identity)
+		)
+		Log.info(
+			"[Mango9] Migrated the legacy line identity cache to \(identity)"
+		)
+	}
 
 	static func save(
 		_ identity: Mango9LineIdentity,
