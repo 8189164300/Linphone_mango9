@@ -44,6 +44,8 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	var launchNotificationPeerAddr: String?
 	var launchNotificationLocalAddr: String?
 	var launchMango9LeadId: Int?
+	var launchMango9SMSTarget: Mango9SMSTarget?
+	var launchMango9ChatTarget: Mango9ChatTarget?
 	
 	var coreContext: CoreContext? {
 		didSet {
@@ -56,6 +58,13 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
 		let tokenStr = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
 		Log.info("Received remote push token")
+		UserDefaults.standard.set(
+			tokenStr,
+			forKey: Mango9ChatStore.remotePushTokenDefaultsKey
+		)
+		Task { @MainActor in
+			await Mango9ChatStore.shared.registerRemotePushTokenIfAvailable()
+		}
 		pendingRemotePushToken = tokenStr + ":remote"
 		forwardPendingRemotePushToken()
 	}
@@ -75,6 +84,20 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	
 	func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
 		Log.info("Received background push notification, payload = \(userInfo.description)")
+		if mango9ChatTarget(from: userInfo) != nil {
+			Task { @MainActor in
+				await Mango9ChatStore.shared.refreshDirectory()
+			}
+			completionHandler(.newData)
+			return
+		}
+		if mango9SMSTarget(from: userInfo) != nil {
+			Task { @MainActor in
+				await Mango9ChatStore.shared.refreshSMSDirectory()
+			}
+			completionHandler(.newData)
+			return
+		}
 		if let leadId = mango9LeadId(from: userInfo) {
 			NotificationCenter.default.post(name: .mango9LeadDidChange, object: leadId)
 			completionHandler(.newData)
@@ -90,7 +113,34 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 					 
 	func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
 		// Set up notifications
-		UNUserNotificationCenter.current().delegate = self
+		let notificationCenter = UNUserNotificationCenter.current()
+		notificationCenter.delegate = self
+		notificationCenter.getNotificationSettings { settings in
+			switch settings.authorizationStatus {
+			case .notDetermined:
+				notificationCenter.requestAuthorization(options: [.alert, .sound, .badge]) {
+					granted, error in
+					if let error {
+						Log.error("Failed to request notification permission: \(error.localizedDescription)")
+					}
+					guard granted else {
+						Log.warn("Mango9 notification permission was not granted")
+						return
+					}
+					DispatchQueue.main.async {
+						application.registerForRemoteNotifications()
+					}
+				}
+			case .authorized, .provisional, .ephemeral:
+				DispatchQueue.main.async {
+					application.registerForRemoteNotifications()
+				}
+			case .denied:
+				Log.warn("Mango9 notifications are disabled in iOS Settings")
+			@unknown default:
+				Log.warn("Unknown Mango9 notification authorization status")
+			}
+		}
 
 		return true
 	}
@@ -99,6 +149,26 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
 		let userInfo = response.notification.request.content.userInfo
 		activateMango9AccountIfNeeded(from: userInfo)
+
+		if let target = mango9ChatTarget(from: userInfo) {
+			if navigationManager == nil {
+				launchMango9ChatTarget = target
+			} else {
+				NotificationCenter.default.post(name: .mango9OpenChat, object: target)
+			}
+			completionHandler()
+			return
+		}
+
+		if let target = mango9SMSTarget(from: userInfo) {
+			if navigationManager == nil {
+				launchMango9SMSTarget = target
+			} else {
+				NotificationCenter.default.post(name: .mango9OpenSMS, object: target)
+			}
+			completionHandler()
+			return
+		}
 
 		if let leadId = mango9LeadId(from: userInfo) {
 			if navigationManager == nil {
@@ -129,6 +199,22 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
 		let userInfo = notification.request.content.userInfo
 		Log.info("Received push notification in foreground, payload= \(userInfo)")
+
+		if mango9ChatTarget(from: userInfo) != nil {
+			Task { @MainActor in
+				await Mango9ChatStore.shared.refreshDirectory()
+			}
+			completionHandler([.banner, .sound, .badge])
+			return
+		}
+
+		if mango9SMSTarget(from: userInfo) != nil {
+			Task { @MainActor in
+				await Mango9ChatStore.shared.refreshSMSDirectory()
+			}
+			completionHandler([.banner, .sound, .badge])
+			return
+		}
 
 		if let leadId = mango9LeadId(from: userInfo) {
 			NotificationCenter.default.post(name: .mango9LeadDidChange, object: leadId)
@@ -181,16 +267,93 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 		return nil
 	}
 
+	private func mango9SMSTarget(
+		from userInfo: [AnyHashable: Any]
+	) -> Mango9SMSTarget? {
+		let nested = userInfo["mango9"] as? [String: Any]
+		let event = (nested?["event"] as? String)
+			?? (userInfo["mango9_event"] as? String)
+			?? (userInfo["event"] as? String)
+		guard event == "sms.received" else {
+			return nil
+		}
+
+		let rawPhone = (nested?["phone"] as? String)
+			?? (userInfo["phone"] as? String)
+			?? ""
+		let digits = rawPhone.filter(\.isNumber)
+		guard digits.count >= 10 else {
+			return nil
+		}
+		let phone = digits.count == 10 ? "1\(digits)" : digits
+		let rawName = (nested?["name"] as? String)
+			?? (userInfo["name"] as? String)
+		let name = rawName?
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+		let displayName = (name?.isEmpty == false) ? name! : phone
+		return Mango9SMSTarget(phone: phone, name: displayName)
+	}
+
+	private func mango9ChatTarget(
+		from userInfo: [AnyHashable: Any]
+	) -> Mango9ChatTarget? {
+		let nested = userInfo["mango9"] as? [String: Any]
+		let event = (nested?["event"] as? String)
+			?? (userInfo["mango9_event"] as? String)
+			?? (userInfo["event"] as? String)
+		guard event == "chat.message" else {
+			return nil
+		}
+
+		let rawUserId = nested?["sender_user_id"]
+			?? userInfo["sender_user_id"]
+			?? userInfo["senderUserId"]
+		let userId: Int
+		if let value = rawUserId as? Int {
+			userId = value
+		} else if let value = rawUserId as? NSNumber {
+			userId = value.intValue
+		} else if let value = rawUserId as? String {
+			userId = Int(value) ?? 0
+		} else {
+			userId = 0
+		}
+
+		let roomId = ((nested?["room_id"] as? String)
+			?? (userInfo["room_id"] as? String)
+			?? (userInfo["roomId"] as? String))?
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+		let rawName = (nested?["name"] as? String)
+			?? (userInfo["name"] as? String)
+		let name = rawName?
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+		let displayName = (name?.isEmpty == false) ? name! : "Team Chat"
+
+		guard userId > 0 || roomId?.isEmpty == false else {
+			return nil
+		}
+		return Mango9ChatTarget(
+			userId: userId,
+			name: displayName,
+			roomId: roomId?.isEmpty == false ? roomId : nil
+		)
+	}
+
 	private func activateMango9AccountIfNeeded(
 		from userInfo: [AnyHashable: Any]
 	) {
 		let nested = userInfo["mango9"] as? [String: Any]
+		let pushedIdentity = (nested?["sip_identity"] as? String)
+			?? (nested?["sipIdentity"] as? String)
+			?? (userInfo["sip_identity"] as? String)
+			?? (userInfo["sipIdentity"] as? String)
 		let crmId = (nested?["crm_id"] as? String)
 			?? (nested?["crmId"] as? String)
 			?? (userInfo["crm_id"] as? String)
 			?? (userInfo["crmId"] as? String)
-		guard let crmId,
-			  let identity = Mango9SessionStore.identity(forCRMId: crmId) else {
+		let identity = Mango9SessionStore.normalizedIdentity(pushedIdentity)
+			?? crmId.flatMap(Mango9SessionStore.identity(forCRMId:))
+		guard let identity else {
 			return
 		}
 
@@ -447,8 +610,7 @@ struct RootView: View {
 	}
 
 	var showAssistant: Bool {
-		(coreContext.codeScannerIsOpen && coreContext.accounts.isEmpty)
-		|| (coreContext.coreIsStarted && coreContext.accounts.isEmpty)
+		(coreContext.coreIsStarted && coreContext.accounts.isEmpty)
 		|| sharedMainViewModel.displayProfileMode
 	}
 }
@@ -482,6 +644,20 @@ struct MainViewSwitcher: View {
 					appDelegate.launchMango9LeadId = nil
 					DispatchQueue.main.async {
 						NotificationCenter.default.post(name: .mango9OpenLead, object: leadId)
+					}
+				}
+
+				if let smsTarget = appDelegate.launchMango9SMSTarget {
+					appDelegate.launchMango9SMSTarget = nil
+					DispatchQueue.main.async {
+						NotificationCenter.default.post(name: .mango9OpenSMS, object: smsTarget)
+					}
+				}
+
+				if let chatTarget = appDelegate.launchMango9ChatTarget {
+					appDelegate.launchMango9ChatTarget = nil
+					DispatchQueue.main.async {
+						NotificationCenter.default.post(name: .mango9OpenChat, object: chatTarget)
 					}
 				}
 			}

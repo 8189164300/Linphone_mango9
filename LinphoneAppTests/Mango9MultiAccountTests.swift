@@ -13,6 +13,43 @@ import XCTest
 @testable import LinphoneApp
 
 final class Mango9MultiAccountTests: XCTestCase {
+	func testRegistrationErrorDistinguishesPushFromCredentials() {
+		let pushFailure = Mango9RegistrationFailure(
+			sipMessage: "555 Push Notification Service Not Supported"
+		)
+		let credentialFailure = Mango9RegistrationFailure(
+			sipMessage: "403 Forbidden"
+		)
+
+		XCTAssertEqual(pushFailure.kind, .pushConfiguration)
+		XCTAssertEqual(pushFailure.sipCode, 555)
+		XCTAssertTrue(
+			pushFailure.userMessage(line: "700").contains("call notifications")
+		)
+		XCTAssertEqual(credentialFailure.kind, .credentials)
+		XCTAssertTrue(
+			credentialFailure.userMessage(line: "700").contains("authenticate")
+		)
+	}
+
+	func testRegistrationErrorUsesFriendlyRetryWording() {
+		let networkFailure = Mango9RegistrationFailure(
+			sipMessage: "408 Request Timeout"
+		)
+		let serverFailure = Mango9RegistrationFailure(
+			sipMessage: "503 Service Unavailable"
+		)
+
+		XCTAssertEqual(networkFailure.kind, .network)
+		XCTAssertTrue(
+			networkFailure.userMessage(line: "100").contains("keep retrying")
+		)
+		XCTAssertEqual(serverFailure.kind, .serviceUnavailable)
+		XCTAssertTrue(
+			serverFailure.userMessage(line: nil).contains("retry automatically")
+		)
+	}
+
 	func testEnrollmentXMLIsParsedWithoutApplyingProxyZero() async throws {
 		let xml = """
 		<?xml version="1.0" encoding="UTF-8"?>

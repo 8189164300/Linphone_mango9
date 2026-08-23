@@ -36,9 +36,9 @@ class CoreContext: ObservableObject {
 	var coreVersion: String = Core.getVersion
 	@Published var loggedIn: Bool = false
 	@Published var loggingInProgress: Bool = false
+	@Published var registrationFailureMessage: String?
 	@Published var coreHasStartedOnce: Bool = false
 	@Published var coreIsStarted: Bool = false
-	@Published var codeScannerIsOpen: Bool = false
 	@Published var accounts: [AccountModel] = []
 	@Published var shortcuts: [ShortcutModel] = []
 	var mCore: Core!
@@ -205,6 +205,8 @@ class CoreContext: ObservableObject {
 			
 			self.mCore.callkitEnabled = true
 			self.mCore.pushNotificationEnabled = true
+			self.mCore.keepAliveEnabled = true
+			self.mCore.registerOnlyWhenNetworkIsUp = true
 			
 			let appGitVersion = AppGitInfo.commit
 			let appGitBranch = AppGitInfo.branch
@@ -325,8 +327,13 @@ class CoreContext: ObservableObject {
 					}
 				}
 				
-			}, onPushNotificationReceived: { (_: Core, payload: String) in
+			}, onPushNotificationReceived: { (core: Core, payload: String) in
 				TelecomManager.shared.cacheIncomingPushPayload(payload)
+				// A VoIP push can wake the process while the previous TLS flow is
+				// no longer usable. Refresh immediately so OpenSIPS can attach the
+				// held INVITE to this device's newly reachable contact.
+				Log.info("[CoreContext] Push received, refreshing SIP registrations")
+				core.refreshRegisters()
 			}, onCallStateChanged: { (core: Core, call: Call, cstate: Call.State, message: String) in
 				TelecomManager.shared.onCallStateChanged(core: core, call: call, state: cstate, message: message)
 				
@@ -434,12 +441,19 @@ class CoreContext: ObservableObject {
 				let hasConnectedAccount = core.accountList.contains {
 					$0.state == .Ok
 				}
+				let line = account.params?.identityAddress?.username
+				let friendlyFailure = Mango9RegistrationFailure(
+					sipMessage: message
+				).userMessage(line: line)
 				
 				DispatchQueue.main.async {
 					self.loggedIn = hasConnectedAccount
 					self.loggingInProgress =
 						isDefaultAccount &&
 						(state == .Progress || state == .Refreshing)
+					if isDefaultAccount, state != .Failed {
+						self.registrationFailureMessage = nil
+					}
 					if state == .Failed,
 					   isDefaultAccount,
 					   self.networkStatusIsConnected {
@@ -452,7 +466,11 @@ class CoreContext: ObservableObject {
 							if account.state == .Failed,
 							   isStillDefaultAccount,
 							   self.networkStatusIsConnected {
-								ToastViewModel.shared.show("Registration_failed")
+								self.registrationFailureMessage = friendlyFailure
+								ToastViewModel.shared.show(
+									"Error: \(friendlyFailure)",
+									duration: 5
+								)
 							}
 						}
 					}
@@ -643,6 +661,7 @@ class CoreContext: ObservableObject {
 				let routeAddress = try Factory.Instance.createAddress(addr: Mango9Configuration.sipProxyURI)
 				try params.setServeraddress(newValue: serverAddress)
 				try params.setRoutesaddresses(newValue: [routeAddress])
+				params.expires = Mango9Configuration.mobileRegistrationExpires
 				params.registerEnabled = true
 				Mango9Configuration.configurePush(on: params)
 				account.params = params
@@ -725,6 +744,101 @@ class CoreContext: ObservableObject {
 			self.mCore.chatMessageFilesDeletionEnabled = true
 			Log.info("[CoreContext] Core is allowed to automatically delete files from previously logged directories when a chat message is deleted")
 		}
+	}
+}
+
+struct Mango9RegistrationFailure {
+	enum Kind: Equatable {
+		case credentials
+		case pushConfiguration
+		case accountNotFound
+		case secureConnection
+		case network
+		case rateLimited
+		case serviceUnavailable
+		case unknown
+	}
+
+	let kind: Kind
+	let sipCode: Int?
+
+	init(sipMessage: String) {
+		let normalized = sipMessage.lowercased()
+		let code = Self.extractSIPCode(from: sipMessage)
+		sipCode = code
+
+		if code == 555 ||
+			normalized.contains("push notification") ||
+			normalized.contains("push service") {
+			kind = .pushConfiguration
+		} else if code == 401 || code == 403 ||
+				normalized.contains("unauthorized") ||
+				normalized.contains("forbidden") ||
+				normalized.contains("authentication") ||
+				normalized.contains("credential") ||
+				normalized.contains("password") {
+			kind = .credentials
+		} else if code == 404 || normalized.contains("not found") {
+			kind = .accountNotFound
+		} else if normalized.contains("tls") ||
+				normalized.contains("ssl") ||
+				normalized.contains("certificate") {
+			kind = .secureConnection
+		} else if code == 408 ||
+				normalized.contains("timeout") ||
+				normalized.contains("timed out") ||
+				normalized.contains("io error") ||
+				normalized.contains("network") ||
+				normalized.contains("unreachable") ||
+				normalized.contains("dns") ||
+				normalized.contains("no route") {
+			kind = .network
+		} else if code == 429 {
+			kind = .rateLimited
+		} else if code.map({ (500...599).contains($0) }) == true ||
+				normalized.contains("service unavailable") ||
+				normalized.contains("server error") {
+			kind = .serviceUnavailable
+		} else {
+			kind = .unknown
+		}
+	}
+
+	func userMessage(line: String?) -> String {
+		let subject = line.flatMap { value -> String? in
+			let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+			return trimmed.isEmpty ? nil : "Extension \(trimmed)"
+		} ?? "This line"
+		let diagnostic = sipCode.map { " (SIP \($0))" } ?? ""
+
+		switch kind {
+		case .credentials:
+			return "\(subject) could not authenticate. Reconnect the account or verify its SIP credentials.\(diagnostic)"
+		case .pushConfiguration:
+			return "\(subject) cannot register because call notifications are not supported by the voice server. Update the app or contact Mango9 support.\(diagnostic)"
+		case .accountNotFound:
+			return "\(subject) is not provisioned on this voice server. Contact your Mango9 administrator.\(diagnostic)"
+		case .secureConnection:
+			return "\(subject) could not establish a secure voice connection. Check the network and try again.\(diagnostic)"
+		case .network:
+			return "\(subject) cannot reach the Mango9 voice service. Check the internet connection; the app will keep retrying.\(diagnostic)"
+		case .rateLimited:
+			return "\(subject) made too many connection attempts. Mango9 will retry automatically in a moment.\(diagnostic)"
+		case .serviceUnavailable:
+			return "The Mango9 voice service could not register \(subject.lowercased()). It will retry automatically.\(diagnostic)"
+		case .unknown:
+			return "\(subject) could not connect to the Mango9 voice service. The app will keep retrying.\(diagnostic)"
+		}
+	}
+
+	private static func extractSIPCode(from message: String) -> Int? {
+		guard let codeRange: Swift.Range<String.Index> = message.range(
+			of: #"(?<!\d)[4-6]\d{2}(?!\d)"#,
+			options: .regularExpression
+		) else {
+			return nil
+		}
+		return Int(message[codeRange])
 	}
 }
 

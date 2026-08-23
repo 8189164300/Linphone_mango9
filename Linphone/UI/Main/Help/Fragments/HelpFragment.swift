@@ -26,8 +26,7 @@ struct HelpFragment: View {
 	@Binding var isShowHelpFragment: Bool
 	
 	var showAssistant: Bool {
-		(CoreContext.shared.codeScannerIsOpen && CoreContext.shared.accounts.isEmpty)
-		|| (CoreContext.shared.coreIsStarted && CoreContext.shared.accounts.isEmpty)
+		(CoreContext.shared.coreIsStarted && CoreContext.shared.accounts.isEmpty)
 		|| SharedMainViewModel.shared.displayProfileMode
 	}
 	

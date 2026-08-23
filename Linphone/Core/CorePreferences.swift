@@ -25,7 +25,13 @@ enum Mango9Configuration {
 	static let provisioningBaseURL = URL(string: "https://provision.mango9.com")!
 	static let sipProxyHost = "proxy.mango9.com"
 	static let sipProxyPort = 5061
-	static let sipProxyURI = "sip:proxy.mango9.com:5061;transport=tls"
+	// iOS suspends SIP applications, so a short binding can expire before the
+	// app is allowed to refresh it. OpenSIPS keeps this mobile contact locally
+	// while AOR throttling maintains a separate one-hour PBX registration.
+	static let mobileRegistrationExpires = 30 * 24 * 60 * 60
+	// Omitting the explicit port allows RFC 3263 DNS/SRV resolution and
+	// redundant OpenSIPS targets. TLS still uses the standard SIP port 5061.
+	static let sipProxyURI = "sip:proxy.mango9.com;transport=tls"
 	static let appleTeamID =
 		(Bundle.main.object(forInfoDictionaryKey: "Mango9AppleTeamID") as? String)?
 			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

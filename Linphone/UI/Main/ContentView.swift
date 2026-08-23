@@ -132,7 +132,10 @@ struct ContentView: View {
 								.padding(.leading, 10)
 							
 							
-							Text(String(localized: "connection_error_for_non_default_account"))
+							Text(
+								coreContext.registrationFailureMessage
+									?? String(localized: "connection_error_for_non_default_account")
+							)
 								.default_text_style_white(styleSize: 16)
 						}
 						Spacer()
@@ -2049,7 +2052,7 @@ struct ContentView: View {
 							.transition(.opacity.combined(with: .move(edge: .bottom)))
 					}
 					
-					if telecomManager.callDisplayed && ((telecomManager.callInProgress && telecomManager.outgoingCallStarted) || telecomManager.callConnected) && !telecomManager.meetingWaitingRoomDisplayed {
+					if telecomManager.callDisplayed && ((telecomManager.callInProgress && (telecomManager.outgoingCallStarted || telecomManager.callStarted)) || telecomManager.callConnected) && !telecomManager.meetingWaitingRoomDisplayed {
 						CallView(
 							fullscreenVideo: $fullscreenVideo,
 							isShowStartCallFragment: $isShowStartCallFragment,

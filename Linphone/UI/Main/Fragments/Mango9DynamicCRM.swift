@@ -207,6 +207,7 @@ private final class Mango9ChatModerationStore: ObservableObject {
 @MainActor
 final class Mango9ChatStore: ObservableObject {
 	static let shared = Mango9ChatStore()
+	static let remotePushTokenDefaultsKey = "mango9_remote_push_token"
 
 	@Published private(set) var users: [Mango9ChatUser] = []
 	@Published private(set) var rooms: [Mango9ChatRoom] = []
@@ -325,6 +326,7 @@ final class Mango9ChatStore: ObservableObject {
 			receiveNext(on: task)
 
 			try await loadDirectory()
+			await registerRemotePushTokenIfAvailable()
 		} catch {
 			guard isCurrentConnection(
 				generation: generation,
@@ -600,6 +602,54 @@ final class Mango9ChatStore: ObservableObject {
 			try await loadDirectory()
 		} catch {
 			errorMessage = error.localizedDescription
+		}
+	}
+
+	func registerRemotePushTokenIfAvailable() async {
+		guard isConnected,
+		      let authToken = chatToken,
+		      let session = Mango9SessionStore.load(),
+		      let token = UserDefaults.standard.string(
+				forKey: Self.remotePushTokenDefaultsKey
+		      ),
+		      token.range(of: "^[a-fA-F0-9]{64,256}$", options: .regularExpression) != nil,
+		      let baseURL = URL(string: session.smsChatApi) else {
+			return
+		}
+
+		var request = URLRequest(
+			url: baseURL
+				.appendingPathComponent("push")
+				.appendingPathComponent("register")
+		)
+		request.httpMethod = "POST"
+		request.timeoutInterval = 15
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+		#if DEBUG
+		let pushEnvironment = "sandbox"
+		#else
+		let pushEnvironment = "production"
+		#endif
+		let payload: [String: String] = [
+			"token": token.lowercased(),
+			"device_id": Self.deviceIdentifier,
+			"crm_id": session.crmId,
+			"sip_identity": connectedIdentity ?? session.sipIdentity ?? "",
+			"environment": pushEnvironment
+		]
+
+		do {
+			request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+			let (_, response) = try await URLSession.shared.data(for: request)
+			guard let http = response as? HTTPURLResponse,
+			      (200..<300).contains(http.statusCode) else {
+				Log.warn("Mango9 message push registration was rejected")
+				return
+			}
+			Log.info("Mango9 message push registration refreshed")
+		} catch {
+			Log.warn("Mango9 message push registration failed")
 		}
 	}
 
@@ -2662,26 +2712,45 @@ struct Mango9ChatStandaloneFragment: View {
 	@Binding var target: Mango9ChatTarget?
 	@ObservedObject private var store = Mango9ChatStore.shared
 
+	@ViewBuilder
+	private var conversation: some View {
+		if let roomId = target?.roomId,
+		   let room = store.rooms.first(where: { $0.id == roomId }) {
+			Mango9ChatFragment(
+				room: room,
+				onClose: close
+			)
+		} else if let target, target.roomId != nil, target.userId <= 0 {
+			ProgressView("Opening conversation…")
+				.task {
+					await store.connectIfNeeded()
+					await store.refreshDirectory()
+				}
+		} else if let target {
+			Mango9ChatFragment(
+				user: store.users.first(where: { $0.id == target.userId })
+					?? Mango9ChatUser(
+						id: target.userId,
+						name: target.name,
+						avatar: "",
+						category: ""
+					),
+				onClose: close
+			)
+		}
+	}
+
 	var body: some View {
 		NavigationView {
-			if let target {
-				Mango9ChatFragment(
-					user: store.users.first(where: { $0.id == target.userId })
-						?? Mango9ChatUser(
-							id: target.userId,
-							name: target.name,
-							avatar: "",
-							category: ""
-						),
-					onClose: {
-						withAnimation {
-							self.target = nil
-						}
-					}
-				)
-			}
+			conversation
 		}
 		.navigationViewStyle(.stack)
+	}
+
+	private func close() {
+		withAnimation {
+			target = nil
+		}
 	}
 }
 
@@ -3193,8 +3262,15 @@ struct Mango9ServerSMSSender: Identifiable, Equatable {
 struct Mango9ChatTarget: Identifiable, Equatable {
 	let userId: Int
 	let name: String
+	let roomId: String?
 
-	var id: Int { userId }
+	init(userId: Int, name: String, roomId: String? = nil) {
+		self.userId = userId
+		self.name = name
+		self.roomId = roomId
+	}
+
+	var id: String { roomId ?? "user:\(userId)" }
 }
 
 typealias Mango9Client = Mango9Lead

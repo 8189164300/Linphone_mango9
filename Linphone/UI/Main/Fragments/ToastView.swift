@@ -365,8 +365,8 @@ struct ToastView: View {
 							.default_text_style(styleSize: 15)
 							.padding(8)
 						
-					case let str where str.contains("Error: "):
-						Text(toast.message)
+					case let str where str.hasPrefix("Error: "):
+						Text(String(str.dropFirst("Error: ".count)))
 							.multilineTextAlignment(.center)
 							.foregroundStyle(Color.redDanger500)
 							.default_text_style(styleSize: 15)

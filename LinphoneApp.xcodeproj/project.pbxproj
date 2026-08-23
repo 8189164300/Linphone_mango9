@@ -94,9 +94,6 @@
 		D71FCA832AE14D6E00D2E43E /* ContactFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D71FCA822AE14D6E00D2E43E /* ContactFragment.swift */; };
 		D720E6AD2BAD822000DDFD87 /* ParticipantModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D720E6AC2BAD822000DDFD87 /* ParticipantModel.swift */; };
 		D72250692ADFBF2D008FB426 /* SideMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = D72250682ADFBF2D008FB426 /* SideMenu.swift */; };
-		D72343302ACEFEF8009AA24E /* QrCodeScannerFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D723432F2ACEFEF8009AA24E /* QrCodeScannerFragment.swift */; };
-		D72343322ACEFF58009AA24E /* QRScannerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D72343312ACEFF58009AA24E /* QRScannerController.swift */; };
-		D72343342ACEFFC3009AA24E /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D72343332ACEFFC3009AA24E /* QRScanner.swift */; };
 		D72343362AD037AF009AA24E /* ToastView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D72343352AD037AF009AA24E /* ToastView.swift */; };
 		D726E4392B16440C0083C415 /* ContactAvatarModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D726E4382B16440C0083C415 /* ContactAvatarModel.swift */; };
 		D726E43D2B19E4FE0083C415 /* StartCallFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D726E43C2B19E4FE0083C415 /* StartCallFragment.swift */; };
@@ -372,9 +369,6 @@
 		D71FCA822AE14D6E00D2E43E /* ContactFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactFragment.swift; sourceTree = "<group>"; };
 		D720E6AC2BAD822000DDFD87 /* ParticipantModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParticipantModel.swift; sourceTree = "<group>"; };
 		D72250682ADFBF2D008FB426 /* SideMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideMenu.swift; sourceTree = "<group>"; };
-		D723432F2ACEFEF8009AA24E /* QrCodeScannerFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QrCodeScannerFragment.swift; sourceTree = "<group>"; };
-		D72343312ACEFF58009AA24E /* QRScannerController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerController.swift; sourceTree = "<group>"; };
-		D72343332ACEFFC3009AA24E /* QRScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScanner.swift; sourceTree = "<group>"; };
 		D72343352AD037AF009AA24E /* ToastView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastView.swift; sourceTree = "<group>"; };
 		D726E4382B16440C0083C415 /* ContactAvatarModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactAvatarModel.swift; sourceTree = "<group>"; };
 		D726E43C2B19E4FE0083C415 /* StartCallFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartCallFragment.swift; sourceTree = "<group>"; };
@@ -867,8 +861,6 @@
 			isa = PBXGroup;
 			children = (
 				D719ABCE2ABC779A00B41C10 /* AccountLoginViewModel.swift */,
-				D72343332ACEFFC3009AA24E /* QRScanner.swift */,
-				D72343312ACEFF58009AA24E /* QRScannerController.swift */,
 				D714DE5F2C1B3B34006C1F1D /* RegisterViewModel.swift */,
 			);
 			path = Viewmodel;
@@ -1217,7 +1209,6 @@
 				D7DA67612ACCB2FA00E95002 /* LoginFragment.swift */,
 				D7EAACCE2AD6ED8000AA6A8A /* PermissionsFragment.swift */,
 				D7DA67632ACCB31700E95002 /* ProfileModeFragment.swift */,
-				D723432F2ACEFEF8009AA24E /* QrCodeScannerFragment.swift */,
 				D7FB55102AD447FD00A5AB15 /* RegisterFragment.swift */,
 				D748BF2B2ACD82D2004844EB /* ThirdPartySipAccountLoginFragment.swift */,
 				D748BF2D2ACD82E7004844EB /* ThirdPartySipAccountWarningFragment.swift */,
@@ -1777,10 +1768,8 @@
 				D711B1302E8FCEDE00DF8C71 /* CardDavViewModel.swift in Sources */,
 				D7E6ADF32B9875C20009A2BC /* Message.swift in Sources */,
 				D7C48DF62AFCDF4700D938CB /* ContactInnerActionsFragment.swift in Sources */,
-				D72343322ACEFF58009AA24E /* QRScannerController.swift in Sources */,
 				662B69D92B25DE18007118BF /* TelecomManager.swift in Sources */,
 				D7F01ADE2E1D0DA3006942C0 /* PopupUpdatePassword.swift in Sources */,
-				D72343342ACEFFC3009AA24E /* QRScanner.swift in Sources */,
 				66246C6A2C622AE900973E97 /* TimeZoneExtension.swift in Sources */,
 				66C491FB2B24D32600CEA16D /* CoreExtension.swift in Sources */,
 				D711B1322E8FCF8800DF8C71 /* LdapViewModel.swift in Sources */,
@@ -1791,7 +1780,6 @@
 				D756C8152D34FF9200A58F2F /* SettingsViewModel.swift in Sources */,
 				D7B99E9B2B29F7C300BE7BF2 /* ActivityIndicator.swift in Sources */,
 				66F626B22BCEBB86003E2DEC /* AddParticipantsFragment.swift in Sources */,
-				D72343302ACEFEF8009AA24E /* QrCodeScannerFragment.swift in Sources */,
 				66F08C892C2AFEF700D9AE2F /* MeetingsListBottomSheet.swift in Sources */,
 				D726E43F2B19E56F0083C415 /* StartCallViewModel.swift in Sources */,
 				D70A26EE2B7CF60B006CC8FC /* ConversationsListBottomSheet.swift in Sources */,
@@ -1933,7 +1921,7 @@
 				CODE_SIGN_ENTITLEMENTS = msgNotificationService/msgNotificationService.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -1953,7 +1941,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.3;
+				MARKETING_VERSION = 6.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).msgNotificationService";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1975,7 +1963,7 @@
 				CODE_SIGN_ENTITLEMENTS = msgNotificationService/msgNotificationService.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -1992,7 +1980,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.3;
+				MARKETING_VERSION = 6.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).msgNotificationService";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -2247,7 +2235,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = Linphone/Linphone.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"Linphone/Preview Content\"";
@@ -2264,7 +2252,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Mango 9 accesses your calendar only when you choose to add a call or meeting event.";
 				INFOPLIST_KEY_NSCalendarsWriteOnlyAccessUsageDescription = "Mango 9 adds a call or meeting event to your calendar only when you request it.";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Mango 9 uses the camera to scan provisioning QR codes, make video calls, and attach a photo or video you choose.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Mango 9 uses the camera for video calls and to attach a photo or video you choose.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Mango 9 uses your contacts to display names and let you call or message people you choose.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Mango 9 uses the local network to connect calls to SIP services available on your network.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Mango 9 uses the microphone during calls and when you choose to record a voice message.";
@@ -2289,7 +2277,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 13.3;
 				MANGO9_APS_ENVIRONMENT = development;
-				MARKETING_VERSION = 6.2.3;
+				MARKETING_VERSION = 6.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2309,7 +2297,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = Linphone/Linphone.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"Linphone/Preview Content\"";
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
@@ -2322,7 +2310,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Mango 9 accesses your calendar only when you choose to add a call or meeting event.";
 				INFOPLIST_KEY_NSCalendarsWriteOnlyAccessUsageDescription = "Mango 9 adds a call or meeting event to your calendar only when you request it.";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Mango 9 uses the camera to scan provisioning QR codes, make video calls, and attach a photo or video you choose.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Mango 9 uses the camera for video calls and to attach a photo or video you choose.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Mango 9 uses your contacts to display names and let you call or message people you choose.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Mango 9 uses the local network to connect calls to SIP services available on your network.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Mango 9 uses the microphone during calls and when you choose to record a voice message.";
@@ -2347,7 +2335,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 13.3;
 				MANGO9_APS_ENVIRONMENT = production;
-				MARKETING_VERSION = 6.2.3;
+				MARKETING_VERSION = 6.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2365,7 +2353,7 @@
 				CODE_SIGN_ENTITLEMENTS = linphoneExtension/linphoneExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2380,7 +2368,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.3;
+				MARKETING_VERSION = 6.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).share";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2399,7 +2387,7 @@
 				CODE_SIGN_ENTITLEMENTS = linphoneExtension/linphoneExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2414,7 +2402,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.3;
+				MARKETING_VERSION = 6.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).share";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2432,7 +2420,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2447,7 +2435,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.3;
+				MARKETING_VERSION = 6.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).intents";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2468,7 +2456,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2483,7 +2471,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.3;
+				MARKETING_VERSION = 6.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).intents";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

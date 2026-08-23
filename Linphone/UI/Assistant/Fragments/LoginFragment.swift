@@ -25,14 +25,26 @@ import linphonesw
 /// Mango9-managed enrollment.
 ///
 /// SIP credentials and tenant details are delivered by the Mango9 provisioning
-/// service after either CRM login or one-time QR enrollment. The public Linphone
-/// account creator and arbitrary SIP-account paths are intentionally not exposed.
+/// service after either CRM password login or the CRM's existing email-code
+/// verification flow. The public Linphone account creator and arbitrary
+/// SIP-account paths are intentionally not exposed.
 struct LoginFragment: View {
+	private enum LoginMode: Equatable {
+		case password
+		case emailRequest
+		case emailVerification
+	}
+
 	@ObservedObject private var coreContext = CoreContext.shared
 
 	@State private var isShowHelpFragment = false
 	@State private var username = ""
 	@State private var password = ""
+	@State private var loginMode: LoginMode = .password
+	@State private var email = ""
+	@State private var verificationCode = ""
+	@State private var resendCountdown = 0
+	@State private var resendTimerTask: Task<Void, Never>?
 	@State private var isPasswordVisible = false
 	@State private var isSigningIn = false
 	@State private var signInError: String?
@@ -85,6 +97,9 @@ struct LoginFragment: View {
 					restoreSavedAccount(session)
 				}
 			}
+		}
+		.onDisappear {
+			resendTimerTask?.cancel()
 		}
 	}
 
@@ -160,11 +175,11 @@ struct LoginFragment: View {
 	}
 
 	private var brandCard: some View {
-		VStack(spacing: 10) {
+		VStack(spacing: 8) {
 			Image("mango9-logo")
 				.resizable()
 				.scaledToFit()
-				.frame(maxWidth: 190, maxHeight: 50)
+				.frame(maxWidth: 176, maxHeight: 46)
 
 			Text("Business calling and messaging")
 				.default_text_style_white_600(styleSize: 18)
@@ -183,24 +198,115 @@ struct LoginFragment: View {
 		}
 		.frame(maxWidth: .infinity)
 		.padding(.horizontal, 24)
-		.padding(.vertical, 20)
+		.padding(.vertical, 18)
 		.background(Color.orangeMain500)
-		.cornerRadius(24)
+		.cornerRadius(20)
 		.padding(.horizontal, 24)
 	}
 
 	private var enrollmentCard: some View {
-		VStack(spacing: 14) {
+		VStack(spacing: 12) {
 			Text("Connect your account")
 				.default_text_style_800(styleSize: 20)
 
-			Text("Sign in with your Mango9 account or scan the QR code shown in the CRM.")
+			Text(loginSubtitle)
 				.default_text_style(styleSize: 14)
 				.foregroundStyle(Color.grayMain2c600)
 				.multilineTextAlignment(.center)
 				.lineLimit(3)
 				.fixedSize(horizontal: false, vertical: true)
 
+			Group {
+				switch loginMode {
+				case .password:
+					passwordLoginFields
+				case .emailRequest:
+					emailRequestFields
+				case .emailVerification:
+					emailVerificationFields
+				}
+			}
+
+			Toggle(isOn: $rememberLogin) {
+				VStack(alignment: .leading, spacing: 2) {
+					Text("Keep me signed in")
+						.default_text_style_600(styleSize: 14)
+					Text("Stored securely on this device. Your password is never saved.")
+						.default_text_style(styleSize: 11)
+						.foregroundStyle(Color.grayMain2c500)
+				}
+			}
+			.toggleStyle(SwitchToggleStyle(tint: Color.orangeMain500))
+
+			if let signInError {
+				Text(signInError)
+					.default_text_style(styleSize: 13)
+					.foregroundStyle(Color.red)
+					.multilineTextAlignment(.center)
+			}
+
+			primaryLoginButton
+
+			if loginMode == .password {
+				Button {
+					showEmailLogin()
+				} label: {
+					HStack(spacing: 8) {
+						Image(systemName: "envelope")
+							.font(.system(size: 16, weight: .semibold))
+
+						Text("Use an email code")
+							.default_text_style_600(styleSize: 16)
+					}
+					.foregroundStyle(Color.orangeMain500)
+					.frame(maxWidth: .infinity)
+					.padding(.horizontal, 20)
+					.frame(height: 48)
+					.background(Color.white)
+					.overlay(
+						Capsule()
+							.stroke(Color.orangeMain500, lineWidth: 1.5)
+					)
+				}
+				.buttonStyle(.plain)
+			} else {
+				Button {
+					showPasswordLogin()
+				} label: {
+					HStack(spacing: 6) {
+						Image(systemName: "key")
+						Text("Use password instead")
+					}
+					.font(.system(size: 14, weight: .semibold))
+					.foregroundStyle(Color.orangeMain500)
+					.padding(.vertical, 4)
+				}
+				.buttonStyle(.plain)
+				.disabled(isSigningIn)
+			}
+
+		}
+		.frame(maxWidth: SharedMainViewModel.shared.maxWidth)
+		.padding(20)
+		.background(Color.white)
+		.cornerRadius(20)
+		.shadow(color: Color.black.opacity(0.05), radius: 12, y: 4)
+		.padding(.horizontal, 24)
+	}
+
+	private var loginSubtitle: String {
+		switch loginMode {
+		case .password:
+			return "Sign in with your Mango9 account or use a code sent to your email."
+		case .emailRequest:
+			return "Enter the email address on your Mango9 account."
+		case .emailVerification:
+			return "Enter the 6-digit code sent to \(email)."
+		}
+	}
+
+	private var passwordLoginFields: some View {
+		Group {
 			TextField("Email or username", text: $username)
 				.textContentType(.username)
 				.textInputAutocapitalization(.never)
@@ -246,82 +352,129 @@ struct LoginFragment: View {
 						.stroke(Color.gray200, lineWidth: 1)
 				)
 				.cornerRadius(14)
-
-			Toggle(isOn: $rememberLogin) {
-				VStack(alignment: .leading, spacing: 2) {
-					Text("Keep me signed in")
-						.default_text_style_600(styleSize: 14)
-					Text("Your session is stored securely. Your CRM password is never saved.")
-						.default_text_style(styleSize: 11)
-						.foregroundStyle(Color.grayMain2c500)
-				}
-			}
-			.toggleStyle(SwitchToggleStyle(tint: Color.orangeMain500))
-
-			if let signInError {
-				Text(signInError)
-					.default_text_style(styleSize: 13)
-					.foregroundStyle(Color.red)
-					.multilineTextAlignment(.center)
-			}
-
-			Button(action: signIn) {
-				HStack {
-					if isSigningIn {
-						ProgressView()
-							.progressViewStyle(CircularProgressViewStyle(tint: Color.white))
-					}
-
-					Text(isSigningIn ? "Signing in…" : "Sign in")
-						.default_text_style_white_600(styleSize: 18)
-				}
-				.frame(maxWidth: .infinity)
-				.padding(.horizontal, 20)
-				.padding(.vertical, 12)
-				.background(Color.orangeMain500)
-				.cornerRadius(60)
-			}
-			.buttonStyle(.plain)
-			.allowsHitTesting(canSignIn)
-
-			HStack(spacing: 12) {
-				Divider()
-				.frame(height: 1)
-
-				Text("or")
-					.default_text_style_600(styleSize: 14)
-					.foregroundStyle(Color.grayMain2c500)
-
-				Divider()
-					.frame(height: 1)
-			}
-
-			NavigationLink {
-				QrCodeScannerFragment()
-			} label: {
-				HStack {
-					Image("qr-code")
-						.renderingMode(.template)
-						.resizable()
-						.foregroundStyle(Color.white)
-						.frame(width: 22, height: 22)
-
-					Text("Scan Mango9 QR code")
-						.default_text_style_white_600(styleSize: 18)
-				}
-				.frame(maxWidth: .infinity)
-				.padding(.horizontal, 20)
-				.padding(.vertical, 12)
-				.background(Color.orangeMain500)
-				.cornerRadius(60)
-			}
-
 		}
-		.frame(maxWidth: SharedMainViewModel.shared.maxWidth)
-		.padding(20)
-		.background(Color.white)
-		.cornerRadius(20)
-		.padding(.horizontal, 24)
+	}
+
+	private var emailRequestFields: some View {
+		TextField("Email address", text: $email)
+			.textContentType(.emailAddress)
+			.keyboardType(.emailAddress)
+			.textInputAutocapitalization(.never)
+			.autocorrectionDisabled()
+			.onSubmit(requestEmailCode)
+			.padding(.horizontal, 18)
+			.frame(height: 48)
+			.background(Color.gray100)
+			.overlay(
+				RoundedRectangle(cornerRadius: 14)
+					.stroke(Color.gray200, lineWidth: 1)
+			)
+			.cornerRadius(14)
+	}
+
+	private var emailVerificationFields: some View {
+		VStack(spacing: 12) {
+			TextField("6-digit code", text: $verificationCode)
+				.textContentType(.oneTimeCode)
+				.keyboardType(.numberPad)
+				.multilineTextAlignment(.center)
+				.font(.system(size: 24, weight: .semibold, design: .rounded))
+				.onChange(of: verificationCode) { value in
+					let digits = value.filter(\.isNumber)
+					let normalizedCode = String(digits.prefix(6))
+					if verificationCode != normalizedCode {
+						verificationCode = normalizedCode
+					}
+				}
+				.padding(.horizontal, 18)
+				.frame(height: 52)
+				.background(Color.gray100)
+				.overlay(
+					RoundedRectangle(cornerRadius: 14)
+						.stroke(Color.gray200, lineWidth: 1)
+				)
+				.cornerRadius(14)
+
+			HStack {
+				Button("Change email") {
+					showEmailLogin()
+				}
+				.default_text_style_600(styleSize: 13)
+				.foregroundStyle(Color.orangeMain500)
+				.buttonStyle(.plain)
+				.disabled(isSigningIn)
+
+				Spacer()
+
+				Button {
+					requestEmailCode()
+				} label: {
+					Text(resendCountdown > 0 ? "Resend in \(resendCountdown)s" : "Resend code")
+						.default_text_style_600(styleSize: 13)
+						.foregroundStyle(resendCountdown > 0 ? Color.grayMain2c500 : Color.orangeMain500)
+				}
+				.buttonStyle(.plain)
+				.disabled(resendCountdown > 0 || isSigningIn)
+			}
+		}
+	}
+
+	private var primaryLoginButton: some View {
+		Button(action: primaryLoginAction) {
+			HStack {
+				if isSigningIn {
+					ProgressView()
+						.progressViewStyle(CircularProgressViewStyle(tint: Color.white))
+				}
+
+				Text(primaryButtonTitle)
+					.default_text_style_white_600(styleSize: 18)
+			}
+			.frame(maxWidth: .infinity)
+			.padding(.horizontal, 20)
+			.frame(height: 50)
+			.background(Color.orangeMain500)
+			.cornerRadius(60)
+		}
+		.buttonStyle(.plain)
+		.allowsHitTesting(canPerformPrimaryAction)
+		.opacity(canPerformPrimaryAction ? 1 : 0.65)
+	}
+
+	private var primaryButtonTitle: String {
+		if isSigningIn {
+			return loginMode == .emailRequest ? "Sending…" : "Signing in…"
+		}
+		switch loginMode {
+		case .password:
+			return "Sign in"
+		case .emailRequest:
+			return "Send Login Code"
+		case .emailVerification:
+			return "Verify and Sign In"
+		}
+	}
+
+	private var canPerformPrimaryAction: Bool {
+		switch loginMode {
+		case .password:
+			return canSignIn
+		case .emailRequest:
+			return isValidEmail(email) && !isSigningIn
+		case .emailVerification:
+			return verificationCode.count == 6 && !isSigningIn
+		}
+	}
+
+	private func primaryLoginAction() {
+		switch loginMode {
+		case .password:
+			signIn()
+		case .emailRequest:
+			requestEmailCode()
+		case .emailVerification:
+			verifyEmailCode()
+		}
 	}
 
 	private var canSignIn: Bool {
@@ -347,10 +500,105 @@ struct LoginFragment: View {
 				)
 				password = ""
 				ToastViewModel.shared.show("Success_mango9_account_connected")
+				closeAccountLoginAfterSuccess()
 			} catch {
 				signInError = Mango9LoginService.userFacingMessage(for: error)
 			}
 			isSigningIn = false
+		}
+	}
+
+	private func showEmailLogin() {
+		resendTimerTask?.cancel()
+		resendCountdown = 0
+		signInError = nil
+		verificationCode = ""
+		if email.isEmpty, username.contains("@") {
+			email = username
+		}
+		loginMode = .emailRequest
+	}
+
+	private func showPasswordLogin() {
+		resendTimerTask?.cancel()
+		resendCountdown = 0
+		verificationCode = ""
+		signInError = nil
+		loginMode = .password
+	}
+
+	private func isValidEmail(_ candidate: String) -> Bool {
+		let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard let at = trimmed.firstIndex(of: "@"), at != trimmed.startIndex else {
+			return false
+		}
+		return trimmed[trimmed.index(after: at)...].contains(".")
+	}
+
+	private func requestEmailCode() {
+		guard isValidEmail(email), !isSigningIn else { return }
+		let submittedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+		email = submittedEmail
+		signInError = nil
+		isSigningIn = true
+
+		Task {
+			do {
+				let resendAfter = try await Mango9LoginService.requestLoginCode(email: submittedEmail)
+				verificationCode = ""
+				loginMode = .emailVerification
+				startResendCountdown(seconds: resendAfter)
+			} catch {
+				signInError = Mango9LoginService.userFacingMessage(for: error)
+			}
+			isSigningIn = false
+		}
+	}
+
+	private func verifyEmailCode() {
+		guard verificationCode.count == 6, !isSigningIn else { return }
+		let submittedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+		let submittedCode = verificationCode
+		signInError = nil
+		isSigningIn = true
+
+		Task {
+			do {
+				try await Mango9LoginService.verifyLoginCode(
+					email: submittedEmail,
+					code: submittedCode,
+					rememberLogin: rememberLogin
+				)
+				verificationCode = ""
+				resendTimerTask?.cancel()
+				ToastViewModel.shared.show("Success_mango9_account_connected")
+				closeAccountLoginAfterSuccess()
+			} catch {
+				verificationCode = ""
+				signInError = Mango9LoginService.userFacingMessage(for: error)
+			}
+			isSigningIn = false
+		}
+	}
+
+	private func closeAccountLoginAfterSuccess() {
+		guard isShowBack else { return }
+		withAnimation {
+			onBackPressed?()
+		}
+	}
+
+	private func startResendCountdown(seconds: Int) {
+		resendTimerTask?.cancel()
+		resendCountdown = max(0, seconds)
+		guard resendCountdown > 0 else { return }
+
+		resendTimerTask = Task {
+			while !Task.isCancelled && resendCountdown > 0 {
+				try? await Task.sleep(nanoseconds: 1_000_000_000)
+				guard !Task.isCancelled else { return }
+				resendCountdown -= 1
+			}
 		}
 	}
 }
@@ -358,6 +606,9 @@ struct LoginFragment: View {
 @MainActor
 private enum Mango9LoginService {
 	private enum SignInFailure: LocalizedError {
+		case invalidEmail
+		case invalidOrExpiredCode
+		case emailCodeUnavailable
 		case invalidCredentials
 		case accountNotProvisionable
 		case rateLimited
@@ -366,6 +617,12 @@ private enum Mango9LoginService {
 
 		var errorDescription: String? {
 			switch self {
+			case .invalidEmail:
+				return "Enter a valid email address."
+			case .invalidOrExpiredCode:
+				return "That code is invalid or expired. Request a new code and try again."
+			case .emailCodeUnavailable:
+				return "Email code sign-in is temporarily unavailable. Use your password or try again later."
 			case .invalidCredentials:
 				return "The CRM username or password is incorrect."
 			case .accountNotProvisionable:
@@ -392,6 +649,35 @@ private enum Mango9LoginService {
 			case deviceId = "device_id"
 			case platform
 		}
+	}
+
+	private struct LoginCodeRequest: Encodable {
+		let email: String
+		let deviceId: String
+
+		enum CodingKeys: String, CodingKey {
+			case email
+			case deviceId = "device_id"
+		}
+	}
+
+	private struct LoginCodeVerifyRequest: Encodable {
+		let email: String
+		let code: String
+		let deviceId: String
+		let platform: String
+
+		enum CodingKeys: String, CodingKey {
+			case email
+			case code
+			case deviceId = "device_id"
+			case platform
+		}
+	}
+
+	private struct LoginCodeRequestResponse: Decodable {
+		let success: Bool
+		let resendAfter: Int?
 	}
 
 	private struct ErrorResponse: Decodable {
@@ -471,7 +757,7 @@ private enum Mango9LoginService {
 			LoginRequest(
 				username: username,
 				password: password,
-				deviceId: UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString,
+				deviceId: deviceId,
 				platform: "ios"
 			)
 		)
@@ -499,6 +785,116 @@ private enum Mango9LoginService {
 		let decoder = JSONDecoder()
 		decoder.keyDecodingStrategy = .convertFromSnakeCase
 		let login = try decoder.decode(LoginResponse.self, from: data)
+		try await completeLogin(login, rememberLogin: rememberLogin)
+	}
+
+	static func requestLoginCode(email: String) async throws -> Int {
+		let endpoint = Mango9Configuration.provisioningBaseURL
+			.appendingPathComponent("v1/mobile/login-code/request")
+		var request = URLRequest(url: endpoint)
+		request.httpMethod = "POST"
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.setValue("application/json", forHTTPHeaderField: "Accept")
+		request.httpBody = try JSONEncoder().encode(
+			LoginCodeRequest(email: email, deviceId: deviceId)
+		)
+
+		let (data, response) = try await URLSession.shared.data(for: request)
+		guard let httpResponse = response as? HTTPURLResponse else {
+			throw SignInFailure.invalidResponse
+		}
+		guard (200..<300).contains(httpResponse.statusCode) else {
+			let serverError = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+			switch (httpResponse.statusCode, serverError?.error) {
+			case (404, _):
+				throw SignInFailure.emailCodeUnavailable
+			case (400, "invalid_email"):
+				throw SignInFailure.invalidEmail
+			case (429, _):
+				throw SignInFailure.rateLimited
+			case (502, _), (503, _):
+				throw SignInFailure.crmUnavailable
+			default:
+				throw SignInFailure.invalidResponse
+			}
+		}
+
+		let decoder = JSONDecoder()
+		decoder.keyDecodingStrategy = .convertFromSnakeCase
+		let result = try decoder.decode(LoginCodeRequestResponse.self, from: data)
+		guard result.success else {
+			throw SignInFailure.invalidResponse
+		}
+		return max(0, result.resendAfter ?? 60)
+	}
+
+	static func verifyLoginCode(
+		email: String,
+		code: String,
+		rememberLogin: Bool
+	) async throws {
+		let endpoint = Mango9Configuration.provisioningBaseURL
+			.appendingPathComponent("v1/mobile/login-code/verify")
+		var request = URLRequest(url: endpoint)
+		request.httpMethod = "POST"
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.setValue("application/json", forHTTPHeaderField: "Accept")
+		request.httpBody = try JSONEncoder().encode(
+			LoginCodeVerifyRequest(
+				email: email,
+				code: code,
+				deviceId: deviceId,
+				platform: "ios"
+			)
+		)
+
+		let (data, response) = try await URLSession.shared.data(for: request)
+		guard let httpResponse = response as? HTTPURLResponse else {
+			throw SignInFailure.invalidResponse
+		}
+		guard (200..<300).contains(httpResponse.statusCode) else {
+			let serverError = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+			switch (httpResponse.statusCode, serverError?.error) {
+			case (404, _):
+				throw SignInFailure.emailCodeUnavailable
+			case (400, "invalid_email"):
+				throw SignInFailure.invalidEmail
+			case (400, "invalid_code"),
+				 (401, "invalid_or_expired_code"):
+				throw SignInFailure.invalidOrExpiredCode
+			case (409, "account_not_provisionable"):
+				throw SignInFailure.accountNotProvisionable
+			case (429, _):
+				throw SignInFailure.rateLimited
+			case (502, _), (503, _):
+				throw SignInFailure.crmUnavailable
+			default:
+				throw SignInFailure.invalidResponse
+			}
+		}
+
+		let decoder = JSONDecoder()
+		decoder.keyDecodingStrategy = .convertFromSnakeCase
+		let login = try decoder.decode(LoginResponse.self, from: data)
+		try await completeLogin(login, rememberLogin: rememberLogin)
+	}
+
+	private static var deviceId: String {
+		let defaultsKey = "mango9_login_device_uuid"
+		if let storedDeviceId = UserDefaults.standard.string(forKey: defaultsKey),
+		   !storedDeviceId.isEmpty {
+			return storedDeviceId
+		}
+
+		let generatedDeviceId = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+		UserDefaults.standard.set(generatedDeviceId, forKey: defaultsKey)
+		return generatedDeviceId
+	}
+
+	private static func completeLogin(
+		_ login: LoginResponse,
+		rememberLogin: Bool
+	) async throws {
 		guard let provisioningURL = Mango9Configuration.verifiedProvisioningURL(from: login.enrollmentUrl) else {
 			throw URLError(.badServerResponse)
 		}

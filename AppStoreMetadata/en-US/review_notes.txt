@@ -1,0 +1,13 @@
+Mango9 is a companion application for existing Mango9 business users. Accounts and telecommunications services are provisioned outside the app under organizational service agreements. There is no consumer signup, purchase, pricing, or subscription link in the app.
+
+Sign in using the review credentials entered in App Store Connect. You may also tap “Use an email code” and enter the code delivered to the reviewer email. Both login methods use the same account-provisioning flow.
+
+After login:
+1. Confirm the assigned extension shows Connected.
+2. Open CRM to view the seeded lead and client.
+3. Tap a phone number and select Call with Mango9.
+4. Open Conversations, then Team Chat, and use the supplied second reviewer user.
+5. In Team Chat, open the safety menu to report or block a user.
+6. Open About Mango9 > Licensing to view open-source notices and the public corresponding-source link.
+
+The review account, review contact details, service endpoints, and safe test number are supplied only in App Store Connect and are not stored in the public source repository.
