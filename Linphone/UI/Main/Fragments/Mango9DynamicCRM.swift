@@ -653,6 +653,57 @@ final class Mango9ChatStore: ObservableObject {
 		}
 	}
 
+	func unregisterRemotePushToken(
+		for sipIdentity: String,
+		session: Mango9Session
+	) async {
+		guard let normalizedIdentity = Mango9SessionStore.normalizedIdentity(
+			sipIdentity
+		),
+		let baseURL = URL(string: session.smsChatApi) else {
+			return
+		}
+
+		let authToken: String
+		if connectedIdentity == normalizedIdentity, let chatToken {
+			authToken = chatToken
+		} else {
+			do {
+				authToken = try await Mango9CRMAPI.chatBootstrap(
+					session: session
+				).token
+			} catch {
+				Log.warn("Mango9 message push unregistration could not obtain authorization")
+				return
+			}
+		}
+
+		var request = URLRequest(
+			url: baseURL
+				.appendingPathComponent("push")
+				.appendingPathComponent("register")
+		)
+		request.httpMethod = "DELETE"
+		request.timeoutInterval = 15
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+
+		do {
+			request.httpBody = try JSONSerialization.data(
+				withJSONObject: ["device_id": Self.deviceIdentifier]
+			)
+			let (_, response) = try await URLSession.shared.data(for: request)
+			guard let http = response as? HTTPURLResponse,
+			      (200..<300).contains(http.statusCode) else {
+				Log.warn("Mango9 message push unregistration was rejected")
+				return
+			}
+			Log.info("Mango9 message push registration removed for signed-out account")
+		} catch {
+			Log.warn("Mango9 message push unregistration failed")
+		}
+	}
+
 	func sendMessage(_ text: String, attachments: [Attachment] = []) async -> Bool {
 		let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard (!message.isEmpty || !attachments.isEmpty), let roomId = activeRoomId else {

@@ -1,1 +1,1 @@
-Sign in with your password or a secure code sent by email—QR setup is no longer required. Incoming calls now open the call screen more reliably, multiple lines recover better after network changes, and SMS and Team Chat notifications open the correct conversation. Connection messages are also clearer throughout the app.
+Signing out now cleanly removes that business line from calling, SMS, and Team Chat notifications on the device. This update also improves registration cleanup and multi-line reliability after account and network changes.

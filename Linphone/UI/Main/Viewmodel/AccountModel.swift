@@ -50,6 +50,7 @@ class AccountModel: ObservableObject {
 	
 	private var accountDelegate: AccountDelegate?
 	private var coreDelegate: CoreDelegate?
+	private var logoutCleanupPending = false
 	
 	init(account: Account, core: Core) {
 		self.account = account
@@ -57,8 +58,11 @@ class AccountModel: ObservableObject {
 		self.computeNotificationsCount()
 		
 		accountDelegate = AccountDelegateStub(
-			onRegistrationStateChanged: { (_: Account, _: RegistrationState, _: String) in
+			onRegistrationStateChanged: { (_: Account, state: RegistrationState, _: String) in
 				self.update()
+				if state == .Cleared {
+					self.completePendingLogout()
+				}
 			}, onMessageWaitingIndicationChanged: { (account: Account, mwi: MessageWaitingIndication) in
 				Log.info("\(AccountModel.TAG) Account \(account.params?.identityAddress?.asStringUriOnly() ?? "Error") has received a MWI NOTIFY. \(mwi.hasMessageWaiting() ? "Message(s) are waiting." : "No message is waiting.")")
 				let showMwiTmp = mwi.hasMessageWaiting()
@@ -206,16 +210,46 @@ class AccountModel: ObservableObject {
 	
 	func logout() {
 		CoreContext.shared.doOnCoreQueue { core in
+			guard !self.logoutCleanupPending else { return }
+			self.logoutCleanupPending = true
 			Log.info("Account \(self.account.displayName()) has been removed")
-			if let sipIdentity = self.account.params?
-				.identityAddress?.asStringUriOnly() {
+			let sipIdentity = self.account.params?
+				.identityAddress?.asStringUriOnly()
+			let session = sipIdentity.flatMap {
+				Mango9SessionStore.load(for: $0)
+			}
+			if let sipIdentity, let session {
+				Task { @MainActor in
+					await Mango9ChatStore.shared.unregisterRemotePushToken(
+						for: sipIdentity,
+						session: session
+					)
+				}
+			}
+			if let sipIdentity {
 				Mango9SessionStore.remove(for: sipIdentity)
 			}
-			// removeAccountWithData() deletes associated authentication only when
-			// the asynchronous unregister finishes. If the same Mango9 line is
-			// provisioned again before then, that delayed cleanup can delete the
-			// replacement credential and leave the new account in a 401 loop.
-			// Remove this account and its current credential synchronously instead.
+
+			if let params = self.account.params?.clone() {
+				params.registerEnabled = false
+				self.account.params = params
+			} else {
+				self.completePendingLogout()
+			}
+
+			// Keep the credential long enough for the SIP REGISTER Expires: 0
+			// transaction. If the network is unavailable, finish local cleanup
+			// without leaving the account stuck in the UI.
+			DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+				self.completePendingLogout()
+			}
+		}
+	}
+
+	private func completePendingLogout() {
+		CoreContext.shared.doOnCoreQueue { core in
+			guard self.logoutCleanupPending else { return }
+			self.logoutCleanupPending = false
 			let authInfo = self.account.findAuthInfo()
 			core.removeAccount(account: self.account)
 			if let authInfo {
