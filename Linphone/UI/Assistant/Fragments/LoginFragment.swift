@@ -1178,6 +1178,19 @@ enum Mango9SessionStore {
 		return migrated
 	}
 
+	static func hasSession(for sipIdentity: String) -> Bool {
+		guard let identity = normalizedIdentity(sipIdentity) else {
+			return false
+		}
+		if volatileSession(for: identity) != nil {
+			return true
+		}
+		guard rememberedLoginIsEnabled else {
+			return false
+		}
+		return loadPersistentSession(account: identity) != nil
+	}
+
 	static func activate(sipIdentity: String?) {
 		guard let identity = normalizedIdentity(sipIdentity) else {
 			UserDefaults.standard.removeObject(forKey: activeIdentityKey)

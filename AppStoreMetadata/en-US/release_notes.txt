@@ -1,1 +1,8 @@
-Signing out now cleanly removes that business line from calling, SMS, and Team Chat notifications on the device. This update also improves registration cleanup and multi-line reliability after account and network changes.
+What’s new in 6.2.6:
+• Faster loading for conversations with attachments
+• Voice-message playback for sent and received SMS and Team Chat messages
+• Improved M4A voice-message compatibility
+• Image zoom and save-to-Photos controls
+• Reliable notification cleanup when removing an account
+• More reliable CRM lead filtering
+• Additional stability and multi-line improvements

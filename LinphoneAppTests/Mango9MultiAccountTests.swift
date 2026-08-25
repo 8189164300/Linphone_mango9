@@ -122,6 +122,118 @@ final class Mango9MultiAccountTests: XCTestCase {
 		)
 	}
 
+	func testRemovedAccountCannotBeReactivatedByStalePush() throws {
+		let identity = "sip:700@\(UUID().uuidString.lowercased()).example.com"
+		let session = Mango9Session(
+			crmId: "test-crm",
+			crmBaseUrl: "https://example.com",
+			crmApiBaseUrl: "https://example.com/api",
+			userId: "test-user",
+			parentClientId: "test-parent",
+			role: "user",
+			loginId: "test@example.com",
+			displayName: "Test User",
+			accessToken: "test-access-token",
+			refreshToken: "test-refresh-token",
+			smsChatApi: "https://example.com/sms_chat_api",
+			connectWebsocket: "wss://example.com/connect",
+			enrollmentExpiresAt: Date().addingTimeInterval(300),
+			sipIdentity: identity
+		)
+		defer {
+			Mango9SessionStore.remove(for: identity)
+		}
+
+		try Mango9SessionStore.save(
+			session,
+			for: identity,
+			persist: false
+		)
+		XCTAssertTrue(Mango9SessionStore.hasSession(for: identity))
+
+		Mango9SessionStore.remove(for: identity)
+
+		XCTAssertFalse(Mango9SessionStore.hasSession(for: identity))
+	}
+
+	func testTeamChatM4AAttachmentUsesAudioPlayer() throws {
+		let media = try XCTUnwrap(
+			Mango9ChatMedia.parse(
+				"https://cdn.example.com/messages/voice.m4a"
+				+ "?signature=test&ffName=Team%20voice.m4a"
+				+ "&ffType=audio%2Fmp4&ffExt=m4a"
+			).first
+		)
+
+		XCTAssertEqual(media.kind, .audio)
+		XCTAssertEqual(media.name, "Team voice.m4a")
+		XCTAssertEqual(media.mimeType, "audio/mp4")
+		XCTAssertEqual(media.url.pathExtension, "m4a")
+	}
+
+	func testLatestLeadFilterRequestWinsWhilePreviousRequestLoads() async throws {
+		let previousIdentity = Mango9SessionStore.activeIdentity
+		let identity = "sip:filter-test@\(UUID().uuidString.lowercased()).example.com"
+		let session = Mango9Session(
+			crmId: "test-crm",
+			crmBaseUrl: "https://example.com",
+			crmApiBaseUrl: "https://example.com/api",
+			userId: "test-user",
+			parentClientId: "test-parent",
+			role: "user",
+			loginId: "test@example.com",
+			displayName: "Test User",
+			accessToken: "test-access-token",
+			refreshToken: "test-refresh-token",
+			smsChatApi: "https://example.com/sms_chat_api",
+			connectWebsocket: "wss://example.com/connect",
+			enrollmentExpiresAt: Date().addingTimeInterval(300),
+			sipIdentity: identity
+		)
+		defer {
+			Mango9SessionStore.remove(for: identity)
+			Mango9SessionStore.activate(sipIdentity: previousIdentity)
+		}
+
+		try Mango9SessionStore.save(session, for: identity, persist: false)
+		Mango9SessionStore.activate(sipIdentity: identity)
+		let probe = Mango9LeadFilterProbe()
+		let viewModel = await Mango9LeadsViewModel {
+			_, _, status, _, _, _ in
+			await probe.load(status: status)
+		}
+
+		let firstReload = Task {
+			await viewModel.setStatus("New")
+		}
+		await probe.waitForCallCount(1)
+
+		await MainActor.run {
+			viewModel.selectedDateFilter = .today
+		}
+		let latestReload = Task {
+			await viewModel.setStatus("Qualified")
+		}
+		await Task.yield()
+		await probe.releaseFirstCall()
+
+		await firstReload.value
+		await latestReload.value
+
+		let recordedStatuses = await probe.recordedStatuses()
+		XCTAssertEqual(recordedStatuses, ["New", "Qualified"])
+		let applied = await MainActor.run {
+			(
+				viewModel.leads.first?.status,
+				viewModel.filteredLeads.count,
+				viewModel.total
+			)
+		}
+		XCTAssertEqual(applied.0, "Qualified")
+		XCTAssertEqual(applied.1, 1)
+		XCTAssertEqual(applied.2, 1)
+	}
+
 	func testLineIdentityCacheIsSeparatedBySIPAccount() {
 		let suffix = UUID().uuidString.lowercased()
 		let firstAccount = "sip:100@\(suffix)-a.example.com"
@@ -276,5 +388,51 @@ final class Mango9MultiAccountTests: XCTestCase {
 			Mango9Configuration.applePushProvider(forAPSEnvironment: nil),
 			"apns"
 		)
+	}
+}
+
+private actor Mango9LeadFilterProbe {
+	private var statuses: [String] = []
+	private var firstCallRelease: CheckedContinuation<Void, Never>?
+
+	func load(status: String) async -> Mango9LeadListPayload {
+		statuses.append(status)
+		if statuses.count == 1 {
+			await withCheckedContinuation { continuation in
+				firstCallRelease = continuation
+			}
+		}
+
+		return Mango9LeadListPayload(
+			leads: [
+				Mango9Lead(
+					id: statuses.count,
+					ownerUserId: 1,
+					ownerName: "Owner",
+					name: "(status) Lead",
+					phone: "2025550101",
+					email: "lead@example.com",
+					status: status,
+					source: "Test",
+					createdAt: "server-filtered-timestamp"
+				)
+			],
+			pagination: .init(total: 1, page: 1, limit: 50, pages: 1)
+		)
+	}
+
+	func waitForCallCount(_ expectedCount: Int) async {
+		while statuses.count < expectedCount {
+			await Task.yield()
+		}
+	}
+
+	func releaseFirstCall() {
+		firstCallRelease?.resume()
+		firstCallRelease = nil
+	}
+
+	func recordedStatuses() -> [String] {
+		statuses
 	}
 }

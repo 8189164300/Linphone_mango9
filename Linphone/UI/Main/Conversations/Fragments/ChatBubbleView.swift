@@ -1450,8 +1450,9 @@ struct CachedAsyncImage<Placeholder: View>: View {
 	}
 }
 
-private struct Mango9RemoteAudioPlayer: View {
-	let attachment: Attachment
+struct Mango9RemoteAudioPlayer: View {
+	let audioURL: URL
+	let name: String
 	let isOutgoing: Bool
 
 	@State private var player: AVPlayer
@@ -1462,9 +1463,18 @@ private struct Mango9RemoteAudioPlayer: View {
 	@State private var timeObserver: Any?
 
 	init(attachment: Attachment, isOutgoing: Bool) {
-		self.attachment = attachment
+		self.init(
+			audioURL: attachment.full,
+			name: attachment.name,
+			isOutgoing: isOutgoing
+		)
+	}
+
+	init(audioURL: URL, name: String, isOutgoing: Bool) {
+		self.audioURL = audioURL
+		self.name = name
 		self.isOutgoing = isOutgoing
-		_player = State(initialValue: AVPlayer(url: attachment.full))
+		_player = State(initialValue: AVPlayer(url: audioURL))
 	}
 
 	private var primaryColor: Color {
@@ -1484,7 +1494,7 @@ private struct Mango9RemoteAudioPlayer: View {
 			.buttonStyle(.plain)
 
 			VStack(alignment: .leading, spacing: 4) {
-				Text(attachment.name.isEmpty ? "Audio message" : attachment.name)
+				Text(name.isEmpty ? "Audio message" : name)
 					.font(.system(size: 13, weight: .semibold))
 					.foregroundStyle(primaryColor)
 					.lineLimit(1)

@@ -220,10 +220,19 @@ class AccountModel: ObservableObject {
 			}
 			if let sipIdentity, let session {
 				Task { @MainActor in
-					await Mango9ChatStore.shared.unregisterRemotePushToken(
+					Mango9ChatStore.shared.disconnectIfConnected(
+						to: sipIdentity
+					)
+					let removed = await Mango9ChatStore.shared.unregisterRemotePushToken(
 						for: sipIdentity,
 						session: session
 					)
+					if !removed {
+						Log.warn(
+							"Mango9 message push cleanup did not complete " +
+							"during account removal"
+						)
+					}
 				}
 			}
 			if let sipIdentity {

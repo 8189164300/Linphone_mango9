@@ -663,52 +663,79 @@ final class Mango9ChatStore: ObservableObject {
 	func unregisterRemotePushToken(
 		for sipIdentity: String,
 		session: Mango9Session
-	) async {
-		guard let normalizedIdentity = Mango9SessionStore.normalizedIdentity(
-			sipIdentity
-		),
+	) async -> Bool {
+		guard Mango9SessionStore.normalizedIdentity(sipIdentity) != nil,
 		let baseURL = URL(string: session.smsChatApi) else {
+			return false
+		}
+
+		var authorizedSession = session
+		for attempt in 1...2 {
+			do {
+				let bootstrap: Mango9ChatBootstrap
+				do {
+					bootstrap = try await Mango9CRMAPI.chatBootstrap(
+						session: authorizedSession
+					)
+				} catch Mango9CRMAPIError.unauthorized {
+					authorizedSession = try await Mango9CRMAPI.refresh(
+						session: authorizedSession
+					)
+					bootstrap = try await Mango9CRMAPI.chatBootstrap(
+						session: authorizedSession
+					)
+				}
+
+				var request = URLRequest(
+					url: baseURL
+						.appendingPathComponent("push")
+						.appendingPathComponent("register")
+				)
+				request.httpMethod = "DELETE"
+				request.timeoutInterval = 15
+				request.setValue(
+					"application/json",
+					forHTTPHeaderField: "Content-Type"
+				)
+				request.setValue(
+					"Bearer \(bootstrap.token)",
+					forHTTPHeaderField: "Authorization"
+				)
+				request.httpBody = try JSONSerialization.data(
+					withJSONObject: ["device_id": Self.deviceIdentifier]
+				)
+
+				let (_, response) = try await URLSession.shared.data(for: request)
+				guard let http = response as? HTTPURLResponse else {
+					throw Mango9ChatError.invalidResponse
+				}
+				if (200..<300).contains(http.statusCode) {
+					Log.info("Mango9 message push registration removed for signed-out account")
+					return true
+				}
+				Log.warn(
+					"Mango9 message push unregistration was rejected " +
+					"(status \(http.statusCode), attempt \(attempt))"
+				)
+			} catch {
+				Log.warn(
+					"Mango9 message push unregistration failed " +
+					"(attempt \(attempt))"
+				)
+			}
+			if attempt < 2 {
+				try? await Task.sleep(nanoseconds: 500_000_000)
+			}
+		}
+		return false
+	}
+
+	func disconnectIfConnected(to sipIdentity: String) {
+		guard let identity = Mango9SessionStore.normalizedIdentity(sipIdentity),
+		      connectedIdentity == identity || connectingIdentity == identity else {
 			return
 		}
-
-		let authToken: String
-		if connectedIdentity == normalizedIdentity, let chatToken {
-			authToken = chatToken
-		} else {
-			do {
-				authToken = try await Mango9CRMAPI.chatBootstrap(
-					session: session
-				).token
-			} catch {
-				Log.warn("Mango9 message push unregistration could not obtain authorization")
-				return
-			}
-		}
-
-		var request = URLRequest(
-			url: baseURL
-				.appendingPathComponent("push")
-				.appendingPathComponent("register")
-		)
-		request.httpMethod = "DELETE"
-		request.timeoutInterval = 15
-		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-		request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
-
-		do {
-			request.httpBody = try JSONSerialization.data(
-				withJSONObject: ["device_id": Self.deviceIdentifier]
-			)
-			let (_, response) = try await URLSession.shared.data(for: request)
-			guard let http = response as? HTTPURLResponse,
-			      (200..<300).contains(http.statusCode) else {
-				Log.warn("Mango9 message push unregistration was rejected")
-				return
-			}
-			Log.info("Mango9 message push registration removed for signed-out account")
-		} catch {
-			Log.warn("Mango9 message push unregistration failed")
-		}
+		disconnect()
 	}
 
 	func sendMessage(_ text: String, attachments: [Attachment] = []) async -> Bool {
@@ -2314,7 +2341,10 @@ private struct Mango9ChatBubble: View {
 
 				VStack(alignment: .leading, spacing: 8) {
 					ForEach(Mango9ChatMedia.parse(message.files)) { media in
-						Mango9ChatMediaView(media: media)
+						Mango9ChatMediaView(
+							media: media,
+							isOutgoing: isOutgoing
+						)
 					}
 					if !message.text.isEmpty {
 						Text(message.text)
@@ -2365,7 +2395,7 @@ private struct Mango9ChatBubble: View {
 }
 
 struct Mango9ChatMedia: Identifiable {
-	enum Kind {
+	enum Kind: Equatable {
 		case image
 		case video
 		case audio
@@ -2427,6 +2457,7 @@ struct Mango9ChatMedia: Identifiable {
 
 private struct Mango9ChatMediaView: View {
 	let media: Mango9ChatMedia
+	let isOutgoing: Bool
 
 	var body: some View {
 		switch media.kind {
@@ -2449,7 +2480,12 @@ private struct Mango9ChatMediaView: View {
 		case .video:
 			Mango9VideoAttachmentView(media: media)
 		case .audio:
-			Mango9AudioAttachmentView(media: media)
+			Mango9RemoteAudioPlayer(
+				audioURL: media.url,
+				name: media.name,
+				isOutgoing: isOutgoing
+			)
+			.frame(width: 220)
 		case .file:
 			attachmentLink(icon: "doc.fill", title: media.name)
 		}
@@ -2489,46 +2525,6 @@ private struct Mango9VideoAttachmentView: View {
 				.foregroundStyle(Color.white.opacity(0.75))
 				.lineLimit(1)
 		}
-	}
-}
-
-private struct Mango9AudioAttachmentView: View {
-	let media: Mango9ChatMedia
-	@State private var player: AVPlayer
-	@State private var isPlaying = false
-
-	init(media: Mango9ChatMedia) {
-		self.media = media
-		_player = State(initialValue: AVPlayer(url: media.url))
-	}
-
-	var body: some View {
-		HStack(spacing: 10) {
-			Button {
-				if isPlaying {
-					player.pause()
-				} else {
-					player.play()
-				}
-				isPlaying.toggle()
-			} label: {
-				Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-					.foregroundStyle(Color.white)
-					.frame(width: 34, height: 34)
-					.background(Color.orangeMain500)
-					.clipShape(Circle())
-			}
-			VStack(alignment: .leading, spacing: 2) {
-				Text(media.name)
-					.font(.system(size: 12, weight: .semibold))
-					.foregroundStyle(Color.white)
-					.lineLimit(1)
-				Text("Voice or audio message")
-					.font(.system(size: 9))
-					.foregroundStyle(Color.white.opacity(0.72))
-			}
-		}
-		.frame(width: 220, alignment: .leading)
 	}
 }
 
@@ -4080,6 +4076,15 @@ final class Mango9CallSettingsViewModel: ObservableObject {
 	}
 }
 
+typealias Mango9LeadListLoader = (
+	Mango9Session,
+	String,
+	String,
+	String,
+	Mango9CRMDateFilter,
+	Int
+) async throws -> Mango9LeadListPayload
+
 @MainActor
 final class Mango9LeadsViewModel: ObservableObject {
 	@Published private(set) var schema: Mango9LeadSchema?
@@ -4092,9 +4097,35 @@ final class Mango9LeadsViewModel: ObservableObject {
 	@Published var selectedStatus = ""
 	@Published var selectedGroupId = ""
 	@Published var selectedDateFilter: Mango9CRMDateFilter = .all
+	private let listLoader: Mango9LeadListLoader
+	private var reloadRequested = false
+
+	init(
+		listLoader: @escaping Mango9LeadListLoader = {
+			session,
+			search,
+			status,
+			groupId,
+			dateFilter,
+			page in
+			try await Mango9CRMAPI.leads(
+				session: session,
+				search: search,
+				status: status,
+				groupId: groupId,
+				dateFilter: dateFilter,
+				page: page
+			)
+		}
+	) {
+		self.listLoader = listLoader
+	}
 
 	var filteredLeads: [Mango9Lead] {
-		leads.filter { selectedDateFilter.includes($0.createdAt) }
+		// The server owns the date-filter definition and result count. Applying
+		// a second device-side date parser can incorrectly hide valid records
+		// from CRM installations that use another timestamp representation.
+		leads
 	}
 
 	var selectedGroupName: String {
@@ -4110,16 +4141,17 @@ final class Mango9LeadsViewModel: ObservableObject {
 
 		isLoading = true
 		errorMessage = nil
-		defer { isLoading = false }
+		var configurationLoaded = false
 
 		do {
 			do {
-				try await load(session: session)
+				try await loadConfiguration(session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
 				try Mango9SessionStore.save(session)
-				try await load(session: session)
+				try await loadConfiguration(session: session)
 			}
+			configurationLoaded = true
 		} catch Mango9CRMAPIError.unauthorized {
 			errorMessage = "Your CRM session expired. Sign in again."
 		} catch is CancellationError {
@@ -4128,6 +4160,13 @@ final class Mango9LeadsViewModel: ObservableObject {
 			// URLSession reports normal Swift task cancellation as NSURLErrorCancelled.
 		} catch {
 			errorMessage = "Leads could not be loaded. Check the connection and try again."
+		}
+
+		isLoading = false
+		if configurationLoaded {
+			await reloadList()
+		} else {
+			reloadRequested = false
 		}
 	}
 
@@ -4142,35 +4181,40 @@ final class Mango9LeadsViewModel: ObservableObject {
 	}
 
 	func reloadList() async {
+		reloadRequested = true
 		guard !isLoading else { return }
-		guard var session = Mango9SessionStore.load() else {
-			errorMessage = "Connect your Mango9 account to load leads."
-			return
-		}
 
-		isLoading = true
-		errorMessage = nil
-		defer { isLoading = false }
-		do {
-			do {
-				try await loadList(session: session)
-			} catch Mango9CRMAPIError.unauthorized {
-				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
-				try await loadList(session: session)
+		while reloadRequested {
+			reloadRequested = false
+			guard var session = Mango9SessionStore.load() else {
+				errorMessage = "Connect your Mango9 account to load leads."
+				return
 			}
-		} catch Mango9CRMAPIError.unauthorized {
-			errorMessage = "Your CRM session expired. Sign in again."
-		} catch is CancellationError {
-			// A newer refresh superseded this request. Keep the last successful list.
-		} catch let error as URLError where error.code == .cancelled {
-			// URLSession reports normal Swift task cancellation as NSURLErrorCancelled.
-		} catch {
-			errorMessage = "Leads could not be loaded. Check the connection and try again."
+
+			isLoading = true
+			errorMessage = nil
+			do {
+				do {
+					try await loadList(session: session)
+				} catch Mango9CRMAPIError.unauthorized {
+					session = try await Mango9CRMAPI.refresh(session: session)
+					try Mango9SessionStore.save(session)
+					try await loadList(session: session)
+				}
+			} catch Mango9CRMAPIError.unauthorized {
+				errorMessage = "Your CRM session expired. Sign in again."
+			} catch is CancellationError {
+				// A newer refresh superseded this request. Keep the last successful list.
+			} catch let error as URLError where error.code == .cancelled {
+				// URLSession reports normal Swift task cancellation as NSURLErrorCancelled.
+			} catch {
+				errorMessage = "Leads could not be loaded. Check the connection and try again."
+			}
+			isLoading = false
 		}
 	}
 
-	private func load(session: Mango9Session) async throws {
+	private func loadConfiguration(session: Mango9Session) async throws {
 		schema = try await Mango9CRMAPI.leadSchema(session: session)
 		do {
 			groups = try await Mango9CRMAPI.leadGroups(session: session)
@@ -4183,17 +4227,18 @@ final class Mango9LeadsViewModel: ObservableObject {
 		if !selectedGroupId.isEmpty && !groups.contains(where: { $0.id == selectedGroupId }) {
 			selectedGroupId = ""
 		}
-		try await loadList(session: session)
 	}
 
 	private func loadList(session: Mango9Session) async throws {
-		let payload = try await Mango9CRMAPI.leads(
-			session: session,
-			search: searchText,
-			status: selectedStatus,
-			groupId: selectedGroupId,
-			dateFilter: selectedDateFilter
+		let payload = try await listLoader(
+			session,
+			searchText,
+			selectedStatus,
+			selectedGroupId,
+			selectedDateFilter,
+			1
 		)
+		guard !reloadRequested else { return }
 		leads = payload.leads
 		total = payload.pagination.total
 	}

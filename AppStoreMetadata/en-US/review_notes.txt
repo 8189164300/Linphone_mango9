@@ -8,8 +8,9 @@ After login:
 3. Tap a phone number and select Call with Mango9.
 4. Open Conversations, then Team Chat, and use the supplied second reviewer user.
 5. In Team Chat, open the safety menu to report or block a user.
-6. Open About Mango9 > Licensing to view open-source notices and the exact corresponding source for this build: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.5-build-20
+6. Send and receive a voice message in SMS or Team Chat to verify the inline audio player.
+7. Open About Mango9 > Licensing to view open-source notices and the exact corresponding source for this build: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.6-build-22
 
-Version 6.2.5 improves account removal. Signing out sends the line's SIP unregister request before deleting its local credentials and removes that account/device registration from SMS and Team Chat notifications.
+Version 6.2.6 improves attachment-heavy conversation loading, sent and received voice-message playback, M4A compatibility, image viewing and saving, and account-removal notification cleanup. It also includes multi-line reliability and general stability improvements.
 
 The review account, review contact details, service endpoints, and safe test number are supplied only in App Store Connect and are not stored in the public source repository.

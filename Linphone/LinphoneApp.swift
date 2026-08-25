@@ -353,7 +353,9 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 			?? (userInfo["crmId"] as? String)
 		let identity = Mango9SessionStore.normalizedIdentity(pushedIdentity)
 			?? crmId.flatMap(Mango9SessionStore.identity(forCRMId:))
-		guard let identity else {
+		guard let identity,
+		      Mango9SessionStore.hasSession(for: identity) else {
+			Log.info("Ignoring Mango9 message push for an account not stored on this device")
 			return
 		}
 
