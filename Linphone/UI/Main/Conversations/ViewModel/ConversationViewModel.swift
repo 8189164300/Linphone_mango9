@@ -43,6 +43,24 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 	private let store = Mango9ChatStore.shared
 	private var subscriptions = Set<AnyCancellable>()
 	private var hiddenMessageIDs: Set<String>
+	private static let fractionalISOFormatter: ISO8601DateFormatter = {
+		let formatter = ISO8601DateFormatter()
+		formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+		return formatter
+	}()
+	private static let basicISOFormatter = ISO8601DateFormatter()
+	private static let serverDateFormatters: [DateFormatter] = [
+		"yyyy-MM-dd HH:mm:ss.SSS",
+		"yyyy-MM-dd HH:mm:ss",
+		"yyyy-MM-dd'T'HH:mm:ss.SSS",
+		"yyyy-MM-dd'T'HH:mm:ss",
+	].map { format in
+		let formatter = DateFormatter()
+		formatter.locale = Locale(identifier: "en_US_POSIX")
+		formatter.timeZone = TimeZone(secondsFromGMT: 0)
+		formatter.dateFormat = format
+		return formatter
+	}
 
 	init(target: Mango9SMSTarget) {
 		self.target = target
@@ -198,16 +216,10 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 
 	static func date(from value: String) -> Date? {
 		let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-		let fractional = ISO8601DateFormatter()
-		fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-		if let date = fractional.date(from: trimmed) ?? ISO8601DateFormatter().date(from: trimmed) {
+		if let date = fractionalISOFormatter.date(from: trimmed) ?? basicISOFormatter.date(from: trimmed) {
 			return date
 		}
-		let formatter = DateFormatter()
-		formatter.locale = Locale(identifier: "en_US_POSIX")
-		formatter.timeZone = TimeZone(secondsFromGMT: 0)
-		for format in ["yyyy-MM-dd HH:mm:ss.SSS", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss"] {
-			formatter.dateFormat = format
+		for formatter in serverDateFormatters {
 			if let date = formatter.date(from: trimmed) { return date }
 		}
 		return nil
@@ -246,6 +258,7 @@ class ConversationViewModel: ObservableObject {
 	@Published var smsSelectedSenderID = ""
 	@Published private(set) var smsErrorMessage: String?
 	@Published private(set) var smsIsMuted = false
+	@Published private(set) var smsIsLoading = false
 	@Published var requestedComposerText: String?
 
 	var isSMSConversation: Bool { smsAdapter != nil }
@@ -470,6 +483,9 @@ class ConversationViewModel: ObservableObject {
 		adapter.$isMuted
 			.receive(on: RunLoop.main)
 			.assign(to: &$smsIsMuted)
+		adapter.$isLoading
+			.receive(on: RunLoop.main)
+			.assign(to: &$smsIsLoading)
 	}
 	
 	func addConversationDelegate(chatRoom: ChatRoom) {
@@ -2692,8 +2708,9 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func resetDisplayedChatRoom() {
-		if let smsAdapter {
-			Task { await smsAdapter.refresh() }
+		if smsAdapter != nil {
+			// ContentView owns the foreground refresh for Mango9 SMS. Avoid issuing
+			// a second full conversation request from this nested scene observer.
 			return
 		}
 		if let displayedConversation = self.sharedMainViewModel.displayedConversation {
@@ -4044,6 +4061,8 @@ class VoiceRecordPlayerManager {
 
 class AudioRecorder: NSObject, ObservableObject {
 	var linphoneAudioRecorder: Recorder!
+	private var carrierAudioRecorder: AVAudioRecorder?
+	private var usesCarrierCompatibleRecording = false
 	var recordingSession: AVAudioSession?
 	@Published var isRecording = false
 	@Published var audioFilename: URL?
@@ -4053,7 +4072,8 @@ class AudioRecorder: NSObject, ObservableObject {
 	
 	var timer: Timer?
 	
-	func startRecording() {
+	func startRecording(useCarrierCompatibleFormat: Bool = false) {
+		usesCarrierCompatibleRecording = useCarrierCompatibleFormat
 		recordingSession = AVAudioSession.sharedInstance()
 		CoreContext.shared.doOnCoreQueue { core in
 			core.activateAudioSession(activated: true)
@@ -4065,13 +4085,55 @@ class AudioRecorder: NSObject, ObservableObject {
 				
 				recordingSession!.requestRecordPermission { allowed in
 					if allowed {
-						self.initVoiceRecorder()
+						if useCarrierCompatibleFormat {
+							self.initCarrierVoiceRecorder()
+						} else {
+							self.initVoiceRecorder()
+						}
 					} else {
 						print("Permission to record not granted.")
 					}
 				}
 			} catch {
 				print("Audio session error: \(error)")
+			}
+		}
+	}
+
+	private func initCarrierVoiceRecorder() {
+		DispatchQueue.main.async {
+			do {
+				let directory = FileUtil.sharedContainerUrl()
+					.appendingPathComponent("Library/Images", isDirectory: true)
+				try FileManager.default.createDirectory(
+					at: directory,
+					withIntermediateDirectories: true
+				)
+				let url = directory.appendingPathComponent(
+					"voice-recording-\(Int(Date().timeIntervalSince1970)).m4a"
+				)
+				let settings: [String: Any] = [
+					AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+					AVSampleRateKey: 44_100,
+					AVNumberOfChannelsKey: 1,
+					AVEncoderBitRateKey: 64_000,
+					AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+				]
+				let recorder = try AVAudioRecorder(url: url, settings: settings)
+				recorder.isMeteringEnabled = true
+				guard recorder.prepareToRecord(), recorder.record() else {
+					Log.error("[ConversationViewModel] [AudioRecorder] SMS voice recorder could not start")
+					return
+				}
+
+				self.audioFilename = url
+				self.audioFilenameAAC = url
+				self.carrierAudioRecorder = recorder
+				self.isRecording = true
+				self.startTimer()
+				Log.info("[ConversationViewModel] [AudioRecorder] Recording carrier-compatible AAC/M4A voice message")
+			} catch {
+				Log.error("[ConversationViewModel] [AudioRecorder] SMS voice recorder failed: \(error.localizedDescription)")
 			}
 		}
 	}
@@ -4098,6 +4160,19 @@ class AudioRecorder: NSObject, ObservableObject {
 	}
 	
 	func startVoiceRecorder() {
+		if usesCarrierCompatibleRecording {
+			guard let carrierAudioRecorder else {
+				Log.warn("[ConversationViewModel] [AudioRecorder] Carrier voice recorder is not ready")
+				return
+			}
+			if !carrierAudioRecorder.isRecording {
+				carrierAudioRecorder.record()
+				startTimer()
+				DispatchQueue.main.async { self.isRecording = true }
+			}
+			return
+		}
+
 		switch linphoneAudioRecorder.state {
 		case .Running:
 			Log.warn("[ConversationViewModel] [AudioRecorder] Recorder is already recording")
@@ -4133,7 +4208,11 @@ class AudioRecorder: NSObject, ObservableObject {
 	}
 	
 	func stopVoiceRecorder() {
-		if linphoneAudioRecorder.state == .Running {
+		if usesCarrierCompatibleRecording {
+			if carrierAudioRecorder?.isRecording == true {
+				carrierAudioRecorder?.stop()
+			}
+		} else if linphoneAudioRecorder?.state == .Running {
 			Log.info("[ConversationViewModel] [AudioRecorder] Closing voice recorder")
 			try? linphoneAudioRecorder.pause()
 			linphoneAudioRecorder.close()
@@ -4160,9 +4239,15 @@ class AudioRecorder: NSObject, ObservableObject {
 			self.recordingTime = 0
 			let maxVoiceRecordDuration = AppServices.corePreferences.voiceRecordingMaxDuration
 			self.timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in  // More frequent updates
-				self.recordingTime += 0.1
+				if self.usesCarrierCompatibleRecording {
+					self.recordingTime = self.carrierAudioRecorder?.currentTime ?? self.recordingTime
+				} else {
+					self.recordingTime += 0.1
+				}
 				self.updateSoundPower()
-				let duration = self.linphoneAudioRecorder.duration
+				let duration = self.usesCarrierCompatibleRecording
+					? Int(self.recordingTime * 1_000)
+					: self.linphoneAudioRecorder.duration
 				if duration >= maxVoiceRecordDuration {
 					print("[ConversationViewModel] [AudioRecorder] Max duration for voice recording exceeded (\(maxVoiceRecordDuration)ms), stopping.")
 					self.stopVoiceRecorder()
@@ -4177,7 +4262,14 @@ class AudioRecorder: NSObject, ObservableObject {
 	}
 	
 	func updateSoundPower() {
-		let soundPowerTmp = linphoneAudioRecorder.captureVolume * 1000	// Capture sound power
+		let soundPowerTmp: Float
+		if usesCarrierCompatibleRecording, let carrierAudioRecorder {
+			carrierAudioRecorder.updateMeters()
+			let decibels = carrierAudioRecorder.averagePower(forChannel: 0)
+			soundPowerTmp = max(0, min(100, (decibels + 50) * 2))
+		} else {
+			soundPowerTmp = linphoneAudioRecorder.captureVolume * 1000	// Capture sound power
+		}
 		soundPower = soundPowerTmp < 10 ? 0 : (soundPowerTmp > 100 ? 100 : (soundPowerTmp - 10))
 	}
 	

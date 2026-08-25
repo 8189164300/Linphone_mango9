@@ -663,18 +663,31 @@ struct ConversationFragment: View {
 					
 					if #available(iOS 16.0, *) {
 						ZStack(alignment: .bottomTrailing) {
-							UIList(
-								geometryProxy: geometry,
-                                sections: conversationViewModel.conversationMessagesSection,
+								UIList(
+									geometryProxy: geometry,
+									sections: conversationViewModel.conversationMessagesSection,
                                 isMessageTextFocused: Binding(get: {
                                     isMessageTextFocused
                                 }, set: { newValue in
                                     isMessageTextFocused = newValue
 								})
                             )
-							.environmentObject(conversationViewModel)
-							.environmentObject(conversationsListViewModel)
-						}
+								.environmentObject(conversationViewModel)
+								.environmentObject(conversationsListViewModel)
+
+								if conversationViewModel.isSMSConversation &&
+									conversationViewModel.smsIsLoading &&
+									conversationViewModel.conversationMessagesSection.isEmpty {
+									VStack(spacing: 12) {
+										ProgressView()
+										Text("Loading conversation…")
+											.default_text_style(styleSize: 14)
+											.foregroundStyle(Color.grayMain2c500)
+									}
+									.frame(maxWidth: .infinity, maxHeight: .infinity)
+									.background(Color.gray100)
+								}
+							}
 						.onAppear {
 							if conversationViewModel.displayedConversationUnreadMessagesCount > 0 {
 								conversationViewModel.markAsRead()
@@ -2027,7 +2040,9 @@ struct VoiceRecorderPlayer: View {
 			.padding(.vertical, 5)
 			.onAppear {
 				conversationViewModel.isRecording = isRecording
-				audioRecorder.startRecording()
+				audioRecorder.startRecording(
+					useCarrierCompatibleFormat: conversationViewModel.isSMSConversation
+				)
 			}
 			.onChange(of: isRecording) { newValue in
 				conversationViewModel.isRecording = newValue

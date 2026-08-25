@@ -21,6 +21,9 @@ import SwiftUI
 import WebKit
 import QuickLook
 import Combine
+import AVFoundation
+import Photos
+import ImageIO
 
 // swiftlint:disable type_body_length
 // swiftlint:disable cyclomatic_complexity
@@ -46,6 +49,7 @@ struct ChatBubbleView: View {
 	@State private var selectedAttachmentIndex: Int = 0
 	
 	@State private var selectedURLAttachment: URL?
+	@State private var previewImageAttachment: Attachment?
 	
 	@State private var showShareSheet = false
 	
@@ -573,6 +577,9 @@ struct ChatBubbleView: View {
 			UIApplication.shared.endEditing()
 		}
 		.quickLookPreview($selectedURLAttachment, in: conversationViewModel.attachments.map { $0.full })
+		.fullScreenCover(item: $previewImageAttachment) { attachment in
+			Mango9ImageAttachmentViewer(attachment: attachment)
+		}
 	}
 	
 	func containsDuplicates(strings: [String]) -> Bool {
@@ -583,114 +590,76 @@ struct ChatBubbleView: View {
 	@ViewBuilder
 	func messageAttachments() -> some View {
 		if eventLogMessage.message.attachments.count == 1 {
-			if eventLogMessage.message.attachments.first!.type == .image || eventLogMessage.message.attachments.first!.type == .gif 
-				|| eventLogMessage.message.attachments.first!.type == .video {
-				let result = imageDimensions(url: eventLogMessage.message.attachments.first!.thumbnail.absoluteString)
+			let attachment = eventLogMessage.message.attachments.first!
+			if attachment.type == .image || attachment.type == .gif || attachment.type == .video {
+				let previewWidth = min(max(geometryProxy.size.width - 110, 180), 280)
+				let previewHeight = min(previewWidth * 0.75, UIScreen.main.bounds.height / 2.5)
 				ZStack {
-					Rectangle()
-						.fill(Color(.white))
-						.aspectRatio(result.0/result.1, contentMode: .fit)
-						.if(result.0 < geometryProxy.size.width - 110) { view in
-							view.frame(maxWidth: result.0)
+					RoundedRectangle(cornerRadius: 10)
+						.fill(Color.grayMain2c100)
+						.frame(width: previewWidth, height: previewHeight)
+
+					if attachment.type == .video {
+						VStack(spacing: 8) {
+							Image("play-fill")
+								.renderingMode(.template)
+								.resizable()
+								.scaledToFit()
+								.foregroundStyle(Color.white)
+								.frame(width: 44, height: 44)
+							Text(attachment.name)
+								.font(.system(size: 12, weight: .semibold))
+								.foregroundStyle(Color.white)
+								.lineLimit(1)
 						}
-						.if(result.1 < UIScreen.main.bounds.height/2) { view in
-							view.frame(maxHeight: result.1)
+						.frame(width: previewWidth, height: previewHeight)
+						.background(Color.black.opacity(0.72))
+						.onTapGesture {
+							if !isPressed && !didLongPress {
+								selectedURLAttachment = attachment.full
+							}
 						}
-						.if(result.0 >= result.1 && geometryProxy.size.width > 0 && result.0 >= geometryProxy.size.width - 110 
-							&& result.1 >= UIScreen.main.bounds.height/2.5) { view in
-							view.frame(
-								maxWidth: geometryProxy.size.width - 110,
-								maxHeight: result.1 * ((geometryProxy.size.width - 110) / result.0)
-							)
-						}
-						.if(result.0 < result.1 && geometryProxy.size.width > 0 && result.1 >= UIScreen.main.bounds.height/2.5) { view in
-							view.frame(
-								maxWidth: result.0 * ((UIScreen.main.bounds.height/2.5) / result.1),
-								maxHeight: UIScreen.main.bounds.height/2.5
-							)
-						}
-					
-					if eventLogMessage.message.attachments.first!.type == .image || eventLogMessage.message.attachments.first!.type == .video {
-						if #available(iOS 16.0, *) {
-							CachedAsyncImage(
-								url: eventLogMessage.message.attachments.first!.thumbnail,
-								placeholder: ProgressView(),
-								onImageTapped: {
-									if !isPressed && !didLongPress {
-										selectedURLAttachment = eventLogMessage.message.attachments.first!.full
-									}
-								})
-							.overlay(
-								Group {
-									if eventLogMessage.message.attachments.first!.type == .video {
-										Image("play-fill")
-											.renderingMode(.template)
-											.resizable()
-											.foregroundStyle(.white)
-											.frame(width: 40, height: 40)
-									}
+					} else {
+						CachedAsyncImage(
+							url: attachment.thumbnail,
+							placeholder: ProgressView(),
+							maxPixelSize: 1_200,
+							onImageTapped: {
+								if !isPressed && !didLongPress {
+									previewImageAttachment = attachment
 								}
-							)
-							.layoutPriority(-1)
-							.clipShape(RoundedRectangle(cornerRadius: 4))
-						} else {
-							CachedAsyncImage(
-								url: eventLogMessage.message.attachments.first!.thumbnail,
-								placeholder: ProgressView(),
-								onImageTapped: {
-									if !isPressed && !didLongPress {
-										selectedURLAttachment = eventLogMessage.message.attachments.first!.full
-									}
-								})
-							
-							.overlay(
-								Group {
-									if eventLogMessage.message.attachments.first!.type == .video {
-										Image("play-fill")
-											.renderingMode(.template)
-											.resizable()
-											.foregroundStyle(.white)
-											.frame(width: 40, height: 40)
-									}
-								}
-							)
-							.layoutPriority(-1)
-							.clipShape(RoundedRectangle(cornerRadius: 4))
-							.id(UUID())
-						}
-					} else if eventLogMessage.message.attachments.first!.type == .gif {
-						if #available(iOS 16.0, *) {
-							GifImageView(eventLogMessage.message.attachments.first!.thumbnail)
-								.layoutPriority(-1)
-								.clipShape(RoundedRectangle(cornerRadius: 4))
-								.contentShape(Rectangle())
-								.onTapGesture {
-									if !isPressed && !didLongPress {
-										selectedURLAttachment = eventLogMessage.message.attachments.first!.full
-									}
-							 	}
-						} else {
-							GifImageView(eventLogMessage.message.attachments.first!.thumbnail)
-								.id(UUID())
-								.layoutPriority(-1)
-								.clipShape(RoundedRectangle(cornerRadius: 4))
-								.contentShape(Rectangle())
-								.onTapGesture {
-									if !isPressed && !didLongPress {
-										selectedURLAttachment = eventLogMessage.message.attachments.first!.full
-									}
-								}
+							}
+						)
+						.frame(width: previewWidth, height: previewHeight)
+						.overlay(alignment: .bottomTrailing) {
+							if attachment.type == .gif {
+								Text("GIF")
+									.font(.system(size: 10, weight: .bold))
+									.foregroundStyle(Color.white)
+									.padding(.horizontal, 7)
+									.padding(.vertical, 4)
+									.background(Color.black.opacity(0.65))
+									.clipShape(Capsule())
+									.padding(8)
+							}
 						}
 					}
 				}
-				.clipShape(RoundedRectangle(cornerRadius: 4))
+				.frame(width: previewWidth, height: previewHeight)
+				.clipShape(RoundedRectangle(cornerRadius: 10))
 				.clipped()
-			} else if eventLogMessage.message.attachments.first!.type == .voiceRecording {
+			} else if attachment.type == .voiceRecording {
 				CustomSlider(
 					eventLogMessage: eventLogMessage
 				)
 				.environmentObject(conversationViewModel)
 				.frame(width: geometryProxy.size.width - 160, height: 50)
+			} else if attachment.type == .audio {
+				Mango9RemoteAudioPlayer(
+					attachment: attachment,
+					isOutgoing: eventLogMessage.message.isOutgoing
+				)
+				.frame(width: max(220, geometryProxy.size.width - 160))
 			} else {
 				HStack {
 					VStack {
@@ -779,59 +748,55 @@ struct ChatBubbleView: View {
 					ForEach(eventLogMessage.message.attachments.filter({ $0.type == .image || $0.type == .gif
 						|| $0.type == .video }), id: \.id) { attachment in
 							ZStack {
-								Rectangle()
-									.fill(Color(.white))
+								RoundedRectangle(cornerRadius: 6)
+									.fill(Color.grayMain2c100)
 									.frame(width: sizeCard, height: sizeCard)
-								
-								if #available(iOS 16.0, *) {
-									CachedAsyncImage(
-										url: attachment.thumbnail,
-										placeholder: ProgressView(),
-										onImageTapped: {
-											if !isPressed && !didLongPress {
-												selectedURLAttachment = attachment.full
-											}
-										})
-									
-									.overlay(
-										Group {
-											if attachment.type == .video {
-												Image("play-fill")
-													.renderingMode(.template)
-													.resizable()
-													.foregroundStyle(.white)
-													.frame(width: 40, height: 40)
-											}
-										}
-									)
-									.layoutPriority(-1)
+
+								if attachment.type == .video {
+									Image("play-fill")
+										.renderingMode(.template)
+										.resizable()
+										.scaledToFit()
+										.foregroundStyle(Color.white)
+										.frame(width: 40, height: 40)
 								} else {
 									CachedAsyncImage(
 										url: attachment.thumbnail,
 										placeholder: ProgressView(),
+										maxPixelSize: 700,
 										onImageTapped: {
 											if !isPressed && !didLongPress {
-												selectedURLAttachment = attachment.full
-											}
-										})
-									
-									.overlay(
-										Group {
-											if attachment.type == .video {
-												Image("play-fill")
-													.renderingMode(.template)
-													.resizable()
-													.foregroundStyle(.white)
-													.frame(width: 40, height: 40)
+												previewImageAttachment = attachment
 											}
 										}
 									)
-									.id(UUID())
-									.layoutPriority(-1)
+									.frame(width: sizeCard, height: sizeCard)
+								}
+
+								if attachment.type == .gif {
+									Text("GIF")
+										.font(.system(size: 9, weight: .bold))
+										.foregroundStyle(Color.white)
+										.padding(.horizontal, 6)
+										.padding(.vertical, 3)
+										.background(Color.black.opacity(0.65))
+										.clipShape(Capsule())
+										.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+										.padding(6)
 								}
 							}
-							.clipShape(RoundedRectangle(cornerRadius: 4))
+							.frame(width: sizeCard, height: sizeCard)
+							.background(attachment.type == .video ? Color.black.opacity(0.72) : Color.clear)
+							.clipShape(RoundedRectangle(cornerRadius: 6))
 							.contentShape(Rectangle())
+							.onTapGesture {
+								guard !isPressed && !didLongPress else { return }
+								if attachment.type == .video {
+									selectedURLAttachment = attachment.full
+								} else {
+									previewImageAttachment = attachment
+								}
+							}
 						}
 				}
 				
@@ -912,18 +877,6 @@ struct ChatBubbleView: View {
 			}
 			.frame(width: max(0, geometryProxy.size.width - 150))
 		}
-	}
-	
-	func imageDimensions(url: String) -> (CGFloat, CGFloat) {
-		if let imageSource = CGImageSourceCreateWithURL(URL(string: url)! as CFURL, nil) {
-			if let imageProperties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as Dictionary? {
-				let pixelWidth = imageProperties[kCGImagePropertyPixelWidth] as? CGFloat
-				let pixelHeight = imageProperties[kCGImagePropertyPixelHeight] as? CGFloat
-				let orientation = imageProperties[kCGImagePropertyOrientation] as? Int
-				return orientation != nil && orientation == 6 ? (pixelHeight ?? 0, pixelWidth ?? 0) : (pixelWidth ?? 0, pixelHeight ?? 0)
-			}
-		}
-		return (100, 100)
 	}
 	
 	func getImageOfType(type: AttachmentType) -> String {
@@ -1361,16 +1314,105 @@ struct CircularProgressView: View {
 	}
 }
 
-class ImageCache {
-	static let shared = NSCache<NSURL, UIImage>()
+final class ImageCache {
+	static let shared: NSCache<NSString, UIImage> = {
+		let cache = NSCache<NSString, UIImage>()
+		cache.countLimit = 80
+		cache.totalCostLimit = 96 * 1_024 * 1_024
+		return cache
+	}()
+}
+
+private actor Mango9AttachmentImagePipeline {
+	static let shared = Mango9AttachmentImagePipeline()
+
+	private var inFlight: [String: Task<UIImage?, Never>] = [:]
+
+	func image(from url: URL, maxPixelSize: CGFloat) async -> UIImage? {
+		let cacheKey = "\(url.absoluteString)|\(Int(maxPixelSize))" as NSString
+		if let cachedImage = ImageCache.shared.object(forKey: cacheKey) {
+			return cachedImage
+		}
+
+		if let existingTask = inFlight[cacheKey as String] {
+			return await existingTask.value
+		}
+
+		let task = Task<UIImage?, Never>(priority: .userInitiated) {
+			var request = URLRequest(url: url)
+			request.cachePolicy = .returnCacheDataElseLoad
+			request.timeoutInterval = 20
+
+			do {
+				let (data, response) = try await URLSession.shared.data(for: request)
+				if let httpResponse = response as? HTTPURLResponse,
+				   !(200...299).contains(httpResponse.statusCode) {
+					return nil
+				}
+
+				guard let image = Self.downsample(data: data, maxPixelSize: maxPixelSize) else {
+					return nil
+				}
+
+				let pixelWidth = Int(image.size.width * image.scale)
+				let pixelHeight = Int(image.size.height * image.scale)
+				ImageCache.shared.setObject(
+					image,
+					forKey: cacheKey,
+					cost: max(pixelWidth * pixelHeight * 4, 1)
+				)
+				return image
+			} catch {
+				return nil
+			}
+		}
+
+		inFlight[cacheKey as String] = task
+		let image = await task.value
+		inFlight[cacheKey as String] = nil
+		return image
+	}
+
+	private nonisolated static func downsample(data: Data, maxPixelSize: CGFloat) -> UIImage? {
+		let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+		guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else {
+			return nil
+		}
+
+		let options = [
+			kCGImageSourceCreateThumbnailFromImageAlways: true,
+			kCGImageSourceCreateThumbnailWithTransform: true,
+			kCGImageSourceShouldCacheImmediately: true,
+			kCGImageSourceThumbnailMaxPixelSize: max(1, Int(maxPixelSize))
+		] as CFDictionary
+
+		guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
+			return nil
+		}
+		return UIImage(cgImage: image)
+	}
 }
 
 struct CachedAsyncImage<Placeholder: View>: View {
 	let url: URL
 	let placeholder: Placeholder
+	let maxPixelSize: CGFloat
 	let onImageTapped: (() -> Void)?
 
 	@State private var image: UIImage?
+	@State private var failed = false
+
+	init(
+		url: URL,
+		placeholder: Placeholder,
+		maxPixelSize: CGFloat = 1_200,
+		onImageTapped: (() -> Void)? = nil
+	) {
+		self.url = url
+		self.placeholder = placeholder
+		self.maxPixelSize = maxPixelSize
+		self.onImageTapped = onImageTapped
+	}
 
 	var body: some View {
 		ZStack {
@@ -1382,34 +1424,399 @@ struct CachedAsyncImage<Placeholder: View>: View {
 					.onTapGesture {
 						onImageTapped?()
 					}
+			} else if failed {
+				VStack(spacing: 6) {
+					Image(systemName: "photo")
+					Text("Unable to load")
+						.font(.caption2)
+				}
+				.foregroundStyle(Color.grayMain2c500)
 			} else {
 				placeholder
-					.onAppear {
-						loadImage()
+			}
+		}
+		.clipped()
+		.task(id: "\(url.absoluteString)|\(Int(maxPixelSize))") {
+			image = nil
+			failed = false
+			let loadedImage = await Mango9AttachmentImagePipeline.shared.image(
+				from: url,
+				maxPixelSize: maxPixelSize
+			)
+			guard !Task.isCancelled else { return }
+			image = loadedImage
+			failed = loadedImage == nil
+		}
+	}
+}
+
+private struct Mango9RemoteAudioPlayer: View {
+	let attachment: Attachment
+	let isOutgoing: Bool
+
+	@State private var player: AVPlayer
+	@State private var isPlaying = false
+	@State private var isScrubbing = false
+	@State private var currentTime: Double = 0
+	@State private var duration: Double = 0
+	@State private var timeObserver: Any?
+
+	init(attachment: Attachment, isOutgoing: Bool) {
+		self.attachment = attachment
+		self.isOutgoing = isOutgoing
+		_player = State(initialValue: AVPlayer(url: attachment.full))
+	}
+
+	private var primaryColor: Color {
+		isOutgoing ? .white : Color.grayMain2c700
+	}
+
+	var body: some View {
+		HStack(spacing: 12) {
+			Button(action: togglePlayback) {
+				Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+					.font(.system(size: 16, weight: .bold))
+					.foregroundStyle(isOutgoing ? Color.orangeMain500 : Color.white)
+					.frame(width: 38, height: 38)
+					.background(isOutgoing ? Color.white : Color.orangeMain500)
+					.clipShape(Circle())
+			}
+			.buttonStyle(.plain)
+
+			VStack(alignment: .leading, spacing: 4) {
+				Text(attachment.name.isEmpty ? "Audio message" : attachment.name)
+					.font(.system(size: 13, weight: .semibold))
+					.foregroundStyle(primaryColor)
+					.lineLimit(1)
+
+				Slider(
+					value: $currentTime,
+					in: 0...max(duration, 1),
+					onEditingChanged: { editing in
+						isScrubbing = editing
+						if !editing {
+							player.seek(to: CMTime(seconds: currentTime, preferredTimescale: 600))
+						}
 					}
+				)
+				.tint(isOutgoing ? .white : Color.orangeMain500)
+
+				HStack {
+					Text(formatTime(currentTime))
+					Spacer()
+					Text(formatTime(duration))
+				}
+				.font(.system(size: 10, weight: .medium, design: .monospaced))
+				.foregroundStyle(primaryColor.opacity(0.78))
+			}
+		}
+		.padding(.horizontal, 12)
+		.padding(.vertical, 10)
+		.background(isOutgoing ? Color.orangeMain500 : Color.grayMain2c100)
+		.clipShape(RoundedRectangle(cornerRadius: 14))
+		.onAppear(perform: preparePlayer)
+		.onDisappear(perform: stopObserving)
+		.onReceive(
+			NotificationCenter.default.publisher(
+				for: AVPlayerItem.didPlayToEndTimeNotification,
+				object: player.currentItem
+			)
+		) { _ in
+			isPlaying = false
+			currentTime = 0
+			player.seek(to: .zero)
+		}
+	}
+
+	private func togglePlayback() {
+		if isPlaying {
+			player.pause()
+		} else {
+			player.play()
+		}
+		isPlaying.toggle()
+	}
+
+	private func preparePlayer() {
+		guard timeObserver == nil else { return }
+		timeObserver = player.addPeriodicTimeObserver(
+			forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
+			queue: .main
+		) { time in
+			guard !isScrubbing else { return }
+			currentTime = max(0, time.seconds.isFinite ? time.seconds : 0)
+		}
+
+		Task {
+			guard let item = player.currentItem else { return }
+			if let loadedDuration = try? await item.asset.load(.duration),
+			   loadedDuration.seconds.isFinite {
+				duration = max(loadedDuration.seconds, 0)
 			}
 		}
 	}
 
-	private func loadImage() {
-		if let cachedImage = ImageCache.shared.object(forKey: url as NSURL) {
-			self.image = cachedImage
-			return
+	private func stopObserving() {
+		player.pause()
+		isPlaying = false
+		if let timeObserver {
+			player.removeTimeObserver(timeObserver)
+			self.timeObserver = nil
 		}
+	}
+
+	private func formatTime(_ seconds: Double) -> String {
+		let totalSeconds = max(Int(seconds.rounded(.down)), 0)
+		return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+	}
+}
+
+private struct Mango9ImageAttachmentViewer: View {
+	@Environment(\.dismiss) private var dismiss
+
+	let attachment: Attachment
+
+	@State private var image: UIImage?
+	@State private var controlsVisible = false
+	@State private var isSaving = false
+	@State private var statusMessage: String?
+
+	var body: some View {
+		ZStack {
+			Color.black.ignoresSafeArea()
+
+			if let image {
+				Mango9ZoomableImage(image: image) {
+					withAnimation(.easeInOut(duration: 0.18)) {
+						controlsVisible.toggle()
+					}
+				}
+			} else {
+				ProgressView("Loading image…")
+					.tint(.white)
+					.foregroundStyle(Color.white)
+			}
+
+			VStack {
+				HStack {
+					Button(action: { dismiss() }) {
+						Image(systemName: "xmark")
+							.font(.system(size: 16, weight: .bold))
+							.foregroundStyle(Color.white)
+							.frame(width: 42, height: 42)
+							.background(.ultraThinMaterial)
+							.clipShape(Circle())
+					}
+					.accessibilityLabel("Close image")
+
+					Spacer()
+
+					if controlsVisible {
+						Button(action: saveImage) {
+							HStack(spacing: 7) {
+								if isSaving {
+									ProgressView().tint(.white)
+								} else {
+									Image(systemName: "square.and.arrow.down")
+								}
+								Text("Save")
+							}
+							.font(.system(size: 15, weight: .semibold))
+							.foregroundStyle(Color.white)
+							.padding(.horizontal, 14)
+							.frame(height: 42)
+							.background(.ultraThinMaterial)
+							.clipShape(Capsule())
+						}
+						.disabled(isSaving)
+						.accessibilityLabel("Save image to Photos")
+					}
+				}
+				.padding(.horizontal, 18)
+				.padding(.top, 12)
+
+				Spacer()
+
+				if controlsVisible {
+					Text("Pinch to zoom • Double-tap to magnify")
+						.font(.footnote.weight(.medium))
+						.foregroundStyle(Color.white)
+						.padding(.horizontal, 14)
+						.padding(.vertical, 9)
+						.background(.ultraThinMaterial)
+						.clipShape(Capsule())
+						.padding(.bottom, 24)
+				}
+			}
+
+			if let statusMessage {
+				Text(statusMessage)
+					.font(.system(size: 14, weight: .semibold))
+					.foregroundStyle(Color.white)
+					.padding(.horizontal, 16)
+					.padding(.vertical, 11)
+					.background(Color.black.opacity(0.75))
+					.clipShape(Capsule())
+					.transition(.opacity.combined(with: .scale))
+			}
+		}
+		.task(id: attachment.full) {
+			image = await Mango9AttachmentImagePipeline.shared.image(
+				from: attachment.full,
+				maxPixelSize: 4_096
+			)
+			if image == nil {
+				statusMessage = "Unable to load this image"
+			}
+		}
+	}
+
+	private func saveImage() {
+		guard !isSaving else { return }
+		isSaving = true
+		statusMessage = nil
 
 		Task {
 			do {
-				let (data, _) = try await URLSession.shared.data(from: url)
-				if let downloadedImage = UIImage(data: data) {
-					ImageCache.shared.setObject(downloadedImage, forKey: url as NSURL)
-					await MainActor.run {
-						self.image = downloadedImage
-					}
+				var request = URLRequest(url: attachment.full)
+				request.cachePolicy = .returnCacheDataElseLoad
+				request.timeoutInterval = 30
+				let (data, response) = try await URLSession.shared.data(for: request)
+				if let httpResponse = response as? HTTPURLResponse,
+				   !(200...299).contains(httpResponse.statusCode) {
+					throw Mango9ImageSaveError.downloadFailed
 				}
+
+				let authorization = await requestPhotoAuthorization()
+				guard authorization == .authorized || authorization == .limited else {
+					throw Mango9ImageSaveError.permissionDenied
+				}
+
+				try await saveToPhotoLibrary(data: data)
+				showStatus("Saved to Photos")
+			} catch let error as Mango9ImageSaveError {
+				showStatus(error.errorDescription ?? "Unable to save image")
 			} catch {
-				print("Error loading image: \(error.localizedDescription)")
+				showStatus("Unable to save image")
+			}
+			isSaving = false
+		}
+	}
+
+	private func requestPhotoAuthorization() async -> PHAuthorizationStatus {
+		await withCheckedContinuation { continuation in
+			PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+				continuation.resume(returning: status)
 			}
 		}
+	}
+
+	private func saveToPhotoLibrary(data: Data) async throws {
+		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+			PHPhotoLibrary.shared().performChanges {
+				let request = PHAssetCreationRequest.forAsset()
+				request.addResource(with: .photo, data: data, options: nil)
+			} completionHandler: { saved, error in
+				if let error {
+					continuation.resume(throwing: error)
+				} else if saved {
+					continuation.resume(returning: ())
+				} else {
+					continuation.resume(throwing: Mango9ImageSaveError.saveFailed)
+				}
+			}
+		}
+	}
+
+	private func showStatus(_ message: String) {
+		withAnimation {
+			statusMessage = message
+		}
+		Task {
+			try? await Task.sleep(nanoseconds: 2_000_000_000)
+			withAnimation {
+				if statusMessage == message {
+					statusMessage = nil
+				}
+			}
+		}
+	}
+}
+
+private enum Mango9ImageSaveError: LocalizedError {
+	case downloadFailed
+	case permissionDenied
+	case saveFailed
+
+	var errorDescription: String? {
+		switch self {
+		case .downloadFailed:
+			return "Unable to download image"
+		case .permissionDenied:
+			return "Allow Photos access to save images"
+		case .saveFailed:
+			return "Unable to save image"
+		}
+	}
+}
+
+private struct Mango9ZoomableImage: View {
+	let image: UIImage
+	let onSingleTap: () -> Void
+
+	@State private var scale: CGFloat = 1
+	@State private var settledScale: CGFloat = 1
+	@State private var offset: CGSize = .zero
+	@State private var settledOffset: CGSize = .zero
+
+	var body: some View {
+		Image(uiImage: image)
+			.resizable()
+			.interpolation(.high)
+			.scaledToFit()
+			.scaleEffect(scale)
+			.offset(offset)
+			.contentShape(Rectangle())
+			.gesture(
+				MagnificationGesture()
+					.onChanged { value in
+						scale = min(max(settledScale * value, 1), 5)
+					}
+					.onEnded { _ in
+						settledScale = scale
+						if scale == 1 {
+							offset = .zero
+							settledOffset = .zero
+						}
+					}
+			)
+			.simultaneousGesture(
+				DragGesture()
+					.onChanged { value in
+						guard scale > 1 else { return }
+						offset = CGSize(
+							width: settledOffset.width + value.translation.width,
+							height: settledOffset.height + value.translation.height
+						)
+					}
+					.onEnded { _ in
+						settledOffset = offset
+					}
+			)
+			.onTapGesture(count: 2) {
+				withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+					if scale > 1 {
+						scale = 1
+						settledScale = 1
+						offset = .zero
+						settledOffset = .zero
+					} else {
+						scale = 2.5
+						settledScale = 2.5
+					}
+				}
+			}
+			.onTapGesture(perform: onSingleTap)
 	}
 }
 

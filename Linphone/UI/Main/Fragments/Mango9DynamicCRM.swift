@@ -227,6 +227,7 @@ final class Mango9ChatStore: ObservableObject {
 	private struct PendingCall {
 		let method: String
 		let continuation: CheckedContinuation<Any, Error>
+		let timeoutTask: Task<Void, Never>
 	}
 
 	private var socket: URLSessionWebSocketTask?
@@ -240,6 +241,7 @@ final class Mango9ChatStore: ObservableObject {
 	private var connectionGeneration = 0
 	private var connectingIdentity: String?
 	private var connectedIdentity: String?
+	private var smsMessageCache: [String: [Mango9ServerSMSMessage]] = [:]
 
 	private init() {}
 
@@ -269,8 +271,10 @@ final class Mango9ChatStore: ObservableObject {
 			}
 		}
 
-		if isConnecting || isConnected || socket != nil {
-			disconnect()
+			if isConnecting || isConnected || socket != nil {
+				let preserveData = connectedIdentity == requestedIdentity ||
+					connectingIdentity == requestedIdentity
+				disconnect(clearData: !preserveData)
 		}
 		connectionGeneration += 1
 		let generation = connectionGeneration
@@ -359,6 +363,7 @@ final class Mango9ChatStore: ObservableObject {
 		chatTokenExpiresAt = nil
 		uploadURL = nil
 		for pending in pendingCalls.values {
+			pending.timeoutTask.cancel()
 			pending.continuation.resume(throwing: Mango9ChatError.disconnected)
 		}
 		pendingCalls.removeAll()
@@ -371,6 +376,7 @@ final class Mango9ChatStore: ObservableObject {
 			smsSenders = []
 			onlineUserIds = []
 			typingUserIds = []
+			smsMessageCache = [:]
 		}
 	}
 
@@ -434,14 +440,16 @@ final class Mango9ChatStore: ObservableObject {
 		activeRoomId = nil
 		messages = []
 		activeSMSPhone = normalized
-		smsMessages = []
+		smsMessages = smsMessageCache[smsCacheKey(phone: normalized)] ?? []
 		errorMessage = nil
 		await connectIfNeeded()
 		guard isConnected else { return }
 		activeSMSPhone = normalized
 		do {
 			try await loadSMSMessages(phone: normalized)
-			try await loadSMSDirectory()
+			if smsSenders.isEmpty {
+				try await loadSMSDirectory()
+			}
 		} catch {
 			errorMessage = error.localizedDescription
 		}
@@ -463,7 +471,6 @@ final class Mango9ChatStore: ObservableObject {
 		guard isConnected else { return }
 		do {
 			try await loadSMSMessages(phone: activeSMSPhone)
-			try await loadSMSDirectory()
 		} catch {
 			errorMessage = error.localizedDescription
 		}
@@ -927,6 +934,14 @@ final class Mango9ChatStore: ObservableObject {
 	}
 
 	private static func mimeType(for attachment: Attachment) -> String {
+		switch attachment.full.pathExtension.lowercased() {
+		case "m4a":
+			return "audio/mp4"
+		case "mka":
+			return "audio/x-matroska"
+		default:
+			break
+		}
 		let detected = attachment.full.mimeType()
 		if detected != "application/octet-stream" {
 			return detected
@@ -983,16 +998,22 @@ final class Mango9ChatStore: ObservableObject {
 	}
 
 	private func loadSMSMessages(phone: String) async throws {
+		let normalized = Self.normalizedPhone(phone)
 		let result = try await rpcCall(
 			"getSmsMessages",
-			params: [phone, 0, "json"]
+			params: [normalized, 0, "json"]
 		)
 		guard let dictionary = result as? [String: Any] else {
 			throw Mango9ChatError.invalidResponse
 		}
-		smsMessages = Self.array(from: dictionary["list"] as Any)
+		let loadedMessages = Self.array(from: dictionary["list"] as Any)
 			.compactMap(Self.smsMessage(from:))
 			.sorted { $0.time < $1.time }
+		smsMessageCache[smsCacheKey(phone: normalized)] = loadedMessages
+		if let activeSMSPhone,
+		   Self.normalizedPhone(activeSMSPhone) == normalized {
+			smsMessages = loadedMessages
+		}
 	}
 
 	private func loadMessages(roomId: String) async throws {
@@ -1060,7 +1081,21 @@ final class Mango9ChatStore: ObservableObject {
 		}
 
 		return try await withCheckedThrowingContinuation { continuation in
-			pendingCalls[id] = PendingCall(method: method, continuation: continuation)
+			let timeoutTask = Task { [weak self] in
+				try? await Task.sleep(nanoseconds: 20_000_000_000)
+				guard !Task.isCancelled, let self,
+					  let pending = self.pendingCalls.removeValue(forKey: id) else {
+					return
+				}
+				pending.continuation.resume(
+					throwing: Mango9ChatError.server("\(method) timed out. Please try again.")
+				)
+			}
+			pendingCalls[id] = PendingCall(
+				method: method,
+				continuation: continuation,
+				timeoutTask: timeoutTask
+			)
 			socket.send(.string(text)) { [weak self] error in
 				guard let error else {
 					return
@@ -1070,6 +1105,7 @@ final class Mango9ChatStore: ObservableObject {
 						  let pending = self.pendingCalls.removeValue(forKey: id) else {
 						return
 					}
+					pending.timeoutTask.cancel()
 					pending.continuation.resume(throwing: error)
 				}
 			}
@@ -1114,6 +1150,7 @@ final class Mango9ChatStore: ObservableObject {
 
 		if let id = json["id"] as? String,
 		   let pending = pendingCalls.removeValue(forKey: id) {
+			pending.timeoutTask.cancel()
 			if let error = json["error"] as? [String: Any] {
 				pending.continuation.resume(
 					throwing: Mango9ChatError.server(
@@ -1206,6 +1243,7 @@ final class Mango9ChatStore: ObservableObject {
 				isIncoming: existing.isIncoming,
 				files: existing.files
 			)
+			smsMessageCache[smsCacheKey(phone: existing.phone)] = smsMessages
 		default:
 			break
 		}
@@ -1218,6 +1256,12 @@ final class Mango9ChatStore: ObservableObject {
 			smsMessages.append(message)
 			smsMessages.sort { $0.time < $1.time }
 		}
+		smsMessageCache[smsCacheKey(phone: message.phone)] = smsMessages
+	}
+
+	private func smsCacheKey(phone: String) -> String {
+		let identity = Mango9SessionStore.activeIdentity ?? connectedIdentity ?? "inactive"
+		return "\(identity)|\(Self.normalizedPhone(phone))"
 	}
 
 	private func upsert(_ message: Mango9ChatMessage) {
