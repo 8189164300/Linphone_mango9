@@ -170,14 +170,20 @@
         android:label="HelpFragment"
         tools:layout="@layout/help_fragment" >
         <action
-            android:id="@+id/action_helpFragment_to_debugFragment"
-            app:destination="@id/debugFragment"
+            android:id="@+id/action_helpFragment_to_mango9LicensingFragment"
+            app:destination="@id/mango9LicensingFragment"
             app:enterAnim="@anim/slide_in_right"
             app:exitAnim="@anim/slide_out_left"
             app:popEnterAnim="@anim/slide_in_left"
             app:popExitAnim="@anim/slide_out_right"
             app:launchSingleTop="true" />
     </fragment>
+
+    <fragment
+        android:id="@+id/mango9LicensingFragment"
+        android:name="org.linphone.ui.main.help.fragment.Mango9LicensingFragment"
+        android:label="Mango9LicensingFragment"
+        tools:layout="@layout/mango9_licensing_fragment" />
 
     <action
         android:id="@+id/action_global_helpFragment"
@@ -204,6 +210,100 @@
             app:launchSingleTop="true" />
 
     </fragment>
+
+    <fragment
+        android:id="@+id/mango9CrmFragment"
+        android:name="org.linphone.ui.main.crm.fragment.Mango9CrmFragment"
+        android:label="@string/mango9_crm_title"
+        tools:layout="@layout/mango9_crm_fragment">
+        <argument
+            android:name="mango9_push_record_kind"
+            android:defaultValue="@null"
+            app:argType="string"
+            app:nullable="true" />
+        <argument
+            android:name="mango9_push_record_id"
+            android:defaultValue="0"
+            app:argType="integer" />
+        <action
+            android:id="@+id/action_mango9CrmFragment_to_mango9MessagingListFragment"
+            app:destination="@id/mango9MessagingListFragment"
+            app:enterAnim="@anim/slide_in_right"
+            app:exitAnim="@anim/slide_out_left"
+            app:popEnterAnim="@anim/slide_in_left"
+            app:popExitAnim="@anim/slide_out_right" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/mango9MessagingListFragment"
+        android:name="org.linphone.ui.main.crm.fragment.Mango9MessagingListFragment"
+        android:label="@string/mango9_messages_title"
+        tools:layout="@layout/mango9_messaging_list_fragment">
+        <argument
+            android:name="mango9_initial_tab"
+            android:defaultValue="team"
+            app:argType="string" />
+        <action
+            android:id="@+id/action_mango9MessagingListFragment_to_mango9MessagingConversationFragment"
+            app:destination="@id/mango9MessagingConversationFragment"
+            app:enterAnim="@anim/slide_in_right"
+            app:exitAnim="@anim/slide_out_left"
+            app:popEnterAnim="@anim/slide_in_left"
+            app:popExitAnim="@anim/slide_out_right" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/mango9MessagingConversationFragment"
+        android:name="org.linphone.ui.main.crm.fragment.Mango9MessagingConversationFragment"
+        android:label="@string/mango9_messages_title"
+        tools:layout="@layout/mango9_messaging_conversation_fragment">
+        <argument
+            android:name="mango9_message_type"
+            android:defaultValue="team"
+            app:argType="string" />
+        <argument
+            android:name="mango9_user_id"
+            android:defaultValue="0"
+            app:argType="integer" />
+        <argument
+            android:name="mango9_room_id"
+            android:defaultValue="@null"
+            app:argType="string"
+            app:nullable="true" />
+        <argument
+            android:name="mango9_target_name"
+            android:defaultValue=""
+            app:argType="string" />
+        <argument
+            android:name="mango9_sms_phone"
+            android:defaultValue="@null"
+            app:argType="string"
+            app:nullable="true" />
+    </fragment>
+
+    <action
+        android:id="@+id/action_global_mango9CrmFragment"
+        app:destination="@id/mango9CrmFragment"
+        app:enterAnim="@anim/slide_in_right"
+        app:exitAnim="@anim/slide_out_left"
+        app:popEnterAnim="@anim/slide_in_left"
+        app:popExitAnim="@anim/slide_out_right" />
+
+    <action
+        android:id="@+id/action_global_mango9MessagingListFragment"
+        app:destination="@id/mango9MessagingListFragment"
+        app:enterAnim="@anim/slide_in_right"
+        app:exitAnim="@anim/slide_out_left"
+        app:popEnterAnim="@anim/slide_in_left"
+        app:popExitAnim="@anim/slide_out_right" />
+
+    <action
+        android:id="@+id/action_global_mango9MessagingConversationFragment"
+        app:destination="@id/mango9MessagingConversationFragment"
+        app:enterAnim="@anim/slide_in_right"
+        app:exitAnim="@anim/slide_out_left"
+        app:popEnterAnim="@anim/slide_in_left"
+        app:popExitAnim="@anim/slide_out_right" />
 
     <action
         android:id="@+id/action_global_recordingsListFragment"

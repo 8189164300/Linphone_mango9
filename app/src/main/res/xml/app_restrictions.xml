@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<restrictions xmlns:android="http://schemas.android.com/apk/res/android">
+    <restriction
+        android:key="xmlConfig"
+        android:title="@string/mango9_managed_xml_title"
+        android:description="@string/mango9_managed_xml_description"
+        android:restrictionType="string" />
+    <restriction
+        android:key="rootCa"
+        android:title="@string/mango9_managed_root_ca_title"
+        android:description="@string/mango9_managed_root_ca_description"
+        android:restrictionType="string" />
+    <restriction
+        android:key="configUri"
+        android:title="@string/mango9_managed_config_uri_title"
+        android:description="@string/mango9_managed_config_uri_description"
+        android:restrictionType="string" />
+</restrictions>

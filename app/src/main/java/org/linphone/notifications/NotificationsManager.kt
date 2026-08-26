@@ -72,6 +72,9 @@ import org.linphone.core.Friend
 import org.linphone.core.MediaDirection
 import org.linphone.core.RegistrationState
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9PushCallerIdentityCache
+import org.linphone.mango9.Mango9RegistrationFailure
+import org.linphone.mango9.Mango9SessionStore
 import org.linphone.ui.call.CallActivity
 import org.linphone.ui.main.MainActivity
 import org.linphone.ui.main.MainActivity.Companion.ARGUMENTS_CHAT
@@ -138,6 +141,8 @@ class NotificationsManager
     private val previousChatNotifications: ArrayList<Int> = arrayListOf()
     private val accountsErrorNotificationsMap: HashMap<String, Int> = HashMap()
 
+    private val mango9Sessions by lazy { Mango9SessionStore(context) }
+
     private val notificationsMap = HashMap<Int, Notification>()
 
     private var currentlyDisplayedChatRoomId: String = ""
@@ -156,7 +161,8 @@ class NotificationsManager
                 "$TAG Found contact [${friend.name}] in remote directory with [${addresses.size}] addresses"
             )
 
-            for ((remoteAddress, notifiable) in callNotificationsMap.entries) {
+            for ((_, notifiable) in callNotificationsMap.entries) {
+                val remoteAddress = notifiable.remoteAddress ?: continue
                 val parsedAddress = Factory.instance().createAddress(remoteAddress)
                 parsedAddress ?: continue
                 val addressMatch = addresses.find {
@@ -212,7 +218,9 @@ class NotificationsManager
             val currentState = call.state
             Log.i("$TAG Call state changed: [$currentState]")
             when (currentState) {
-                Call.State.IncomingReceived, Call.State.IncomingEarlyMedia -> {
+                Call.State.PushIncomingReceived,
+                Call.State.IncomingReceived,
+                Call.State.IncomingEarlyMedia -> {
                     Log.i(
                         "$TAG Showing incoming call notification for [${call.remoteAddress.asStringUriOnly()}]"
                     )
@@ -469,7 +477,7 @@ class NotificationsManager
             message: String
         ) {
             if (state == RegistrationState.Failed) {
-                showAccountErrorNotification(account)
+                showAccountErrorNotification(account, message)
             } else if (state == RegistrationState.Ok) {
                 // Check if a notification exists for that identity address and if yes, remove it
                 val identity = account.params.identityAddress?.asStringUriOnly().orEmpty()
@@ -723,6 +731,7 @@ class NotificationsManager
         }
 
         cancelNotification(notificationId)
+        callNotificationsMap.remove(getCallKey(call))
         currentlyRingingCallRemoteAddress = null
     }
 
@@ -1233,7 +1242,7 @@ class NotificationsManager
     }
 
     @WorkerThread
-    private fun showAccountErrorNotification(account: Account) {
+    private fun showAccountErrorNotification(account: Account, sipMessage: String) {
         // Don't do it if background mode is not enabled, otherwise it will trigger every time
         // the app is put in background and it's not relevant as long as push notifications work
         if (!corePreferences.keepServiceAlive) return
@@ -1256,13 +1265,21 @@ class NotificationsManager
 
             val identity = account.params.identityAddress?.asStringUriOnly().orEmpty()
             val notificationId = identity.hashCode()
+            val errorMessage = if (mango9Sessions.hasSession(identity)) {
+                Mango9RegistrationFailure(sipMessage).userMessage(
+                    account.params.identityAddress?.username
+                )
+            } else {
+                context.getString(R.string.notification_account_registration_error_message)
+            }
 
             val notification = NotificationCompat.Builder(
                 context,
                 context.getString(R.string.notification_channel_account_error_id)
             )
                 .setContentTitle(context.getString(R.string.notification_account_registration_error_title, identity))
-                .setContentText(context.getString(R.string.notification_account_registration_error_message))
+                .setContentText(errorMessage)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(errorMessage))
                 .setSmallIcon(R.drawable.linphone_notification)
                 .setAutoCancel(false)
                 .setOngoing(true)
@@ -1360,15 +1377,21 @@ class NotificationsManager
     @WorkerThread
     private fun getNotifiableForCall(call: Call): Notifiable {
         val address = call.remoteAddress.asStringUriOnly()
-        var notifiable: Notifiable? = callNotificationsMap[address]
+        val key = getCallKey(call)
+        var notifiable: Notifiable? = callNotificationsMap[key]
         if (notifiable == null) {
             notifiable = Notifiable(getNotificationIdForCall(call))
             notifiable.remoteAddress = address
 
-            callNotificationsMap[address] = notifiable
+            callNotificationsMap[key] = notifiable
         }
         return notifiable
     }
+
+    @WorkerThread
+    private fun getCallKey(call: Call): String =
+        call.callLog.callId?.takeIf(String::isNotBlank)
+            ?: call.remoteAddress.asStringUriOnly()
 
     @WorkerThread
     private fun getNotifiableForChatMessage(message: ChatMessage): NotifiableMessage {
@@ -1426,6 +1449,11 @@ class NotificationsManager
         val conference = call.conference
         val conferenceInfo = LinphoneUtils.getConferenceInfoIfAny(call)
         val isConference = conference != null || conferenceInfo != null
+        val pushedIdentity = if (call.state == Call.State.PushIncomingReceived) {
+            Mango9PushCallerIdentityCache.get(call.callLog.callId)
+        } else {
+            null
+        }
 
         val caller = if (isConference) {
             val subject = conferenceInfo?.subject ?: conference?.subject ?: LinphoneUtils.getDisplayName(
@@ -1435,6 +1463,24 @@ class NotificationsManager
                 .setName(subject.ifEmpty { "Unknown" })
                 .setIcon(
                     AvatarGenerator(context).setInitials(AppUtils.getInitials(subject)).buildIcon()
+                )
+                .setImportant(false)
+                .build()
+        } else if (pushedIdentity != null) {
+            Person.Builder()
+                .setName(pushedIdentity.displayName)
+                .setUri(
+                    if (pushedIdentity.handle.startsWith('+')) {
+                        "tel:${pushedIdentity.handle}"
+                    } else {
+                        pushedIdentity.handle
+                    }
+                )
+                .setKey(pushedIdentity.callId)
+                .setIcon(
+                    AvatarGenerator(context)
+                        .setInitials(AppUtils.getInitials(pushedIdentity.displayName))
+                        .buildIcon()
                 )
                 .setImportant(false)
                 .build()
@@ -1664,7 +1710,8 @@ class NotificationsManager
     @WorkerThread
     private fun dismissCallNotification(call: Call) {
         val address = call.remoteAddress.asStringUriOnly()
-        val notifiable: Notifiable? = callNotificationsMap[address]
+        val key = getCallKey(call)
+        val notifiable: Notifiable? = callNotificationsMap[key]
         if (notifiable != null) {
             if (notificationsMap.containsKey(notifiable.notificationId)) {
                 cancelNotification(notifiable.notificationId)
@@ -1672,7 +1719,7 @@ class NotificationsManager
                 Log.i("$TAG Removing previous in-call foreground Service error notification")
                 cancelNotification(IN_CALL_FOREGROUND_SERVICE_ERROR_ID, IN_CALL_ERROR_TAG)
             }
-            callNotificationsMap.remove(address)
+            callNotificationsMap.remove(key)
         } else {
             Log.w("$TAG No notification found for call with remote address [$address]")
         }

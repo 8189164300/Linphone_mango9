@@ -38,6 +38,7 @@ import org.linphone.core.MagicSearch
 import org.linphone.core.MagicSearchListenerStub
 import org.linphone.core.SearchResult
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9ChatRouting
 import org.linphone.ui.main.chat.model.ConversationModel
 import org.linphone.ui.main.chat.model.ConversationModelWrapper
 import org.linphone.ui.main.contacts.model.ContactAvatarModel
@@ -414,6 +415,7 @@ class ConversationsListViewModel
 
     @WorkerThread
     fun createOneToOneChatRoomWith(remote: Address) {
+        if (Mango9ChatRouting.openIfNeeded(remote)) return
         val core = coreContext.core
         val account = core.defaultAccount
         if (account == null) {

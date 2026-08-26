@@ -31,7 +31,13 @@ coil = "3.4.0"
 dotsIndicator = "5.1.0"
 photoview = "2.3.0"
 openidAppauth = "0.11.1"
-linphone = "5.5.+"
+okhttp = "5.3.0"
+linphone = "5.5.17-pre.1+3896ec0681"
+junit4 = "4.13.2"
+jsonJava = "20260814"
+androidxTest = "1.6.1"
+androidxTestExtJunit = "1.2.1"
+espresso = "3.6.1"
 
 [libraries]
 androidx-annotations = { group = "androidx.annotation", name = "annotation", version.ref = "annotations" }
@@ -66,8 +72,16 @@ coil-video = { group = "io.coil-kt.coil3", name = "coil-video", version.ref = "c
 dots-indicator = { group = "com.tbuonomo", name = "dotsindicator", version.ref = "dotsIndicator" }
 photoview = { group = "com.github.chrisbanes", name = "PhotoView", version.ref = "photoview" }
 openid-appauth = { group = "net.openid", name = "appauth", version.ref = "openidAppauth" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver3", version.ref = "okhttp" }
 
 linphone = { group = "org.linphone", name = "linphone-sdk-android", version.ref = "linphone" }
+junit4 = { group = "junit", name = "junit", version.ref = "junit4" }
+json-java = { group = "org.json", name = "json", version.ref = "jsonJava" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTest" }
+androidx-test-rules = { group = "androidx.test", name = "rules", version.ref = "androidxTest" }
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExtJunit" }
+androidx-test-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

@@ -52,7 +52,11 @@ import org.linphone.core.FriendListListenerStub
 import org.linphone.core.MagicSearch
 import org.linphone.core.MagicSearchListenerStub
 import org.linphone.core.SecurityLevel
+import org.linphone.core.SubscribePolicy
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9ChatTarget
+import org.linphone.mango9.Mango9SessionStore
+import org.linphone.mango9.Mango9TeamMember
 import org.linphone.ui.main.MainActivity
 import org.linphone.ui.main.contacts.model.ContactAvatarModel
 import org.linphone.ui.main.contacts.model.ContactNumberOrAddressClickListener
@@ -74,6 +78,8 @@ class ContactsManager
         private const val DELAY_BEFORE_RELOADING_CONTACTS_AFTER_PRESENCE_RECEIVED = 1000L // 1 second
         private const val DELAY_BEFORE_RELOADING_CONTACTS_AFTER_MAGIC_SEARCH_RESULT = 1000L // 1 second
         private const val FRIEND_LIST_TEMPORARY_STORED_REMOTE_DIRECTORY = "TempRemoteDirectoryContacts"
+        private const val MANGO9_TEAM_FRIEND_LIST = "Mango9 team"
+        private const val MANGO9_TEAM_REF_KEY_PREFIX = "mango9-user-"
     }
 
     private var nativeContactsLoaded = false
@@ -92,6 +98,12 @@ class ContactsManager
     private var reloadRemoteContactsJob: Job? = null
 
     private var loadContactsOnlyFromDefaultDirectory = true
+
+    @Volatile private var mango9TeamIdentity: String? = null
+
+    @Volatile private var mango9TeamIdentityInitialized = false
+
+    @Volatile private var mango9ChatTargetsByAddress: Map<String, Mango9ChatTarget> = emptyMap()
 
     private val magicSearchListener = object : MagicSearchListenerStub() {
         @WorkerThread
@@ -637,6 +649,129 @@ class ContactsManager
             list.removeListener(friendListListener)
         }
     }
+
+    /**
+     * Clears any persisted teammate directory when the default SIP identity changes. This happens
+     * before the replacement directory is downloaded so contacts can never leak across accounts.
+     */
+    @WorkerThread
+    fun activateMango9TeamIdentity(identityValue: String?) {
+        val identity = Mango9SessionStore.normalizedIdentity(identityValue)
+        if (mango9TeamIdentityInitialized && mango9TeamIdentity == identity) return
+        mango9TeamIdentityInitialized = true
+        mango9TeamIdentity = identity
+        removeMango9TeamFriends()
+    }
+
+    @WorkerThread
+    fun clearMango9Team(identityValue: String?) {
+        val identity = Mango9SessionStore.normalizedIdentity(identityValue)
+        val currentIdentity = Mango9SessionStore.normalizedIdentity(
+            coreContext.core.defaultAccount?.params?.identityAddress?.asStringUriOnly(),
+        )
+        if (identity != currentIdentity) return
+        mango9TeamIdentityInitialized = true
+        mango9TeamIdentity = identity
+        removeMango9TeamFriends()
+    }
+
+    @WorkerThread
+    fun syncMango9Team(identityValue: String, members: List<Mango9TeamMember>) {
+        val identity = Mango9SessionStore.normalizedIdentity(identityValue) ?: return
+        val sessions = Mango9SessionStore(coreContext.context)
+        val currentIdentity = Mango9SessionStore.normalizedIdentity(
+            coreContext.core.defaultAccount?.params?.identityAddress?.asStringUriOnly(),
+        )
+        if (!sessions.isActive(identity) || currentIdentity != identity) {
+            Log.w("$TAG Ignoring teammate directory for inactive identity [$identity]")
+            return
+        }
+
+        mango9TeamIdentityInitialized = true
+        mango9TeamIdentity = identity
+        mango9ChatTargetsByAddress = members.mapNotNull { member ->
+            val key = normalizedMango9Address(member.sipUri) ?: return@mapNotNull null
+            key to Mango9ChatTarget(member.userId, member.displayName)
+        }.toMap()
+
+        val core = coreContext.core
+        val list = core.getFriendListByName(MANGO9_TEAM_FRIEND_LIST) ?: core.createFriendList().also {
+            it.isDatabaseStorageEnabled = true
+            it.displayName = MANGO9_TEAM_FRIEND_LIST
+            core.addFriendList(it)
+            Log.i("$TAG Created persistent [$MANGO9_TEAM_FRIEND_LIST] friend list")
+        }
+        val expectedKeys = members.map { mango9RefKey(it.userId) }.toSet()
+        list.friends.filter { it.refKey !in expectedKeys }.forEach { stale ->
+            stale.addresses.forEach(::removeKnownAddressFromMap)
+            list.removeFriend(stale)
+        }
+
+        for (member in members) {
+            val sipUri = member.sipUri ?: continue
+            val address = core.interpretUrl(sipUri, false) ?: continue
+            val refKey = mango9RefKey(member.userId)
+            val existing = list.friends.firstOrNull { it.refKey == refKey }
+            val friend = existing ?: core.createFriend()
+            friend.edit()
+            friend.refKey = refKey
+            friend.name = member.displayName
+            friend.firstName = member.displayName
+            friend.lastName = ""
+            friend.addresses.forEach(friend::removeAddress)
+            friend.addAddress(address)
+            friend.phoneNumbersWithLabel.forEach(friend::removePhoneNumberWithLabel)
+            member.mobile.trim().takeIf(String::isNotEmpty)?.let { mobile ->
+                friend.addPhoneNumberWithLabel(
+                    Factory.instance().createFriendPhoneNumber(mobile, "mobile"),
+                )
+            }
+            friend.organization = "Mango9"
+            friend.jobTitle = member.role.trim().replaceFirstChar(Char::titlecase)
+            friend.isSubscribesEnabled = false
+            friend.incSubscribePolicy = SubscribePolicy.SPDeny
+            friend.done()
+            if (existing == null) list.addFriend(friend)
+            newContactAdded(friend)
+        }
+
+        notifyContactsListChanged()
+        Log.i("$TAG Synchronized [${mango9ChatTargetsByAddress.size}] Mango9 teammates for [$identity]")
+    }
+
+    @WorkerThread
+    fun mango9ChatTarget(address: Address): Mango9ChatTarget? {
+        val currentIdentity = Mango9SessionStore.normalizedIdentity(
+            coreContext.core.defaultAccount?.params?.identityAddress?.asStringUriOnly(),
+        )
+        if (currentIdentity == null || currentIdentity != mango9TeamIdentity) return null
+        val key = normalizedMango9Address(address.asStringUriOnly()) ?: return null
+        return mango9ChatTargetsByAddress[key]
+    }
+
+    @WorkerThread
+    fun mango9ChatTarget(friend: Friend): Mango9ChatTarget? {
+        val userId = friend.refKey?.takeIf { it.startsWith(MANGO9_TEAM_REF_KEY_PREFIX) }
+            ?.removePrefix(MANGO9_TEAM_REF_KEY_PREFIX)?.toIntOrNull() ?: return null
+        return mango9ChatTargetsByAddress.values.firstOrNull { it.userId == userId }
+    }
+
+    @WorkerThread
+    private fun removeMango9TeamFriends() {
+        mango9ChatTargetsByAddress = emptyMap()
+        val list = coreContext.core.getFriendListByName(MANGO9_TEAM_FRIEND_LIST) ?: return
+        list.friends.forEach { friend ->
+            friend.addresses.forEach(::removeKnownAddressFromMap)
+            list.removeFriend(friend)
+        }
+        notifyContactsListChanged()
+        Log.i("$TAG Cleared the Mango9 teammate directory")
+    }
+
+    private fun normalizedMango9Address(value: String?): String? =
+        Mango9SessionStore.normalizedIdentity(value)
+
+    private fun mango9RefKey(userId: Int) = "$MANGO9_TEAM_REF_KEY_PREFIX$userId"
 
     @WorkerThread
     fun getRemoteContactDirectoriesCacheFriendList(): FriendList {

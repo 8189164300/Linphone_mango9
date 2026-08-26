@@ -23,7 +23,6 @@ import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
-import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.launch
 import org.linphone.BuildConfig
 import org.linphone.LinphoneApplication.Companion.coreContext
@@ -153,12 +152,7 @@ class HelpViewModel
         sdkVersion.value = coreContext.sdkVersion
         logsUploadInProgress.value = false
 
-        try {
-            firebaseProjectId.value = FirebaseApp.getInstance().options.projectId
-        } catch (e: Exception) {
-            Log.e("$TAG Failed to get FirebaseApp instance: $e")
-            firebaseProjectId.value = "unknown"
-        }
+        firebaseProjectId.value = if (BuildConfig.CRASHLYTICS_ENABLED) "configured" else "disabled"
 
         versionClickCount = if (corePreferences.showDeveloperSettings) {
             Log.i("$TAG Developer settings are already enabled")

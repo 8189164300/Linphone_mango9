@@ -436,17 +436,19 @@ class SettingsViewModel
     @UiThread
     fun enableVfs() {
         Log.i("$TAG Enabling VFS")
-        if (VFS.enable(coreContext.context)) {
-            val enabled = VFS.isEnabled(coreContext.context)
-            isVfsEnabled.postValue(enabled)
-            if (enabled) {
-                Log.i("$TAG VFS has been enabled")
-                showGreenToast(R.string.settings_security_enable_vfs_success_toast, R.drawable.lock_key)
+        coreContext.postOnCoreThread {
+            if (VFS.enable(coreContext.context)) {
+                val enabled = VFS.isEnabled(coreContext.context)
+                isVfsEnabled.postValue(enabled)
+                if (enabled) {
+                    Log.i("$TAG VFS has been enabled")
+                    showGreenToast(R.string.settings_security_enable_vfs_success_toast, R.drawable.lock_key)
+                }
+            } else {
+                Log.e("$TAG Failed to enable VFS!")
+                isVfsEnabled.postValue(false)
+                showRedToast(R.string.settings_security_enable_vfs_failure_toast, R.drawable.warning_circle)
             }
-        } else {
-            Log.e("$TAG Failed to enable VFS!")
-            isVfsEnabled.postValue(false)
-            showRedToast(R.string.settings_security_enable_vfs_failure_toast, R.drawable.warning_circle)
         }
     }
 

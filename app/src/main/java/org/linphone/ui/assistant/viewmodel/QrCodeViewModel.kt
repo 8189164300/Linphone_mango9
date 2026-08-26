@@ -1,102 +1,64 @@
 /*
- * Copyright (c) 2010-2023 Belledonne Communications SARL.
+ * Copyright (c) 2010-2026 Belledonne Communications SARL and Mango9.
  *
- * This file is part of linphone-android
- * (see https://www.linphone.org).
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * This file is part of the Mango9 Android client and is distributed under
+ * the GNU General Public License version 3 or later.
  */
 package org.linphone.ui.assistant.viewmodel
 
 import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
 import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
 import org.linphone.LinphoneApplication.Companion.coreContext
-import org.linphone.core.ConfiguringState
+import org.linphone.R
 import org.linphone.core.Core
 import org.linphone.core.CoreListenerStub
+import org.linphone.core.GlobalState
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9ApiException
+import org.linphone.mango9.Mango9Configuration
+import org.linphone.mango9.Mango9LoginRepository
 import org.linphone.ui.GenericViewModel
 import org.linphone.utils.Event
-import org.linphone.R
-import org.linphone.core.GlobalState
 import org.linphone.utils.LinphoneUtils
 
 class QrCodeViewModel
     @UiThread
     constructor() : GenericViewModel() {
     companion object {
-        private const val TAG = "[Qr Code Scanner ViewModel]"
+        private const val TAG = "[Mango9 QR Scanner ViewModel]"
     }
 
     val remoteProvisioningSuccessfulEvent = MutableLiveData<Event<Boolean>>()
-
     val onErrorEvent = MutableLiveData<Event<Boolean>>()
+    private val repository = Mango9LoginRepository(coreContext.context)
 
     private val coreListener = object : CoreListenerStub() {
         @WorkerThread
-        override fun onConfiguringStatus(core: Core, status: ConfiguringState, message: String?) {
-            Log.i("$TAG Configuring state is [$status]")
-            if (status == ConfiguringState.Failed) {
-                Log.e("$TAG Failure applying remote provisioning: $message")
-                showRedToast(R.string.remote_provisioning_config_failed_toast, R.drawable.warning_circle)
-                onErrorEvent.postValue(Event(true))
-            }
-        }
-
-        @WorkerThread
-        override fun onGlobalStateChanged(core: Core, state: GlobalState?, message: String) {
-            if (state == GlobalState.On) {
-                if (core.accountList.isEmpty()) {
-                    Log.w("$TAG Provisioning was successful but no account has been configured yet, staying in assistant")
-                    // Remote provisioning didn't contain any account
-                    // and there wasn't at least one configured before either
-                    remoteProvisioningSuccessfulEvent.postValue(Event(false))
-                } else {
-                    Log.i("$TAG At least an account exists in Core, leaving assistant")
-                    remoteProvisioningSuccessfulEvent.postValue(Event(true))
-                }
-            }
-        }
-
-        @WorkerThread
         override fun onQrcodeFound(core: Core, result: String?) {
-            Log.i("$TAG QR Code found: [$result]")
-            if (result == null) {
+            val remoteUrl = result?.let(LinphoneUtils::getRemoteProvisioningUrlFromUri)
+            val verifiedUrl = Mango9Configuration.verifiedProvisioningUrl(remoteUrl)
+            if (verifiedUrl == null) {
+                Log.e("$TAG Rejected QR code outside the Mango9 provisioning origin")
                 showRedToast(R.string.assistant_qr_code_invalid_toast, R.drawable.warning_circle)
-            } else {
-                val url = LinphoneUtils.getRemoteProvisioningUrlFromUri(result)
-                if (url == null) {
-                    Log.e("$TAG The content of the QR Code [$result] doesn't seem to be a valid web URL")
-                    showRedToast(R.string.assistant_qr_code_invalid_toast, R.drawable.warning_circle)
-                    return
-                }
+                return
+            }
 
-                Log.i(
-                    "$TAG Setting QR code URL [$url], restarting the Core outside of iterate() loop to apply configuration changes"
-                )
-                core.nativePreviewWindowId = null
-                core.isVideoPreviewEnabled = false
-                core.isQrcodeVideoPreviewEnabled = false
-                core.provisioningUri = url
-
-                coreContext.postOnCoreThread { core ->
-                    Log.i("$TAG Stopping Core")
-                    core.stop()
-                    Log.i("$TAG Core has been stopped, restarting it")
-                    core.start()
-                    Log.i("$TAG Core has been restarted")
+            Log.i("$TAG Accepted one-time Mango9 enrollment URL")
+            core.nativePreviewWindowId = null
+            core.isVideoPreviewEnabled = false
+            core.isQrcodeVideoPreviewEnabled = false
+            viewModelScope.launch {
+                try {
+                    repository.enrollFromQr(verifiedUrl.toString())
+                    remoteProvisioningSuccessfulEvent.postValue(Event(true))
+                } catch (error: Exception) {
+                    val message = (error as? Mango9ApiException)?.userMessage
+                        ?: "We couldn't reach Mango9. Check your connection and try again."
+                    showFormattedRedToast(message, R.drawable.warning_circle)
+                    onErrorEvent.postValue(Event(true))
                 }
             }
         }
@@ -105,40 +67,26 @@ class QrCodeViewModel
     init {
         coreContext.postOnCoreThread { core ->
             core.addListener(coreListener)
-
-            val coreGlobalState = core.globalState
-            if (coreGlobalState != GlobalState.On) {
-                Log.e("$TAG Core isn't ON (current state is [$coreGlobalState]), video preview won't work!")
+            if (core.globalState != GlobalState.On) {
+                Log.e("$TAG Core isn't ON, video preview may not start")
             }
         }
     }
 
     @UiThread
     override fun onCleared() {
-        coreContext.postOnCoreThread { core ->
-            core.removeListener(coreListener)
-        }
+        coreContext.postOnCoreThread { core -> core.removeListener(coreListener) }
         super.onCleared()
     }
 
     @UiThread
     fun setBackCamera() {
         coreContext.postOnCoreThread { core ->
-            // Just in case, on some devices such as Xiaomi Redmi Note 5
-            // this is required right after granting the CAMERA permission
-            Log.i("$TAG Reloading video devices, might be needed if CAMERA permission was granted very recently")
             core.reloadVideoDevices()
-
             if (!coreContext.setBackCamera()) {
-                for (camera in core.videoDevicesList) {
-                    if (camera != "StaticImage: Static picture") {
-                        Log.w("$TAG No back facing camera found, using first one available [$camera]")
-                        coreContext.core.videoDevice = camera
-                        return@postOnCoreThread
-                    }
+                core.videoDevicesList.firstOrNull { it != "StaticImage: Static picture" }?.let {
+                    core.videoDevice = it
                 }
-
-                Log.e("$TAG No camera device found!")
             }
         }
     }

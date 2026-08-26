@@ -26,6 +26,7 @@ import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.core.Call
 import org.linphone.core.CallListenerStub
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9PushCallerIdentityCache
 import org.linphone.ui.main.contacts.model.ContactAvatarModel
 import org.linphone.utils.LinphoneUtils
 
@@ -61,8 +62,18 @@ class CallModel
 
         val conferenceInfo = coreContext.core.findConferenceInformationFromUri(call.remoteAddress)
         val remoteAddress = call.callLog.remoteAddress
+        val pushedIdentity = if (call.state == Call.State.PushIncomingReceived) {
+            Mango9PushCallerIdentityCache.get(call.callLog.callId)
+        } else {
+            null
+        }
         val avatarModel = if (conferenceInfo != null) {
             coreContext.contactsManager.getContactAvatarModelForConferenceInfo(conferenceInfo)
+        } else if (pushedIdentity != null) {
+            val fakeFriend = coreContext.core.createFriend()
+            fakeFriend.name = pushedIdentity.displayName
+            fakeFriend.address = remoteAddress
+            ContactAvatarModel(fakeFriend, remoteAddress)
         } else {
             coreContext.contactsManager.getContactAvatarModelForAddress(
                 remoteAddress
@@ -70,7 +81,9 @@ class CallModel
         }
         contact.postValue(avatarModel)
         displayName.postValue(
-            avatarModel.friend.name ?: LinphoneUtils.getDisplayName(remoteAddress)
+            pushedIdentity?.displayName
+                ?: avatarModel.friend.name
+                ?: LinphoneUtils.getDisplayName(remoteAddress)
         )
 
         state.postValue(LinphoneUtils.callStateToString(call.state))

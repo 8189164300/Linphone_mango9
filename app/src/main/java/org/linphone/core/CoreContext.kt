@@ -48,9 +48,13 @@ import kotlin.system.exitProcess
 import org.linphone.BuildConfig
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.LinphoneApplication.Companion.corePreferences
+import org.linphone.LinphoneApplication.Companion.managedConfigurationManager
 import org.linphone.compatibility.Compatibility
 import org.linphone.contacts.ContactsManager
 import org.linphone.core.tools.Log
+import org.linphone.core.tools.AndroidPlatformHelper
+import org.linphone.mango9.Mango9MessagePushTokenStore
+import org.linphone.mango9.Mango9PushCallerIdentityCache
 import org.linphone.notifications.NotificationsManager
 import org.linphone.telecom.TelecomManager
 import org.linphone.ui.call.CallActivity
@@ -266,6 +270,11 @@ class CoreContext
             Log.i("$TAG Global state changed [$state]")
 
             if (state == GlobalState.On) {
+                if (BuildConfig.MANGO9_FCM_ENABLED) {
+                    Mango9MessagePushTokenStore(context).load()?.let { token ->
+                        AndroidPlatformHelper.instance().setPushToken(token)
+                    }
+                }
                 // Wait for GlobalState.ON as some settings modification won't be saved
                 // in RC file if Core isn't ON
                 onCoreStarted()
@@ -314,6 +323,25 @@ class CoreContext
                     )
                 )
             }
+        }
+
+        @WorkerThread
+        override fun onPushNotificationReceived(core: Core, payload: String?) {
+            if (payload.isNullOrBlank()) {
+                Log.w("$TAG Incoming push did not contain a payload")
+            } else {
+                val identity = Mango9PushCallerIdentityCache.cache(payload)
+                if (identity == null) {
+                    Log.w("$TAG Incoming push did not contain a usable caller identity")
+                } else {
+                    Log.i("$TAG Cached incoming caller identity for Call-ID [${identity.callId}]")
+                }
+            }
+
+            // Match iOS: the push wakes the app, then a fresh mobile contact lets
+            // OpenSIPS attach its held INVITE to this device.
+            Log.i("$TAG Call push received, refreshing SIP registrations")
+            core.refreshRegisters()
         }
 
         @WorkerThread
@@ -426,6 +454,9 @@ class CoreContext
                     showFormattedRedToastEvent.postValue(
                         Event(Pair(text, org.linphone.R.drawable.warning_circle))
                     )
+                }
+                Call.State.Released -> {
+                    Mango9PushCallerIdentityCache.remove(call.callLog.callId)
                 }
                 else -> {
                 }
@@ -696,6 +727,9 @@ class CoreContext
     fun startCore() {
         Log.i("$TAG Starting Core")
 
+        enforceMango9RuntimeDefaults()
+        managedConfigurationManager.applyBeforeCoreStart(core)
+
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, coreThread)
 
@@ -773,11 +807,6 @@ class CoreContext
                         Log.i("$TAG Keeping RLS URI as an account on the default domain has been found")
                     }
                 }
-            }
-
-            if (core.logCollectionUploadServerUrl.isNullOrEmpty()) {
-                Log.w("$TAG Logs sharing server URL not set, fixing that")
-                core.logCollectionUploadServerUrl = "https://files.linphone.org/http-file-transfer-server/hft.php"
             }
 
             corePreferences.linphoneConfigurationVersion = currentVersion
@@ -915,6 +944,7 @@ class CoreContext
 
     @UiThread
     fun onForeground() {
+        managedConfigurationManager.onForeground()
         postOnCoreThread {
             // We can't rely on defaultAccount?.params?.isPublishEnabled
             // as it will be modified by the SDK when changing the presence status
@@ -931,6 +961,7 @@ class CoreContext
 
     @UiThread
     fun onBackground() {
+        managedConfigurationManager.onBackground()
         postOnCoreThread {
             // We can't rely on defaultAccount?.params?.isPublishEnabled
             // as it will be modified by the SDK when changing the presence status
@@ -1323,22 +1354,31 @@ class CoreContext
         Log.i("$TAG Enabling hiding empty chat rooms")
         core.config.setBool("misc", "hide_empty_chat_rooms", true)
 
-        // Replace old URLs by new ones
-        if (corePreferences.checkForUpdateServerUrl == "https://www.linphone.org/releases") {
-            corePreferences.checkForUpdateServerUrl = "https://download.linphone.org/releases"
-        }
-        if (core.fileTransferServer == "https://www.linphone.org:444/lft.php") {
-            core.fileTransferServer = "https://files.linphone.org/http-file-transfer-server/hft.php"
-        }
-        if (core.logCollectionUploadServerUrl == "https://www.linphone.org:444/lft.php") {
-            core.logCollectionUploadServerUrl = "https://files.linphone.org/http-file-transfer-server/hft.php"
-        }
-
         Log.i("$TAG IMDN threshold set to 1 (meaning only sender will receive delivery & read notifications)")
         core.imdnToEverybodyThreshold = 1
 
         Log.i("$TAG Removing previous grammar files (without .belr extension)")
         corePreferences.clearPreviousGrammars()
+    }
+
+    /**
+     * Mango9 does not use Linphone's hosted update, file-transfer, log-upload,
+     * account-creation, RLS, conference, LIME, or STUN services. Clear these on
+     * every start so an upgrade from an upstream install cannot retain a public
+     * Linphone endpoint. This runs before managed-app configuration so an
+     * administrator's xmlConfig values remain authoritative afterward.
+     */
+    private fun enforceMango9RuntimeDefaults() {
+        corePreferences.checkForUpdateServerUrl = ""
+        core.fileTransferServer = ""
+        core.logCollectionUploadServerUrl = ""
+        core.config.setString("account_creator", "url", "")
+        core.config.setString("sip", "rls_uri", "")
+        core.config.setString("ui", "contacts_filter", "")
+        core.config.setBool("ui", "change_main_color_allowed", false)
+        core.config.setBool("ui", "show_developer_settings", false)
+        core.config.setBool("ui", "disable_meetings_feature", true)
+        Log.i("$TAG Applied Mango9 runtime service defaults")
     }
 
     @WorkerThread

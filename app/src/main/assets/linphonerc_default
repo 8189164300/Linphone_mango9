@@ -2,7 +2,7 @@
 ## Start of default rc
 
 [sip]
-contact="Linphone Android" <sip:linphone.android@unknown-host>
+contact="Mango9 Android" <sip:mango9.android@unknown-host>
 use_ipv6=1
 keepalive_period=30000
 sip_port=-1
@@ -28,15 +28,17 @@ automatically_accept_direction=2 #receive only
 tunnel=disabled
 auto_download_incoming_voice_recordings=1
 auto_download_incoming_icalendars=1
+default_domain=proxy.mango9.com
+auto_apply_provisioning_config_uri_handler=1
 
 [tunnel]
 host=
 port=443
 
 [misc]
-log_collection_upload_server_url=https://files.linphone.org/http-file-transfer-server/hft.php
-file_transfer_server_url=https://files.linphone.org/http-file-transfer-server/hft.php
-version_check_url_root=https://download.linphone.org/releases
+log_collection_upload_server_url=
+file_transfer_server_url=
+version_check_url_root=
 max_calls=10
 history_max_size=100
 conference_layout=1
@@ -52,9 +54,12 @@ return_empty_friends=1
 imdn_to_everybody_threshold=1
 
 [ui]
-contacts_filter=sip.linphone.org
+contacts_filter=
+change_main_color_allowed=0
+show_developer_settings=0
+disable_meetings_feature=1
 
 [account_creator]
-url=https://subscribe.linphone.org/api/
+url=
 
 ## End of default rc

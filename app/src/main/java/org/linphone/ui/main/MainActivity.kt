@@ -45,6 +45,8 @@ import androidx.core.view.updatePadding
 import androidx.databinding.DataBindingUtil
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavController
 import androidx.navigation.NavDestination
 import androidx.navigation.NavOptions
@@ -62,13 +64,21 @@ import org.linphone.R
 import org.linphone.compatibility.Compatibility
 import org.linphone.core.tools.Log
 import org.linphone.databinding.MainActivityBinding
+import org.linphone.mango9.Mango9AccountContextSync
+import org.linphone.mango9.Mango9ChatRouting
+import org.linphone.mango9.Mango9ChatTarget
+import org.linphone.mango9.Mango9MessagePush
+import org.linphone.mango9.Mango9MessagePushCoordinator
+import org.linphone.mango9.Mango9MessagePushTarget
+import org.linphone.mango9.Mango9SmsTarget
 import org.linphone.ui.GenericActivity
 import org.linphone.ui.assistant.AssistantActivity
 import org.linphone.ui.main.chat.fragment.ConversationsListFragmentDirections
+import org.linphone.ui.main.crm.fragment.Mango9CrmFragment
+import org.linphone.ui.main.crm.fragment.Mango9MessagingListFragment
 import org.linphone.utils.PasswordDialogModel
 import org.linphone.ui.main.viewmodel.MainViewModel
 import org.linphone.ui.main.viewmodel.SharedMainViewModel
-import org.linphone.ui.welcome.WelcomeActivity
 import org.linphone.utils.AppUtils
 import org.linphone.utils.DialogUtils
 import org.linphone.utils.Event
@@ -195,6 +205,18 @@ class MainActivity : GenericActivity() {
 
         sharedViewModel = run {
             ViewModelProvider(this)[SharedMainViewModel::class.java]
+        }
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                Mango9ChatRouting.openRequests.collect(::openMango9Chat)
+            }
+        }
+        refreshMango9AccountContext()
+        viewModel.defaultAccountChangedEvent.observe(this) { event ->
+            event.consume {
+                refreshMango9AccountContext()
+            }
         }
 
         viewModel.goBackToCallEvent.observe(this) {
@@ -392,17 +414,12 @@ class MainActivity : GenericActivity() {
 
         coreContext.postOnCoreThread { core ->
             if (corePreferences.firstLaunch) {
-                Log.i("$TAG First time Linphone 6.0 has been started, showing Welcome activity")
+                Log.i("$TAG First Mango9 launch detected")
                 corePreferences.firstLaunch = false
-                coreContext.postOnMainThread {
-                    try {
-                        startActivity(Intent(this, WelcomeActivity::class.java))
-                    } catch (ise: IllegalStateException) {
-                        Log.e("$TAG Can't start activity: $ise")
-                    }
-                }
-            } else if (core.accountList.isEmpty()) {
-                Log.w("$TAG No account found, showing Assistant activity")
+            }
+
+            if (core.accountList.isEmpty()) {
+                Log.w("$TAG No account found, showing Mango9 assistant")
                 coreContext.postOnMainThread {
                     try {
                         startActivity(Intent(this, AssistantActivity::class.java))
@@ -490,6 +507,42 @@ class MainActivity : GenericActivity() {
 
     fun findNavController(): NavController {
         return findNavController(R.id.main_nav_container)
+    }
+
+    private fun openMango9Chat(target: Mango9ChatTarget) {
+        val arguments = Bundle().apply {
+            putString(Mango9MessagingListFragment.ARG_TYPE, Mango9MessagingListFragment.TYPE_TEAM)
+            putInt(Mango9MessagingListFragment.ARG_USER_ID, target.userId)
+            putString(Mango9MessagingListFragment.ARG_ROOM_ID, target.roomId)
+            putString(Mango9MessagingListFragment.ARG_TARGET, target.name)
+            putString(Mango9MessagingListFragment.ARG_PHONE, null)
+        }
+        findNavController().navigate(R.id.action_global_mango9MessagingConversationFragment, arguments)
+    }
+
+    private fun openMango9Sms(target: Mango9SmsTarget) {
+        val arguments = Bundle().apply {
+            putString(Mango9MessagingListFragment.ARG_TYPE, Mango9MessagingListFragment.TYPE_SMS)
+            putInt(Mango9MessagingListFragment.ARG_USER_ID, 0)
+            putString(Mango9MessagingListFragment.ARG_ROOM_ID, null)
+            putString(Mango9MessagingListFragment.ARG_TARGET, target.name)
+            putString(Mango9MessagingListFragment.ARG_PHONE, target.phone)
+        }
+        findNavController().navigate(R.id.action_global_mango9MessagingConversationFragment, arguments)
+    }
+
+    private fun openMango9Lead(id: Int) {
+        val arguments = Bundle().apply {
+            putString(Mango9CrmFragment.ARG_PUSH_RECORD_KIND, "lead")
+            putInt(Mango9CrmFragment.ARG_PUSH_RECORD_ID, id)
+        }
+        findNavController().navigate(R.id.action_global_mango9CrmFragment, arguments)
+    }
+
+    private fun refreshMango9AccountContext() {
+        lifecycleScope.launch {
+            Mango9AccountContextSync.refresh(this@MainActivity)
+        }
     }
 
     fun loadContacts() {
@@ -610,6 +663,28 @@ class MainActivity : GenericActivity() {
     }
 
     private fun handleMainIntent(intent: Intent) {
+        val messagePush = Mango9MessagePush.fromJson(
+            intent.getStringExtra(Mango9MessagePushCoordinator.EXTRA_PUSH),
+        )
+        if (messagePush != null) {
+            intent.removeExtra(Mango9MessagePushCoordinator.EXTRA_PUSH)
+            lifecycleScope.launch {
+                if (!Mango9MessagePushCoordinator.activateForOpen(this@MainActivity, messagePush)) {
+                    Log.w("$TAG Ignoring Mango9 message push for an unavailable account")
+                    return@launch
+                }
+                when (val target = messagePush.target) {
+                    is Mango9MessagePushTarget.Chat -> openMango9Chat(
+                        Mango9ChatTarget(target.userId, target.name, target.roomId),
+                    )
+                    is Mango9MessagePushTarget.Sms -> openMango9Sms(
+                        Mango9SmsTarget(target.phone, target.name),
+                    )
+                    is Mango9MessagePushTarget.Lead -> openMango9Lead(target.id)
+                }
+            }
+            return
+        }
         coreContext.postOnCoreThread { core ->
             if (intent.hasExtra(ARGUMENTS_CHAT)) {
                 Log.i("$TAG Intent has [Chat] extra")

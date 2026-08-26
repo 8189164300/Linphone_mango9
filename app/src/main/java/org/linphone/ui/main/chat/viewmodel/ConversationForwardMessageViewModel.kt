@@ -32,6 +32,7 @@ import org.linphone.core.ChatRoomListenerStub
 import org.linphone.core.Conference
 import org.linphone.core.Friend
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9ChatRouting
 import org.linphone.ui.main.model.ConversationContactOrSuggestionModel
 import org.linphone.ui.main.viewmodel.AddressSelectionViewModel
 import org.linphone.utils.AppUtils
@@ -92,6 +93,13 @@ class ConversationForwardMessageViewModel
         }
     }
 
+    @WorkerThread
+    override fun onFriendSelectedDirectly(friend: Friend): Boolean {
+        val target = coreContext.contactsManager.mango9ChatTarget(friend) ?: return false
+        Mango9ChatRouting.open(target)
+        return true
+    }
+
     @UiThread
     fun handleClickOnModel(model: ConversationContactOrSuggestionModel) {
         coreContext.postOnCoreThread { core ->
@@ -133,6 +141,7 @@ class ConversationForwardMessageViewModel
 
     @WorkerThread
     fun createOneToOneChatRoomWith(remote: Address) {
+        if (Mango9ChatRouting.openIfNeeded(remote)) return
         val core = coreContext.core
         val account = core.defaultAccount
         if (account == null) {

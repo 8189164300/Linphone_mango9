@@ -30,6 +30,9 @@ import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import androidx.annotation.UiThread
+import androidx.core.content.ContextCompat
+import androidx.core.widget.doAfterTextChanged
+import androidx.fragment.app.viewModels
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.navGraphViewModels
 import org.linphone.R
@@ -38,6 +41,7 @@ import org.linphone.core.tools.Log
 import org.linphone.databinding.SettingsFragmentBinding
 import org.linphone.ui.GenericActivity
 import org.linphone.ui.main.fragment.GenericMainFragment
+import org.linphone.ui.main.settings.viewmodel.Mango9CallSettingsViewModel
 import org.linphone.utils.ConfirmationDialogModel
 import org.linphone.ui.main.settings.viewmodel.SettingsViewModel
 import org.linphone.utils.AppUtils
@@ -58,6 +62,10 @@ class SettingsFragment : GenericMainFragment() {
     private val viewModel: SettingsViewModel by navGraphViewModels(
         R.id.main_nav_graph
     )
+
+    private val mango9CallSettingsViewModel: Mango9CallSettingsViewModel by viewModels()
+
+    private var renderingMango9CallSettings = false
 
     private val sortContactsByListener = object : AdapterView.OnItemSelectedListener {
         override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -144,6 +152,7 @@ class SettingsFragment : GenericMainFragment() {
         binding.lifecycleOwner = viewLifecycleOwner
         binding.viewModel = viewModel
         observeToastEvents(viewModel)
+        setupMango9CallSettings()
 
         binding.setBackClickListener {
             goBack()
@@ -338,6 +347,76 @@ class SettingsFragment : GenericMainFragment() {
         startPostponedEnterTransition()
     }
 
+    private fun setupMango9CallSettings() {
+        val section = binding.mango9CallSettings
+        section.refresh.setOnClickListener { mango9CallSettingsViewModel.reload(force = true) }
+        section.forwardingSwitch.setOnCheckedChangeListener { _, checked ->
+            if (!renderingMango9CallSettings) mango9CallSettingsViewModel.forwardingEnabled.value = checked
+        }
+        section.destination.doAfterTextChanged { editable ->
+            if (!renderingMango9CallSettings) {
+                mango9CallSettingsViewModel.forwardingDestination.value = editable?.toString().orEmpty()
+            }
+        }
+        section.save.setOnClickListener { mango9CallSettingsViewModel.save() }
+
+        mango9CallSettingsViewModel.hasSession.observe(viewLifecycleOwner) { renderMango9CallSettings() }
+        mango9CallSettingsViewModel.settings.observe(viewLifecycleOwner) { renderMango9CallSettings() }
+        mango9CallSettingsViewModel.forwardingEnabled.observe(viewLifecycleOwner) { renderMango9CallSettings() }
+        mango9CallSettingsViewModel.forwardingDestination.observe(viewLifecycleOwner) { renderMango9CallSettings() }
+        mango9CallSettingsViewModel.lineLabel.observe(viewLifecycleOwner) { renderMango9CallSettings() }
+        mango9CallSettingsViewModel.loading.observe(viewLifecycleOwner) { renderMango9CallSettings() }
+        mango9CallSettingsViewModel.saving.observe(viewLifecycleOwner) { renderMango9CallSettings() }
+        mango9CallSettingsViewModel.errorMessage.observe(viewLifecycleOwner) { renderMango9CallSettings() }
+        mango9CallSettingsViewModel.statusMessage.observe(viewLifecycleOwner) { renderMango9CallSettings() }
+        mango9CallSettingsViewModel.canSave.observe(viewLifecycleOwner) { renderMango9CallSettings() }
+    }
+
+    private fun renderMango9CallSettings() {
+        val section = binding.mango9CallSettings
+        val visible = mango9CallSettingsViewModel.hasSession.value == true
+        section.root.visibility = if (visible) View.VISIBLE else View.GONE
+        if (!visible) return
+
+        val loading = mango9CallSettingsViewModel.loading.value == true
+        val saving = mango9CallSettingsViewModel.saving.value == true
+        val loaded = mango9CallSettingsViewModel.settings.value != null
+        val enabled = mango9CallSettingsViewModel.forwardingEnabled.value == true
+        val destination = mango9CallSettingsViewModel.forwardingDestination.value.orEmpty()
+        section.loading.visibility = if (loading && !loaded) View.VISIBLE else View.GONE
+        section.content.visibility = if (loaded) View.VISIBLE else View.GONE
+        section.refresh.isEnabled = !loading && !saving
+        section.lineLabel.text = mango9CallSettingsViewModel.lineLabel.value.orEmpty()
+        section.forwardingStatus.setText(
+            if (enabled) R.string.mango9_call_forwarding_enabled else R.string.mango9_call_forwarding_off,
+        )
+        section.forwardingStatus.setTextColor(
+            ContextCompat.getColor(
+                requireContext(),
+                if (enabled) R.color.green_success_500 else R.color.gray_main2_500,
+            ),
+        )
+        renderingMango9CallSettings = true
+        section.forwardingSwitch.isChecked = enabled
+        if (section.destination.text?.toString() != destination) {
+            section.destination.setText(destination)
+            section.destination.setSelection(destination.length)
+        }
+        renderingMango9CallSettings = false
+        section.forwardingSwitch.isEnabled = !saving
+        section.destination.isEnabled = !saving
+        section.save.isEnabled = mango9CallSettingsViewModel.canSave.value == true
+        section.save.text = getString(
+            if (saving) R.string.mango9_call_forwarding_saving else R.string.mango9_call_forwarding_save,
+        )
+        val status = mango9CallSettingsViewModel.statusMessage.value
+        section.statusMessage.text = status.orEmpty()
+        section.statusMessage.visibility = if (status.isNullOrBlank()) View.GONE else View.VISIBLE
+        val error = mango9CallSettingsViewModel.errorMessage.value
+        section.errorMessage.text = error.orEmpty()
+        section.errorMessage.visibility = if (error.isNullOrBlank()) View.GONE else View.VISIBLE
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (resultCode == Activity.RESULT_OK && requestCode == RINGTONE_PICKER_INTENT_ID) {
@@ -358,6 +437,7 @@ class SettingsFragment : GenericMainFragment() {
         viewModel.reloadLdapServers()
         viewModel.reloadConfiguredCardDavServers()
         viewModel.reloadShowDeveloperSettings()
+        mango9CallSettingsViewModel.reload()
     }
 
     override fun onPause() {

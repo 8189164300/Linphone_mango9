@@ -29,6 +29,7 @@ import org.linphone.core.Core
 import org.linphone.core.CoreListenerStub
 import org.linphone.core.GlobalState
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9SessionStore
 import org.linphone.ui.GenericViewModel
 import org.linphone.ui.main.model.AccountModel
 import org.linphone.ui.main.model.ShortcutModel
@@ -48,6 +49,8 @@ class DrawerMenuViewModel
     val hideRecordings = MutableLiveData<Boolean>()
 
     val hideSettings = MutableLiveData<Boolean>()
+
+    val hasMango9Session = MutableLiveData<Boolean>(false)
 
     val shortcuts = MutableLiveData<ArrayList<ShortcutModel>>()
 
@@ -73,6 +76,8 @@ class DrawerMenuViewModel
         MutableLiveData()
     }
 
+    private val mango9Sessions = Mango9SessionStore(coreContext.context)
+
     private val coreListener = object : CoreListenerStub() {
         @WorkerThread
         override fun onDefaultAccountChanged(core: Core, account: Account?) {
@@ -88,6 +93,8 @@ class DrawerMenuViewModel
                 defaultAccountChangedEvent.postValue(
                     Event(account.params.identityAddress?.asStringUriOnly() ?: "")
                 )
+                mango9Sessions.activate(account.params.identityAddress?.asStringUriOnly())
+                hasMango9Session.postValue(mango9Sessions.load() != null)
             }
         }
 
@@ -191,12 +198,14 @@ class DrawerMenuViewModel
             list.add(model)
 
             if (account == coreContext.core.defaultAccount) {
+                mango9Sessions.activate(account.params.identityAddress?.asStringUriOnly())
                 defaultAccountChangedEvent.postValue(
                     Event(account.params.identityAddress?.asStringUriOnly() ?: "")
                 )
             }
         }
         accounts.postValue(list)
+        hasMango9Session.postValue(mango9Sessions.load() != null)
 
         val maxAccount = corePreferences.maxAccountsCount
         val accountsCount = list.size

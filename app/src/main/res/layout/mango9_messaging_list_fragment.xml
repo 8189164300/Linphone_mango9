@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="?attr/color_grey_100">
+
+        <ImageView
+            android:id="@+id/back"
+            style="@style/icon_top_bar_button_style"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/top_bar_height"
+            android:contentDescription="@string/content_description_go_back_icon"
+            android:src="@drawable/caret_left"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:tint="?attr/color_main1_500" />
+
+        <LinearLayout
+            android:id="@+id/title_block"
+            android:layout_width="0dp"
+            android:layout_height="@dimen/top_bar_height"
+            android:gravity="center_vertical"
+            android:orientation="vertical"
+            app:layout_constraintEnd_toStartOf="@id/add_group"
+            app:layout_constraintStart_toEndOf="@id/back"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <TextView
+                style="@style/default_text_style_800"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/mango9_messages_title"
+                android:textColor="?attr/color_main1_500"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/connection_status"
+                style="@style/default_text_style"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/mango9_chat_connecting"
+                android:textColor="?attr/color_main2_500"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/add_group"
+            style="@style/icon_top_bar_button_style"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/top_bar_height"
+            android:contentDescription="@string/mango9_chat_new_group"
+            android:src="@drawable/plus_circle"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:tint="?attr/color_main1_500" />
+
+        <View
+            android:id="@+id/header_separator"
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:background="?attr/color_separator"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/title_block" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/tabs"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginTop="10dp"
+            app:checkedButton="@id/team_tab"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/header_separator"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/team_tab"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="42dp"
+                android:layout_weight="1"
+                android:checkable="true"
+                android:text="@string/mango9_team_chat" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/sms_tab"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="42dp"
+                android:layout_weight="1"
+                android:checkable="true"
+                android:text="@string/mango9_sms" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/swipe_refresh"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_marginTop="6dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/tabs">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/list"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingBottom="24dp"
+                tools:listitem="@layout/mango9_messaging_list_cell" />
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+        <TextView
+            android:id="@+id/empty"
+            style="@style/default_text_style"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:padding="24dp"
+            android:text="@string/mango9_chat_empty"
+            android:textColor="?attr/color_main2_500"
+            android:textSize="13sp"
+            android:visibility="gone"
+            app:layout_constraintBottom_toBottomOf="@id/swipe_refresh"
+            app:layout_constraintEnd_toEndOf="@id/swipe_refresh"
+            app:layout_constraintStart_toStartOf="@id/swipe_refresh"
+            app:layout_constraintTop_toTopOf="@id/swipe_refresh" />
+
+        <LinearLayout
+            android:id="@+id/error_card"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_margin="16dp"
+            android:background="@drawable/shape_squircle_white_background"
+            android:elevation="3dp"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="18dp"
+            android:visibility="gone"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/tabs">
+
+            <TextView
+                android:id="@+id/error_message"
+                style="@style/default_text_style"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:textColor="@color/red_danger_500"
+                android:textSize="13sp"
+                tools:text="Mango9 messaging is unavailable." />
+
+            <Button
+                android:id="@+id/retry"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/mango9_chat_try_again" />
+        </LinearLayout>
+
+        <com.google.android.material.progressindicator.CircularProgressIndicator
+            android:id="@+id/loading"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:visibility="gone"
+            app:indicatorColor="?attr/color_main1_500"
+            app:layout_constraintBottom_toBottomOf="@id/swipe_refresh"
+            app:layout_constraintEnd_toEndOf="@id/swipe_refresh"
+            app:layout_constraintStart_toStartOf="@id/swipe_refresh"
+            app:layout_constraintTop_toTopOf="@id/swipe_refresh" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</layout>

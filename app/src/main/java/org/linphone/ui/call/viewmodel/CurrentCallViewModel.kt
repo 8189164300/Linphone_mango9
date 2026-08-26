@@ -57,6 +57,7 @@ import org.linphone.core.MediaDirection
 import org.linphone.core.MediaEncryption
 import org.linphone.core.SecurityLevel
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9PushCallerIdentityCache
 import org.linphone.ui.GenericViewModel
 import org.linphone.ui.call.conference.viewmodel.ConferenceViewModel
 import org.linphone.ui.call.model.AudioDeviceModel
@@ -1187,15 +1188,25 @@ class CurrentCallViewModel
         canBePaused.postValue(canCallBePaused())
 
         val address = call.callLog.remoteAddress
+        val pushedIdentity = if (state == Call.State.PushIncomingReceived) {
+            Mango9PushCallerIdentityCache.get(call.callLog.callId)
+        } else {
+            null
+        }
         val uri = if (corePreferences.onlyDisplaySipUriUsername) {
             address.username ?: ""
         } else {
             LinphoneUtils.getAddressAsCleanStringUriOnly(address)
         }
-        displayedAddress.postValue(uri)
+        displayedAddress.postValue(pushedIdentity?.handle ?: uri)
 
         val model = if (conferenceInfo != null) {
             coreContext.contactsManager.getContactAvatarModelForConferenceInfo(conferenceInfo)
+        } else if (pushedIdentity != null) {
+            val fakeFriend = coreContext.core.createFriend()
+            fakeFriend.name = pushedIdentity.displayName
+            fakeFriend.address = address
+            ContactAvatarModel(fakeFriend, address)
         } else {
             // Do not use contact avatar model from ContactsManager to be able to show
             // ZRTP verification status with the device that will answer the call

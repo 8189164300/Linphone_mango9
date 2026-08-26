@@ -235,7 +235,9 @@ class LinphoneUtils {
         @AnyThread
         fun isCallIncoming(callState: Call.State): Boolean {
             return when (callState) {
-                Call.State.IncomingReceived, Call.State.IncomingEarlyMedia -> true
+                Call.State.PushIncomingReceived,
+                Call.State.IncomingReceived,
+                Call.State.IncomingEarlyMedia -> true
                 else -> false
             }
         }
@@ -599,7 +601,9 @@ class LinphoneUtils {
         @WorkerThread
         fun callStateToString(state: Call.State): String {
             return when (state) {
-                Call.State.IncomingEarlyMedia, Call.State.IncomingReceived -> {
+                Call.State.PushIncomingReceived,
+                Call.State.IncomingEarlyMedia,
+                Call.State.IncomingReceived -> {
                     AppUtils.getString(R.string.call_state_incoming_received)
                 }
                 Call.State.OutgoingInit, Call.State.OutgoingProgress -> {

@@ -27,17 +27,26 @@ import android.view.ViewGroup
 import android.view.animation.Animation
 import android.view.animation.AnimationUtils
 import androidx.annotation.UiThread
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.findNavController
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
+import kotlinx.coroutines.launch
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.R
 import org.linphone.contacts.getListOfSipAddressesAndPhoneNumbers
 import org.linphone.core.tools.Log
 import org.linphone.databinding.ChatListFragmentBinding
+import org.linphone.mango9.Mango9ChatConnectionState
+import org.linphone.mango9.Mango9ChatState
+import org.linphone.mango9.Mango9ChatStore
+import org.linphone.mango9.Mango9ChatRouting
+import org.linphone.mango9.Mango9SessionStore
 import org.linphone.ui.fileviewer.FileViewerActivity
 import org.linphone.ui.fileviewer.MediaViewerActivity
 import org.linphone.ui.main.MainActivity.Companion.ARGUMENTS_CONVERSATION_ID
@@ -47,6 +56,7 @@ import org.linphone.ui.main.chat.viewmodel.ConversationsListViewModel
 import org.linphone.ui.main.contacts.model.ContactNumberOrAddressClickListener
 import org.linphone.ui.main.contacts.model.ContactNumberOrAddressModel
 import org.linphone.ui.main.contacts.model.NumberOrAddressPickerDialogModel
+import org.linphone.ui.main.crm.fragment.Mango9MessagingListFragment
 import org.linphone.ui.main.fragment.AbstractMainFragment
 import org.linphone.utils.ConfirmationDialogModel
 import org.linphone.utils.DialogUtils
@@ -67,6 +77,9 @@ class ConversationsListFragment : AbstractMainFragment() {
     private lateinit var adapter: ConversationsListAdapter
 
     private var bottomSheetDialog: BottomSheetDialogFragment? = null
+
+    private val mango9ChatStore by lazy { Mango9ChatStore.get(requireContext()) }
+    private val mango9Sessions by lazy { Mango9SessionStore(requireContext()) }
 
     private val numberOrAddressClickListener = object : ContactNumberOrAddressClickListener {
         @UiThread
@@ -102,6 +115,8 @@ class ConversationsListFragment : AbstractMainFragment() {
             "$TAG Default account changed, updating avatar in top bar & re-computing conversations"
         )
         listViewModel.filter()
+        mango9ChatStore.disconnect()
+        viewLifecycleOwner.lifecycleScope.launch { mango9ChatStore.connect() }
     }
 
     override fun onCreateAnimation(transit: Int, enter: Boolean, nextAnim: Int): Animation? {
@@ -192,6 +207,10 @@ class ConversationsListFragment : AbstractMainFragment() {
         adapter.createConversationWithFriendClickedEvent.observe(viewLifecycleOwner) {
             it.consume { friend ->
                 coreContext.postOnCoreThread {
+                    coreContext.contactsManager.mango9ChatTarget(friend)?.let { target ->
+                        Mango9ChatRouting.open(target)
+                        return@postOnCoreThread
+                    }
                     val singleAvailableAddress = LinphoneUtils.getSingleAvailableAddressForFriend(friend)
                     if (singleAvailableAddress != null) {
                         Log.i(
@@ -214,7 +233,9 @@ class ConversationsListFragment : AbstractMainFragment() {
         adapter.createConversationWithAddressClickedEvent.observe(viewLifecycleOwner) {
             it.consume { address ->
                 Log.i("$TAG Creating 1-1 conversation with to [${address.asStringUriOnly()}]")
-                listViewModel.createOneToOneChatRoomWith(address)
+                coreContext.postOnCoreThread {
+                    listViewModel.createOneToOneChatRoomWith(address)
+                }
             }
         }
 
@@ -226,6 +247,15 @@ class ConversationsListFragment : AbstractMainFragment() {
                 findNavController().navigate(action)
             }
         }
+
+        binding.mango9TeamChatEntry.setOnClickListener { openMango9Messages("team") }
+        binding.mango9SmsEntry.setOnClickListener { openMango9Messages("sms") }
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                mango9ChatStore.state.collect(::renderMango9Messages)
+            }
+        }
+        viewLifecycleOwner.lifecycleScope.launch { mango9ChatStore.connect() }
 
         listViewModel.conversations.observe(viewLifecycleOwner) {
             adapter.submitList(it)
@@ -421,6 +451,36 @@ class ConversationsListFragment : AbstractMainFragment() {
 
         dialog.show()
     }
+
+    private fun renderMango9Messages(state: Mango9ChatState) {
+        val visible = mango9Sessions.load() != null
+        binding.mango9MessagingBanner.visibility = if (visible) View.VISIBLE else View.GONE
+        if (!visible) return
+        val teamUnread = mango9ChatStore.teamUnreadCount(state)
+        val smsUnread = mango9ChatStore.smsUnreadCount(state)
+        binding.mango9TeamChatUnread.visibility = if (teamUnread > 0) View.VISIBLE else View.GONE
+        binding.mango9TeamChatUnread.text = unreadLabel(teamUnread)
+        binding.mango9SmsUnread.visibility = if (smsUnread > 0) View.VISIBLE else View.GONE
+        binding.mango9SmsUnread.text = unreadLabel(smsUnread)
+        val latest = mango9ChatStore.inboxPreviewRoom(state)
+        binding.mango9TeamChatPreview.text = when {
+            latest != null && latest.lastMessage.isNotBlank() ->
+                "${mango9ChatStore.roomTitle(latest)}: ${latest.lastMessage}"
+            state.connection == Mango9ChatConnectionState.Connected -> getString(R.string.mango9_chat_no_new_messages)
+            state.connection == Mango9ChatConnectionState.Connecting -> getString(R.string.mango9_chat_connecting)
+            else -> getString(R.string.mango9_chat_disconnected)
+        }
+    }
+
+    private fun openMango9Messages(initialTab: String) {
+        if (findNavController().currentDestination?.id != R.id.conversationsListFragment) return
+        val arguments = Bundle().apply {
+            putString(Mango9MessagingListFragment.ARG_INITIAL_TAB, initialTab)
+        }
+        findNavController().navigate(R.id.action_global_mango9MessagingListFragment, arguments)
+    }
+
+    private fun unreadLabel(count: Int): String = if (count > 99) "99+" else count.toString()
 
     private fun showDeleteConfirmationDialog(conversationModel: ConversationModel) {
         val dialogModel = ConfirmationDialogModel()

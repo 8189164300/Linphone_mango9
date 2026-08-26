@@ -8,6 +8,9 @@
             name="settingsClickedListener"
             type="View.OnClickListener" />
         <variable
+            name="crmClickListener"
+            type="View.OnClickListener" />
+        <variable
             name="recordingsClickListener"
             type="View.OnClickListener" />
         <variable
@@ -167,7 +170,28 @@
                 app:layout="@{@layout/drawer_shortcuts_list_cell}"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintBottom_toTopOf="@id/settings" />
+                app:layout_constraintBottom_toTopOf="@id/crm" />
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:id="@+id/crm"
+                style="@style/header_style"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:layout_marginEnd="10dp"
+                android:layout_marginBottom="10dp"
+                android:background="@drawable/squircle_transparent_button_background"
+                android:drawableStart="@drawable/address_book"
+                android:drawableEnd="@drawable/caret_right"
+                android:drawablePadding="8dp"
+                android:onClick="@{crmClickListener}"
+                android:padding="5dp"
+                android:text="@string/mango9_crm_title"
+                android:visibility="@{viewModel.hasMango9Session ? View.VISIBLE : View.GONE, default=gone}"
+                app:drawableTint="?attr/color_main1_500"
+                app:layout_constraintBottom_toTopOf="@id/settings"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent" />
 
             <androidx.appcompat.widget.AppCompatTextView
                 android:onClick="@{settingsClickedListener}"

@@ -43,6 +43,8 @@ import org.linphone.core.RegistrationState
 import org.linphone.core.VFS
 import org.linphone.core.tools.AndroidPlatformHelper
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9RegistrationFailure
+import org.linphone.mango9.Mango9SessionStore
 import org.linphone.utils.AppUtils
 import org.linphone.utils.Event
 import org.linphone.utils.FileUtils
@@ -53,6 +55,7 @@ class MainViewModel
     constructor() : ViewModel() {
     companion object {
         private const val TAG = "[Main ViewModel]"
+        private const val REGISTRATION_FAILURE_DELAY_MS = 8_000L
 
         const val NONE = 0
         const val MWI_MESSAGES_WAITING = 4
@@ -62,6 +65,7 @@ class MainViewModel
         const val SEND_NOTIFICATIONS_PERMISSION_NOT_GRANTED = 15
         const val DEFAULT_ACCOUNT_DISABLED = 18
         const val NETWORK_NOT_REACHABLE = 19
+        const val DEFAULT_ACCOUNT_REGISTRATION_FAILED = 20
     }
 
     val showAlert = MutableLiveData<Boolean>()
@@ -114,6 +118,10 @@ class MainViewModel
         MutableLiveData()
     }
 
+    val defaultAccountChangedEvent: MutableLiveData<Event<Boolean>> by lazy {
+        MutableLiveData()
+    }
+
     val clearFilesOrTextPendingSharingEvent: MutableLiveData<Event<Boolean>> by lazy {
         MutableLiveData()
     }
@@ -131,6 +139,10 @@ class MainViewModel
     private var nonDefaultAccountNotificationsCount = 0
 
     private var mwiNewMessages = false
+
+    private val mango9Sessions = Mango9SessionStore(coreContext.context)
+
+    private var registrationFailureGeneration = 0L
 
     private val coreListener = object : CoreListenerStub() {
         @WorkerThread
@@ -232,10 +244,32 @@ class MainViewModel
                 RegistrationState.Failed -> {
                     if (account == core.defaultAccount) {
                         Log.e("$TAG Default account registration failed!")
-                        val label = AppUtils.getString(
-                            R.string.connection_error_for_non_default_account
-                        )
-                        addAlert(DEFAULT_ACCOUNT_DISABLED, label)
+                        val identity = account.params.identityAddress?.asStringUriOnly().orEmpty()
+                        if (mango9Sessions.hasSession(identity)) {
+                            val label = Mango9RegistrationFailure(message).userMessage(
+                                account.params.identityAddress?.username
+                            )
+                            val generation = ++registrationFailureGeneration
+                            coreContext.postOnCoreThreadDelayed({
+                                if (
+                                    generation == registrationFailureGeneration &&
+                                    account == core.defaultAccount &&
+                                    account.state == RegistrationState.Failed &&
+                                    core.isNetworkReachable
+                                ) {
+                                    addAlert(
+                                        DEFAULT_ACCOUNT_REGISTRATION_FAILED,
+                                        label,
+                                        forceUpdate = true,
+                                    )
+                                }
+                            }, REGISTRATION_FAILURE_DELAY_MS)
+                        } else {
+                            val label = AppUtils.getString(
+                                R.string.connection_error_for_non_default_account
+                            )
+                            addAlert(DEFAULT_ACCOUNT_REGISTRATION_FAILED, label)
+                        }
                     } else if (core.isNetworkReachable) {
                         Log.e("$TAG Non-default account registration failed!")
                         val label = AppUtils.getString(
@@ -253,6 +287,8 @@ class MainViewModel
                     }
 
                     if (account == core.defaultAccount) {
+                        registrationFailureGeneration++
+                        removeAlert(DEFAULT_ACCOUNT_REGISTRATION_FAILED)
                         Log.i("$TAG Default account is now registered")
                         removeAlert(DEFAULT_ACCOUNT_DISABLED)
                     } else {
@@ -267,14 +303,18 @@ class MainViewModel
                 }
                 RegistrationState.Progress, RegistrationState.Refreshing -> {
                     if (account == core.defaultAccount) {
+                        registrationFailureGeneration++
                         Log.i(
                             "$TAG Default account is registering, removing registration failed alert for now"
                         )
                         removeAlert(DEFAULT_ACCOUNT_DISABLED)
+                        removeAlert(DEFAULT_ACCOUNT_REGISTRATION_FAILED)
                     }
                 }
                 RegistrationState.Cleared -> {
                     if (account == core.defaultAccount) {
+                        registrationFailureGeneration++
+                        removeAlert(DEFAULT_ACCOUNT_REGISTRATION_FAILED)
                         Log.w("$TAG Default account is now disabled")
                         val label = AppUtils.getString(
                             R.string.default_account_disabled
@@ -290,6 +330,9 @@ class MainViewModel
         override fun onDefaultAccountChanged(core: Core, account: Account?) {
             if (!monitorAccount) return
             if (core.globalState != GlobalState.On) return // In case of late remote provisioning
+
+            registrationFailureGeneration++
+            removeAlert(DEFAULT_ACCOUNT_REGISTRATION_FAILED)
 
             if (account == null) {
                 Log.w("$TAG Default account is now null!")
@@ -320,6 +363,7 @@ class MainViewModel
             }
 
             computeNonDefaultAccountNotificationsCount()
+            defaultAccountChangedEvent.postValue(Event(true))
         }
 
         @WorkerThread
@@ -331,6 +375,8 @@ class MainViewModel
                 "$TAG Account [${account.params.identityAddress?.asStringUriOnly()}] has been removed!"
             )
             removeAlert(DEFAULT_ACCOUNT_DISABLED)
+            registrationFailureGeneration++
+            removeAlert(DEFAULT_ACCOUNT_REGISTRATION_FAILED)
             removeAlert(NON_DEFAULT_ACCOUNT_NOT_CONNECTED)
             // Refresh REGISTER to re-compute alerts regarding accounts registration state
             core.refreshRegisters()
@@ -652,7 +698,7 @@ class MainViewModel
             Log.i("$TAG Max priority alert right now is [$type]")
             maxAlertLevel.postValue(type)
             val icon = when (type) {
-                DEFAULT_ACCOUNT_DISABLED -> {
+                DEFAULT_ACCOUNT_DISABLED, DEFAULT_ACCOUNT_REGISTRATION_FAILED -> {
                     R.drawable.warning_circle
                 }
                 NETWORK_NOT_REACHABLE -> {

@@ -1,17 +1,98 @@
 <?xml version='1.0' encoding='UTF-8'?>
 
 <!DOCTYPE resources [
-    <!ENTITY appName "Linphone">
+    <!ENTITY appName "Mango9">
 ]>
 
 <resources>
+    <string name="mango9_managed_xml_title">Linphone XML configuration</string>
+    <string name="mango9_managed_xml_description">Managed Linphone XML applied to this Mango9 installation.</string>
+    <string name="mango9_managed_root_ca_title">Root CA certificate</string>
+    <string name="mango9_managed_root_ca_description">PEM root certificate used for managed Mango9 connections.</string>
+    <string name="mango9_managed_config_uri_title">Provisioning URL</string>
+    <string name="mango9_managed_config_uri_description">HTTPS provisioning URL hosted on provision.mango9.com.</string>
     <string name="app_name" translatable="false">&appName;</string>
+
+    <!-- Mango9 managed account enrollment -->
+    <string name="mango9_brand_tagline">Business calling and messaging</string>
+    <string name="mango9_brand_subtitle">Securely connect this device to your Mango9 account.</string>
+    <string name="mango9_connect_account">Connect your account</string>
+    <string name="mango9_username_hint">Email or username</string>
+    <string name="mango9_email_hint">Email address</string>
+    <string name="mango9_code_hint">6-digit code</string>
+    <string name="mango9_change_email">Change email</string>
+    <string name="mango9_keep_signed_in">Keep me signed in</string>
+    <string name="mango9_secure_storage_note">Stored securely on this device. Your password is never saved.</string>
+    <string name="mango9_use_email_code">Use an email code</string>
+    <string name="mango9_use_password">Use password instead</string>
+    <string name="mango9_manual_sip_accessibility">Configure SIP account manually</string>
+
+    <!-- Mango9 CRM -->
+    <string name="mango9_crm_title">CRM</string>
+    <string name="mango9_crm_subtitle">Mango9 customer workspace</string>
+    <string name="mango9_crm_connected">CONNECTED</string>
+    <string name="mango9_crm_overview">Overview</string>
+    <string name="mango9_crm_workspace">CRM workspace</string>
+    <string name="mango9_crm_leads">Leads</string>
+    <string name="mango9_crm_clients">Clients</string>
+    <string name="mango9_crm_team_chat">Team Chat</string>
+    <string name="mango9_crm_leads_subtitle">Pipeline with dynamic CRM fields</string>
+    <string name="mango9_crm_clients_subtitle">Customer records in your CRM scope</string>
+    <string name="content_description_open_chat_room">Open conversation</string>
+    <string name="mango9_crm_team_chat_subtitle">Private and group CRM chat with presence</string>
+    <string name="mango9_crm_sign_in_required">CRM sign-in required</string>
+    <string name="mango9_crm_sign_in_explanation">Connect with a Mango9 CRM login to load the correct tenant, permissions, dashboard, messaging services, and SIP assignment.</string>
+    <string name="mango9_crm_connect_account">Connect Mango9 account</string>
+    <string name="mango9_crm_data_unavailable">CRM data unavailable</string>
+    <string name="mango9_crm_search_leads">Search lead name, phone, or email</string>
+    <string name="mango9_crm_search_clients">Search client name, phone, or email</string>
+    <string name="mango9_crm_no_records">No records found</string>
+    <string name="mango9_crm_no_contact">No contact information</string>
+    <string name="mango9_unnamed_record">Unnamed record</string>
+    <string name="mango9_crm_add_record">Add record</string>
+    <string name="mango9_crm_refresh">Refresh CRM</string>
+    <string name="mango9_crm_records_scope">Records in your CRM scope</string>
+    <string name="mango9_crm_team_chat_loading">Team Chat is being connected to the Mango9 messaging service.</string>
+    <string name="mango9_crm_group_filter">Filter by CRM group</string>
+    <string name="mango9_crm_date_filter">Filter by date</string>
+    <string name="mango9_crm_all">All</string>
+    <string name="mango9_crm_all_groups">All groups</string>
+    <string name="mango9_crm_all_dates">All dates</string>
+    <string name="mango9_crm_today">Today</string>
+    <string name="mango9_crm_last_7_days">Last 7 days</string>
+    <string name="mango9_crm_last_30_days">Last 30 days</string>
+    <string name="mango9_crm_lead">Lead</string>
+    <string name="mango9_crm_client">Client</string>
+    <string name="mango9_crm_add_named_record">Add %1$s</string>
+    <string name="mango9_crm_view_named_record">%1$s</string>
+    <string name="mango9_crm_edit_named_record">Edit %1$s</string>
+    <string name="mango9_crm_delete_named_record">Delete this %1$s?</string>
+    <string name="mango9_crm_first_name">First name</string>
+    <string name="mango9_crm_last_name">Last name</string>
+    <string name="mango9_crm_phone">Phone</string>
+    <string name="mango9_crm_email">Email</string>
+    <string name="mango9_crm_first_name_required">First name is required.</string>
+    <string name="mango9_crm_contact_required">Add a phone number or email address.</string>
+    <string name="mango9_crm_field_required">%1$s is required.</string>
+    <string name="mango9_crm_create">Create</string>
+    <string name="mango9_crm_edit">Edit</string>
+    <string name="mango9_crm_save">Save</string>
+    <string name="mango9_crm_delete">Delete</string>
+    <string name="mango9_crm_delete_warning">This removes the record from the CRM and cannot be undone.</string>
+    <string name="mango9_crm_not_set">Not set</string>
+    <string name="mango9_crm_mango9_call">Mango9</string>
+    <string name="mango9_crm_mango9_sms">Mango9 SMS</string>
+    <string name="mango9_crm_phone_call">Phone</string>
+    <string name="mango9_crm_text">Text</string>
+    <string name="mango9_crm_copy">Copy</string>
+    <string name="mango9_not_available_symbol" translatable="false">—</string>
+    <string name="mango9_chat_pending_attachments">%1$s   ×</string>
 
     <!-- Not translatable strings -->
     <string name="vertical_separator" translatable="false">|</string>
 
-    <string name="assistant_web_platform_link" translatable="false">subscribe.linphone.org</string>
-    <string name="assistant_linphone_contact_us_link" translatable="false">linphone.org/contact</string>
+    <string name="assistant_web_platform_link" translatable="false">www.mango9.com/support</string>
+    <string name="assistant_linphone_contact_us_link" translatable="false">www.mango9.com/support</string>
 
     <string name="notification_channel_call_id" translatable="false">linphone_6.0_notification_call_id</string>
     <string name="notification_channel_incoming_call_id" translatable="false">linphone_6.0_notification_incoming_call_id</string>
@@ -27,20 +108,49 @@
     <string name="emoji_surprised" translatable="false">😮</string>
     <string name="emoji_tear" translatable="false">😢</string>
 
-    <string name="help_about_open_source_licenses_title" translatable="false">GNU General Public License v3.0</string>
-    <string name="help_about_open_source_licenses_subtitle" translatable="false">© Belledonne Communications 2010-2025</string>
+    <string name="help_about_open_source_licenses_title" translatable="false">Licensing</string>
+    <string name="help_about_open_source_licenses_subtitle" translatable="false">Open-source licenses, attribution, and source code.</string>
+    <string name="mango9_help_support_title">Mango9 support</string>
+    <string name="mango9_help_support_subtitle">Get help with Mango9 calling, messaging, and account setup.</string>
+    <string name="mango9_help_privacy_subtitle">How Mango9 collects and uses information.</string>
+    <string name="mango9_help_safety_title">Account and safety support</string>
+    <string name="mango9_help_safety_subtitle">Report abusive content or request account access or termination.</string>
+    <string name="mango9_help_safety_email" translatable="false">mailto:support@mango9.com?subject=Mango9%20Android%20account%20or%20safety%20support</string>
+
+    <string name="mango9_licensing_title">Licensing</string>
+    <string name="mango9_licensing_intro">Mango9 for Android is free and open-source software based on Linphone. Mango9 modified the Linphone Android application in 2026. The notices and exact-version source links below apply to this app and its included communication components.</string>
+    <string name="mango9_licensing_warranty">This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. You may copy, modify, and redistribute the covered software under the license terms shown below.</string>
+    <string name="mango9_licensing_app_section">Mango9 application</string>
+    <string name="mango9_licensing_gpl_title" translatable="false">GNU General Public License v3.0 or later</string>
+    <string name="mango9_licensing_gpl_subtitle">License for the Mango9 Android application</string>
+    <string name="mango9_licensing_source_title">Mango9 corresponding source code</string>
+    <string name="mango9_licensing_source_missing">Public repository URL must be configured before distribution</string>
+    <string name="mango9_licensing_source_available">Public corresponding-source repository for Mango9 Android %1$s (build %2$d)</string>
+    <string name="mango9_licensing_upstream_app_title">Linphone Android upstream source</string>
+    <string name="mango9_licensing_upstream_app_subtitle" translatable="false">Original Linphone Android 6.2.6 source and attribution</string>
+    <string name="mango9_licensing_sdk_section">Communication SDK</string>
+    <string name="mango9_licensing_sdk_license_title" translatable="false">GNU General Public License v3.0</string>
+    <string name="mango9_licensing_sdk_license_subtitle" translatable="false">License declared by Linphone SDK Android 5.5.17-pre.1+3896ec0681</string>
+    <string name="mango9_licensing_sdk_source_title">Linphone SDK source</string>
+    <string name="mango9_licensing_sdk_source_subtitle" translatable="false">Exact SDK source commit 3896ec0681</string>
+    <string name="mango9_licensing_third_party_title">Linphone third-party components</string>
+    <string name="mango9_licensing_third_party_subtitle">Licenses for native SDK dependencies</string>
+    <string name="mango9_licensing_android_section">Direct Android libraries</string>
+    <string name="mango9_licensing_android_libraries_title">AndroidX, Material, and application libraries</string>
+    <string name="mango9_licensing_android_libraries_subtitle" translatable="false">AndroidX and Material (Apache 2.0); AppAuth 0.11.1 (Apache 2.0); OkHttp 5.3.0 (Apache 2.0); Coil 3.4.0 (Apache 2.0); DotsIndicator 5.1.0 (Apache 2.0); PhotoView 2.3.0 (Apache 2.0). Exact coordinates are pinned in gradle/libs.versions.toml.</string>
+    <string name="mango9_licensing_attribution">Linphone is originally published by Belledonne Communications SARL. Mango9 is a modified version and is not endorsed by Belledonne Communications. Copyright notices in the source remain with their respective holders. Mango9 modifications are released under GNU GPL v3.0 or later.</string>
     <string name="help_advanced_send_debug_logs_email_address" translatable="false">linphone-android@belledonne-communications.com</string>
 
-    <string name="website_contact_url" translatable="false">https://linphone.org/contact</string>
-    <string name="website_download_url" translatable="false">https://linphone.org/linphone-softphone</string>
-    <string name="website_user_guide_url" translatable="false">https://linphone.org/en/docs/</string>
-    <string name="website_privacy_policy_url" translatable="false">https://linphone.org/en/privacy-policy</string>
-    <string name="website_terms_and_conditions_url" translatable="false">https://linphone.org/en/terms-of-use</string>
-    <string name="web_platform_register_email_url" translatable="false">https://subscribe.linphone.org/register/email</string>
-    <string name="web_platform_forgotten_password_url" translatable="false">https://subscribe.linphone.org</string>
-    <string name="website_translate_weblate_url" translatable="false">https://weblate.linphone.org/</string>
+    <string name="website_contact_url" translatable="false">https://www.mango9.com/support</string>
+    <string name="website_download_url" translatable="false">https://www.mango9.com</string>
+    <string name="website_user_guide_url" translatable="false">https://www.mango9.com/support</string>
+    <string name="website_privacy_policy_url" translatable="false">https://www.mango9.com/privacy</string>
+    <string name="website_terms_and_conditions_url" translatable="false">https://www.mango9.com</string>
+    <string name="web_platform_register_email_url" translatable="false">https://www.mango9.com/support</string>
+    <string name="web_platform_forgotten_password_url" translatable="false">https://www.mango9.com/support</string>
+    <string name="website_translate_weblate_url" translatable="false">https://www.mango9.com/support</string>
     <string name="website_open_source_licences_usage_url" translatable="false">https://wiki.linphone.org/xwiki/wiki/public/view/Linphone/Third%20party%20components%20/#Hlinphone-android</string>
-    <string name="conversation_end_to_end_encrypted_bottom_sheet_link" translatable="false"><u>https://linphone.org/en/features/#security</u></string>
+    <string name="conversation_end_to_end_encrypted_bottom_sheet_link" translatable="false"><u>https://www.mango9.com/privacy</u></string>
 
     <string name="conversation_one_to_one_hidden_subject" translatable="false">Dummy subject</string>
 
@@ -93,6 +203,9 @@
     <string name="notification_channel_service_desc">This service will run all the time to keep app alive and allow you to receive calls and messages without push notifications.</string>
     <string name="notification_channel_chat_name">Instant messages notifications</string>
     <string name="notification_channel_account_error_name">Account error notifications</string>
+    <string name="mango9_push_team_chat">New Team Chat message</string>
+    <string name="mango9_push_sms">New SMS message</string>
+    <string name="mango9_push_lead">A lead was created or assigned to you</string>
     <string name="notification_chat_message_reaction_received">Reacted by %1$s to: %2$s</string>
     <string name="notification_mark_message_as_read">Mark as read</string>
     <string name="notification_reply_to_message">Reply</string>
@@ -423,7 +536,7 @@
     <string name="manage_account_device_remove">Remove</string>
     <string name="manage_account_device_last_connection">Last connection:</string>
     <string name="manage_account_dialog_remove_account_title">Sign out of your account?</string>
-    <string name="manage_account_dialog_remove_account_message">If you wish to delete your account permanently, go to: https://sip.linphone.org</string>
+    <string name="manage_account_dialog_remove_account_message">This removes the SIP account and its local data from this device. Contact Mango9 support to close a managed account.</string>
     <string name="manage_account_outbound_proxy">Outbound SIP Proxy</string>
     <string name="manage_account_dialog_outbound_proxy_help_message">If this field is filled, the outbound proxy will be enabled automatically. Leave it empty to disable it.</string>
 
@@ -1049,6 +1162,76 @@
     <string name="content_description_cancel_files_or_text_pending_sharing">Click to cancel files or text pending sharing</string>
     <string name="content_description_close_drawer_menu">Closes menu</string>
 
+    <!-- Mango9 Team Chat and SMS -->
+    <string name="mango9_messages_title">Mango9 Messages</string>
+    <string name="mango9_team_chat">Team Chat</string>
+    <string name="mango9_sms">SMS</string>
+    <string name="mango9_sms_conversations">SMS conversations</string>
+    <string name="mango9_chat_no_new_messages">No new messages</string>
+    <plurals name="mango9_chat_unread_messages">
+        <item quantity="one">%d unread message</item>
+        <item quantity="other">%d unread messages</item>
+    </plurals>
+    <string name="mango9_chat_connecting">Connecting to Mango9 chat…</string>
+    <string name="mango9_chat_connected">Connected</string>
+    <string name="mango9_chat_disconnected">Disconnected — reconnecting…</string>
+    <string name="mango9_chat_new_group">New group</string>
+    <string name="mango9_chat_empty">No teammates or groups are available.</string>
+    <string name="mango9_sms_empty">No SMS conversations yet.</string>
+    <string name="mango9_chat_try_again">Try again</string>
+    <string name="mango9_chat_transport">Mango9 chat</string>
+    <string name="mango9_sms_transport">Mango9 SMS</string>
+    <string name="mango9_chat_safety_options">Conversation safety options</string>
+    <string name="mango9_chat_start_conversation">Start the conversation.</string>
+    <string name="mango9_chat_attach">Attach photo, video, or file</string>
+    <string name="mango9_chat_record_voice">Record a voice message</string>
+    <string name="mango9_chat_recording">Recording voice message — tap the microphone to attach</string>
+    <string name="mango9_chat_write_message">Write a message</string>
+    <string name="mango9_chat_send">Send message</string>
+    <string name="mango9_chat_online">Online</string>
+    <string name="mango9_chat_offline">Offline</string>
+    <string name="mango9_contact_typing">Typing…</string>
+    <string name="mango9_chat_blocked">Blocked</string>
+    <string name="mango9_chat_typing">%1$s is typing…</string>
+    <string name="mango9_chat_group_status">%1$d members · %2$d online</string>
+    <string name="mango9_chat_sent">Sent</string>
+    <string name="mango9_chat_delivered">Delivered</string>
+    <string name="mango9_chat_read">Read</string>
+    <string name="mango9_chat_sending">Sending</string>
+    <string name="mango9_chat_failed">Failed</string>
+    <string name="mango9_sms_sender">From %1$s</string>
+    <string name="mango9_sms_no_sender">No approved Mango9 SMS number is available for this account.</string>
+    <string name="mango9_chat_group_label">Group</string>
+    <string name="mango9_chat_sms_label">SMS</string>
+    <string name="mango9_chat_online_label">Online</string>
+    <string name="mango9_chat_offline_label">Offline</string>
+    <string name="mango9_chat_new_group_title">New group</string>
+    <string name="mango9_chat_choose_two">Choose at least two teammates.</string>
+    <string name="mango9_chat_create">Create</string>
+    <string name="mango9_chat_manage_members">Group members</string>
+    <string name="mango9_chat_save_members">Save members</string>
+    <string name="mango9_chat_report_conversation">Report conversation</string>
+    <string name="mango9_chat_report_message">Report message</string>
+    <string name="mango9_chat_hide_message">Hide message</string>
+    <string name="mango9_chat_show_hidden">Show hidden messages</string>
+    <string name="mango9_chat_block_user">Block user</string>
+    <string name="mango9_chat_unblock_user">Unblock user</string>
+    <string name="mango9_chat_delete_conversation">Delete conversation</string>
+    <string name="mango9_chat_delete_title">Delete this conversation?</string>
+    <string name="mango9_chat_delete_warning">The conversation history will be removed from this app. A new incoming message can start it again.</string>
+    <string name="mango9_chat_report_title">Report this conversation?</string>
+    <string name="mango9_chat_report_message_title">Report this message?</string>
+    <string name="mango9_chat_report_explanation">Mango9 will open a pre-addressed email to support. You can add details or screenshots before sending the report.</string>
+    <string name="mango9_chat_continue">Continue</string>
+    <string name="mango9_sms_mute">Mute conversation</string>
+    <string name="mango9_sms_unmute">Unmute conversation</string>
+    <string name="mango9_chat_unblock_to_send">Unblock this user from the conversation menu to send a message.</string>
+    <string name="mango9_chat_attachment_unavailable">This attachment is no longer available.</string>
+    <string name="mango9_chat_attachment_limit">You can attach up to 12 files.</string>
+    <string name="mango9_chat_microphone_required">Microphone access is required to record a voice message.</string>
+    <string name="mango9_chat_recording_failed">Voice recording could not be started.</string>
+    <string name="mango9_chat_remove_attachments">Tap here to remove all selected attachments</string>
+
     <!-- Copy of private hosts_allowlist_sample in androidx.car.app:app:1.7.0-beta01, as they recommend it -->
     <string-array name="hosts_allowlist_sample_copy" translatable="false">
         <item>fdb00c43dbde8b51cb312aa81d3b5fa17713adb94b28f598d77f8eb89daceedf,
@@ -1069,4 +1252,12 @@
         <item>50e603d333c6049a37bd751375d08f3bd0abebd33facd30bd17b64b89658b421,
             com.google.android.apps.automotive.templates.host</item>
         </string-array>
+    <string name="mango9_call_routing_title">Mango9 call routing</string>
+    <string name="mango9_call_routing_refresh">Refresh call routing</string>
+    <string name="mango9_call_forwarding_title">Call forwarding</string>
+    <string name="mango9_call_forwarding_enabled">Enabled</string>
+    <string name="mango9_call_forwarding_off">Off</string>
+    <string name="mango9_call_forwarding_destination">Forward calls to</string>
+    <string name="mango9_call_forwarding_save">Save forwarding</string>
+    <string name="mango9_call_forwarding_saving">Saving…</string>
 </resources>

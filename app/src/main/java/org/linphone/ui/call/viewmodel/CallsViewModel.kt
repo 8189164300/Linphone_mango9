@@ -180,7 +180,9 @@ class CallsViewModel
                     Call.State.OutgoingInit, Call.State.OutgoingRinging, Call.State.OutgoingProgress, Call.State.OutgoingEarlyMedia -> {
                         showOutgoingCallEvent.postValue(Event(true))
                     }
-                    Call.State.IncomingReceived, Call.State.IncomingEarlyMedia -> {
+                    Call.State.PushIncomingReceived,
+                    Call.State.IncomingReceived,
+                    Call.State.IncomingEarlyMedia -> {
                         showIncomingCallEvent.postValue(Event(true))
                     }
                     else -> {}

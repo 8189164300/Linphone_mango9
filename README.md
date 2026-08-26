@@ -1,182 +1,95 @@
+# Mango9 for Android
 
-[![pipeline status](https://gitlab.linphone.org/BC/public/linphone-android/badges/master/pipeline.svg)](https://gitlab.linphone.org/BC/public/linphone-android/commits/master) 
-[![weblate status](https://weblate.linphone.org/widget/linphone/linphone-android-6-0/status-badge.png)](https://weblate.linphone.org/engage/linphone/)
+Mango9 for Android is a modified version of the Linphone Android application.
+It provides Mango9 account provisioning, SIP calling through the Mango9 proxy,
+CRM access, contacts, Team Chat, SMS/MMS, and Firebase Cloud Messaging support.
 
-Linphone is an open source softphone for voice and video over IP calling and instant messaging.
+This repository is the public corresponding-source location displayed by the
+Mango9 app. The immutable release tag
+[`android-6.2.6-build-602006`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.6-build-602006)
+corresponds to Mango9 Android version 6.2.6, version code 602006.
 
-It is fully SIP-based, for all calling, presence and IM features.
+Mango9 modified the upstream Linphone Android application in 2026. Mango9 is
+not affiliated with or endorsed by Belledonne Communications SARL.
 
-General description is available from [linphone web site](https://linphone.org).
+## Repository layout
 
-### How to get it
+The public `8189164300/Linphone_mango9` repository contains both mobile
+platforms without rewriting either platform's history:
 
-[<img src="metadata/google-play-badge.png" height="60" alt="Get it on Google Play">](https://play.google.com/store/apps/details?id=org.linphone)[<img src="metadata/f-droid-badge.png" height="60" alt="Get it on F-Droid">](https://f-droid.org/en/packages/org.linphone/)
+- `main` and `ios`: Mango9 iOS source; App Store releases use immutable
+  `ios-<version>-build-<number>` tags.
+- `android`: Mango9 Android source; Android releases use immutable
+  `android-<version>-build-<versionCode>` tags.
 
-You can also download APKs signed with our key from [our website](https://download.linphone.org/releases/android/?C=M;O=D).
+Always use the tag matching the installed binary when obtaining corresponding
+source. A moving branch may contain changes for a later build.
 
-### License
+## License
 
-Copyright © Belledonne Communications
+The Mango9 application modifications are distributed under the GNU General
+Public License, version 3 or (at your option) any later version. See
+[`LICENSE.txt`](LICENSE.txt).
 
-Linphone is dual licensed, and is available either :
+Linphone Android is originally published by Belledonne Communications SARL.
+Original copyright and license notices remain in the source files. The names
+“Linphone” and “Belledonne Communications” are used only for attribution and to
+identify the upstream project.
 
- - under a [GNU/GPLv3 license](https://www.gnu.org/licenses/gpl-3.0.en.html), for free (open source). Please make sure that you understand and agree with the terms  of this license before using it (see LICENSE file for details).
+This program is provided without warranty; without even the implied warranty
+of merchantability or fitness for a particular purpose.
 
- - under a proprietary license, for a fee, to be used in closed source applications. Contact [Belledonne Communications](https://linphone.org/contact) for any question about costs and services.
+See [`OPEN_SOURCE_NOTICES.md`](OPEN_SOURCE_NOTICES.md) for the exact upstream
+application revision, Linphone SDK artifact/source revision, and direct
+dependency license information.
 
-### Documentation
+## Source relationship
 
-- Supported features and RFCs : https://www.linphone.org/linphone-softphone/#linphone-fonctionnalites
+- Mango9 release source:
+  [`android-6.2.6-build-602006`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.6-build-602006)
+- Upstream Linphone Android tag: [`6.2.6`](https://github.com/BelledonneCommunications/linphone-android/tree/6.2.6)
+- Upstream application commit:
+  [`42b1fcce3c8037e6f5a891cf8d108eb47e308386`](https://github.com/BelledonneCommunications/linphone-android/commit/42b1fcce3c8037e6f5a891cf8d108eb47e308386)
+- Linphone SDK Android artifact: `5.5.17-pre.1+3896ec0681`
+- Linphone SDK source commit:
+  [`3896ec0681`](https://github.com/BelledonneCommunications/linphone-sdk/commit/3896ec0681)
 
-- Linphone public wiki : https://wiki.linphone.org/xwiki/wiki/public/view/Linphone/
+This branch contains the complete modified application source and build scripts,
+not only a patch against upstream.
 
-- Tutorials : https://gitlab.linphone.org/BC/public/tutorials/-/tree/master/android/kotlin
+## Building
 
-# What's new
+Requirements:
 
-6.0.0 release is a completely new version, designed with UX/UI experts and marks a turning point in design, features, and user experience. The improvements make this version smoother and simpler for both developers and users.
+- Android Studio with Android SDK 37
+- Java 21
+- Android 9/API 28 or newer for the target device
 
-You can take a look at the [CHANGELOG.md](CHANGELOG.md) file for a non-exhaustive list of changes of this new version and of the newly added features, the most exciting ones being the improved fluidity, a real multi-accounts support and asymmetrical video in calls.
+Open the project in Android Studio, or build from the repository root:
 
-This release only works on Android OS 9.0 and newer.
-
-# Building the app
-
-If you have Android Studio, simply open the project, wait for the gradle synchronization and then build/install the app.  
-It will download the linphone library from our Maven repository as an AAR file so you don't have to build anything yourself.
-
-If you don't have Android Studio, you can build and install the app using gradle:
-```
-./gradlew assembleDebug
-```
-will compile the APK file (assembleRelease to instead if you want to build a release package), and then
-```
-./gradlew installDebug
-```
-to install the generated APK in the previous step (use installRelease instead if you built a release package).
-
-APK files are stored within ```./app/build/outputs/apk/debug/``` and ```./app/build/outputs/apk/release/``` directories.
-
-When building a release AppBundle, use releaseAppBundle target instead of release.   
-Also make sure you have a NDK installed and that you have an environment variable named ```ANDROID_NDK_HOME``` that contains the path to the NDK.  
-This is to be able to include native libraries symbols into app bundle for the Play Store.
-
-## Building a local SDK
-
-1. Clone the linphone-sdk repository from out gitlab:
-```
-git clone https://gitlab.linphone.org/BC/public/linphone-sdk.git --recursive
-```
-
-2. Follow the instructions in the linphone-sdk/README file to build the SDK.
-
-3. Create or edit the gradle.properties file in $GRADLE_USER_HOME (usually ~/.gradle/) and add the absolute path to your linphone-sdk build directory, for example:
-```
-LinphoneSdkBuildDir=/home/<username>/linphone-sdk/build/
+```sh
+./gradlew verifyMango9StaticPolicy testDebugUnitTest assembleDebug
 ```
 
-4. Rebuild the app in Android Studio.
+The debug APK is written to `app/build/outputs/apk/debug/`.
 
-## Native debugging
+The build downloads the pinned Linphone SDK Android AAR from Linphone's public
+Maven repository. To build the SDK locally, clone its exact source revision with
+submodules and follow its Android build instructions, then set
+`LinphoneSdkBuildDir` in your Gradle user properties to the resulting SDK build
+directory.
 
-1. Install LLDB from SDK Tools in Android-studio.
+Release signing requires your own Android keystore. No signing key, SIP secret,
+CRM credential, Firebase service-account key, or FCM server credential is
+included in this public repository. `app/mango9-google-services.json` is the
+Firebase Android client configuration embedded in the application; it is not a
+server credential.
 
-2. In Android-studio go to Run->Edit Configurations->Debugger.
+## Verification
 
-3. Select 'Dual' or 'Native' and add the path to linphone-sdk debug libraries (build/libs-debug/ for example).
+The source branch includes JVM tests, Android instrumentation tests, strict
+Android lint, and a Mango9 static-policy gate. The detailed implementation and
+verification record is in [`MANGO9_ANDROID_PARITY.md`](MANGO9_ANDROID_PARITY.md).
 
-4. Open native file and put your breakpoint on it.
-
-5. Make sure you are using the debug AAR in the app/build.gradle script and not the release one (to have faster builds by default the release AAR is used even for debug APK flavor).
-
-6. Debug app.
-
-## Known issues
-
-- If you have the following build issue `AAPT: error: resource drawable/linphone_logo_tinted (aka org.linphone:drawable/linphone_logo_tinted) not found`, delete the `app/src/main/res/xml/contacts.xml` file (you can do it simply with `git clean -f` command) and start the build again.
-
-- If you encounter the `couldn't find "libc++_shared.so"` crash when the app starts, simply clean the project in Android Studio (under Build menu) and build again.
-Also check you have built the SDK for the right CPU architecture using the `-DLINPHONESDK_ANDROID_ARCHS=armv7,arm64,x86,x86_64` cmake parameter.
-
-- Push notification might not work when app has been started by Android Studio consecutively to an install. Remove the app from the recent activity view and start it again using the launcher icon to resolve this.
-
-## Troubleshooting
-
-### Behavior issue
-
-When submitting an issue on our [Github repository](https://github.com/BelledonneCommunications/linphone-android), please follow the template and attach the matching library logs.
-
-Starting 6.0.0 release, logs are always enabled and stored locally on the device, you can clear them/upload them securely on our server for sharing by going into the Help → Troubleshooting page.
-
-### Native crash
-
-First of all, to be able to get a symbolized stack trace, you need the debug version of our libraries.
-
-If you haven't built the SDK locally (see [building a local SDK](#BuildingalocalSDK)), here's how to get them:
-
-1. Go to our [maven repository](https://download.linphone.org/maven_repository/org/linphone/linphone-sdk-android/) and find the directory that matches the version of our SDK that crashed.
-
-2. Download the linphone-sdk-android-<version>-libs-debug.zip archive.
-
-3. Extract the symbolized libraries somewhere on your computer, it will create a ```libs-debug``` directory.
-
-Now you need the ```ndk-stack``` tool and possibly ```adb logcat```.
-If your computer isn't used for Android development, you can download those tools from [Google website](https://developer.android.com/studio#downloads), in the ```Command line tools only``` section.
-
-Once you have the debug libraries and the proper tools installed, you can use the ```ndk-stack``` tool to symbolize your stacktrace. Note that you also need to know the architecture (armv7, arm64, x86, etc...) of the libraries that were used.
-
-If you know the CPU architecture of your device (most probably arm64 if it's a recent device) you can use the following to get the stacktrace from a device plugged to a computer:
-```
-adb logcat -d | ndk-stack -sym ./libs-debug/arm64-v8a/
-```
-If you don't know the CPU architecture, use the following instead:
-```
-adb logcat -d | ndk-stack -sym ./libs-debug/`adb shell getprop ro.product.cpu.abi | tr -d '\r'` 
-```
-Warning: This command won't print anything until you reproduce the crash!
-
-Starting [NDK r29](https://github.com/android/ndk/wiki/Changelog-r29) you will be able to directly use the ```libs-debug.zip``` file in ```ndk-stack -sym``` argument.
-
-## Create an APK with a different package name
-
-Simply edit the ```app/build.gradle.kts``` file and change the value of the ```packageName``` variable.
-The next build will automatically use this value everywhere thanks to ```manifestPlaceholders``` feature of gradle and Android.
-
-We no longer build the debug flavor with a different package name, but if you still want that behavior you only have to change the value of ```useDifferentPackageNameForDebugBuild``` to ```true```. When enabled, app built and installed by Android studio will have ```org.linphone.debug``` package name instead of ```org.linphone```.
-
-If you encounter
-```
-Execution failed for task ':app:processDebugGoogleServices'.
-> No matching client found for package name 'your package name'
-```
-error when building, make sure you have replaced the ```app/google-services.json``` file by yours (containing your package name).
-If you don't have such file because you don't rely on Firebase Cloud Messaging features nor Crashlytics, delete the file instead.
-
-## Firebase push notifications
-
-Now that Google Cloud Messaging has been deprecated and will be completely removed on April 11th 2019, the only official way of using push notifications is through Firebase.
-
-However to make Firebase push notifications work, the project needs to have a ```app/google-services.json``` file that contains the configuration.  
-We have archived our own, so you can build your linphone-android application and still receive push notifications from our free SIP service (sip.linphone.org).
-If you delete it, you won't receive any push notification.
-
-If you have your own push server, replace this file by yours.
-
-## Translations
-
-We no longer use transifex for the translation process, instead we have deployed our own instance of [Weblate](https://weblate.linphone.org/).
-
-Due to the full app rewrite we can't re-use previous translations, so we'll be very happy if you want to contribute.
-
-<a href="https://weblate.linphone.org/engage/linphone/">
-<img src="https://weblate.linphone.org/widget/linphone/linphone-android-6-2/multi-auto.svg" alt="Translation status" />
-</a>
-
-# CONTRIBUTIONS
-
-In order to submit a patch for inclusion in linphone's source code:
-
-1. First make sure your patch applies to latest git sources before submitting: patches made to old versions can't and won't be merged.
-2. Fill out and send us an email with the link of pull-request and the [Contributor Agreement](https://linphone.org/sites/default/files/bc-contributor-agreement_0.pdf) for your patch to be included in the git tree.
-
-The goal of this agreement to grant us peaceful exercise of our rights on the linphone source code, while not losing your rights on your contribution.
+The public-source tag makes the source available; it does not include Mango9
+production credentials and does not grant access to Mango9 services.

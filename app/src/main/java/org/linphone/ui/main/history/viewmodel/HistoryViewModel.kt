@@ -33,6 +33,7 @@ import org.linphone.core.Conference
 import org.linphone.core.Core
 import org.linphone.core.CoreListenerStub
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9ChatRouting
 import org.linphone.ui.GenericViewModel
 import org.linphone.ui.main.history.model.CallLogHistoryModel
 import org.linphone.ui.main.history.model.CallLogModel
@@ -215,6 +216,8 @@ class HistoryViewModel
     fun goToConversation() {
         coreContext.postOnCoreThread { core ->
             if (!::address.isInitialized) return@postOnCoreThread
+
+            if (Mango9ChatRouting.openIfNeeded(address)) return@postOnCoreThread
 
             val account = core.defaultAccount
             val localSipUri = account?.params?.identityAddress?.asStringUriOnly()

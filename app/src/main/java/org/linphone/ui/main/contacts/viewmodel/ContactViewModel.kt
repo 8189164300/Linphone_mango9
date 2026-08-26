@@ -42,6 +42,9 @@ import org.linphone.core.CoreListenerStub
 import org.linphone.core.Friend
 import org.linphone.core.SecurityLevel
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9ChatRouting
+import org.linphone.mango9.Mango9ChatState
+import org.linphone.mango9.Mango9ChatStore
 import org.linphone.ui.GenericViewModel
 import org.linphone.ui.main.contacts.model.ContactAvatarModel
 import org.linphone.ui.main.contacts.model.ContactDeviceModel
@@ -98,6 +101,12 @@ class ContactViewModel
     val chatDisabled = MutableLiveData<Boolean>()
 
     val videoCallDisabled = MutableLiveData<Boolean>()
+
+    val mango9PresenceVisible = MutableLiveData(false)
+
+    val mango9PresenceText = MutableLiveData("")
+
+    val mango9PresenceOnline = MutableLiveData(false)
 
     val existingConversationId = MutableLiveData<String>()
 
@@ -242,6 +251,11 @@ class ContactViewModel
 
     private var refKey: String = ""
 
+    @Volatile
+    private var mango9UserId: Int? = null
+
+    private val mango9ChatStore = Mango9ChatStore.get(coreContext.context)
+
     init {
         isStored.value = false
         isReadOnly.value = false
@@ -266,6 +280,9 @@ class ContactViewModel
 
             expandDevicesTrust.postValue(defaultDomain)
             coreContext.contactsManager.addListener(contactsListener)
+        }
+        viewModelScope.launch {
+            mango9ChatStore.state.collect(::updateMango9Presence)
         }
     }
 
@@ -336,8 +353,33 @@ class ContactViewModel
         val addressesAndNumbers = friend.getListOfSipAddressesAndPhoneNumbers(listener)
         sipAddressesAndPhoneNumbers.postValue(addressesAndNumbers)
 
+        mango9UserId = coreContext.contactsManager.mango9ChatTarget(friend)?.userId
+        updateMango9Presence(mango9ChatStore.state.value)
+
         fetchDevicesAndTrust()
         lookUpExistingChatRoom()
+    }
+
+    private fun updateMango9Presence(state: Mango9ChatState) {
+        val userId = mango9UserId
+        mango9PresenceVisible.postValue(userId != null)
+        if (userId == null) {
+            mango9PresenceText.postValue("")
+            mango9PresenceOnline.postValue(false)
+            return
+        }
+        val typing = userId in state.typingUserIds
+        val online = userId in state.onlineUserIds
+        mango9PresenceText.postValue(
+            AppUtils.getString(
+                when {
+                    typing -> R.string.mango9_contact_typing
+                    online -> R.string.mango9_chat_online
+                    else -> R.string.mango9_chat_offline
+                },
+            ),
+        )
+        mango9PresenceOnline.postValue(online && !typing)
     }
 
     @UiThread
@@ -478,6 +520,10 @@ class ContactViewModel
     @UiThread
     fun goToConversation() {
         coreContext.postOnCoreThread {
+            coreContext.contactsManager.mango9ChatTarget(friend)?.let { target ->
+                Mango9ChatRouting.open(target)
+                return@postOnCoreThread
+            }
             val singleAvailableAddress = LinphoneUtils.getSingleAvailableAddressForFriend(friend)
             if (singleAvailableAddress != null) {
                 Log.i(
@@ -497,6 +543,7 @@ class ContactViewModel
 
     @WorkerThread
     private fun goToConversation(remote: Address) {
+        if (Mango9ChatRouting.openIfNeeded(remote)) return
         val core = coreContext.core
         val account = core.defaultAccount
         val localSipUri = account?.params?.identityAddress?.asStringUriOnly()

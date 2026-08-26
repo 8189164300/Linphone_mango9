@@ -146,6 +146,9 @@ abstract class AddressSelectionViewModel
     @WorkerThread
     abstract fun onSingleAddressSelected(address: Address, friend: Friend?)
 
+    @WorkerThread
+    open fun onFriendSelectedDirectly(friend: Friend): Boolean = false
+
     init {
         multipleSelectionMode.value = false
         isEmpty.value = true
@@ -542,6 +545,11 @@ abstract class AddressSelectionViewModel
                 val fakeFriend = core.createFriend()
                 fakeFriend.addAddress(model.address)
                 onAddressSelected(model.address, fakeFriend)
+                return@postOnCoreThread
+            }
+
+            if (multipleSelectionMode.value != true && onFriendSelectedDirectly(friend)) {
+                coreContext.postOnMainThread { clearFilter() }
                 return@postOnCoreThread
             }
 

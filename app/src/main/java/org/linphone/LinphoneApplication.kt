@@ -34,7 +34,6 @@ import coil3.request.CachePolicy
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
 import coil3.video.VideoFrameDecoder
-import com.google.android.material.color.DynamicColors
 import org.linphone.compatibility.Compatibility
 import org.linphone.core.CoreContext
 import org.linphone.core.CorePreferences
@@ -43,6 +42,8 @@ import org.linphone.core.LogCollectionState
 import org.linphone.core.LogLevel
 import org.linphone.core.VFS
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9FirebaseTokenSync
+import org.linphone.mango9.Mango9ManagedConfigurationManager
 
 @MainThread
 class LinphoneApplication : Application(), SingletonImageLoader.Factory {
@@ -54,8 +55,15 @@ class LinphoneApplication : Application(), SingletonImageLoader.Factory {
 
         @SuppressLint("StaticFieldLeak")
         lateinit var coreContext: CoreContext
+
+        @SuppressLint("StaticFieldLeak")
+        lateinit var managedConfigurationManager: Mango9ManagedConfigurationManager
     }
 
+    // The config object is created and assigned before CoreContext and its
+    // worker thread exist, so this one initialization write is necessarily on
+    // Android's application main thread.
+    @SuppressLint("WrongThread")
     override fun onCreate() {
         super.onCreate()
         val context = applicationContext
@@ -63,7 +71,7 @@ class LinphoneApplication : Application(), SingletonImageLoader.Factory {
         val powerManager = context.getSystemService(POWER_SERVICE) as PowerManager
         val wakeLock = powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
-            "Linphone:AppCreation"
+            "Mango9:AppCreation"
         )
         wakeLock.acquire(20000L) // 20 seconds
 
@@ -93,10 +101,16 @@ class LinphoneApplication : Application(), SingletonImageLoader.Factory {
         Log.i("$TAG Report Core preferences initialized")
         Compatibility.setupAppStartupListener(context)
 
-        coreContext = CoreContext(context)
-        coreContext.start()
+        managedConfigurationManager = Mango9ManagedConfigurationManager(context)
+        managedConfigurationManager.prepareConfiguration(config)
 
-        DynamicColors.applyToActivitiesIfAvailable(this)
+        coreContext = CoreContext(context)
+        managedConfigurationManager.attach(coreContext)
+        coreContext.start()
+        if (BuildConfig.MANGO9_FCM_ENABLED) {
+            Mango9FirebaseTokenSync.refresh(context)
+        }
+
         wakeLock.release()
     }
 

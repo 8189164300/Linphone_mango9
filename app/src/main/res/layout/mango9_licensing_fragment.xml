@@ -1,0 +1,316 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="?attr/color_background_contrast_in_dark_mode">
+
+        <ImageView
+            android:id="@+id/back"
+            style="@style/icon_top_bar_button_style"
+            android:layout_width="wrap_content"
+            android:layout_height="0dp"
+            android:contentDescription="@string/content_description_go_back_icon"
+            android:src="@drawable/caret_left"
+            app:layout_constraintBottom_toBottomOf="@id/title"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="@id/title"
+            app:tint="?attr/color_main1_500" />
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/title"
+            style="@style/main_page_title_style"
+            android:layout_width="0dp"
+            android:layout_height="@dimen/top_bar_height"
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="10dp"
+            android:text="@string/mango9_licensing_title"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toEndOf="@id/back"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <ScrollView
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:background="?attr/color_grey_100"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/title">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:padding="20dp">
+
+                <androidx.appcompat.widget.AppCompatTextView
+                    style="@style/default_text_style"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxWidth="@dimen/section_max_width"
+                    android:text="@string/mango9_licensing_intro" />
+
+                <androidx.appcompat.widget.AppCompatTextView
+                    style="@style/default_text_style"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:maxWidth="@dimen/section_max_width"
+                    android:text="@string/mango9_licensing_warranty"
+                    android:textColor="?attr/color_main2_600"
+                    android:textSize="13sp" />
+
+                <androidx.appcompat.widget.AppCompatTextView
+                    style="@style/section_header_style"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="24dp"
+                    android:layout_marginBottom="8dp"
+                    android:maxWidth="@dimen/section_max_width"
+                    android:text="@string/mango9_licensing_app_section" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/shape_squircle_white_background"
+                    android:maxWidth="@dimen/section_max_width"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:id="@+id/app_license"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:minHeight="76dp"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+                        <androidx.appcompat.widget.AppCompatTextView
+                            style="@style/header_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:drawableEnd="@drawable/arrow_square_out"
+                            android:drawablePadding="8dp"
+                            android:text="@string/mango9_licensing_gpl_title"
+                            app:drawableTint="?attr/color_main2_600" />
+                        <androidx.appcompat.widget.AppCompatTextView
+                            style="@style/default_text_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/mango9_licensing_gpl_subtitle"
+                            android:textColor="?attr/color_main2_600"
+                            android:textSize="14sp" />
+                    </LinearLayout>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="?attr/color_grey_100" />
+
+                    <LinearLayout
+                        android:id="@+id/corresponding_source"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:minHeight="76dp"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+                        <androidx.appcompat.widget.AppCompatTextView
+                            style="@style/header_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:drawableEnd="@drawable/arrow_square_out"
+                            android:drawablePadding="8dp"
+                            android:text="@string/mango9_licensing_source_title"
+                            app:drawableTint="?attr/color_main2_600" />
+                        <androidx.appcompat.widget.AppCompatTextView
+                            android:id="@+id/corresponding_source_subtitle"
+                            style="@style/default_text_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/mango9_licensing_source_missing"
+                            android:textColor="?attr/color_main2_600"
+                            android:textSize="14sp" />
+                    </LinearLayout>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="?attr/color_grey_100" />
+
+                    <LinearLayout
+                        android:id="@+id/upstream_app"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:minHeight="76dp"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+                        <androidx.appcompat.widget.AppCompatTextView
+                            style="@style/header_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:drawableEnd="@drawable/arrow_square_out"
+                            android:drawablePadding="8dp"
+                            android:text="@string/mango9_licensing_upstream_app_title"
+                            app:drawableTint="?attr/color_main2_600" />
+                        <androidx.appcompat.widget.AppCompatTextView
+                            style="@style/default_text_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/mango9_licensing_upstream_app_subtitle"
+                            android:textColor="?attr/color_main2_600"
+                            android:textSize="14sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <androidx.appcompat.widget.AppCompatTextView
+                    style="@style/section_header_style"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="24dp"
+                    android:layout_marginBottom="8dp"
+                    android:maxWidth="@dimen/section_max_width"
+                    android:text="@string/mango9_licensing_sdk_section" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/shape_squircle_white_background"
+                    android:maxWidth="@dimen/section_max_width"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:id="@+id/sdk_license"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:minHeight="76dp"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+                        <androidx.appcompat.widget.AppCompatTextView
+                            style="@style/header_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:drawableEnd="@drawable/arrow_square_out"
+                            android:drawablePadding="8dp"
+                            android:text="@string/mango9_licensing_sdk_license_title"
+                            app:drawableTint="?attr/color_main2_600" />
+                        <androidx.appcompat.widget.AppCompatTextView
+                            style="@style/default_text_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/mango9_licensing_sdk_license_subtitle"
+                            android:textColor="?attr/color_main2_600"
+                            android:textSize="14sp" />
+                    </LinearLayout>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="?attr/color_grey_100" />
+
+                    <LinearLayout
+                        android:id="@+id/sdk_source"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:minHeight="76dp"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+                        <androidx.appcompat.widget.AppCompatTextView
+                            style="@style/header_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:drawableEnd="@drawable/arrow_square_out"
+                            android:drawablePadding="8dp"
+                            android:text="@string/mango9_licensing_sdk_source_title"
+                            app:drawableTint="?attr/color_main2_600" />
+                        <androidx.appcompat.widget.AppCompatTextView
+                            style="@style/default_text_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/mango9_licensing_sdk_source_subtitle"
+                            android:textColor="?attr/color_main2_600"
+                            android:textSize="14sp" />
+                    </LinearLayout>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="?attr/color_grey_100" />
+
+                    <LinearLayout
+                        android:id="@+id/third_party"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:minHeight="76dp"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+                        <androidx.appcompat.widget.AppCompatTextView
+                            style="@style/header_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:drawableEnd="@drawable/arrow_square_out"
+                            android:drawablePadding="8dp"
+                            android:text="@string/mango9_licensing_third_party_title"
+                            app:drawableTint="?attr/color_main2_600" />
+                        <androidx.appcompat.widget.AppCompatTextView
+                            style="@style/default_text_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/mango9_licensing_third_party_subtitle"
+                            android:textColor="?attr/color_main2_600"
+                            android:textSize="14sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <androidx.appcompat.widget.AppCompatTextView
+                    style="@style/section_header_style"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="24dp"
+                    android:layout_marginBottom="8dp"
+                    android:maxWidth="@dimen/section_max_width"
+                    android:text="@string/mango9_licensing_android_section" />
+
+                <LinearLayout
+                    android:id="@+id/android_libraries"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/shape_squircle_white_background"
+                    android:maxWidth="@dimen/section_max_width"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+                    <androidx.appcompat.widget.AppCompatTextView
+                        style="@style/header_style"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/mango9_licensing_android_libraries_title" />
+                    <androidx.appcompat.widget.AppCompatTextView
+                        style="@style/default_text_style"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/mango9_licensing_android_libraries_subtitle"
+                        android:textColor="?attr/color_main2_600"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <androidx.appcompat.widget.AppCompatTextView
+                    style="@style/default_text_style"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="24dp"
+                    android:layout_marginBottom="@dimen/screen_bottom_margin"
+                    android:maxWidth="@dimen/section_max_width"
+                    android:text="@string/mango9_licensing_attribution"
+                    android:textColor="?attr/color_main2_600"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </ScrollView>
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</layout>

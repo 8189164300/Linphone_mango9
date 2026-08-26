@@ -1,0 +1,521 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="?attr/color_grey_100">
+
+        <ImageView
+            android:id="@+id/back"
+            style="@style/icon_top_bar_button_style"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/top_bar_height"
+            android:contentDescription="@string/content_description_go_back_icon"
+            android:src="@drawable/caret_left"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:tint="?attr/color_main1_500" />
+
+        <LinearLayout
+            android:id="@+id/title_block"
+            android:layout_width="0dp"
+            android:layout_height="@dimen/top_bar_height"
+            android:gravity="center_vertical"
+            android:orientation="vertical"
+            android:paddingHorizontal="8dp"
+            app:layout_constraintEnd_toStartOf="@id/refresh"
+            app:layout_constraintStart_toEndOf="@id/back"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <TextView
+                android:id="@+id/title"
+                style="@style/default_text_style_800"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/mango9_crm_title"
+                android:textColor="?attr/color_main1_500"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/subtitle"
+                style="@style/default_text_style"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:text="@string/mango9_crm_subtitle"
+                android:textColor="?attr/color_main2_500"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/refresh"
+            style="@style/icon_top_bar_button_style"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/top_bar_height"
+            android:contentDescription="@string/mango9_crm_refresh"
+            android:src="@drawable/arrow_clockwise"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:tint="?attr/color_main1_500" />
+
+        <View
+            android:id="@+id/header_separator"
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:background="?attr/color_separator"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/title_block" />
+
+        <FrameLayout
+            android:id="@+id/content"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/header_separator">
+
+            <androidx.core.widget.NestedScrollView
+                android:id="@+id/dashboard_scroll"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:fillViewport="true"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:id="@+id/account_card"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/shape_squircle_white_background"
+                        android:elevation="2dp"
+                        android:gravity="center_vertical"
+                        android:minHeight="86dp"
+                        android:orientation="horizontal"
+                        android:padding="16dp">
+
+                        <ImageView
+                            android:layout_width="54dp"
+                            android:layout_height="54dp"
+                            android:background="@drawable/mango9_brand_card_background"
+                            android:contentDescription="@null"
+                            android:padding="13dp"
+                            android:src="@drawable/address_book"
+                            app:tint="@color/bc_white" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="14dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:id="@+id/account_name"
+                                style="@style/default_text_style_800"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:maxLines="1"
+                                android:text="@string/app_name"
+                                android:textSize="16sp" />
+
+                            <TextView
+                                android:id="@+id/account_login"
+                                style="@style/default_text_style"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="3dp"
+                                android:maxLines="1"
+                                android:textColor="?attr/color_main2_500"
+                                android:textSize="12sp" />
+
+                            <TextView
+                                android:id="@+id/account_role"
+                                style="@style/default_text_style_600"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="3dp"
+                                android:maxLines="1"
+                                android:textColor="?attr/color_main1_500"
+                                android:textSize="11sp" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/connected_badge"
+                            style="@style/default_text_style_700"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/squircle_transparent_button_background"
+                            android:paddingHorizontal="8dp"
+                            android:paddingVertical="5dp"
+                            android:text="@string/mango9_crm_connected"
+                            android:textColor="@color/green_success_500"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/connected_content"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/default_text_style_800"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="20dp"
+                            android:text="@string/mango9_crm_overview"
+                            android:textSize="17sp" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:baselineAligned="false"
+                            android:orientation="horizontal">
+
+                            <LinearLayout
+                                android:id="@+id/leads_metric"
+                                android:layout_width="0dp"
+                                android:layout_height="76dp"
+                                android:layout_marginEnd="6dp"
+                                android:layout_weight="1"
+                                android:background="@drawable/shape_squircle_white_background"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:gravity="center_vertical"
+                                android:orientation="horizontal"
+                                android:padding="12dp">
+
+                                <ImageView
+                                    android:layout_width="42dp"
+                                    android:layout_height="42dp"
+                                    android:background="@drawable/mango9_brand_card_background"
+                                    android:contentDescription="@null"
+                                    android:padding="9dp"
+                                    android:src="@drawable/users_three"
+                                    app:tint="@color/bc_white" />
+
+                                <LinearLayout
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginStart="10dp"
+                                    android:layout_weight="1"
+                                    android:orientation="vertical">
+
+                                    <TextView
+                                        android:id="@+id/leads_count"
+                                        style="@style/default_text_style_800"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/mango9_not_available_symbol"
+                                        android:textSize="19sp" />
+
+                                    <TextView
+                                        style="@style/default_text_style"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/mango9_crm_leads"
+                                        android:textColor="?attr/color_main2_500"
+                                        android:textSize="11sp" />
+                                </LinearLayout>
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:id="@+id/clients_metric"
+                                android:layout_width="0dp"
+                                android:layout_height="76dp"
+                                android:layout_marginStart="6dp"
+                                android:layout_weight="1"
+                                android:background="@drawable/shape_squircle_white_background"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:gravity="center_vertical"
+                                android:orientation="horizontal"
+                                android:padding="12dp">
+
+                                <ImageView
+                                    android:layout_width="42dp"
+                                    android:layout_height="42dp"
+                                    android:background="@drawable/mango9_brand_card_background"
+                                    android:contentDescription="@null"
+                                    android:padding="9dp"
+                                    android:src="@drawable/address_book"
+                                    app:tint="@color/bc_white" />
+
+                                <LinearLayout
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginStart="10dp"
+                                    android:layout_weight="1"
+                                    android:orientation="vertical">
+
+                                    <TextView
+                                        android:id="@+id/clients_count"
+                                        style="@style/default_text_style_800"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/mango9_not_available_symbol"
+                                        android:textSize="19sp" />
+
+                                    <TextView
+                                        style="@style/default_text_style"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/mango9_crm_clients"
+                                        android:textColor="?attr/color_main2_500"
+                                        android:textSize="11sp" />
+                                </LinearLayout>
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <TextView
+                            style="@style/default_text_style_800"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="20dp"
+                            android:text="@string/mango9_crm_workspace"
+                            android:textSize="17sp" />
+
+                        <TextView
+                            android:id="@+id/leads_row"
+                            style="@style/header_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:background="@drawable/shape_squircle_white_background"
+                            app:drawableEndCompat="@drawable/caret_right"
+                            app:drawableStartCompat="@drawable/users_three"
+                            android:drawablePadding="12dp"
+                            android:minHeight="70dp"
+                            android:padding="14dp"
+                            android:text="@string/mango9_crm_leads_subtitle"
+                            app:drawableTint="?attr/color_main1_500" />
+
+                        <TextView
+                            android:id="@+id/clients_row"
+                            style="@style/header_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:background="@drawable/shape_squircle_white_background"
+                            app:drawableEndCompat="@drawable/caret_right"
+                            app:drawableStartCompat="@drawable/address_book"
+                            android:drawablePadding="12dp"
+                            android:minHeight="70dp"
+                            android:padding="14dp"
+                            android:text="@string/mango9_crm_clients_subtitle"
+                            app:drawableTint="?attr/color_main1_500" />
+
+                        <TextView
+                            android:id="@+id/team_chat_row"
+                            style="@style/header_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:layout_marginBottom="28dp"
+                            android:background="@drawable/shape_squircle_white_background"
+                            app:drawableEndCompat="@drawable/caret_right"
+                            app:drawableStartCompat="@drawable/chat_teardrop_text"
+                            android:drawablePadding="12dp"
+                            android:minHeight="70dp"
+                            android:padding="14dp"
+                            android:text="@string/mango9_crm_team_chat_subtitle"
+                            app:drawableTint="?attr/color_main1_500" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/sign_in_card"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:background="@drawable/shape_squircle_white_background"
+                        android:gravity="center_horizontal"
+                        android:orientation="vertical"
+                        android:padding="22dp"
+                        android:visibility="gone">
+
+                        <ImageView
+                            android:layout_width="42dp"
+                            android:layout_height="42dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/user_circle_gear"
+                            app:tint="?attr/color_main1_500" />
+
+                        <TextView
+                            style="@style/default_text_style_800"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="14dp"
+                            android:text="@string/mango9_crm_sign_in_required"
+                            android:textSize="17sp" />
+
+                        <TextView
+                            style="@style/default_text_style"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:gravity="center"
+                            android:text="@string/mango9_crm_sign_in_explanation"
+                            android:textColor="?attr/color_main2_500"
+                            android:textSize="13sp" />
+
+                        <Button
+                            android:id="@+id/connect_account"
+                            style="@style/Widget.Material3.Button"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="16dp"
+                            android:text="@string/mango9_crm_connect_account" />
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.core.widget.NestedScrollView>
+
+            <LinearLayout
+                android:id="@+id/records_content"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:visibility="gone">
+
+                <com.google.android.material.textfield.TextInputLayout
+                    style="?attr/textInputOutlinedStyle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:startIconDrawable="@drawable/magnifying_glass">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/search"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:imeOptions="actionSearch"
+                        android:inputType="text"
+                        android:singleLine="true" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <Spinner
+                        android:id="@+id/group_filter"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_marginEnd="6dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/edit_text_background"
+                        android:contentDescription="@string/mango9_crm_group_filter"
+                        android:paddingHorizontal="10dp" />
+
+                    <Spinner
+                        android:id="@+id/date_filter"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/edit_text_background"
+                        android:contentDescription="@string/mango9_crm_date_filter"
+                        android:paddingHorizontal="10dp" />
+                </LinearLayout>
+
+                <HorizontalScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:scrollbars="none">
+
+                    <com.google.android.material.chip.ChipGroup
+                        android:id="@+id/status_filters"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:selectionRequired="true"
+                        app:singleSelection="true" />
+                </HorizontalScrollView>
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/records"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_marginTop="10dp"
+                    android:layout_weight="1"
+                    android:clipToPadding="false"
+                    android:paddingBottom="24dp" />
+
+                <TextView
+                    android:id="@+id/empty_records"
+                    style="@style/default_text_style_700"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:padding="30dp"
+                    android:text="@string/mango9_crm_no_records"
+                    android:textColor="?attr/color_main2_500"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/error_card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:layout_margin="16dp"
+                android:background="@color/red_danger_100"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="14dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/warning_circle"
+                    app:tint="@color/red_danger_500" />
+
+                <TextView
+                    android:id="@+id/error_message"
+                    style="@style/default_text_style"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:textColor="?attr/color_main2_700"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <com.google.android.material.progressindicator.CircularProgressIndicator
+                android:id="@+id/loading"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:visibility="gone"
+                app:indicatorColor="?attr/color_main1_500" />
+        </FrameLayout>
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/add_record"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_margin="20dp"
+            android:contentDescription="@string/mango9_crm_add_record"
+            android:src="@drawable/plus_circle"
+            android:visibility="gone"
+            app:backgroundTint="?attr/color_main1_500"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:tint="@color/bc_white" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</layout>

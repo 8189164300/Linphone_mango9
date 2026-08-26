@@ -5,15 +5,23 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="sharedpref" path="encrypted.pref.xml"/>
+        <exclude domain="sharedpref" path="mango9_session_metadata.xml"/>
+        <exclude domain="sharedpref" path="mango9_session_secrets.xml"/>
+        <exclude domain="sharedpref" path="mango9_device.xml"/>
+        <exclude domain="sharedpref" path="mango9_managed_configuration_secrets.xml"/>
+        <exclude domain="sharedpref" path="mango9_line_identity.xml"/>
+        <exclude domain="sharedpref" path="mango9_chat_moderation.xml"/>
+        <exclude domain="sharedpref" path="mango9_message_push.xml"/>
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="sharedpref" path="encrypted.pref.xml"/>
+        <exclude domain="sharedpref" path="mango9_session_metadata.xml"/>
+        <exclude domain="sharedpref" path="mango9_session_secrets.xml"/>
+        <exclude domain="sharedpref" path="mango9_device.xml"/>
+        <exclude domain="sharedpref" path="mango9_managed_configuration_secrets.xml"/>
+        <exclude domain="sharedpref" path="mango9_line_identity.xml"/>
+        <exclude domain="sharedpref" path="mango9_chat_moderation.xml"/>
+        <exclude domain="sharedpref" path="mango9_message_push.xml"/>
     </device-transfer>
-    -->
 </data-extraction-rules>

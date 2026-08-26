@@ -23,7 +23,9 @@ import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
 import androidx.lifecycle.MediatorLiveData
 import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.viewModelScope
 import java.util.Locale
+import kotlinx.coroutines.launch
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.LinphoneApplication.Companion.corePreferences
 import org.linphone.R
@@ -37,6 +39,8 @@ import org.linphone.core.DialPlan
 import org.linphone.core.Dictionary
 import org.linphone.core.Factory
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9SessionStore
+import org.linphone.mango9.Mango9ChatStore
 import org.linphone.ui.GenericViewModel
 import org.linphone.ui.main.model.AccountModel
 import org.linphone.ui.main.model.isEndToEndEncryptionMandatory
@@ -93,6 +97,9 @@ class AccountProfileViewModel
     }
 
     private lateinit var account: Account
+
+    private val mango9Sessions = Mango9SessionStore(coreContext.context)
+    private val mango9ChatStore = Mango9ChatStore.get(coreContext.context)
 
     private lateinit var accountManagerServices: AccountManagerServices
 
@@ -208,6 +215,10 @@ class AccountProfileViewModel
             if (found != null) {
                 Log.i("$TAG Found matching account [$found]")
                 account = found
+                val isManagedMango9Account = mango9Sessions.hasSession(identity)
+                if (isManagedMango9Account) {
+                    hideAccountSettings.postValue(true)
+                }
                 accountModel.postValue(AccountModel(account))
                 isCurrentlySelectedModeSecure.postValue(isEndToEndEncryptionMandatory())
                 registerEnabled.postValue(account.params.isRegisterEnabled)
@@ -262,19 +273,37 @@ class AccountProfileViewModel
 
     @UiThread
     fun deleteAccount() {
-        coreContext.postOnCoreThread { core ->
-            if (::account.isInitialized) {
-                val identity = account.params.identityAddress?.asStringUriOnly()
-                Log.w("$TAG Removing account [$identity] and all related data (auth info, conferences, conversations, call logs)")
-                core.removeAccountWithData(account)
-                accountRemovedEvent.postValue(Event(true))
+        if (!::account.isInitialized) return
+        val accountToRemove = account
+        val identity = accountToRemove.params.identityAddress?.asStringUriOnly()
+        val session = identity?.let(mango9Sessions::load)
+        if (identity == null || session == null) {
+            removeAccount(accountToRemove, identity)
+            return
+        }
+        viewModelScope.launch {
+            try {
+                mango9ChatStore.unregisterRemotePushToken(identity, session)
+            } finally {
+                mango9ChatStore.disconnectIfConnected(identity)
+                removeAccount(accountToRemove, identity)
+            }
+        }
+    }
 
-                if (core.accountList.isEmpty()) {
-                    Log.w("$TAG No more account found in Core")
-                    if (!core.provisioningUri.isNullOrEmpty()) {
-                        Log.w("$TAG Removing remote provisioning URI")
-                        core.provisioningUri = null
-                    }
+    private fun removeAccount(accountToRemove: Account, identity: String?) {
+        coreContext.postOnCoreThread { core ->
+            if (!core.accountList.contains(accountToRemove)) return@postOnCoreThread
+            Log.w("$TAG Removing account [$identity] and all related data (auth info, conferences, conversations, call logs)")
+            identity?.let(mango9Sessions::remove)
+            core.removeAccountWithData(accountToRemove)
+            accountRemovedEvent.postValue(Event(true))
+
+            if (core.accountList.isEmpty()) {
+                Log.w("$TAG No more account found in Core")
+                if (!core.provisioningUri.isNullOrEmpty()) {
+                    Log.w("$TAG Removing remote provisioning URI")
+                    core.provisioningUri = null
                 }
             }
         }

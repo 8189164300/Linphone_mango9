@@ -10,8 +10,8 @@
     <color name="background_color_dark_mode">#191919</color>
     <color name="background_color_alt_dark_mode">#303030</color>
 
-    <color name="orange_main_100">#FFEACB</color>
-    <color name="orange_main_500">#FF5E00</color>
+    <color name="orange_main_100">#EEF1FF</color>
+    <color name="orange_main_500">#4053C8</color>
 
     <color name="gray_main2_100">#EEF6F8</color>
     <color name="gray_main2_200">#DFECF2</color>
@@ -55,6 +55,7 @@
 
     <color name="blue_info_500">#4AA8FF</color>
     <color name="blue_info_500_night">#64B4FF</color>
+    <color name="mango9_system_blue">#0A84FF</color>
 
     <color name="orange_plain_text_security_warning_600">#AF9308</color>
     <color name="orange_warning_100">#F8F1D4</color>

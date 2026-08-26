@@ -2,6 +2,7 @@ import com.android.build.gradle.internal.tasks.factory.dependsOn
 import com.google.firebase.crashlytics.buildtools.gradle.CrashlyticsExtension
 import com.google.firebase.crashlytics.buildtools.gradle.CrashlyticsPlugin
 import com.google.gms.googleservices.GoogleServicesPlugin
+import com.google.gms.googleservices.GoogleServicesTask
 import java.io.BufferedReader
 import java.io.FileInputStream
 import java.util.Properties
@@ -14,19 +15,35 @@ plugins {
     alias(libs.plugins.navigation)
 }
 
-val packageName = "org.linphone"
+val packageName = "com.mango9.phone"
 val useDifferentPackageNameForDebugBuild = false
 
 val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
-val googleServices = File(projectDir.absolutePath + "/google-services.json")
+// The upstream repository includes credentials for Linphone's Firebase project.
+// They must never be linked into Mango9 builds. Push can be enabled after a
+// Mango9-owned google-services.json and matching release process are provided.
+val googleServices = File(projectDir.absolutePath + "/mango9-google-services.json")
 val linphoneLibs = File("$sdkPath/libs/")
 val linphoneDebugLibs = File("$sdkPath/libs-debug/")
 val firebaseCloudMessagingAvailable = googleServices.exists()
 val crashlyticsAvailable = googleServices.exists() && linphoneLibs.exists() && linphoneDebugLibs.exists()
+val defaultMango9SourceCodeUrl =
+    "https://github.com/8189164300/Linphone_mango9/tree/android-6.2.6-build-602006"
+val mango9SourceCodeUrl = providers.gradleProperty("Mango9SourceCodeUrl")
+    .orNull
+    ?.trim()
+    ?.takeIf(String::isNotEmpty)
+    ?: defaultMango9SourceCodeUrl
+val escapedMango9SourceCodeUrl = mango9SourceCodeUrl.replace("\\", "\\\\").replace("\"", "\\\"")
 
 if (firebaseCloudMessagingAvailable) {
     println("google-services.json found, enabling Firebase CloudMessaging feature")
     apply<GoogleServicesPlugin>()
+    afterEvaluate {
+        tasks.withType<GoogleServicesTask>().configureEach {
+            googleServicesJsonFiles.set(listOf(googleServices))
+        }
+    }
 } else {
     println("google-services.json not found, disabling Firebase CloudMessaging feature")
 }
@@ -98,6 +115,30 @@ tasks.register("linphoneSdkSource") {
 }
 project.tasks.preBuild.dependsOn("linphoneSdkSource")
 
+// AGP 9 does not currently merge the namespaced assets from the published
+// Linphone SDK AAR into this application. The native SDK requires those exact
+// grammars, CA data, images, and sounds at runtime and aborts if they are absent.
+// Extract them from the resolved SDK artifact so they are packaged without
+// keeping a second, manually copied, version in this repository.
+val linphoneSdkAssetsDir = layout.buildDirectory.dir("generated/linphoneSdkAssets")
+val extractLinphoneSdkAssets = tasks.register<Sync>("extractLinphoneSdkAssets") {
+    val linphoneAars = providers.provider {
+        configurations.implementation.get().filter {
+            it.name.startsWith("linphone-sdk-android") && it.extension == "aar"
+        }
+    }
+    from({ linphoneAars.get().map(::zipTree) }) {
+        include("assets/**")
+        includeEmptyDirs = false
+        eachFile {
+            path = path.removePrefix("assets/")
+        }
+    }
+    into(linphoneSdkAssetsDir)
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+project.tasks.preBuild.dependsOn(extractLinphoneSdkAssets)
+
 android {
     namespace = "org.linphone"
     compileSdk = 37
@@ -108,8 +149,13 @@ android {
         targetSdk = 37
         versionCode = 602006 // 6.02.006
         versionName = "6.2.6"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunnerArguments["disableAnalytics"] = "true"
+        buildConfigField("String", "MANGO9_SOURCE_CODE_URL", "\"$escapedMango9SourceCodeUrl\"")
+        buildConfigField("Boolean", "MANGO9_FCM_ENABLED", firebaseCloudMessagingAvailable.toString())
 
         manifestPlaceholders["appAuthRedirectScheme"] = packageName
+        manifestPlaceholders["firebaseMessagingEnabled"] = firebaseCloudMessagingAvailable.toString()
 
         ndk {
             //noinspection ChromeOsAbiSupport
@@ -117,12 +163,18 @@ android {
         }
     }
 
+    sourceSets.named("main") {
+        // preBuild depends on extractLinphoneSdkAssets above; use the concrete
+        // directory here because AGP 9 rejects Provider values in SourceSet.
+        assets.srcDir(file("build/generated/linphoneSdkAssets"))
+    }
+
     applicationVariants.all {
         val variant = this
         variant.outputs
             .map { it as com.android.build.gradle.internal.api.BaseVariantOutputImpl }
             .forEach { output ->
-                output.outputFileName = "linphone-android-${variant.buildType.name}-$gitVersion.apk"
+                output.outputFileName = "mango9-android-${variant.buildType.name}-$gitVersion.apk"
             }
     }
 
@@ -216,7 +268,19 @@ android {
     }
 
     lint {
-        abortOnError = false
+        abortOnError = true
+        // Android lint 9.2.1 crashes inside the AndroidX fragment detector
+        // while resolving upstream DebugFragment.kt. Keep the rest of lint
+        // active and disable only the three checks named by lint's workaround.
+        disable += setOf(
+            "FragmentAddMenuProvider",
+            "FragmentBackPressedCallback",
+            "FragmentLiveDataObserve",
+            // Upstream ships partial community translations and intentionally
+            // falls back to the complete English resource set.
+            "MissingQuantity",
+            "MissingTranslation",
+        )
     }
 }
 
@@ -246,8 +310,16 @@ dependencies {
     // To be able to parse native crash tombstone and print them with SDK logs the next time the app will start
     implementation(libs.google.protobuf)
 
-    implementation(platform(libs.google.firebase.bom))
-    implementation(libs.google.firebase.messaging)
+    if (firebaseCloudMessagingAvailable) {
+        implementation(platform(libs.google.firebase.bom))
+        implementation(libs.google.firebase.messaging)
+    } else {
+        // Linphone SDK and dormant upstream diagnostics types reference Firebase
+        // APIs at compile time. Keep those references resolvable without
+        // packaging the Firebase runtime in a credential-free Mango9 build.
+        compileOnly(platform(libs.google.firebase.bom))
+        compileOnly(libs.google.firebase.messaging)
+    }
     if (crashlyticsAvailable) {
         implementation(libs.google.firebase.crashlytics)
     } else {
@@ -265,8 +337,297 @@ dependencies {
     implementation(libs.photoview)
     // https://github.com/openid/AppAuth-Android/blob/master/LICENSE Apache v2.0
     implementation(libs.openid.appauth)
+    // https://square.github.io/okhttp/ Apache v2.0; Mango9 JSON-RPC WebSocket transport.
+    implementation(libs.okhttp)
 
     implementation(libs.linphone)
+
+    testImplementation(libs.junit4)
+    testImplementation(libs.json.java)
+    testImplementation(libs.okhttp.mockwebserver)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.espresso.core)
+}
+
+val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
+    group = "verification"
+    description = "Rejects Mango9 identity, transport, credential, and upstream-service regressions."
+
+    val manifest = file("src/main/AndroidManifest.xml")
+    val mainActivity = file("src/main/java/org/linphone/ui/main/MainActivity.kt")
+    val helpFragment = file("src/main/java/org/linphone/ui/main/help/fragment/HelpFragment.kt")
+    val coreContext = file("src/main/java/org/linphone/core/CoreContext.kt")
+    val notificationsManager = file("src/main/java/org/linphone/notifications/NotificationsManager.kt")
+    val linphoneUtils = file("src/main/java/org/linphone/utils/LinphoneUtils.kt")
+    val mainViewModel = file("src/main/java/org/linphone/ui/main/viewmodel/MainViewModel.kt")
+    val loginRepository = file("src/main/java/org/linphone/mango9/Mango9LoginRepository.kt")
+    val crmViewModel = file("src/main/java/org/linphone/ui/main/crm/viewmodel/Mango9CrmViewModel.kt")
+    val chatStore = file("src/main/java/org/linphone/mango9/Mango9ChatStore.kt")
+    val messagePush = file("src/main/java/org/linphone/mango9/Mango9MessagePush.kt")
+    val accountProfile = file("src/main/java/org/linphone/ui/main/settings/viewmodel/AccountProfileViewModel.kt")
+    val backupRules = file("src/main/res/xml/backup_rules.xml")
+    val dataExtractionRules = file("src/main/res/xml/data_extraction_rules.xml")
+    val assistantNavigation = file("src/main/res/navigation/assistant_nav_graph.xml")
+    val versionCatalog = rootProject.file("gradle/libs.versions.toml")
+    val readme = rootProject.file("README.md")
+    val openSourceNotices = rootProject.file("OPEN_SOURCE_NOTICES.md")
+    val runtimeAssets = fileTree("src/main/assets")
+    val runtimeResources = fileTree("src/main/res") {
+        include("**/*.xml")
+    }
+    val upstreamGoogleServices = file("google-services.json")
+    val mango9GoogleServices = file("mango9-google-services.json")
+    inputs.files(
+        manifest,
+        mainActivity,
+        helpFragment,
+        coreContext,
+        notificationsManager,
+        linphoneUtils,
+        mainViewModel,
+        loginRepository,
+        crmViewModel,
+        chatStore,
+        messagePush,
+        accountProfile,
+        backupRules,
+        dataExtractionRules,
+        assistantNavigation,
+        versionCatalog,
+        readme,
+        openSourceNotices,
+        runtimeAssets,
+        runtimeResources,
+    )
+    inputs.file(file("build.gradle.kts"))
+    if (mango9GoogleServices.exists()) inputs.file(mango9GoogleServices)
+
+    doLast {
+        val failures = mutableListOf<String>()
+        val manifestText = manifest.readText()
+        val mainActivityText = mainActivity.readText()
+        val helpFragmentText = helpFragment.readText()
+        val coreContextText = coreContext.readText()
+        val notificationsManagerText = notificationsManager.readText()
+        val linphoneUtilsText = linphoneUtils.readText()
+        val mainViewModelText = mainViewModel.readText()
+        val loginRepositoryText = loginRepository.readText()
+        val crmViewModelText = crmViewModel.readText()
+        val chatStoreText = chatStore.readText()
+        val messagePushText = messagePush.readText()
+        val accountProfileText = accountProfile.readText()
+        val backupRulesText = backupRules.readText()
+        val dataExtractionRulesText = dataExtractionRules.readText()
+        val assistantNavigationText = assistantNavigation.readText()
+        val versionCatalogText = versionCatalog.readText()
+        val readmeText = readme.readText()
+        val openSourceNoticesText = openSourceNotices.readText()
+        val buildText = file("build.gradle.kts").readText()
+
+        fun requirePolicy(condition: Boolean, message: String) {
+            if (!condition) failures += message
+        }
+
+        requirePolicy(
+            buildText.contains("val packageName = \"com.mango9.phone\""),
+            "application ID must remain com.mango9.phone",
+        )
+        requirePolicy(
+            manifestText.contains("android:usesCleartextTraffic=\"false\""),
+            "cleartext traffic must remain disabled",
+        )
+        requirePolicy(
+            manifestText.contains("android:name=\"android.content.APP_RESTRICTIONS\"") &&
+                manifestText.contains("android:resource=\"@xml/app_restrictions\""),
+            "managed app restrictions metadata is missing",
+        )
+        requirePolicy(
+            manifestText.contains("android:enabled=\"\${firebaseMessagingEnabled}\"") &&
+                manifestText.contains(".mango9.Mango9FirebaseMessagingService") &&
+                buildText.contains("if (firebaseCloudMessagingAvailable)"),
+            "Firebase Messaging must remain conditional on Mango9-owned credentials",
+        )
+        requirePolicy(
+            !manifestText.contains(".ui.welcome.WelcomeActivity") &&
+                !mainActivityText.contains("WelcomeActivity"),
+            "the upstream Linphone welcome carousel must not be reachable from Mango9",
+        )
+        requirePolicy(
+            !helpFragmentText.contains("DebugFragment") &&
+                !helpFragmentText.contains("checkForUpdate") &&
+                !helpFragmentText.contains("website_translate_weblate_url"),
+            "Help must not expose upstream debug, update, or translation routes",
+        )
+        requirePolicy(
+            !assistantNavigationText.contains("action_landingFragment_to_registerFragment") &&
+                !assistantNavigationText.contains("action_landingFragment_to_recoverAccountFragment") &&
+                !assistantNavigationText.contains("action_landingFragment_to_thirdPartySipAccountWarningFragment"),
+            "Mango9 landing must not expose upstream Linphone account creation or recovery",
+        )
+        requirePolicy(
+            versionCatalogText.contains("linphone = \"5.5.17-pre.1+3896ec0681\""),
+            "Linphone SDK must remain pinned to the audited exact artifact",
+        )
+        requirePolicy(
+            buildText.contains("MANGO9_SOURCE_CODE_URL"),
+            "the configurable Mango9 corresponding-source field is missing",
+        )
+        requirePolicy(
+            mango9SourceCodeUrl.startsWith(
+                "https://github.com/8189164300/Linphone_mango9/tree/android-",
+            ) &&
+                readmeText.contains(mango9SourceCodeUrl) &&
+                openSourceNoticesText.contains(mango9SourceCodeUrl),
+            "Licensing, README, and open-source notices must use the same immutable Android source tag",
+        )
+        requirePolicy(
+            coreContextText.indexOf("enforceMango9RuntimeDefaults()") in
+                0 until coreContextText.indexOf("managedConfigurationManager.applyBeforeCoreStart(core)"),
+            "runtime sanitation must happen before managed configuration is applied",
+        )
+        requirePolicy(
+            coreContextText.contains("onPushNotificationReceived") &&
+                coreContextText.contains("Mango9PushCallerIdentityCache.cache") &&
+                coreContextText.contains("Call push received, refreshing SIP registrations") &&
+                notificationsManagerText.contains("Call.State.PushIncomingReceived") &&
+                linphoneUtilsText.contains("Call.State.PushIncomingReceived"),
+            "Call-ID-scoped Mango9 push caller identity, registration refresh, or incoming-call handling is missing",
+        )
+        requirePolicy(
+            mainViewModelText.contains("Mango9RegistrationFailure(message)") &&
+                mainViewModelText.contains("REGISTRATION_FAILURE_DELAY_MS"),
+            "actionable delayed Mango9 registration failures are missing",
+        )
+        requirePolicy(
+            loginRepositoryText.contains("Mango9LineIdentityStore") &&
+                loginRepositoryText.contains("Mango9LineIdentity(provisioning.username, provisioning.activeNumber)"),
+            "per-account Mango9 DID/extension persistence is missing",
+        )
+        requirePolicy(
+            crmViewModelText.contains("Mango9LatestRequestGate") &&
+                crmViewModelText.contains("recordsRequests.isLatest(request)") &&
+                crmViewModelText.contains("detailRequests.isLatest(request)"),
+            "CRM stale-response protection is missing",
+        )
+        requirePolicy(
+            messagePushText.contains("chat.message") &&
+                messagePushText.contains("sms.received") &&
+                messagePushText.contains("lead.assigned") &&
+                mainActivityText.contains("Mango9MessagePushCoordinator.activateForOpen"),
+            "account-scoped Mango9 message-push parsing and deep-link routing are missing",
+        )
+        requirePolicy(
+            chatStoreText.contains("registerRemotePushTokenIfAvailable") &&
+                chatStoreText.contains("unregisterRemotePushToken") &&
+                accountProfileText.contains("unregisterRemotePushToken(identity, session)"),
+            "Mango9 message-push registration lifecycle is missing",
+        )
+        val privatePreferenceFiles = listOf(
+            "encrypted.pref.xml",
+            "mango9_session_metadata.xml",
+            "mango9_session_secrets.xml",
+            "mango9_device.xml",
+            "mango9_managed_configuration_secrets.xml",
+            "mango9_line_identity.xml",
+            "mango9_chat_moderation.xml",
+            "mango9_message_push.xml",
+        )
+        privatePreferenceFiles.forEach { preferenceFile ->
+            requirePolicy(
+                backupRulesText.contains("path=\"$preferenceFile\""),
+                "$preferenceFile must be excluded from legacy Android backup",
+            )
+            requirePolicy(
+                dataExtractionRulesText.split("path=\"$preferenceFile\"").size == 3,
+                "$preferenceFile must be excluded from cloud backup and device transfer",
+            )
+        }
+        requirePolicy(!upstreamGoogleServices.exists(), "upstream app/google-services.json must not exist")
+
+        val forbiddenRuntimeValues = listOf(
+            "sip.linphone.org",
+            "stun.linphone.org",
+            "lime.linphone.org",
+            "files.linphone.org",
+            "subscribe.linphone.org",
+            "download.linphone.org",
+            "linphone.org/contact",
+            "linphone.org/en/docs",
+            "linphone.org/en/privacy-policy",
+            "linphone.org/en/terms-of-use",
+            "weblate.linphone.org",
+        )
+        (runtimeAssets.files + runtimeResources.files).forEach { candidate ->
+            val text = candidate.readText()
+            forbiddenRuntimeValues.forEach { forbidden ->
+                if (text.contains(forbidden, ignoreCase = true)) {
+                    failures += "${candidate.relativeTo(projectDir)} contains forbidden runtime endpoint [$forbidden]"
+                }
+            }
+        }
+
+        val defaults = file("src/main/assets/linphonerc_default").readText()
+        requirePolicy(
+            defaults.contains("default_domain=proxy.mango9.com"),
+            "Mango9 default SIP domain is missing",
+        )
+        requirePolicy(
+            defaults.contains("log_collection_upload_server_url=\n") &&
+                defaults.contains("file_transfer_server_url=\n") &&
+                defaults.contains("version_check_url_root=\n"),
+            "hosted update/file/log services must be blank by default",
+        )
+        val assistantDefaults = file("src/main/assets/assistant_linphone_default_values").readText()
+        requirePolicy(
+            assistantDefaults.contains("sip:proxy.mango9.com;transport=tls"),
+            "managed account defaults must route through proxy.mango9.com over TLS",
+        )
+
+        if (mango9GoogleServices.exists()) {
+            val googleText = mango9GoogleServices.readText()
+            requirePolicy(
+                googleText.contains("\"package_name\": \"com.mango9.phone\""),
+                "Mango9 Firebase configuration must target com.mango9.phone",
+            )
+            requirePolicy(
+                !googleText.contains("linphone", ignoreCase = true),
+                "Mango9 Firebase configuration must not reference an upstream Linphone project",
+            )
+        }
+
+        if (failures.isNotEmpty()) {
+            throw GradleException("Mango9 static policy failed:\n- ${failures.joinToString("\n- ")}")
+        }
+        logger.lifecycle("Mango9 static policy passed")
+    }
+}
+
+val verifyMango9ReleasePolicy = tasks.register("verifyMango9ReleasePolicy") {
+    group = "verification"
+    description = "Rejects release builds without a public Mango9 corresponding-source URL."
+    dependsOn(verifyMango9StaticPolicy)
+    doLast {
+        if (mango9SourceCodeUrl.isEmpty()) {
+            throw GradleException(
+                "Release requires -PMango9SourceCodeUrl=https://... for GPL corresponding source",
+            )
+        }
+        if (!firebaseCloudMessagingAvailable) {
+            throw GradleException(
+                "Release requires app/mango9-google-services.json for Mango9 push notifications",
+            )
+        }
+    }
+}
+
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    dependsOn(verifyMango9ReleasePolicy)
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(verifyMango9StaticPolicy)
 }
 
 configure<org.jlleitschuh.gradle.ktlint.KtlintExtension> {

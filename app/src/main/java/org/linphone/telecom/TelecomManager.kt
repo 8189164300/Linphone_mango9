@@ -29,11 +29,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.core.Call
 import org.linphone.core.Core
 import org.linphone.core.CoreListenerStub
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9PushCallerIdentityCache
 import org.linphone.utils.LinphoneUtils
 import androidx.core.net.toUri
 import org.linphone.compatibility.Compatibility
@@ -53,6 +55,7 @@ class TelecomManager
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val map = HashMap<String, TelecomCallControlCallback>()
+    private val followedCallKeys = ConcurrentHashMap.newKeySet<String>()
 
     private val coreListener = object : CoreListenerStub() {
         @WorkerThread
@@ -62,7 +65,11 @@ class TelecomManager
             state: Call.State?,
             message: String
         ) {
-            if (state == Call.State.IncomingReceived || state == Call.State.OutgoingProgress) {
+            if (
+                state == Call.State.PushIncomingReceived ||
+                state == Call.State.IncomingReceived ||
+                state == Call.State.OutgoingProgress
+            ) {
                 onCallCreated(call)
             }
         }
@@ -70,6 +77,7 @@ class TelecomManager
         @WorkerThread
         override fun onLastCallEnded(core: Core) {
             currentlyFollowedCalls = 0
+            followedCallKeys.clear()
         }
     }
 
@@ -93,10 +101,25 @@ class TelecomManager
 
     @WorkerThread
     fun onCallCreated(call: Call) {
+        val callKey = call.callLog.callId?.takeIf(String::isNotBlank)
+            ?: System.identityHashCode(call).toString()
+        if (!followedCallKeys.add(callKey)) {
+            Log.i("$TAG Call [$callKey] is already followed by Telecom, skipping duplicate state")
+            return
+        }
         Log.i("$TAG Call to [${call.remoteAddress.asStringUriOnly()}] created in state [${call.state}]")
 
         val address = call.callLog.remoteAddress
-        val uri = address.asStringUriOnly().toUri()
+        val pushedIdentity = if (call.state == Call.State.PushIncomingReceived) {
+            Mango9PushCallerIdentityCache.get(call.callLog.callId)
+        } else {
+            null
+        }
+        val uri = if (pushedIdentity?.handle?.startsWith('+') == true) {
+            "tel:${pushedIdentity.handle}".toUri()
+        } else {
+            address.asStringUriOnly().toUri()
+        }
 
         val direction = if (call.dir == Call.Dir.Outgoing) {
             CallAttributesCompat.DIRECTION_OUTGOING
@@ -107,7 +130,9 @@ class TelecomManager
         val capabilities = CallAttributesCompat.SUPPORTS_SET_INACTIVE or CallAttributesCompat.SUPPORTS_TRANSFER
 
         val conferenceInfo = LinphoneUtils.getConferenceInfoIfAny(call)
-        val displayName = if (call.conference != null || conferenceInfo != null) {
+        val displayName = if (pushedIdentity != null) {
+            pushedIdentity.displayName
+        } else if (call.conference != null || conferenceInfo != null) {
             conferenceInfo?.subject ?: call.conference?.subject ?: LinphoneUtils.getDisplayName(address)
         } else {
             val friend = coreContext.contactsManager.findContactByAddress(address)
@@ -155,6 +180,7 @@ class TelecomManager
                         coreContext.postOnCoreThread {
                             coreContext.terminateCall(call)
                         }
+                        followedCallKeys.remove(callKey)
                         currentlyFollowedCalls -= 1
                     },
                     { // onSetActive
@@ -188,12 +214,16 @@ class TelecomManager
                     }
                 }
             } catch (ce: CallException) {
+                followedCallKeys.remove(callKey)
                 Log.e("$TAG Failed to add call to Telecom's CallsManager: $ce")
             } catch (se: SecurityException) {
+                followedCallKeys.remove(callKey)
                 Log.e("$TAG Security exception trying to add call to Telecom's CallsManager: $se")
             } catch (ise: IllegalArgumentException) {
+                followedCallKeys.remove(callKey)
                 Log.e("$TAG Illegal argument exception trying to add call to Telecom's CallsManager: $ise")
             } catch (e: Exception) {
+                followedCallKeys.remove(callKey)
                 Log.e("$TAG Exception trying to add call to Telecom's CallsManager: $e")
             }
         }

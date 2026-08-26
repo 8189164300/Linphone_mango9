@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <LinearLayout
+        android:id="@+id/root"
+        android:layout_width="match_parent"
+        android:layout_height="74dp"
+        android:background="?attr/selectableItemBackground"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="16dp">
+
+        <FrameLayout
+            android:layout_width="48dp"
+            android:layout_height="48dp">
+
+            <TextView
+                android:id="@+id/avatar"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
+                android:background="@drawable/mango9_chat_avatar_background"
+                android:gravity="center"
+                android:textColor="@color/orange_main_500"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                tools:text="AP" />
+
+            <View
+                android:id="@+id/online"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_gravity="bottom|end"
+                android:background="@drawable/mango9_chat_online_background" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/title"
+                style="@style/default_text_style_700"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="?attr/color_main2_800"
+                android:textSize="14sp"
+                tools:text="Ani Paytyan" />
+
+            <TextView
+                android:id="@+id/preview"
+                style="@style/default_text_style"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="?attr/color_main2_500"
+                android:textSize="12sp"
+                tools:text="Last message preview" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/unread"
+            android:layout_width="wrap_content"
+            android:layout_height="24dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/mango9_chat_unread_background"
+            android:gravity="center"
+            android:minWidth="24dp"
+            android:paddingHorizontal="7dp"
+            android:textColor="@color/bc_white"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:visibility="gone"
+            tools:text="3"
+            tools:visibility="visible" />
+    </LinearLayout>
+</layout>
