@@ -17,6 +17,9 @@ plugins {
 
 val packageName = "com.mango9.phone"
 val useDifferentPackageNameForDebugBuild = false
+val mango9VersionName = "6.2.6"
+val mango9VersionCode = 602007
+val mango9ReleaseTag = "android-$mango9VersionName-build-$mango9VersionCode"
 
 val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
 // The upstream repository includes credentials for Linphone's Firebase project.
@@ -28,7 +31,7 @@ val linphoneDebugLibs = File("$sdkPath/libs-debug/")
 val firebaseCloudMessagingAvailable = googleServices.exists()
 val crashlyticsAvailable = googleServices.exists() && linphoneLibs.exists() && linphoneDebugLibs.exists()
 val defaultMango9SourceCodeUrl =
-    "https://github.com/8189164300/Linphone_mango9/tree/android-6.2.6-build-602006"
+    "https://github.com/8189164300/Linphone_mango9/tree/$mango9ReleaseTag"
 val mango9SourceCodeUrl = providers.gradleProperty("Mango9SourceCodeUrl")
     .orNull
     ?.trim()
@@ -54,32 +57,15 @@ if (crashlyticsAvailable) {
     println("Crashlytics has been disabled because either google-services.json file wasn't found or local Linphone SDK build folder isn't configured")
 }
 
-var gitVersion = "6.2.6"
-var gitBranch = ""
+val gitVersion = mango9VersionName
+var gitBranch = "unknown"
 try {
-    val gitDescribe = ProcessBuilder()
-        .command("git", "describe", "--abbrev=0")
-        .directory(project.rootDir)
-        .start()
-        .inputStream.bufferedReader().use(BufferedReader::readText)
-        .trim()
-    println("Git describe: $gitDescribe")
-
-    val gitCommitsCount = ProcessBuilder()
-        .command("git", "rev-list", "$gitDescribe..HEAD", "--count")
-        .directory(project.rootDir)
-        .start()
-        .inputStream.bufferedReader().use(BufferedReader::readText)
-        .trim()
-    println("Git commits count: $gitCommitsCount")
-
     val gitCommitHash = ProcessBuilder()
         .command("git", "rev-parse", "--short", "HEAD")
         .directory(project.rootDir)
         .start()
         .inputStream.bufferedReader().use(BufferedReader::readText)
         .trim()
-    println("Git commit hash: $gitCommitHash")
 
     gitBranch = ProcessBuilder()
         .command("git", "name-rev", "--name-only", "HEAD")
@@ -87,18 +73,11 @@ try {
         .start()
         .inputStream.bufferedReader().use(BufferedReader::readText)
         .trim()
-    println("Git branch name: $gitBranch")
-
-    gitVersion =
-        if (gitCommitsCount.toInt() == 0) {
-            gitDescribe
-        } else {
-            "$gitDescribe.$gitCommitsCount+$gitCommitHash"
-        }
+    println("Git commit: $gitCommitHash, branch: $gitBranch")
 } catch (e: Exception) {
-    println("Git not found [$e], using $gitVersion")
+    println("Git metadata unavailable [$e]")
 }
-println("Computed git version: $gitVersion")
+println("Mango9 version: $gitVersion ($mango9VersionCode), source tag: $mango9ReleaseTag")
 
 configurations {
     implementation { isCanBeResolved = true }
@@ -147,8 +126,8 @@ android {
         applicationId = packageName
         minSdk = 28
         targetSdk = 37
-        versionCode = 602006 // 6.02.006
-        versionName = "6.2.6"
+        versionCode = mango9VersionCode
+        versionName = mango9VersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["disableAnalytics"] = "true"
         buildConfigField("String", "MANGO9_SOURCE_CODE_URL", "\"$escapedMango9SourceCodeUrl\"")
@@ -358,6 +337,9 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
     val manifest = file("src/main/AndroidManifest.xml")
     val mainActivity = file("src/main/java/org/linphone/ui/main/MainActivity.kt")
     val helpFragment = file("src/main/java/org/linphone/ui/main/help/fragment/HelpFragment.kt")
+    val loginLayout = file("src/main/res/layout/assistant_landing_fragment.xml")
+    val loginBrandBackground = file("src/main/res/drawable/mango9_brand_card_background.xml")
+    val mango9ApiClient = file("src/main/java/org/linphone/mango9/Mango9ApiClient.kt")
     val coreContext = file("src/main/java/org/linphone/core/CoreContext.kt")
     val notificationsManager = file("src/main/java/org/linphone/notifications/NotificationsManager.kt")
     val linphoneUtils = file("src/main/java/org/linphone/utils/LinphoneUtils.kt")
@@ -383,6 +365,9 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         manifest,
         mainActivity,
         helpFragment,
+        loginLayout,
+        loginBrandBackground,
+        mango9ApiClient,
         coreContext,
         notificationsManager,
         linphoneUtils,
@@ -409,6 +394,9 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         val manifestText = manifest.readText()
         val mainActivityText = mainActivity.readText()
         val helpFragmentText = helpFragment.readText()
+        val loginLayoutText = loginLayout.readText()
+        val loginBrandBackgroundText = loginBrandBackground.readText()
+        val mango9ApiClientText = mango9ApiClient.readText()
         val coreContextText = coreContext.readText()
         val notificationsManagerText = notificationsManager.readText()
         val linphoneUtilsText = linphoneUtils.readText()
@@ -459,6 +447,22 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
                 !helpFragmentText.contains("checkForUpdate") &&
                 !helpFragmentText.contains("website_translate_weblate_url"),
             "Help must not expose upstream debug, update, or translation routes",
+        )
+        requirePolicy(
+            loginLayoutText.contains("android:background=\"@color/gray_100\"") &&
+                loginLayoutText.contains("@drawable/mango9_login_field_background") &&
+                loginLayoutText.contains("@drawable/mango9_login_primary_button_background") &&
+                loginLayoutText.contains("@drawable/mango9_login_secondary_button_background") &&
+                !loginLayoutText.contains("?attr/") &&
+                loginBrandBackgroundText.contains("@color/orange_main_500") &&
+                !loginBrandBackgroundText.contains("<gradient"),
+            "Mango9 login must retain the fixed iOS parity palette in light and dark device modes",
+        )
+        requirePolicy(
+            mango9ApiClientText.contains("application/xml, text/xml;q=0.9, */*;q=0.1") &&
+                mango9ApiClientText.contains("purpose = RequestPurpose.Enrollment") &&
+                mango9ApiClientText.contains("Mango9ApiException.EnrollmentUnavailable"),
+            "One-time SIP enrollment must use XML negotiation and stage-specific error mapping",
         )
         requirePolicy(
             !assistantNavigationText.contains("action_landingFragment_to_registerFragment") &&

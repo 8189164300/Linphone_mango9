@@ -37,6 +37,10 @@ iOS platform conventions where Android has a native equivalent.
   are intentionally blocked while Mango9's default Android `FLAG_SECURE` policy
   is active, so the XML accessibility hierarchies are the authoritative screen
   evidence.
+- The login screen uses the same fixed iOS palette in both Android light and
+  dark device modes: `#F9F9F9` page/field surfaces, a white enrollment card,
+  `#4E6074` copy, and `#4053C8` brand/actions. The dark-mode emulator hierarchy
+  confirms that all controls and the English `Password` hint remain present.
 
 ## Identity, branding, and distribution
 
@@ -47,8 +51,9 @@ iOS platform conventions where Android has a native equivalent.
 - [x] Mango9 launcher/adaptive icons use the approved SVG paths, and the
       wordmark is derived from `../Linphone_mango9/Branding`.
 - [~] Mango9 blue/brand theme, typography, spacing, login card, navigation, and
-      empty/error/loading states are implemented; an exhaustive phone/tablet
-      visual comparison against iOS remains.
+      empty/error/loading states are implemented. The login palette and solid
+      brand card are pinned to the iOS source values in both device modes; an
+      exhaustive phone/tablet visual comparison against iOS remains.
 - [x] Linphone upstream copyright and GPL notices remain available in Licensing;
       reachable Linphone consumer-account branding and hosted-service links are
       rejected by the static policy.
@@ -58,7 +63,7 @@ iOS platform conventions where Android has a native equivalent.
       explicit Mango9 file, and the current APK enables the Mango9 FCM service.
 - [x] Licensing, README, and open-source notices link the exact upstream
       Android/SDK revisions and immutable Mango9 corresponding-source tag
-      `android-6.2.6-build-602006`; the static policy requires these links to
+      `android-6.2.6-build-602007`; the static policy requires these links to
       remain consistent.
 
 ## Enrollment and account lifecycle
@@ -71,11 +76,15 @@ Reference: `LoginFragment.swift`, `CorePreferences.swift`, and
 - [x] Passwordless login requests and verifies the six-digit email code through
       `/v1/mobile/login-code/request` and `/v1/mobile/login-code/verify`.
 - [x] Login supports password visibility, validation, resend countdown,
-      user-facing server errors, loading state, and “keep me signed in”.
+      user-facing stage-specific server errors, loading state, and “keep me
+      signed in”. Authentication, one-time XML enrollment, and SIP installation
+      failures are distinguished without logging credentials or tokens.
 - [x] Enrollment URLs are accepted only over HTTPS from
       `provision.mango9.com`, with no user-info and only the default/443 port.
 - [x] One-time Linphone provisioning XML is parsed for SIP identity, username,
-      domain, realm, and HA1 without persisting the one-time URL.
+      domain, realm, and HA1 without persisting the one-time URL. Android uses
+      XML content negotiation like iOS and does not misreport an expired or
+      missing enrollment as an email-code or CRM-password failure.
 - [x] Every managed SIP account registers through
       `sip:proxy.mango9.com;transport=tls`; registrar and route cannot be changed
       by the managed-account UI.
@@ -207,6 +216,12 @@ Reference: `Mango9ChatStore` and the Mango9 adapters in conversation views.
 - [~] Emulator smoke covers clean install, permissions, cold first launch, both
       login modes, Help/Licensing, and process restart. Credentialed offline/error,
       signed-in navigation, and account switching remain.
+- [~] The live public provisioning health endpoint and Android password-login
+      request contract were exercised on 2026-08-26. A synthetic invalid account
+      returned the expected HTTP 401 `invalid_credentials` response with a server
+      request ID, and the installed Android app rendered the matching user error
+      without crashing. A successful credentialed enrollment still requires a
+      non-production tester account.
 - [ ] Physical-device smoke test covers provisioning and the complete calling and
       push matrix named above.
 - [ ] A final screen-by-screen comparison is captured for the supported phone and

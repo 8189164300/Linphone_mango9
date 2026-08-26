@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:drawable="@drawable/mango9_login_primary_button_disabled_background"
+        android:state_enabled="false" />
+    <item android:drawable="@drawable/mango9_login_primary_button_enabled_background" />
+</selector>

@@ -18,6 +18,7 @@
     <string name="mango9_brand_subtitle">Securely connect this device to your Mango9 account.</string>
     <string name="mango9_connect_account">Connect your account</string>
     <string name="mango9_username_hint">Email or username</string>
+    <string name="mango9_password_hint">Password</string>
     <string name="mango9_email_hint">Email address</string>
     <string name="mango9_code_hint">6-digit code</string>
     <string name="mango9_change_email">Change email</string>

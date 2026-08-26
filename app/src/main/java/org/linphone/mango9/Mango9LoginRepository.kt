@@ -7,8 +7,13 @@
 package org.linphone.mango9
 
 import android.content.Context
+import org.linphone.core.tools.Log
 
 class Mango9LoginRepository(context: Context) {
+    private companion object {
+        private const val TAG = "[Mango9 Login]"
+    }
+
     private val api = Mango9ApiClient(context)
     private val lineIdentities = Mango9LineIdentityStore(context)
     val sessions = Mango9SessionStore(context)
@@ -58,7 +63,12 @@ class Mango9LoginRepository(context: Context) {
     }
 
     private suspend fun completeLogin(login: Mango9LoginResponse, rememberLogin: Boolean) {
-        val enrollment = api.fetchEnrollment(login.enrollmentUrl)
+        val enrollment = try {
+            api.fetchEnrollment(login.enrollmentUrl)
+        } catch (error: Exception) {
+            Log.e("$TAG Authentication succeeded but enrollment retrieval failed: ${error.javaClass.simpleName}")
+            throw error
+        }
         val session = login.session.associatedWith(enrollment.identity)
         sessions.rememberLogin = rememberLogin
         sessions.save(
@@ -86,6 +96,11 @@ class Mango9LoginRepository(context: Context) {
         }
         // CRM authentication and SIP registration are separate lanes. A valid
         // CRM session is intentionally retained if the SIP proxy is temporarily unavailable.
-        Mango9AccountProvisioner.install(enrollment, session.displayName)
+        try {
+            Mango9AccountProvisioner.install(enrollment, session.displayName)
+        } catch (error: Exception) {
+            Log.e("$TAG Authentication and enrollment succeeded but SIP installation failed: ${error.javaClass.simpleName}")
+            throw error
+        }
     }
 }

@@ -26,7 +26,7 @@
     <androidx.coordinatorlayout.widget.CoordinatorLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/gray_main2_100">
+        android:background="@color/gray_100">
 
         <ScrollView
             android:layout_width="match_parent"
@@ -55,7 +55,7 @@
                         android:onClick="@{backClickListener}"
                         android:src="@drawable/caret_left"
                         android:visibility="@{viewModel.showBackButton ? View.VISIBLE : View.INVISIBLE, default=invisible}"
-                        app:tint="?attr/color_main2_600" />
+                        app:tint="@color/gray_main2_600" />
 
                     <TextView
                         style="@style/assistant_page_title_style"
@@ -63,7 +63,7 @@
                         android:layout_height="wrap_content"
                         android:layout_gravity="center"
                         android:text="@string/app_name"
-                        android:textColor="?attr/color_text" />
+                        android:textColor="@color/gray_main2_600" />
 
                     <LinearLayout
                         android:layout_width="wrap_content"
@@ -80,7 +80,7 @@
                             android:onClick="@{manualSipClickListener}"
                             android:padding="11dp"
                             android:src="@drawable/gear"
-                            app:tint="?attr/color_main2_600" />
+                            app:tint="@color/gray_main2_600" />
 
                         <ImageView
                             style="@style/icon_top_bar_button_style"
@@ -90,7 +90,7 @@
                             android:onClick="@{qrCodeClickListener}"
                             android:padding="11dp"
                             android:src="@drawable/qr_code"
-                            app:tint="?attr/color_main2_600" />
+                            app:tint="@color/gray_main2_600" />
 
                         <ImageView
                             style="@style/icon_top_bar_button_style"
@@ -100,7 +100,7 @@
                             android:onClick="@{helpClickListener}"
                             android:padding="11dp"
                             android:src="@drawable/question"
-                            app:tint="?attr/color_main2_600" />
+                            app:tint="@color/gray_main2_600" />
                     </LinearLayout>
                 </FrameLayout>
 
@@ -161,7 +161,7 @@
                         android:fontFamily="@font/noto_sans_800"
                         android:gravity="center"
                         android:text="@string/mango9_connect_account"
-                        android:textColor="?attr/color_text"
+                        android:textColor="@color/gray_main2_600"
                         android:textSize="20sp" />
 
                     <TextView
@@ -172,7 +172,7 @@
                         android:gravity="center"
                         android:maxLines="3"
                         android:text="@{viewModel.loginSubtitle}"
-                        android:textColor="?attr/color_main2_600"
+                        android:textColor="@color/gray_main2_600"
                         android:textSize="14sp" />
 
                     <LinearLayout
@@ -188,13 +188,14 @@
                             android:layout_width="match_parent"
                             android:layout_height="50dp"
                             android:autofillHints="username"
-                            android:background="@drawable/edit_text_background"
+                            android:background="@drawable/mango9_login_field_background"
                             android:hint="@string/mango9_username_hint"
                             android:imeOptions="actionNext"
                             android:inputType="text|textNoSuggestions"
                             android:paddingHorizontal="18dp"
                             android:text="@={viewModel.username}"
-                            android:textColor="?attr/color_main2_600"
+                            android:textColor="@color/gray_main2_600"
+                            android:textColorHint="@color/gray_main2_400"
                             android:textSize="14sp" />
 
                         <FrameLayout
@@ -208,15 +209,16 @@
                                 android:layout_width="match_parent"
                                 android:layout_height="match_parent"
                                 android:autofillHints="password"
-                                android:background="@drawable/edit_text_background"
-                                android:hint="@string/password"
+                                android:background="@drawable/mango9_login_field_background"
+                                android:hint="@string/mango9_password_hint"
                                 android:imeOptions="actionDone"
                                 android:inputType="textPassword"
                                 android:onEditorAction="@{(view, actionId, event) -> viewModel.primaryActionFromIme()}"
                                 android:paddingStart="18dp"
                                 android:paddingEnd="52dp"
                                 android:text="@={viewModel.password}"
-                                android:textColor="?attr/color_main2_600"
+                                android:textColor="@color/gray_main2_600"
+                                android:textColorHint="@color/gray_main2_400"
                                 android:textSize="14sp"
                                 passwordInputType="@{viewModel.showPassword ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD, default=textPassword}" />
 
@@ -228,7 +230,7 @@
                                 android:onClick="@{() -> viewModel.toggleShowPassword()}"
                                 android:padding="10dp"
                                 android:src="@{viewModel.showPassword ? @drawable/eye_slash : @drawable/eye, default=@drawable/eye}"
-                                app:tint="?attr/color_main2_500" />
+                                app:tint="@color/gray_main2_600" />
                         </FrameLayout>
                     </LinearLayout>
 
@@ -239,14 +241,15 @@
                         android:layout_height="50dp"
                         android:layout_marginTop="16dp"
                         android:autofillHints="emailAddress"
-                        android:background="@drawable/edit_text_background"
+                        android:background="@drawable/mango9_login_field_background"
                         android:hint="@string/mango9_email_hint"
                         android:imeOptions="actionDone"
                         android:inputType="textEmailAddress"
                         android:onEditorAction="@{(view, actionId, event) -> viewModel.primaryActionFromIme()}"
                         android:paddingHorizontal="18dp"
                         android:text="@={viewModel.email}"
-                        android:textColor="?attr/color_main2_600"
+                        android:textColor="@color/gray_main2_600"
+                        android:textColorHint="@color/gray_main2_400"
                         android:textSize="14sp"
                         android:visibility="@{viewModel.emailRequestMode ? View.VISIBLE : View.GONE, default=gone}" />
 
@@ -262,7 +265,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="52dp"
                             android:autofillHints="smsOTPCode"
-                            android:background="@drawable/edit_text_background"
+                            android:background="@drawable/mango9_login_field_background"
                             android:gravity="center"
                             android:hint="@string/mango9_code_hint"
                             android:imeOptions="actionDone"
@@ -270,7 +273,8 @@
                             android:maxLength="6"
                             android:onEditorAction="@{(view, actionId, event) -> viewModel.primaryActionFromIme()}"
                             android:text="@={viewModel.verificationCode}"
-                            android:textColor="?attr/color_main2_600"
+                            android:textColor="@color/gray_main2_600"
+                            android:textColorHint="@color/gray_main2_400"
                             android:textSize="24sp" />
 
                         <LinearLayout
@@ -288,7 +292,7 @@
                                 android:gravity="start|center_vertical"
                                 android:onClick="@{() -> viewModel.changeEmail()}"
                                 android:text="@string/mango9_change_email"
-                                android:textColor="?attr/color_main1_500"
+                                android:textColor="@color/orange_main_500"
                                 android:textSize="13sp" />
 
                             <TextView
@@ -300,7 +304,7 @@
                                 android:gravity="end|center_vertical"
                                 android:onClick="@{() -> viewModel.resendCode()}"
                                 android:text="@{viewModel.resendButtonTitle}"
-                                android:textColor="?attr/color_main1_500"
+                                android:textColor="@color/orange_main_500"
                                 android:textSize="13sp" />
                         </LinearLayout>
                     </LinearLayout>
@@ -323,7 +327,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="@string/mango9_keep_signed_in"
-                                android:textColor="?attr/color_text"
+                                android:textColor="@color/gray_main2_600"
                                 android:textSize="14sp" />
 
                             <TextView
@@ -332,7 +336,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:text="@string/mango9_secure_storage_note"
-                                android:textColor="?attr/color_main2_500"
+                                android:textColor="@color/gray_main2_500"
                                 android:textSize="11sp" />
                         </LinearLayout>
 
@@ -340,7 +344,9 @@
                             style="@style/material_switch_style"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:checked="@={viewModel.rememberLogin}" />
+                            android:checked="@={viewModel.rememberLogin}"
+                            app:thumbTint="@color/mango9_login_switch_thumb"
+                            app:trackTint="@color/mango9_login_switch_track" />
                     </LinearLayout>
 
                     <TextView
@@ -364,11 +370,12 @@
                             android:id="@+id/mango9_primary_action"
                             android:layout_width="match_parent"
                             android:layout_height="match_parent"
-                            android:background="@drawable/primary_button_background"
+                            android:background="@drawable/mango9_login_primary_button_background"
                             android:enabled="@{viewModel.primaryActionEnabled}"
                             android:gravity="center"
                             android:onClick="@{() -> viewModel.primaryAction()}"
-                            android:text="@{viewModel.primaryButtonTitle}" />
+                            android:text="@{viewModel.primaryButtonTitle}"
+                            android:textColor="@color/bc_white" />
 
                         <ProgressBar
                             android:layout_width="24dp"
@@ -385,14 +392,15 @@
                         android:layout_width="match_parent"
                         android:layout_height="48dp"
                         android:layout_marginTop="12dp"
-                        android:background="@drawable/secondary_button_background"
+                        android:background="@drawable/mango9_login_secondary_button_background"
                         app:drawableStartCompat="@drawable/envelope_simple"
                         android:drawablePadding="8dp"
                         android:gravity="center"
                         android:onClick="@{() -> viewModel.showEmailLogin()}"
                         android:text="@string/mango9_use_email_code"
+                        android:textColor="@color/orange_main_500"
                         android:visibility="@{viewModel.passwordMode ? View.VISIBLE : View.GONE, default=visible}"
-                        app:drawableTint="?attr/color_main1_500" />
+                        app:drawableTint="@color/orange_main_500" />
 
                     <TextView
                         style="@style/default_text_style"
@@ -403,7 +411,7 @@
                         android:gravity="center"
                         android:onClick="@{() -> viewModel.showPasswordLogin()}"
                         android:text="@string/mango9_use_password"
-                        android:textColor="?attr/color_main1_500"
+                        android:textColor="@color/orange_main_500"
                         android:textSize="14sp"
                         android:visibility="@{viewModel.passwordMode ? View.GONE : View.VISIBLE, default=gone}" />
                 </LinearLayout>
