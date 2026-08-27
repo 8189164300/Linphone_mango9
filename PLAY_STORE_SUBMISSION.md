@@ -8,7 +8,7 @@ promote the release to production until every required item is complete.
 - App name: `Mango9`
 - Package name: `com.mango9.phone`
 - Version: `6.2.6`
-- Version code: `602012`
+- Version code: `602014`
 - Primary category: `Business`
 - Price: `Free`
 - Contains ads: `No`
@@ -17,7 +17,7 @@ promote the release to production until every required item is complete.
 - Privacy policy: <https://www.mango9.com/privacy>
 - Support: <https://www.mango9.com/support> and `support@mango9.com`
 - Corresponding source:
-  <https://github.com/8189164300/Linphone_mango9/tree/android-6.2.6-build-602012>
+  <https://github.com/8189164300/Linphone_mango9/tree/android-6.2.6-build-602014>
 
 ## Developer account and app ownership
 
@@ -140,7 +140,7 @@ current Google definitions.
 1. Increment the version code after any code, resource, manifest, or release
    configuration change.
 2. Commit the exact release source with the final source URL.
-3. Create and push the immutable tag `android-6.2.6-build-602012`.
+3. Create and push the immutable tag `android-6.2.6-build-602014`.
 4. Build the signed AAB from that tagged commit; never move the tag.
 5. Confirm About Mango9 > Licensing opens the exact public tag.
 6. Record the Git commit, AAB SHA-256, upload-certificate fingerprints, and Play

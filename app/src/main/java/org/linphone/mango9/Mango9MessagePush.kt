@@ -78,10 +78,9 @@ data class Mango9MessagePush(
                     )
                 }
                 "sms.received" -> {
-                    val digits = value("phone")?.filter(Char::isDigit).orEmpty()
+                    val digits = Mango9PhoneNumber.normalized(value("phone").orEmpty())
                     if (digits.length < 10) return null
-                    val phone = if (digits.length == 10) "1$digits" else digits
-                    Mango9MessagePushTarget.Sms(phone, value("name") ?: phone)
+                    Mango9MessagePushTarget.Sms(digits, value("name") ?: digits)
                 }
                 "lead.created", "lead.assigned" -> {
                     val leadId = value("lead_id", "leadId")?.toIntOrNull()?.takeIf { it > 0 }
@@ -164,6 +163,7 @@ object Mango9MessagePushRegistration {
         if (!validBearer(chatToken) || !Mango9MessagePushTokenStore.isValidToken(pushToken)) return null
         val body = JSONObject()
             .put("token", pushToken)
+            .put("platform", "firebase")
             .put("device_id", deviceId)
             .put("crm_id", session.crmId)
             .put("sip_identity", sipIdentity)

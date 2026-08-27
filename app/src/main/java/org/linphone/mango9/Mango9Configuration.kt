@@ -14,6 +14,10 @@ object Mango9Configuration {
     const val PROVISIONING_BASE_URL = "https://$PROVISIONING_HOST"
     const val SIP_PROXY_HOST = "proxy.mango9.com"
     const val SIP_PROXY_URI = "sip:$SIP_PROXY_HOST;transport=tls"
+
+    // The Mango9 edge dispatches Android RFC 8599 wake-ups through the isolated
+    // FCM sidecar while retaining the existing APNs path for iOS.
+    const val SIP_PUSH_NOTIFICATION_ENABLED = true
     const val MOBILE_REGISTRATION_EXPIRES_SECONDS = 30 * 24 * 60 * 60
 
     fun verifiedProvisioningUrl(rawValue: String?): URL? {

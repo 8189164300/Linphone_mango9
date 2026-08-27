@@ -1,27 +1,28 @@
 {
   "project_info": {
-    "project_number": "746448892737",
-    "project_id": "manushak-c4d12"
+    "project_number": "90265444452",
+    "project_id": "mango9-506818",
+    "storage_bucket": "mango9-506818.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:746448892737:android:4a7f6fc79b0daad71a27c0",
+        "mobilesdk_app_id": "1:90265444452:android:cd0eacfef2cab07fedbf71",
         "android_client_info": {
           "package_name": "com.mango9.phone"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "746448892737-jh4ggt27jhon95oo2g4g0rffctp7ribg.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDHyxy94a8GxcdKzQOE14cRDxuMihunV5s"
+          "current_key": "AIzaSyA56ORd-fhX3e-2MhzxgiS_wWQXTHOHbps"
         }
-      ]
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
     }
   ],
   "configuration_version": "1"

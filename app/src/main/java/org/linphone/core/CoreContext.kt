@@ -224,11 +224,16 @@ class CoreContext
             if (!serverHost.equals(Mango9Configuration.SIP_PROXY_HOST, ignoreCase = true)) return
 
             val errorInfo = account.errorInfo
-            Mango9AccountProvisioner.retryWithoutSipPushIfUnsupported(
+            val pushDisabled = Mango9AccountProvisioner.retryWithoutSipPushIfUnsupported(
                 account,
                 errorInfo.protocolCode,
                 errorInfo.phrase?.takeIf { it.isNotEmpty() } ?: message,
             )
+            if (pushDisabled && !corePreferences.keepServiceAlive) {
+                corePreferences.keepServiceAlive = true
+                startKeepAliveService()
+                Log.i("$TAG Enabled Android SIP keep-alive after the proxy rejected SIP push")
+            }
         }
 
         @WorkerThread
@@ -1401,7 +1406,39 @@ class CoreContext
         core.config.setBool("ui", "show_developer_settings", false)
         core.config.setBool("ui", "disable_meetings_feature", true)
         core.config.setBool("ui", "only_display_sip_uri_username", true)
+        enforceMango9AndroidRegistrationDefaults()
         Log.i("$TAG Applied Mango9 runtime service defaults")
+    }
+
+    /** Normalize existing managed accounts to the current Android SIP-push policy before Core.start(). */
+    private fun enforceMango9AndroidRegistrationDefaults() {
+        var managedAccountFound = false
+        for (account in core.accountList) {
+            val params = account.params
+            val serverHost = params.serverAddress?.domain
+            if (!serverHost.equals(Mango9Configuration.SIP_PROXY_HOST, ignoreCase = true)) continue
+
+            managedAccountFound = true
+            if (
+                params.expires != Mango9Configuration.MOBILE_REGISTRATION_EXPIRES_SECONDS ||
+                params.pushNotificationAllowed != Mango9Configuration.SIP_PUSH_NOTIFICATION_ENABLED
+            ) {
+                val updated = params.clone()
+                updated.expires = Mango9Configuration.MOBILE_REGISTRATION_EXPIRES_SECONDS
+                updated.pushNotificationAllowed = Mango9Configuration.SIP_PUSH_NOTIFICATION_ENABLED
+                account.params = updated
+                Log.i("$TAG Normalized managed Android SIP registration policy")
+            }
+        }
+
+        if (
+            managedAccountFound &&
+            !Mango9Configuration.SIP_PUSH_NOTIFICATION_ENABLED &&
+            !corePreferences.keepServiceAlive
+        ) {
+            corePreferences.keepServiceAlive = true
+            Log.i("$TAG Enabled Android SIP keep-alive for existing managed account(s)")
+        }
     }
 
     @WorkerThread

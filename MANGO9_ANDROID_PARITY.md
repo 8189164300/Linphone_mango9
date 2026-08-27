@@ -67,7 +67,7 @@ iOS platform conventions where Android has a native equivalent.
       explicit Mango9 file, and the current APK enables the Mango9 FCM service.
 - [x] Licensing, README, and open-source notices link the exact upstream
       Android/SDK revisions and immutable Mango9 corresponding-source tag
-      `android-6.2.6-build-602012`; the static policy requires these links to
+      `android-6.2.6-build-602014`; the static policy requires these links to
       remain consistent.
 
 ## Enrollment and account lifecycle

@@ -68,8 +68,7 @@ class Mango9ChatModerationStore(context: Context) {
             .joinToString("") { "%02x".format(it) }
 
         fun normalizedPhone(value: String): String {
-            val digits = value.filter(Char::isDigit)
-            return if (digits.length == 10) "1$digits" else digits
+            return Mango9PhoneNumber.normalized(value)
         }
     }
 }

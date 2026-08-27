@@ -94,6 +94,7 @@ class Mango9MessagePushTest {
         assertEquals("https://messages.example.com/api/push/register", request.url.toString())
         assertEquals("Bearer short-lived-chat-token", request.header("Authorization"))
         assertEquals("fcm:abcdefghijklmnopqrstuvwxyz-0123456789", json.getString("token"))
+        assertEquals("firebase", json.getString("platform"))
         assertEquals("device-7", json.getString("device_id"))
         assertEquals("crm-7", json.getString("crm_id"))
         assertEquals("sip:700@tenant.example.com", json.getString("sip_identity"))

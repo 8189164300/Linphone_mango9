@@ -14,7 +14,8 @@ import org.junit.Test
 
 class Mango9ManagedConfigurationTest {
     @Test
-    fun mobileRegistrationLifetimeMatchesIos() {
+    fun androidUsesLongSipBindingWithFcmCallWakeUp() {
+        assertEquals(true, Mango9Configuration.SIP_PUSH_NOTIFICATION_ENABLED)
         assertEquals(30 * 24 * 60 * 60, Mango9Configuration.MOBILE_REGISTRATION_EXPIRES_SECONDS)
     }
 

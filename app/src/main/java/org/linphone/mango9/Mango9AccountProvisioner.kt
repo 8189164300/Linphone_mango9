@@ -13,8 +13,8 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
-import org.linphone.BuildConfig
 import org.linphone.LinphoneApplication.Companion.coreContext
+import org.linphone.LinphoneApplication.Companion.corePreferences
 import org.linphone.core.Account
 import org.linphone.core.Core
 import org.linphone.core.Factory
@@ -95,22 +95,6 @@ object Mango9AccountProvisioner {
                     )
                     val params = core.createAccountParams()
                     params.identityAddress = identity
-                    if (BuildConfig.MANGO9_FCM_ENABLED) {
-                        val identityDomain = identity.domain?.trim()?.lowercase()
-                        if (!identityDomain.isNullOrEmpty()) {
-                            val compatibleDomains = core.config
-                                .getStringList("app", "push_notification_domains", emptyArray())
-                                .map(String::trim)
-                                .filter(String::isNotEmpty)
-                            if (identityDomain !in compatibleDomains) {
-                                core.config.setStringList(
-                                    "app",
-                                    "push_notification_domains",
-                                    (compatibleDomains + identityDomain).distinct().toTypedArray(),
-                                )
-                            }
-                        }
-                    }
                     val proxy = Factory.instance().createAddress(Mango9Configuration.SIP_PROXY_URI)
                         ?: throw Mango9ApiException.InvalidResponse
                     proxy.transport = TransportType.Tls
@@ -118,7 +102,7 @@ object Mango9AccountProvisioner {
                     params.setRoutesAddresses(arrayOf(proxy.clone()))
                     params.expires = Mango9Configuration.MOBILE_REGISTRATION_EXPIRES_SECONDS
                     params.isRegisterEnabled = true
-                    params.pushNotificationAllowed = BuildConfig.MANGO9_FCM_ENABLED
+                    params.pushNotificationAllowed = Mango9Configuration.SIP_PUSH_NOTIFICATION_ENABLED
 
                     val matching = core.accountList.filter {
                         Mango9SessionStore.normalizedIdentity(it.params.identityAddress?.asStringUriOnly()) ==
@@ -139,6 +123,7 @@ object Mango9AccountProvisioner {
                     }
                     core.defaultAccount = selected
                     selected.refreshRegister()
+                    enableAndroidSipKeepAliveIfNeeded()
                     core.config.setString("misc", "config-uri", null)
                     core.provisioningUri = null
                     Log.i("$TAG Installed managed account [$normalizedIdentity] through ${Mango9Configuration.SIP_PROXY_HOST}")
@@ -202,6 +187,7 @@ object Mango9AccountProvisioner {
 
         val updatedParams = params.clone()
         updatedParams.pushNotificationAllowed = false
+        updatedParams.expires = Mango9Configuration.MOBILE_REGISTRATION_EXPIRES_SECONDS
         account.params = updatedParams
         account.refreshRegister()
         Log.w(
@@ -209,6 +195,14 @@ object Mango9AccountProvisioner {
                 "retrying registration without SIP push parameters"
         )
         return true
+    }
+
+    private fun enableAndroidSipKeepAliveIfNeeded() {
+        if (Mango9Configuration.SIP_PUSH_NOTIFICATION_ENABLED) return
+        if (corePreferences.keepServiceAlive) return
+        corePreferences.keepServiceAlive = true
+        coreContext.startKeepAliveService()
+        Log.i("$TAG Enabled Android SIP keep-alive service for the managed Mango9 account")
     }
 
     private data class RegistrationSnapshot(
