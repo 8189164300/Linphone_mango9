@@ -67,7 +67,7 @@ iOS platform conventions where Android has a native equivalent.
       explicit Mango9 file, and the current APK enables the Mango9 FCM service.
 - [x] Licensing, README, and open-source notices link the exact upstream
       Android/SDK revisions and immutable Mango9 corresponding-source tag
-      `android-6.2.6-build-602011`; the static policy requires these links to
+      `android-6.2.6-build-602012`; the static policy requires these links to
       remain consistent.
 
 ## Enrollment and account lifecycle
@@ -169,6 +169,9 @@ Reference: `Mango9CRMFragment.swift` and `Mango9DynamicCRM.swift`.
 - [~] CRM navigation is available only for a valid Mango9 session and retains
       active-account isolation.
 - [~] Dashboard metrics and deep-linked lead navigation are implemented.
+- [x] The dashboard header, Overview labels, and CRM workspace rows use the exact
+      iOS title/subtitle copy. Leads, Clients, and Team Chat each render the
+      iOS-style separate title and description instead of collapsing to one line.
 - [~] Leads: schema-driven list, search, status/group/date filters, pagination,
       create, detail, edit, delete, and communication actions.
 - [~] Clients: schema-driven list, search, status/group/date filters, pagination,

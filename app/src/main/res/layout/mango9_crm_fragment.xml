@@ -286,51 +286,165 @@
                             android:text="@string/mango9_crm_workspace"
                             android:textSize="17sp" />
 
-                        <TextView
+                        <LinearLayout
                             android:id="@+id/leads_row"
-                            style="@style/header_style"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="12dp"
                             android:background="@drawable/shape_squircle_white_background"
-                            app:drawableEndCompat="@drawable/caret_right"
-                            app:drawableStartCompat="@drawable/users_three"
-                            android:drawablePadding="12dp"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:foreground="?attr/selectableItemBackground"
+                            android:gravity="center_vertical"
                             android:minHeight="70dp"
-                            android:padding="14dp"
-                            android:text="@string/mango9_crm_leads_subtitle"
-                            app:drawableTint="?attr/color_main1_500" />
+                            android:orientation="horizontal"
+                            android:padding="13dp">
 
-                        <TextView
+                            <ImageView
+                                android:layout_width="45dp"
+                                android:layout_height="45dp"
+                                android:background="@drawable/mango9_crm_icon_background"
+                                android:contentDescription="@null"
+                                android:padding="10dp"
+                                android:src="@drawable/users_three"
+                                app:tint="@color/orange_main_500" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    style="@style/default_text_style_700"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/mango9_crm_leads"
+                                    android:textSize="14sp" />
+
+                                <TextView
+                                    style="@style/default_text_style"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:text="@string/mango9_crm_leads_subtitle"
+                                    android:textColor="?attr/color_main2_500"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <LinearLayout
                             android:id="@+id/clients_row"
-                            style="@style/header_style"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="12dp"
                             android:background="@drawable/shape_squircle_white_background"
-                            app:drawableEndCompat="@drawable/caret_right"
-                            app:drawableStartCompat="@drawable/address_book"
-                            android:drawablePadding="12dp"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:foreground="?attr/selectableItemBackground"
+                            android:gravity="center_vertical"
                             android:minHeight="70dp"
-                            android:padding="14dp"
-                            android:text="@string/mango9_crm_clients_subtitle"
-                            app:drawableTint="?attr/color_main1_500" />
+                            android:orientation="horizontal"
+                            android:padding="13dp">
 
-                        <TextView
+                            <ImageView
+                                android:layout_width="45dp"
+                                android:layout_height="45dp"
+                                android:background="@drawable/mango9_crm_icon_background"
+                                android:contentDescription="@null"
+                                android:padding="10dp"
+                                android:src="@drawable/address_book"
+                                app:tint="@color/orange_main_500" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    style="@style/default_text_style_700"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/mango9_crm_clients"
+                                    android:textSize="14sp" />
+
+                                <TextView
+                                    style="@style/default_text_style"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:text="@string/mango9_crm_clients_subtitle"
+                                    android:textColor="?attr/color_main2_500"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <LinearLayout
                             android:id="@+id/team_chat_row"
-                            style="@style/header_style"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="12dp"
                             android:layout_marginBottom="28dp"
                             android:background="@drawable/shape_squircle_white_background"
-                            app:drawableEndCompat="@drawable/caret_right"
-                            app:drawableStartCompat="@drawable/chat_teardrop_text"
-                            android:drawablePadding="12dp"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:foreground="?attr/selectableItemBackground"
+                            android:gravity="center_vertical"
                             android:minHeight="70dp"
-                            android:padding="14dp"
-                            android:text="@string/mango9_crm_team_chat_subtitle"
-                            app:drawableTint="?attr/color_main1_500" />
+                            android:orientation="horizontal"
+                            android:padding="13dp">
+
+                            <ImageView
+                                android:layout_width="45dp"
+                                android:layout_height="45dp"
+                                android:background="@drawable/mango9_crm_icon_background"
+                                android:contentDescription="@null"
+                                android:padding="10dp"
+                                android:src="@drawable/chat_teardrop_text"
+                                app:tint="@color/orange_main_500" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    style="@style/default_text_style_700"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:text="@string/mango9_crm_team_chat"
+                                    android:textSize="14sp" />
+
+                                <TextView
+                                    android:id="@+id/team_chat_subtitle"
+                                    style="@style/default_text_style"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="3dp"
+                                    android:text="@string/mango9_crm_team_chat_subtitle"
+                                    android:textColor="?attr/color_main2_500"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:id="@+id/team_chat_unread_badge"
+                                style="@style/default_text_style_700"
+                                android:layout_width="wrap_content"
+                                android:layout_height="22dp"
+                                android:layout_marginStart="8dp"
+                                android:background="@drawable/mango9_chat_unread_background"
+                                android:gravity="center"
+                                android:minWidth="22dp"
+                                android:paddingHorizontal="6dp"
+                                android:textColor="@color/bc_white"
+                                android:textSize="10sp"
+                                android:visibility="gone" />
+                        </LinearLayout>
                     </LinearLayout>
 
                     <LinearLayout

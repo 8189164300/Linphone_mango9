@@ -18,7 +18,7 @@ plugins {
 val packageName = "com.mango9.phone"
 val useDifferentPackageNameForDebugBuild = false
 val mango9VersionName = "6.2.6"
-val mango9VersionCode = 602011
+val mango9VersionCode = 602012
 val mango9ReleaseTag = "android-$mango9VersionName-build-$mango9VersionCode"
 
 val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
@@ -159,20 +159,62 @@ android {
 
     val keystorePropertiesFile = rootProject.file("keystore.properties")
     val keystoreProperties = Properties()
-    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+    if (keystorePropertiesFile.exists()) {
+        keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+    }
+
+    fun releaseSigningValue(
+        gradleProperty: String,
+        environmentVariable: String,
+        legacyProperty: String,
+    ): String? = providers.gradleProperty(gradleProperty).orNull
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+        ?: System.getenv(environmentVariable)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+        ?: (keystoreProperties[legacyProperty] as? String)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
 
     signingConfigs {
         create("release") {
-            val keyStorePath = keystoreProperties["storeFile"] as String
-            val keyStore = project.file(keyStorePath)
-            if (keyStore.exists()) {
+            val keyStorePath = releaseSigningValue(
+                "Mango9UploadStoreFile",
+                "MANGO9_UPLOAD_STORE_FILE",
+                "storeFile",
+            )
+            val configuredStorePassword = releaseSigningValue(
+                "Mango9UploadStorePassword",
+                "MANGO9_UPLOAD_STORE_PASSWORD",
+                "storePassword",
+            )
+            val configuredKeyAlias = releaseSigningValue(
+                "Mango9UploadKeyAlias",
+                "MANGO9_UPLOAD_KEY_ALIAS",
+                "keyAlias",
+            )
+            val configuredKeyPassword = releaseSigningValue(
+                "Mango9UploadKeyPassword",
+                "MANGO9_UPLOAD_KEY_PASSWORD",
+                "keyPassword",
+            ) ?: configuredStorePassword
+            val keyStore = keyStorePath?.let(project::file)
+            if (
+                keyStore != null && keyStore.exists() &&
+                configuredStorePassword != null && configuredKeyAlias != null &&
+                configuredKeyPassword != null
+            ) {
                 storeFile = keyStore
-                storePassword = keystoreProperties["storePassword"] as String
-                keyAlias = keystoreProperties["keyAlias"] as String
-                keyPassword = keystoreProperties["keyPassword"] as String
+                storePassword = configuredStorePassword
+                keyAlias = configuredKeyAlias
+                keyPassword = configuredKeyPassword
                 println("Signing config release is using keystore [$storeFile]")
             } else {
-                println("Keystore [$storeFile] doesn't exists!")
+                println(
+                    "Release signing is not configured. Supply Mango9UploadStoreFile, " +
+                        "Mango9UploadStorePassword, Mango9UploadKeyAlias, and Mango9UploadKeyPassword.",
+                )
             }
         }
     }
@@ -352,6 +394,7 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
     val mango9ApiClient = file("src/main/java/org/linphone/mango9/Mango9ApiClient.kt")
     val forwardingPolicy = file("src/main/java/org/linphone/mango9/Mango9CallForwardingPolicy.kt")
     val callSettingsLayout = file("src/main/res/layout/mango9_call_settings.xml")
+    val crmLayout = file("src/main/res/layout/mango9_crm_fragment.xml")
     val accountCompany = file("src/main/java/org/linphone/mango9/Mango9AccountCompany.kt")
     val accountModel = file("src/main/java/org/linphone/ui/main/model/AccountModel.kt")
     val accountListCell = file("src/main/res/layout/account_list_cell.xml")
@@ -372,6 +415,9 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
     val versionCatalog = rootProject.file("gradle/libs.versions.toml")
     val readme = rootProject.file("README.md")
     val openSourceNotices = rootProject.file("OPEN_SOURCE_NOTICES.md")
+    val playTitle = rootProject.file("metadata/en-US/title.txt")
+    val playShortDescription = rootProject.file("metadata/en-US/short_description.txt")
+    val playFullDescription = rootProject.file("metadata/en-US/full_description.txt")
     val runtimeAssets = fileTree("src/main/assets")
     val runtimeResources = fileTree("src/main/res") {
         include("**/*.xml")
@@ -390,6 +436,7 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         mango9ApiClient,
         forwardingPolicy,
         callSettingsLayout,
+        crmLayout,
         accountCompany,
         accountModel,
         accountListCell,
@@ -410,6 +457,9 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         versionCatalog,
         readme,
         openSourceNotices,
+        playTitle,
+        playShortDescription,
+        playFullDescription,
         runtimeAssets,
         runtimeResources,
     )
@@ -429,6 +479,7 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         val mango9ApiClientText = mango9ApiClient.readText()
         val forwardingPolicyText = forwardingPolicy.readText()
         val callSettingsLayoutText = callSettingsLayout.readText()
+        val crmLayoutText = crmLayout.readText()
         val accountCompanyText = accountCompany.readText()
         val accountModelText = accountModel.readText()
         val accountListCellText = accountListCell.readText()
@@ -449,6 +500,9 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         val versionCatalogText = versionCatalog.readText()
         val readmeText = readme.readText()
         val openSourceNoticesText = openSourceNotices.readText()
+        val playTitleText = playTitle.readText().trim()
+        val playShortDescriptionText = playShortDescription.readText().trim()
+        val playFullDescriptionText = playFullDescription.readText().trim()
         val buildText = file("build.gradle.kts").readText()
 
         fun requirePolicy(condition: Boolean, message: String) {
@@ -458,6 +512,14 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         requirePolicy(
             buildText.contains("val packageName = \"com.mango9.phone\""),
             "application ID must remain com.mango9.phone",
+        )
+        requirePolicy(
+            playTitleText == "Mango9" &&
+                playShortDescriptionText.length <= 80 &&
+                playFullDescriptionText.length <= 4_000 &&
+                !playShortDescriptionText.contains("Linphone", ignoreCase = true) &&
+                !playFullDescriptionText.contains("Linphone", ignoreCase = true),
+            "Google Play metadata must remain Mango9-branded and within listing limits",
         )
         requirePolicy(
             manifestText.contains("android:usesCleartextTraffic=\"false\""),
@@ -523,6 +585,16 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
                 mango9ApiClientText.contains("Mango9CallForwardingPolicy.validatedDestination") &&
                 callSettingsLayoutText.contains("@string/mango9_call_forwarding_number_required"),
             "Call forwarding must require a destination number before it can be enabled",
+        )
+        requirePolicy(
+            crmLayoutText.contains("@string/mango9_crm_leads") &&
+                crmLayoutText.contains("@string/mango9_crm_leads_subtitle") &&
+                crmLayoutText.contains("@string/mango9_crm_clients") &&
+                crmLayoutText.contains("@string/mango9_crm_clients_subtitle") &&
+                crmLayoutText.contains("@string/mango9_crm_team_chat") &&
+                crmLayoutText.contains("@string/mango9_crm_team_chat_subtitle") &&
+                crmLayoutText.contains("@+id/team_chat_unread_badge"),
+            "Mango9 CRM workspace rows must retain the iOS title-and-subtitle copy",
         )
         requirePolicy(
             coreContextText.contains("only_display_sip_uri_username\", true") &&

@@ -1,0 +1,8 @@
+Initial Google Play release of Mango9 for Android.
+
+• Business calling with Mango9-managed lines
+• CRM contacts and records
+• SMS and tenant-scoped Team Chat
+• Password and secure email-code sign-in
+• Multiple-account support and Firebase call notifications
+• CRM dashboard wording and workspace rows aligned with Mango9 for iOS

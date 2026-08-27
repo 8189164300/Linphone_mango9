@@ -137,11 +137,15 @@ class Mango9CrmFragment : GenericMainFragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 messagingStore.state.collect { state ->
                     val unread = messagingStore.teamUnreadCount(state)
-                    binding.teamChatRow.text = if (unread > 0) {
-                        "${getString(R.string.mango9_crm_team_chat_subtitle)} · " +
-                            resources.getQuantityString(R.plurals.mango9_chat_unread_messages, unread, unread)
-                    } else {
-                        getString(R.string.mango9_crm_team_chat_subtitle)
+                    binding.teamChatSubtitle.setText(R.string.mango9_crm_team_chat_subtitle)
+                    binding.teamChatUnreadBadge.apply {
+                        visibility = if (unread > 0) View.VISIBLE else View.GONE
+                        text = if (unread < 100) unread.toString() else "99+"
+                        contentDescription = resources.getQuantityString(
+                            R.plurals.mango9_chat_unread_messages,
+                            unread,
+                            unread,
+                        )
                     }
                 }
             }
