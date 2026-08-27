@@ -18,7 +18,7 @@ plugins {
 val packageName = "com.mango9.phone"
 val useDifferentPackageNameForDebugBuild = false
 val mango9VersionName = "6.2.6"
-val mango9VersionCode = 602008
+val mango9VersionCode = 602009
 val mango9ReleaseTag = "android-$mango9VersionName-build-$mango9VersionCode"
 
 val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
@@ -350,7 +350,11 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         "src/main/res/values-night-v33/themes.xml",
     )
     val mango9ApiClient = file("src/main/java/org/linphone/mango9/Mango9ApiClient.kt")
+    val forwardingPolicy = file("src/main/java/org/linphone/mango9/Mango9CallForwardingPolicy.kt")
+    val callSettingsLayout = file("src/main/res/layout/mango9_call_settings.xml")
     val coreContext = file("src/main/java/org/linphone/core/CoreContext.kt")
+    val suggestionModel = file("src/main/java/org/linphone/ui/main/model/ConversationContactOrSuggestionModel.kt")
+    val contactsManager = file("src/main/java/org/linphone/contacts/ContactsManager.kt")
     val notificationsManager = file("src/main/java/org/linphone/notifications/NotificationsManager.kt")
     val linphoneUtils = file("src/main/java/org/linphone/utils/LinphoneUtils.kt")
     val mainViewModel = file("src/main/java/org/linphone/ui/main/viewmodel/MainViewModel.kt")
@@ -381,7 +385,11 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         loginBrandBackground,
         splashThemes,
         mango9ApiClient,
+        forwardingPolicy,
+        callSettingsLayout,
         coreContext,
+        suggestionModel,
+        contactsManager,
         notificationsManager,
         linphoneUtils,
         mainViewModel,
@@ -413,7 +421,11 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         val loginBrandBackgroundText = loginBrandBackground.readText()
         val splashThemeText = splashThemes.joinToString("\n") { it.readText() }
         val mango9ApiClientText = mango9ApiClient.readText()
+        val forwardingPolicyText = forwardingPolicy.readText()
+        val callSettingsLayoutText = callSettingsLayout.readText()
         val coreContextText = coreContext.readText()
+        val suggestionModelText = suggestionModel.readText()
+        val contactsManagerText = contactsManager.readText()
         val notificationsManagerText = notificationsManager.readText()
         val linphoneUtilsText = linphoneUtils.readText()
         val mainViewModelText = mainViewModel.readText()
@@ -496,6 +508,18 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
                 bottomNavLayoutText.contains("viewModel.navigateToCrm()") &&
                 !drawerLayoutText.contains("@+id/crm"),
             "CRM must remain in the main footer instead of the drawer",
+        )
+        requirePolicy(
+            forwardingPolicyText.contains("validatedDestination(enabled: Boolean") &&
+                mango9ApiClientText.contains("Mango9CallForwardingPolicy.validatedDestination") &&
+                callSettingsLayoutText.contains("@string/mango9_call_forwarding_number_required"),
+            "Call forwarding must require a destination number before it can be enabled",
+        )
+        requirePolicy(
+            coreContextText.contains("only_display_sip_uri_username\", true") &&
+                suggestionModelText.contains("Mango9SipDisplay.friendlyUsername") &&
+                contactsManagerText.contains("Mango9SipDisplay.friendlyUsername"),
+            "Mango9 suggestions and contact rows must show the SIP username instead of a raw URI",
         )
         requirePolicy(
             mango9ApiClientText.contains("application/xml, text/xml;q=0.9, */*;q=0.1") &&

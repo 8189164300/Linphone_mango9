@@ -12,6 +12,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.mango9.Mango9ApiException
+import org.linphone.mango9.Mango9CallForwardingPolicy
 import org.linphone.mango9.Mango9CallSettings
 import org.linphone.mango9.Mango9CrmRepository
 import org.linphone.mango9.Mango9LineIdentity
@@ -81,7 +82,17 @@ class Mango9CallSettingsViewModel : GenericViewModel() {
         if (saving.value == true || canSave.value != true) return
         val identity = repository.activeIdentity() ?: return
         val enabled = forwardingEnabled.value == true
-        val destination = forwardingDestination.value.orEmpty().trim()
+        val destination = try {
+            Mango9CallForwardingPolicy.validatedDestination(
+                enabled,
+                forwardingDestination.value.orEmpty(),
+            )
+        } catch (error: Mango9ApiException.InvalidForwardingDestination) {
+            forwardingEnabled.value = false
+            errorMessage.value = error.userMessage
+            statusMessage.value = null
+            return
+        }
         viewModelScope.launch {
             saving.value = true
             errorMessage.value = null
@@ -107,10 +118,41 @@ class Mango9CallSettingsViewModel : GenericViewModel() {
         }
     }
 
+    fun requestForwardingEnabled(enabled: Boolean): Boolean {
+        if (
+            enabled &&
+            !Mango9CallForwardingPolicy.isValidDestination(forwardingDestination.value.orEmpty())
+        ) {
+            forwardingEnabled.value = false
+            errorMessage.value = Mango9ApiException.InvalidForwardingDestination.userMessage
+            statusMessage.value = null
+            return false
+        }
+        forwardingEnabled.value = enabled
+        if (errorMessage.value == Mango9ApiException.InvalidForwardingDestination.userMessage) {
+            errorMessage.value = null
+        }
+        return true
+    }
+
+    fun updateForwardingDestination(destination: String) {
+        forwardingDestination.value = destination
+        if (
+            Mango9CallForwardingPolicy.isValidDestination(destination) &&
+            errorMessage.value == Mango9ApiException.InvalidForwardingDestination.userMessage
+        ) {
+            errorMessage.value = null
+        }
+    }
+
     private fun apply(loaded: Mango9CallSettings) {
         settings.value = loaded
+        val validDestination = Mango9CallForwardingPolicy.isValidDestination(loaded.forwardingDestination)
         forwardingEnabled.value = loaded.forwardingEnabled
         forwardingDestination.value = loaded.forwardingDestination
+        if (loaded.forwardingEnabled && !validDestination) {
+            errorMessage.value = Mango9ApiException.InvalidForwardingDestination.userMessage
+        }
         lineIdentities.save(
             Mango9LineIdentity(loaded.extension, loaded.activeNumber),
             repository.activeIdentity(),
@@ -123,8 +165,13 @@ class Mango9CallSettingsViewModel : GenericViewModel() {
     }
 
     private fun updateCanSave() {
+        val destination = forwardingDestination.value.orEmpty()
+        val validDestination = Mango9CallForwardingPolicy.isValidDestination(destination)
         canSave.value = saving.value != true &&
-            (forwardingEnabled.value != true || forwardingDestination.value.orEmpty().trim().isNotEmpty())
+            (
+                validDestination ||
+                    (forwardingEnabled.value != true && destination.isBlank())
+            )
     }
 
     private fun userMessage(error: Exception): String =

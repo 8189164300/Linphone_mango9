@@ -1400,6 +1400,7 @@ class CoreContext
         core.config.setBool("ui", "change_main_color_allowed", false)
         core.config.setBool("ui", "show_developer_settings", false)
         core.config.setBool("ui", "disable_meetings_feature", true)
+        core.config.setBool("ui", "only_display_sip_uri_username", true)
         Log.i("$TAG Applied Mango9 runtime service defaults")
     }
 

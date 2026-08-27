@@ -55,6 +55,7 @@ import org.linphone.core.SecurityLevel
 import org.linphone.core.SubscribePolicy
 import org.linphone.core.tools.Log
 import org.linphone.mango9.Mango9ChatTarget
+import org.linphone.mango9.Mango9SipDisplay
 import org.linphone.mango9.Mango9SessionStore
 import org.linphone.mango9.Mango9TeamMember
 import org.linphone.ui.main.MainActivity
@@ -966,7 +967,11 @@ fun Friend.getListOfSipAddressesAndPhoneNumbers(listener: ContactNumberOrAddress
         val data = ContactNumberOrAddressModel(
             this,
             address,
-            address.asStringUriOnly(),
+            if (corePreferences.onlyDisplaySipUriUsername) {
+                Mango9SipDisplay.friendlyUsername(address.username, address.asStringUriOnly())
+            } else {
+                address.asStringUriOnly()
+            },
             true, // SIP addresses are always enabled
             listener,
             true

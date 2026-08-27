@@ -39,6 +39,7 @@ import org.linphone.R
 import org.linphone.compatibility.Compatibility
 import org.linphone.core.tools.Log
 import org.linphone.databinding.SettingsFragmentBinding
+import org.linphone.mango9.Mango9CallForwardingPolicy
 import org.linphone.ui.GenericActivity
 import org.linphone.ui.main.fragment.GenericMainFragment
 import org.linphone.ui.main.settings.viewmodel.Mango9CallSettingsViewModel
@@ -351,11 +352,14 @@ class SettingsFragment : GenericMainFragment() {
         val section = binding.mango9CallSettings
         section.refresh.setOnClickListener { mango9CallSettingsViewModel.reload(force = true) }
         section.forwardingSwitch.setOnCheckedChangeListener { _, checked ->
-            if (!renderingMango9CallSettings) mango9CallSettingsViewModel.forwardingEnabled.value = checked
+            if (!renderingMango9CallSettings) {
+                val accepted = mango9CallSettingsViewModel.requestForwardingEnabled(checked)
+                if (!accepted) section.destination.requestFocus()
+            }
         }
         section.destination.doAfterTextChanged { editable ->
             if (!renderingMango9CallSettings) {
-                mango9CallSettingsViewModel.forwardingDestination.value = editable?.toString().orEmpty()
+                mango9CallSettingsViewModel.updateForwardingDestination(editable?.toString().orEmpty())
             }
         }
         section.save.setOnClickListener { mango9CallSettingsViewModel.save() }
@@ -383,6 +387,7 @@ class SettingsFragment : GenericMainFragment() {
         val loaded = mango9CallSettingsViewModel.settings.value != null
         val enabled = mango9CallSettingsViewModel.forwardingEnabled.value == true
         val destination = mango9CallSettingsViewModel.forwardingDestination.value.orEmpty()
+        val validDestination = Mango9CallForwardingPolicy.isValidDestination(destination)
         section.loading.visibility = if (loading && !loaded) View.VISIBLE else View.GONE
         section.content.visibility = if (loaded) View.VISIBLE else View.GONE
         section.refresh.isEnabled = !loading && !saving
@@ -403,8 +408,18 @@ class SettingsFragment : GenericMainFragment() {
             section.destination.setSelection(destination.length)
         }
         renderingMango9CallSettings = false
-        section.forwardingSwitch.isEnabled = !saving
+        section.forwardingSwitch.isEnabled = !saving && (enabled || validDestination)
         section.destination.isEnabled = !saving
+        section.destinationLayout.error = if (destination.isNotBlank() && !validDestination) {
+            getString(R.string.mango9_call_forwarding_invalid_number)
+        } else {
+            null
+        }
+        section.destinationLayout.helperText = if (validDestination) {
+            null
+        } else {
+            getString(R.string.mango9_call_forwarding_number_required)
+        }
         section.save.isEnabled = mango9CallSettingsViewModel.canSave.value == true
         section.save.text = getString(
             if (saving) R.string.mango9_call_forwarding_saving else R.string.mango9_call_forwarding_save,

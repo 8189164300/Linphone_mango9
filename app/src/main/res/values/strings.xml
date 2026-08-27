@@ -1259,6 +1259,8 @@
     <string name="mango9_call_forwarding_enabled">Enabled</string>
     <string name="mango9_call_forwarding_off">Off</string>
     <string name="mango9_call_forwarding_destination">Forward calls to</string>
+    <string name="mango9_call_forwarding_number_required">Enter a number before enabling call forwarding.</string>
+    <string name="mango9_call_forwarding_invalid_number">Enter a valid forwarding number.</string>
     <string name="mango9_call_forwarding_save">Save forwarding</string>
     <string name="mango9_call_forwarding_saving">Saving…</string>
 </resources>

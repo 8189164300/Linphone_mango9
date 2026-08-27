@@ -41,6 +41,10 @@ sealed class Mango9ApiException(val userMessage: String) : Exception(userMessage
 
     data object Unauthorized : Mango9ApiException("Your saved Mango9 session has expired. Enter your password to connect again.")
 
+    data object InvalidForwardingDestination : Mango9ApiException(
+        "Enter a valid forwarding number. Call forwarding cannot be enabled without one.",
+    )
+
     data object InvalidResponse : Mango9ApiException("The provisioning service returned an unexpected response.")
 
     data object RegistrationFailed : Mango9ApiException("The Mango9 extension could not register. Please try again.")
@@ -326,11 +330,12 @@ internal class Mango9ApiClient(context: Context) {
         enabled: Boolean,
         destination: String,
     ): Mango9CallSettings {
+        val validatedDestination = Mango9CallForwardingPolicy.validatedDestination(enabled, destination)
         val data = authorizedCrmData(
             session,
             listOf("mobile", "call-settings", "forwarding"),
             "POST",
-            body = JSONObject().put("enabled", enabled).put("destination", destination),
+            body = JSONObject().put("enabled", enabled).put("destination", validatedDestination),
         )
         return parseCallSettings(data)
     }

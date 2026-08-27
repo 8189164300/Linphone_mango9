@@ -25,6 +25,7 @@ import androidx.lifecycle.MutableLiveData
 import org.linphone.LinphoneApplication.Companion.corePreferences
 import org.linphone.core.Address
 import org.linphone.core.Friend
+import org.linphone.mango9.Mango9SipDisplay
 import org.linphone.ui.main.contacts.model.ContactAvatarModel
 import org.linphone.utils.AppUtils
 import org.linphone.utils.LinphoneUtils
@@ -52,7 +53,9 @@ class ConversationContactOrSuggestionModel
             address.username ?: address.domain.orEmpty()
         }
 
-    val sipUri = if (!corePreferences.hideSipAddresses) {
+    val sipUri = if (corePreferences.onlyDisplaySipUriUsername) {
+        Mango9SipDisplay.friendlyUsername(address.username, address.asStringUriOnly())
+    } else if (!corePreferences.hideSipAddresses) {
         // Hide SIP address and only show username for suggestions
         // on the same domain as the currently selected account
         if (!defaultAccountDomain.isNullOrEmpty() && defaultAccountDomain == address.domain) {
