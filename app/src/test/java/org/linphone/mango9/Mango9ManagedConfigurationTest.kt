@@ -14,6 +14,11 @@ import org.junit.Test
 
 class Mango9ManagedConfigurationTest {
     @Test
+    fun mobileRegistrationLifetimeMatchesIos() {
+        assertEquals(30 * 24 * 60 * 60, Mango9Configuration.MOBILE_REGISTRATION_EXPIRES_SECONDS)
+    }
+
+    @Test
     fun snapshotUsesTheSameThreeKeysAsIosAndIgnoresInvalidValues() {
         val snapshot = Mango9ManagedConfigurationSnapshot.from(
             mapOf(

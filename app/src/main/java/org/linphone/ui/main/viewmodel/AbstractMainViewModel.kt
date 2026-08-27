@@ -84,6 +84,10 @@ open class AbstractMainViewModel
         MutableLiveData()
     }
 
+    val navigateToCrmEvent: MutableLiveData<Event<Boolean>> by lazy {
+        MutableLiveData()
+    }
+
     val navigateToContactsEvent: MutableLiveData<Event<Boolean>> by lazy {
         MutableLiveData()
     }
@@ -267,6 +271,11 @@ open class AbstractMainViewModel
     @UiThread
     fun navigateToHistory() {
         navigateToHistoryEvent.value = Event(true)
+    }
+
+    @UiThread
+    fun navigateToCrm() {
+        navigateToCrmEvent.value = Event(true)
     }
 
     @UiThread

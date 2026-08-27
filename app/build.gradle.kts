@@ -18,7 +18,7 @@ plugins {
 val packageName = "com.mango9.phone"
 val useDifferentPackageNameForDebugBuild = false
 val mango9VersionName = "6.2.6"
-val mango9VersionCode = 602007
+val mango9VersionCode = 602008
 val mango9ReleaseTag = "android-$mango9VersionName-build-$mango9VersionCode"
 
 val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
@@ -338,7 +338,17 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
     val mainActivity = file("src/main/java/org/linphone/ui/main/MainActivity.kt")
     val helpFragment = file("src/main/java/org/linphone/ui/main/help/fragment/HelpFragment.kt")
     val loginLayout = file("src/main/res/layout/assistant_landing_fragment.xml")
+    val drawerLayout = file("src/main/res/layout/drawer_menu.xml")
+    val bottomNavLayout = file("src/main/res/layout/bottom_nav_bar.xml")
     val loginBrandBackground = file("src/main/res/drawable/mango9_brand_card_background.xml")
+    val splashThemes = files(
+        "src/main/res/values/themes.xml",
+        "src/main/res/values-night/themes.xml",
+        "src/main/res/values-v31/themes.xml",
+        "src/main/res/values-night-v31/themes.xml",
+        "src/main/res/values-v33/themes.xml",
+        "src/main/res/values-night-v33/themes.xml",
+    )
     val mango9ApiClient = file("src/main/java/org/linphone/mango9/Mango9ApiClient.kt")
     val coreContext = file("src/main/java/org/linphone/core/CoreContext.kt")
     val notificationsManager = file("src/main/java/org/linphone/notifications/NotificationsManager.kt")
@@ -366,7 +376,10 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         mainActivity,
         helpFragment,
         loginLayout,
+        drawerLayout,
+        bottomNavLayout,
         loginBrandBackground,
+        splashThemes,
         mango9ApiClient,
         coreContext,
         notificationsManager,
@@ -395,7 +408,10 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         val mainActivityText = mainActivity.readText()
         val helpFragmentText = helpFragment.readText()
         val loginLayoutText = loginLayout.readText()
+        val drawerLayoutText = drawerLayout.readText()
+        val bottomNavLayoutText = bottomNavLayout.readText()
         val loginBrandBackgroundText = loginBrandBackground.readText()
+        val splashThemeText = splashThemes.joinToString("\n") { it.readText() }
         val mango9ApiClientText = mango9ApiClient.readText()
         val coreContextText = coreContext.readText()
         val notificationsManagerText = notificationsManager.readText()
@@ -457,6 +473,29 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
                 loginBrandBackgroundText.contains("@color/orange_main_500") &&
                 !loginBrandBackgroundText.contains("<gradient"),
             "Mango9 login must retain the fixed iOS parity palette in light and dark device modes",
+        )
+        requirePolicy(
+            !splashThemeText.contains("linphone_splashscreen") &&
+                !splashThemeText.contains("windowSplashScreenBrandingImage") &&
+                splashThemes.all {
+                    val text = it.readText()
+                    text.contains("@color/orange_main_500") &&
+                        text.contains("@drawable/mango9_splashscreen_wordmark")
+                } &&
+                loginLayoutText.contains("android:id=\"@+id/mango9_use_email_code\"") &&
+                !loginLayoutText.contains("app:drawableStartCompat=\"@drawable/envelope_simple\""),
+            "Splash branding and the centered email-code label must remain Mango9-specific",
+        )
+        requirePolicy(
+            drawerLayoutText.contains("@drawable/mango9_wordmark_white") &&
+                !drawerLayoutText.contains("@drawable/linphone_notification"),
+            "Mango9 drawer must use the Mango9 wordmark instead of the Linphone mark",
+        )
+        requirePolicy(
+            bottomNavLayoutText.contains("@drawable/mango9_crm_footer") &&
+                bottomNavLayoutText.contains("viewModel.navigateToCrm()") &&
+                !drawerLayoutText.contains("@+id/crm"),
+            "CRM must remain in the main footer instead of the drawer",
         )
         requirePolicy(
             mango9ApiClientText.contains("application/xml, text/xml;q=0.9, */*;q=0.1") &&

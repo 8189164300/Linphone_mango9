@@ -386,21 +386,33 @@
                             android:visibility="@{viewModel.inProgress ? View.VISIBLE : View.GONE, default=gone}" />
                     </FrameLayout>
 
-                    <TextView
-                        style="@style/secondary_button_label_style"
-                        android:id="@+id/mango9_use_email_code"
+                    <FrameLayout
                         android:layout_width="match_parent"
                         android:layout_height="48dp"
                         android:layout_marginTop="12dp"
                         android:background="@drawable/mango9_login_secondary_button_background"
-                        app:drawableStartCompat="@drawable/envelope_simple"
-                        android:drawablePadding="8dp"
-                        android:gravity="center"
-                        android:onClick="@{() -> viewModel.showEmailLogin()}"
-                        android:text="@string/mango9_use_email_code"
-                        android:textColor="@color/orange_main_500"
-                        android:visibility="@{viewModel.passwordMode ? View.VISIBLE : View.GONE, default=visible}"
-                        app:drawableTint="@color/orange_main_500" />
+                        android:visibility="@{viewModel.passwordMode ? View.VISIBLE : View.GONE, default=visible}">
+
+                        <ImageView
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:layout_gravity="start|center_vertical"
+                            android:layout_marginStart="18dp"
+                            android:contentDescription="@null"
+                            android:importantForAccessibility="no"
+                            android:src="@drawable/envelope_simple"
+                            app:tint="@color/orange_main_500" />
+
+                        <TextView
+                            style="@style/secondary_button_label_style"
+                            android:id="@+id/mango9_use_email_code"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:gravity="center"
+                            android:onClick="@{() -> viewModel.showEmailLogin()}"
+                            android:text="@string/mango9_use_email_code"
+                            android:textColor="@color/orange_main_500" />
+                    </FrameLayout>
 
                     <TextView
                         style="@style/default_text_style"

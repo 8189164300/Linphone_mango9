@@ -14,6 +14,7 @@ object Mango9Configuration {
     const val PROVISIONING_BASE_URL = "https://$PROVISIONING_HOST"
     const val SIP_PROXY_HOST = "proxy.mango9.com"
     const val SIP_PROXY_URI = "sip:$SIP_PROXY_HOST;transport=tls"
+    const val MOBILE_REGISTRATION_EXPIRES_SECONDS = 30 * 24 * 60 * 60
 
     fun verifiedProvisioningUrl(rawValue: String?): URL? {
         val uri = verifiedHttpsUri(rawValue, requiredHost = PROVISIONING_HOST) ?: return null

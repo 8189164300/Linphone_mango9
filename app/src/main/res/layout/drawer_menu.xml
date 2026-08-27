@@ -8,9 +8,6 @@
             name="settingsClickedListener"
             type="View.OnClickListener" />
         <variable
-            name="crmClickListener"
-            type="View.OnClickListener" />
-        <variable
             name="recordingsClickListener"
             type="View.OnClickListener" />
         <variable
@@ -43,32 +40,18 @@
             app:layout_constraintEnd_toEndOf="parent">
 
             <ImageView
-                android:id="@+id/brand_icon"
+                android:id="@+id/brand_logo"
                 android:onClick="@{() -> viewModel.closeDrawerMenu()}"
-                android:layout_width="@dimen/large_icon_size"
-                android:layout_height="@dimen/large_icon_size"
-                android:layout_marginStart="26dp"
-                android:layout_marginTop="15dp"
-                android:src="@drawable/linphone_notification"
+                android:layout_width="139dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="24dp"
+                android:layout_marginTop="12dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/mango9_wordmark_white"
                 android:contentDescription="@string/app_name"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:tint="?attr/color_main1_500" />
-
-            <androidx.appcompat.widget.AppCompatTextView
-                style="@style/section_header_style"
-                android:id="@+id/brand_name"
-                android:onClick="@{() -> viewModel.closeDrawerMenu()}"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:layout_marginEnd="16dp"
-                android:text="@string/app_name"
-                android:gravity="center_vertical"
-                app:layout_constraintTop_toTopOf="@id/brand_icon"
-                app:layout_constraintStart_toEndOf="@id/brand_icon"
-                app:layout_constraintBottom_toBottomOf="@id/brand_icon"
-                app:layout_constraintEnd_toStartOf="@id/close_drawer" />
 
             <ImageView
                 android:id="@+id/close_drawer"
@@ -82,9 +65,9 @@
                 android:contentDescription="@string/content_description_close_drawer_menu"
                 android:background="@drawable/circle_transparent_button_background"
                 app:tint="?attr/color_main2_600"
-                app:layout_constraintTop_toTopOf="@id/brand_name"
-                app:layout_constraintStart_toEndOf="@id/brand_name"
-                app:layout_constraintBottom_toBottomOf="@id/brand_name"
+                app:layout_constraintTop_toTopOf="@id/brand_logo"
+                app:layout_constraintStart_toEndOf="@id/brand_logo"
+                app:layout_constraintBottom_toBottomOf="@id/brand_logo"
                 app:layout_constraintEnd_toEndOf="parent"/>
 
             <ScrollView
@@ -95,7 +78,7 @@
                 android:fillViewport="true"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/brand_name"
+                app:layout_constraintTop_toBottomOf="@id/brand_logo"
                 app:layout_constraintBottom_toTopOf="@id/add_account">
 
                 <LinearLayout
@@ -170,28 +153,7 @@
                 app:layout="@{@layout/drawer_shortcuts_list_cell}"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintBottom_toTopOf="@id/crm" />
-
-            <androidx.appcompat.widget.AppCompatTextView
-                android:id="@+id/crm"
-                style="@style/header_style"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:layout_marginEnd="10dp"
-                android:layout_marginBottom="10dp"
-                android:background="@drawable/squircle_transparent_button_background"
-                android:drawableStart="@drawable/address_book"
-                android:drawableEnd="@drawable/caret_right"
-                android:drawablePadding="8dp"
-                android:onClick="@{crmClickListener}"
-                android:padding="5dp"
-                android:text="@string/mango9_crm_title"
-                android:visibility="@{viewModel.hasMango9Session ? View.VISIBLE : View.GONE, default=gone}"
-                app:drawableTint="?attr/color_main1_500"
-                app:layout_constraintBottom_toTopOf="@id/settings"
-                app:layout_constraintEnd_toEndOf="parent"
-                app:layout_constraintStart_toStartOf="parent" />
+                app:layout_constraintBottom_toTopOf="@id/settings" />
 
             <androidx.appcompat.widget.AppCompatTextView
                 android:onClick="@{settingsClickedListener}"

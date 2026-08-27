@@ -32,10 +32,21 @@ object Mango9AccountProvisioner {
         installOnCore(enrollment, displayName)
         val registered = withTimeoutOrNull(REGISTRATION_TIMEOUT_MS) {
             var failedSince: Long? = null
+            var pushFallbackAttempted = false
             while (true) {
-                when (registrationState(normalizedIdentity)) {
+                val snapshot = registrationSnapshot(normalizedIdentity)
+                when (snapshot?.state) {
                     RegistrationState.Ok -> return@withTimeoutOrNull true
                     RegistrationState.Failed -> {
+                        if (
+                            !pushFallbackAttempted &&
+                            shouldRetryWithoutSipPush(snapshot.protocolCode, snapshot.phrase) &&
+                            retryWithoutSipPush(normalizedIdentity)
+                        ) {
+                            pushFallbackAttempted = true
+                            failedSince = null
+                            continue
+                        }
                         val now = SystemClock.elapsedRealtime()
                         val firstFailure = failedSince ?: now.also { failedSince = it }
                         if (now - firstFailure >= FAILURE_GRACE_MS) {
@@ -105,6 +116,7 @@ object Mango9AccountProvisioner {
                     proxy.transport = TransportType.Tls
                     params.serverAddress = proxy
                     params.setRoutesAddresses(arrayOf(proxy.clone()))
+                    params.expires = Mango9Configuration.MOBILE_REGISTRATION_EXPIRES_SECONDS
                     params.isRegisterEnabled = true
                     params.pushNotificationAllowed = BuildConfig.MANGO9_FCM_ENABLED
 
@@ -137,17 +149,77 @@ object Mango9AccountProvisioner {
             }
         }
 
-    private suspend fun registrationState(identity: String): RegistrationState? =
+    private suspend fun registrationSnapshot(identity: String): RegistrationSnapshot? =
         suspendCancellableCoroutine { continuation ->
             coreContext.postOnCoreThread { core: Core ->
                 val account = core.accountList.firstOrNull {
                     Mango9SessionStore.normalizedIdentity(it.params.identityAddress?.asStringUriOnly()) == identity
                 }
-                if (continuation.isActive) continuation.resume(account?.state)
+                val errorInfo = account?.errorInfo
+                val snapshot = account?.let {
+                    RegistrationSnapshot(it.state, errorInfo?.protocolCode, errorInfo?.phrase)
+                }
+                if (continuation.isActive) continuation.resume(snapshot)
             }
         }
+
+    private suspend fun retryWithoutSipPush(identity: String): Boolean =
+        suspendCancellableCoroutine { continuation ->
+            coreContext.postOnCoreThread { core: Core ->
+                try {
+                    val account = core.accountList.firstOrNull {
+                        Mango9SessionStore.normalizedIdentity(it.params.identityAddress?.asStringUriOnly()) == identity
+                    }
+                    val errorInfo = account?.errorInfo
+                    val retried = account != null && retryWithoutSipPushIfUnsupported(
+                        account,
+                        errorInfo?.protocolCode,
+                        errorInfo?.phrase,
+                    )
+                    if (continuation.isActive) continuation.resume(retried)
+                } catch (error: Exception) {
+                    if (continuation.isActive) continuation.resumeWithException(error)
+                }
+            }
+        }
+
+    internal fun shouldRetryWithoutSipPush(protocolCode: Int?, phrase: String?): Boolean =
+        protocolCode == PUSH_NOT_SUPPORTED_CODE &&
+            phrase?.contains(PUSH_NOT_SUPPORTED_PHRASE, ignoreCase = true) == true
+
+    internal fun retryWithoutSipPushIfUnsupported(
+        account: Account,
+        protocolCode: Int?,
+        phrase: String?,
+    ): Boolean {
+        val params = account.params
+        if (
+            !params.pushNotificationAllowed ||
+            !shouldRetryWithoutSipPush(protocolCode, phrase)
+        ) {
+            return false
+        }
+
+        val updatedParams = params.clone()
+        updatedParams.pushNotificationAllowed = false
+        account.params = updatedParams
+        account.refreshRegister()
+        Log.w(
+            "$TAG Proxy rejected FCM SIP push with 555; " +
+                "retrying registration without SIP push parameters"
+        )
+        return true
+    }
+
+    private data class RegistrationSnapshot(
+        val state: RegistrationState,
+        val protocolCode: Int?,
+        val phrase: String?,
+    )
 
     private const val REGISTRATION_TIMEOUT_MS = 15_000L
     private const val FAILURE_GRACE_MS = 1_000L
     private const val POLL_INTERVAL_MS = 250L
+    private const val PUSH_NOT_SUPPORTED_CODE = 555
+    private const val PUSH_NOT_SUPPORTED_PHRASE = "Push Notification Service Not Supported"
 }

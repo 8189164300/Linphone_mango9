@@ -41,6 +41,10 @@ iOS platform conventions where Android has a native equivalent.
   dark device modes: `#F9F9F9` page/field surfaces, a white enrollment card,
   `#4E6074` copy, and `#4053C8` brand/actions. The dark-mode emulator hierarchy
   confirms that all controls and the English `Password` hint remain present.
+- The Android launch screen matches iOS with a solid `#4053C8` background and
+  centered white Mango9 wordmark in every API/day-night theme. Android's former
+  Linphone center icon and bottom branding image are not referenced. The email
+  code action positions its envelope independently so the label stays centered.
 
 ## Identity, branding, and distribution
 
@@ -63,7 +67,7 @@ iOS platform conventions where Android has a native equivalent.
       explicit Mango9 file, and the current APK enables the Mango9 FCM service.
 - [x] Licensing, README, and open-source notices link the exact upstream
       Android/SDK revisions and immutable Mango9 corresponding-source tag
-      `android-6.2.6-build-602007`; the static policy requires these links to
+      `android-6.2.6-build-602008`; the static policy requires these links to
       remain consistent.
 
 ## Enrollment and account lifecycle
@@ -120,6 +124,11 @@ and `Mango9PushCallerIdentityTests.swift`.
 - [x] Managed-account registration targets Mango9 and static policy rejects
       public Linphone runtime endpoints. Push is enabled only for a reviewed
       Mango9 FCM build.
+- [x] Android mirrors the iOS 30-day mobile registration expiry. If the Mango9
+      proxy returns the exact `555 Push Notification Service Not Supported`
+      response for an FCM contact, Android retries that managed account without
+      SIP push parameters so foreground registration can complete. Background
+      incoming-call wake still requires proxy-side FCM support.
 - [~] Android Telecom/full-screen incoming-call behavior is inherited for
       foreground, background, locked, killed, reboot, and network-change cases,
       but the complete Mango9 physical-device matrix is not yet run.
@@ -144,6 +153,8 @@ and `Mango9PushCallerIdentityTests.swift`.
 
 Reference: `Mango9CRMFragment.swift` and `Mango9DynamicCRM.swift`.
 
+- [x] CRM is a first-class main-footer destination between Contacts and Calls,
+      matching the iOS navigation order; the duplicate drawer entry is removed.
 - [~] CRM navigation is available only for a valid Mango9 session and retains
       active-account isolation.
 - [~] Dashboard metrics and deep-linked lead navigation are implemented.

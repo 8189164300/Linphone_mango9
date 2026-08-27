@@ -156,6 +156,12 @@ abstract class AbstractMainFragment : GenericMainFragment() {
             }
         }
 
+        viewModel.navigateToCrmEvent.observe(viewLifecycleOwner) {
+            it.consume {
+                findNavController().navigate(R.id.action_global_mango9CrmFragment)
+            }
+        }
+
         viewModel.navigateToConversationsEvent.observe(viewLifecycleOwner) {
             it.consume {
                 if (currentFragmentId != R.id.conversationsListFragment) {

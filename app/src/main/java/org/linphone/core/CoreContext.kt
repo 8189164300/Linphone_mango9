@@ -54,6 +54,8 @@ import org.linphone.contacts.ContactsManager
 import org.linphone.core.tools.Log
 import org.linphone.core.tools.AndroidPlatformHelper
 import org.linphone.mango9.Mango9MessagePushTokenStore
+import org.linphone.mango9.Mango9AccountProvisioner
+import org.linphone.mango9.Mango9Configuration
 import org.linphone.mango9.Mango9PushCallerIdentityCache
 import org.linphone.notifications.NotificationsManager
 import org.linphone.telecom.TelecomManager
@@ -209,6 +211,26 @@ class CoreContext
     private var previousCallState = Call.State.Idle
 
     private val coreListener = object : CoreListenerStub() {
+        @WorkerThread
+        override fun onAccountRegistrationStateChanged(
+            core: Core,
+            account: Account,
+            state: RegistrationState?,
+            message: String,
+        ) {
+            if (state != RegistrationState.Failed) return
+
+            val serverHost = account.params.serverAddress?.domain
+            if (!serverHost.equals(Mango9Configuration.SIP_PROXY_HOST, ignoreCase = true)) return
+
+            val errorInfo = account.errorInfo
+            Mango9AccountProvisioner.retryWithoutSipPushIfUnsupported(
+                account,
+                errorInfo.protocolCode,
+                errorInfo.phrase?.takeIf { it.isNotEmpty() } ?: message,
+            )
+        }
+
         @WorkerThread
         override fun onDefaultAccountChanged(core: Core, account: Account?) {
             defaultAccountHasVideoConferenceFactoryUri = account?.params?.audioVideoConferenceFactoryAddress != null
