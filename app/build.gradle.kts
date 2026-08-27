@@ -18,7 +18,7 @@ plugins {
 val packageName = "com.mango9.phone"
 val useDifferentPackageNameForDebugBuild = false
 val mango9VersionName = "6.2.6"
-val mango9VersionCode = 602010
+val mango9VersionCode = 602011
 val mango9ReleaseTag = "android-$mango9VersionName-build-$mango9VersionCode"
 
 val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
@@ -536,6 +536,16 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
                 accountListCellText.contains("@+id/company_name") &&
                 accountListCellText.contains("model.companyName"),
             "Mango9 hamburger account rows must show the PBX company under the line number",
+        )
+        requirePolicy(
+            accountListCellText.contains("@+id/selected_account_check") &&
+                accountListCellText.contains("model.isDefault ? View.VISIBLE : View.GONE") &&
+                accountListCellText.contains("layout_constraintEnd_toStartOf=\"@id/company_name\"") &&
+                accountListCellText.contains("layout_constraintHorizontal_chainStyle=\"packed\"") &&
+                accountListCellText.contains("@+id/sip_status_dot") &&
+                accountListCellText.contains("RegistrationState.Ok ? @color/green_success_500 : @color/red_danger_500") &&
+                !accountListCellText.contains("@+id/register_status"),
+            "Mango9 account rows must use an active-account checkmark and binary SIP status dot",
         )
         requirePolicy(
             mango9ApiClientText.contains("application/xml, text/xml;q=0.9, */*;q=0.1") &&
