@@ -38,7 +38,9 @@ import org.linphone.core.MessageWaitingIndication
 import org.linphone.core.RegistrationState
 import org.linphone.core.SecurityLevel
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9AccountCompany
 import org.linphone.mango9.Mango9LineIdentityStore
+import org.linphone.mango9.Mango9SessionStore
 import org.linphone.utils.AppUtils
 import org.linphone.utils.LinphoneUtils
 
@@ -57,6 +59,8 @@ class AccountModel
     val displayName = MutableLiveData<String>()
 
     val lineIdentityLabel = MutableLiveData<String>()
+
+    val companyName = MutableLiveData<String>()
 
     val registrationState = MutableLiveData<RegistrationState>()
 
@@ -110,6 +114,7 @@ class AccountModel
     }
 
     private val lineIdentities = Mango9LineIdentityStore(coreContext.context)
+    private val mango9Sessions = Mango9SessionStore(coreContext.context)
 
     private val coreListener = object : CoreListenerStub() {
         @WorkerThread
@@ -288,6 +293,12 @@ class AccountModel
                     ?: account.params.identityAddress?.username.orEmpty(),
                 activeNumber = storedLine?.activeNumber.orEmpty(),
                 fallback = "",
+            )
+        )
+        companyName.postValue(
+            Mango9AccountCompany.displayName(
+                mango9Sessions.load(identity)?.displayName,
+                account.params.identityAddress?.domain,
             )
         )
 

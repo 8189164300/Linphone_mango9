@@ -22,7 +22,7 @@ iOS platform conventions where Android has a native equivalent.
   `42b1fcce3c8037e6f5a891cf8d108eb47e308386`.
 - Communication SDK: exact Maven version
   `5.5.17-pre.1+3896ec0681`, with matching source link in Licensing.
-- Local gate: `verifyMango9StaticPolicy`, 29 JVM unit tests, `assembleDebug`,
+- Local gate: `verifyMango9StaticPolicy`, 32 JVM unit tests, `assembleDebug`,
   `assembleDebugAndroidTest`, and strict `lintDebug` all pass.
 - Clean emulator install: ten instrumentation tests pass. A manual cold launch
   resolves from `org.linphone.ui.main.MainActivity` to the Mango9
@@ -67,7 +67,7 @@ iOS platform conventions where Android has a native equivalent.
       explicit Mango9 file, and the current APK enables the Mango9 FCM service.
 - [x] Licensing, README, and open-source notices link the exact upstream
       Android/SDK revisions and immutable Mango9 corresponding-source tag
-      `android-6.2.6-build-602009`; the static policy requires these links to
+      `android-6.2.6-build-602010`; the static policy requires these links to
       remain consistent.
 
 ## Enrollment and account lifecycle
@@ -150,6 +150,9 @@ and `Mango9PushCallerIdentityTests.swift`.
 - [x] SIP suggestions and contact-detail address rows display only the friendly
       username/number while retaining the complete SIP address for call and chat
       actions, matching the iOS presentation/routing separation.
+- [x] Hamburger account rows show the formatted PBX company directly beneath
+      the DID/extension label. Android derives it from the saved session and SIP
+      tenant with the same normalization and fallback order as iOS.
 - [ ] Physical-device calls pass two-way audio, Bluetooth/wired-headset routing,
       DTMF, hold/resume, transfer, inbound wake, and outbound >30-second tests.
 

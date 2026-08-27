@@ -71,10 +71,28 @@
             android:textColor="?attr/color_main2_500"
             android:textSize="12sp"
             android:visibility="@{model.lineIdentityLabel.empty ? View.GONE : View.VISIBLE}"
-            app:layout_constraintBottom_toTopOf="@id/register_status"
+            app:layout_constraintBottom_toTopOf="@id/company_name"
             app:layout_constraintEnd_toStartOf="@id/end_barrier"
             app:layout_constraintStart_toEndOf="@id/avatar"
             app:layout_constraintTop_toBottomOf="@id/name" />
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/company_name"
+            style="@style/default_text_style"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="5dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@{model.companyName, default=`Manushak`}"
+            android:textColor="?attr/color_main2_500"
+            android:textSize="11sp"
+            android:visibility="@{model.companyName.empty ? View.GONE : View.VISIBLE}"
+            app:layout_constraintBottom_toTopOf="@id/register_status"
+            app:layout_constraintEnd_toStartOf="@id/end_barrier"
+            app:layout_constraintStart_toEndOf="@id/avatar"
+            app:layout_constraintTop_toBottomOf="@id/line_identity" />
 
         <androidx.appcompat.widget.AppCompatTextView
             android:onClick="@{() -> model.refreshRegister()}"
@@ -96,7 +114,7 @@
             app:layout_constraintHorizontal_bias="0"
             app:layout_constraintStart_toStartOf="@id/name"
             app:layout_constraintEnd_toStartOf="@id/menu"
-            app:layout_constraintTop_toBottomOf="@id/line_identity"
+            app:layout_constraintTop_toBottomOf="@id/company_name"
             app:layout_constraintBottom_toTopOf="@id/separator"/>
 
         <androidx.appcompat.widget.AppCompatTextView
