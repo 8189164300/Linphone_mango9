@@ -2194,12 +2194,14 @@ struct ContentView: View {
 		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenChat)) { notification in
 			guard let target = notification.object as? Mango9ChatTarget else { return }
 			withAnimation {
+				isShowStartConversationFragment = false
 				mango9ChatTarget = target
 			}
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenSMS)) { notification in
 			guard let target = notification.object as? Mango9SMSTarget else { return }
 			resetFilter()
+			isShowStartConversationFragment = false
 			isShowCRMFragment = false
 			mango9ChatTarget = nil
 			sharedMainViewModel.displayedFriend = nil

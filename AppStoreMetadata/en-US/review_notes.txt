@@ -9,8 +9,8 @@ After login:
 4. Open Conversations, then Team Chat, and use the supplied second reviewer user.
 5. In Team Chat, open the safety menu to report or block a user.
 6. Send and receive a voice message in SMS or Team Chat to verify the inline audio player.
-7. Open About Mango9 > Licensing to view open-source notices and the exact corresponding source for this build: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.7-build-23
+7. Open About Mango9 > Licensing to view open-source notices and the exact corresponding source for this build: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.7-build-24
 
-Version 6.2.7 clears SMS and Team Chat unread indicators immediately when a conversation opens and keeps app badge counts synchronized. It also applies consistent Mango9 colors across launch, onboarding, permissions, and sign-in screens.
+Version 6.2.7 clears SMS and Team Chat unread indicators immediately when a conversation opens and keeps app badge counts synchronized. Selecting a suggested contact also opens its new conversation immediately. The update applies consistent Mango9 colors across launch, onboarding, permissions, and sign-in screens.
 
 The review account, review contact details, service endpoints, and safe test number are supplied only in App Store Connect and are not stored in the public source repository.

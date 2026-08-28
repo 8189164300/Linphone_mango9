@@ -1,5 +1,6 @@
 What’s new in 6.2.7:
 • SMS and Team Chat unread indicators clear immediately when opened
 • App badge counts remain synchronized with unread conversations
+• Suggested contacts now open directly in a new conversation
 • Consistent Mango9 colors across launch, onboarding, permissions, and sign-in
 • Additional messaging and interface reliability improvements
