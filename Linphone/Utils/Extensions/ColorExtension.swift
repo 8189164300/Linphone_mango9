@@ -27,6 +27,11 @@ extension Color {
 	static let transparentColor = Color(hex: "#00000000")
 	static let black = Color(hex: "#000000")
 	static let white = Color(hex: "#FFFFFF")
+
+	// Fixed Mango9 brand colors for launch, onboarding, and account enrollment.
+	// These entry screens must not inherit a previously selected in-app theme.
+	static let mango9Primary = Color(hex: "#4053C8")
+	static let mango9Surface = Color(hex: "#EEF1FF")
 	
 	static var orangeMain100: Color { theme.main100 }
 	static var orangeMain500: Color { theme.main500 }

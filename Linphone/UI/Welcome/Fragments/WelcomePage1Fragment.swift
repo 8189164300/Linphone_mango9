@@ -32,7 +32,7 @@ struct WelcomePage1Fragment: View {
 					.frame(width: 150, height: 88)
 					.padding(.horizontal, 26)
 					.padding(.vertical, 20)
-					.background(Color.orangeMain500)
+					.background(Color.mango9Primary)
 					.cornerRadius(24)
 				Text(Bundle.main.displayName)
 					.welcome_text_style_gray_800(styleSize: 30)

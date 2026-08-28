@@ -151,7 +151,7 @@ struct PermissionsFragment: View {
 			}
 			.padding(.horizontal, 20)
 			.padding(.vertical, 10)
-			.background(Color.orangeMain500)
+			.background(Color.mango9Primary)
 			.cornerRadius(60)
 			.frame(maxWidth: SharedMainViewModel.shared.maxWidth)
 			.padding(.horizontal)
@@ -164,6 +164,7 @@ struct PermissionsFragment: View {
 				.clipped()
 		}
 		.frame(minHeight: geometry.size.height)
+		.background(Color.mango9Surface)
 	}
 }
 

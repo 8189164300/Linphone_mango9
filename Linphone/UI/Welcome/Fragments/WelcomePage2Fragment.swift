@@ -29,7 +29,7 @@ struct WelcomePage2Fragment: View {
 				Image("secured")
 					.renderingMode(.template)
 					.resizable()
-					.foregroundStyle(Color.orangeMain500)
+					.foregroundStyle(Color.mango9Primary)
 					.frame(width: 70, height: 100)
 				Text("welcome_page_2_title")
 					.welcome_text_style_gray_800(styleSize: 30)

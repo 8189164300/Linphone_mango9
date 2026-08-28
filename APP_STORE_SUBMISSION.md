@@ -1,26 +1,24 @@
 # Mango9 iOS App Store Submission
 
-This file is the release gate for the Mango9 iOS 6.2.4 update.
+This file is the release gate for the Mango9 iOS 6.2.7 update.
 Do not press **Submit for Review** until every required item below is complete.
 
 ## Release identity
 
 - App name: `Mango9`
 - Bundle ID: `com.mango9.phone`
-- Version: `6.2.4`
-- Current build: `19`
+- Version: `6.2.7`
+- Current build: `23`
 - Primary category: `Business`
 - Price: `Free`
 - Release method: `Manually release this version`
 - Seller/signing identity: George Gabrielyan (individual Apple Developer account)
 
-## What's New in 6.2.4
+## What's New in 6.2.7
 
-Sign in with a password or a secure code sent by email—QR setup is no longer
-required. Incoming calls now open the call screen more reliably, multiple lines
-recover better after network changes, and SMS and Team Chat notifications open
-the correct conversation. Connection messages are also clearer throughout the
-app.
+Unread indicators now clear immediately when an SMS or Team Chat conversation
+is opened, while read acknowledgements continue in the background. Launch,
+onboarding, permissions, and sign-in screens also use consistent Mango9 colors.
 
 ## Business model statement
 
@@ -164,7 +162,7 @@ Complete this only after the final TestFlight candidate has passed every test:
 
 1. Increment the build number if any code, resource, manifest, entitlement, or
    configuration changes.
-2. Choose the immutable tag name, such as `ios-6.2.4-build-19`, and change
+2. Choose the immutable tag name, such as `ios-6.2.7-build-23`, and change
    `MANGO9_SOURCE_CODE_URL` in `Shared.xcconfig` to that tag URL.
 3. Commit the exact release source, including the final source URL.
 4. Create the chosen tag on that commit and push both the commit and tag.

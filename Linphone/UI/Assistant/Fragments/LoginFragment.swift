@@ -56,7 +56,7 @@ struct LoginFragment: View {
 	var body: some View {
 		NavigationView {
 			ZStack {
-				Color.gray100
+				Color.mango9Surface
 					.ignoresSafeArea()
 
 				ScrollView(.vertical, showsIndicators: false) {
@@ -132,7 +132,7 @@ struct LoginFragment: View {
 					Image("caret-left")
 						.renderingMode(.template)
 						.resizable()
-						.foregroundStyle(Color.grayMain2c600)
+						.foregroundStyle(Color.mango9Primary)
 						.frame(width: 25, height: 25)
 						.padding(10)
 				}
@@ -151,7 +151,7 @@ struct LoginFragment: View {
 				Image("gear")
 					.renderingMode(.template)
 					.resizable()
-					.foregroundStyle(Color.grayMain2c600)
+					.foregroundStyle(Color.mango9Primary)
 					.frame(width: 21, height: 21)
 					.padding(12)
 			}
@@ -165,7 +165,7 @@ struct LoginFragment: View {
 				Image("question")
 					.renderingMode(.template)
 					.resizable()
-					.foregroundStyle(Color.grayMain2c600)
+					.foregroundStyle(Color.mango9Primary)
 					.frame(width: 20, height: 20)
 					.padding(12)
 			}
@@ -199,7 +199,7 @@ struct LoginFragment: View {
 		.frame(maxWidth: .infinity)
 		.padding(.horizontal, 24)
 		.padding(.vertical, 18)
-		.background(Color.orangeMain500)
+		.background(Color.mango9Primary)
 		.cornerRadius(20)
 		.padding(.horizontal, 24)
 	}
@@ -236,7 +236,7 @@ struct LoginFragment: View {
 						.foregroundStyle(Color.grayMain2c500)
 				}
 			}
-			.toggleStyle(SwitchToggleStyle(tint: Color.orangeMain500))
+			.toggleStyle(SwitchToggleStyle(tint: Color.mango9Primary))
 
 			if let signInError {
 				Text(signInError)
@@ -258,14 +258,14 @@ struct LoginFragment: View {
 						Text("Use an email code")
 							.default_text_style_600(styleSize: 16)
 					}
-					.foregroundStyle(Color.orangeMain500)
+					.foregroundStyle(Color.mango9Primary)
 					.frame(maxWidth: .infinity)
 					.padding(.horizontal, 20)
 					.frame(height: 48)
 					.background(Color.white)
 					.overlay(
 						Capsule()
-							.stroke(Color.orangeMain500, lineWidth: 1.5)
+							.stroke(Color.mango9Primary, lineWidth: 1.5)
 					)
 				}
 				.buttonStyle(.plain)
@@ -278,7 +278,7 @@ struct LoginFragment: View {
 						Text("Use password instead")
 					}
 					.font(.system(size: 14, weight: .semibold))
-					.foregroundStyle(Color.orangeMain500)
+					.foregroundStyle(Color.mango9Primary)
 					.padding(.vertical, 4)
 				}
 				.buttonStyle(.plain)
@@ -400,7 +400,7 @@ struct LoginFragment: View {
 					showEmailLogin()
 				}
 				.default_text_style_600(styleSize: 13)
-				.foregroundStyle(Color.orangeMain500)
+				.foregroundStyle(Color.mango9Primary)
 				.buttonStyle(.plain)
 				.disabled(isSigningIn)
 
@@ -411,7 +411,7 @@ struct LoginFragment: View {
 				} label: {
 					Text(resendCountdown > 0 ? "Resend in \(resendCountdown)s" : "Resend code")
 						.default_text_style_600(styleSize: 13)
-						.foregroundStyle(resendCountdown > 0 ? Color.grayMain2c500 : Color.orangeMain500)
+						.foregroundStyle(resendCountdown > 0 ? Color.grayMain2c500 : Color.mango9Primary)
 				}
 				.buttonStyle(.plain)
 				.disabled(resendCountdown > 0 || isSigningIn)
@@ -433,7 +433,7 @@ struct LoginFragment: View {
 			.frame(maxWidth: .infinity)
 			.padding(.horizontal, 20)
 			.frame(height: 50)
-			.background(Color.orangeMain500)
+			.background(Color.mango9Primary)
 			.cornerRadius(60)
 		}
 		.buttonStyle(.plain)

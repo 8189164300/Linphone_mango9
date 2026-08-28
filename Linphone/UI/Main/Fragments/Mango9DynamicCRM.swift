@@ -441,10 +441,12 @@ final class Mango9ChatStore: ObservableObject {
 		messages = []
 		activeSMSPhone = normalized
 		smsMessages = smsMessageCache[smsCacheKey(phone: normalized)] ?? []
+		markSMSReadLocally(normalized)
 		errorMessage = nil
 		await connectIfNeeded()
 		guard isConnected else { return }
 		activeSMSPhone = normalized
+		markSMSReadLocally(normalized)
 		do {
 			try await loadSMSMessages(phone: normalized)
 			if smsSenders.isEmpty {
@@ -490,6 +492,9 @@ final class Mango9ChatStore: ObservableObject {
 
 	func openConversation(with userId: Int, fallbackName: String = "") async {
 		closeSMSConversation()
+		if let existingRoom = directRoom(with: userId) {
+			markRoomReadLocally(existingRoom.id)
+		}
 		openingUserId = userId
 		activeRoomId = nil
 		messages = []
@@ -512,6 +517,7 @@ final class Mango9ChatStore: ObservableObject {
 				throw Mango9ChatError.invalidResponse
 			}
 			activeRoomId = room.id
+			markRoomReadLocally(room.id)
 			try await loadMessages(roomId: room.id)
 
 			if users.first(where: { $0.id == userId }) == nil, !fallbackName.isEmpty {
@@ -531,6 +537,7 @@ final class Mango9ChatStore: ObservableObject {
 
 	func openRoom(_ room: Mango9ChatRoom) async {
 		closeSMSConversation()
+		markRoomReadLocally(room.id)
 		openingUserId = nil
 		activeRoomId = nil
 		messages = []
@@ -542,6 +549,7 @@ final class Mango9ChatStore: ObservableObject {
 
 		do {
 			activeRoomId = room.id
+			markRoomReadLocally(room.id)
 			try await loadMessages(roomId: room.id)
 		} catch {
 			errorMessage = error.localizedDescription
@@ -1011,6 +1019,9 @@ final class Mango9ChatStore: ObservableObject {
 			)
 		}
 		rooms = loadedRooms
+		if let activeRoomId {
+			markRoomReadLocally(activeRoomId)
+		}
 		applyPresence(Self.array(from: rawPresence))
 	}
 
@@ -1022,6 +1033,9 @@ final class Mango9ChatStore: ObservableObject {
 			.sorted { $0.latest > $1.latest }
 		smsSenders = Self.array(from: rawSenders)
 			.compactMap(Self.smsSender(from:))
+		if let activeSMSPhone {
+			markSMSReadLocally(activeSMSPhone)
+		}
 	}
 
 	private func loadSMSMessages(phone: String) async throws {
@@ -1040,6 +1054,7 @@ final class Mango9ChatStore: ObservableObject {
 		if let activeSMSPhone,
 		   Self.normalizedPhone(activeSMSPhone) == normalized {
 			smsMessages = loadedMessages
+			markSMSReadLocally(normalized)
 		}
 	}
 
@@ -1078,6 +1093,30 @@ final class Mango9ChatStore: ObservableObject {
 			unread: 0,
 			isDirect: room.isDirect
 		)
+		synchronizeApplicationBadge()
+	}
+
+	private func markSMSReadLocally(_ phone: String) {
+		let normalized = Self.normalizedPhone(phone)
+		guard let index = smsParties.firstIndex(where: {
+			Self.normalizedPhone($0.phone) == normalized
+		}), smsParties[index].unread > 0 else {
+			return
+		}
+		let party = smsParties[index]
+		smsParties[index] = Mango9SMSParty(
+			phone: party.phone,
+			latest: party.latest,
+			lastMessage: party.lastMessage,
+			unread: 0,
+			avatar: party.avatar
+		)
+		synchronizeApplicationBadge()
+	}
+
+	private func synchronizeApplicationBadge() {
+		UIApplication.shared.applicationIconBadgeNumber =
+			max(0, SharedMainViewModel.shared.unreadMessages) + unreadCount
 	}
 
 	private func directRoom(with userId: Int) -> Mango9ChatRoom? {
@@ -1284,6 +1323,10 @@ final class Mango9ChatStore: ObservableObject {
 			smsMessages.sort { $0.time < $1.time }
 		}
 		smsMessageCache[smsCacheKey(phone: message.phone)] = smsMessages
+		if let activeSMSPhone,
+		   Self.normalizedPhone(activeSMSPhone) == Self.normalizedPhone(message.phone) {
+			markSMSReadLocally(message.phone)
+		}
 	}
 
 	private func smsCacheKey(phone: String) -> String {
@@ -1312,6 +1355,9 @@ final class Mango9ChatStore: ObservableObject {
 				unread: unread,
 				isDirect: existing.isDirect
 			)
+			if message.roomId == activeRoomId {
+				synchronizeApplicationBadge()
+			}
 		}
 	}
 

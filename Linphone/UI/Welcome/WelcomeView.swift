@@ -118,7 +118,7 @@ struct WelcomeView: View {
 				})
 				.padding(.horizontal, 20)
 				.padding(.vertical, 10)
-				.background(Color.orangeMain500)
+				.background(Color.mango9Primary)
 				.cornerRadius(60)
 				.padding(.horizontal)
 				.padding(.bottom, geometry.safeAreaInsets.bottom.isEqual(to: 0.0) ? 20 : 0)
@@ -136,7 +136,7 @@ struct WelcomeView: View {
 				})
 				.padding(.horizontal, 20)
 				.padding(.vertical, 10)
-				.background(Color.orangeMain500)
+				.background(Color.mango9Primary)
 				.cornerRadius(60)
 				.padding(.horizontal)
 				.padding(.bottom, geometry.safeAreaInsets.bottom.isEqual(to: 0.0) ? 20 : 0)
@@ -144,20 +144,21 @@ struct WelcomeView: View {
 			}
 			
 			LinearGradient(
-				colors: [Color.orangeMain500.opacity(0.12), Color.orangeMain500.opacity(0.32)],
+				colors: [Color.mango9Primary.opacity(0.12), Color.mango9Primary.opacity(0.32)],
 				startPoint: .top,
 				endPoint: .bottom
 			)
 				.frame(width: geometry.size.width, height: 60)
 		}
 		.frame(minHeight: geometry.size.height)
+		.background(Color.mango9Surface)
 		.onAppear {
 			PermissionManager.shared.havePermissionsAlreadyBeenRequested()
 		}
 	}
 	
 	func setupAppearance() {
-		UIPageControl.appearance().currentPageIndicatorTintColor = UIColor(Color.orangeMain500)
+		UIPageControl.appearance().currentPageIndicatorTintColor = UIColor(Color.mango9Primary)
 		if #available(iOS 16.0, *) {
 			
 			let dotCurrentImage = UIImage(named: "current-dot")

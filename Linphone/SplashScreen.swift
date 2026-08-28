@@ -24,7 +24,7 @@ struct SplashScreen: View {
 
 	var body: some View {
 		ZStack {
-			Color(hex: "#4053C8")
+			Color.mango9Primary
 				.ignoresSafeArea()
 
 			Image("mango9-logo")
