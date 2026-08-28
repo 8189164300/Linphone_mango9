@@ -924,10 +924,207 @@ struct ConversationInfoFragment: View {
 					.background(.white)
 					.cornerRadius(14)
 					.padding(20)
+
+					smsActivitySection
+					crmRecordSection
+					localCallSection
 				}
 			}
 			.background(Color.gray100)
 		}
+		.onAppear {
+			conversationViewModel.refreshSMSConversationInsights()
+		}
+	}
+
+	private var smsActivitySection: some View {
+		let stats = conversationViewModel.smsStats
+		return VStack(alignment: .leading, spacing: 12) {
+			Text("Conversation activity")
+				.default_text_style_800(styleSize: 18)
+			Text("Based on messages available from Mango9.")
+				.default_text_style(styleSize: 13)
+				.foregroundStyle(Color.grayMain2c600)
+
+			HStack(spacing: 10) {
+				smsInsightMetric(title: "Messages", value: String(stats.total))
+				smsInsightMetric(title: "Received", value: String(stats.received))
+				smsInsightMetric(title: "Sent", value: String(stats.sent))
+			}
+			HStack(spacing: 10) {
+				smsInsightMetric(title: "Attachments", value: String(stats.attachments))
+				if stats.failed > 0 {
+					smsInsightMetric(title: "Failed", value: String(stats.failed), isWarning: true)
+				}
+			}
+
+			if let first = stats.firstAvailableMessage {
+				smsInsightRow(title: "First available SMS", value: smsInsightDate(first))
+			}
+			if let latest = stats.latestMessage {
+				smsInsightRow(title: "Latest SMS", value: smsInsightDate(latest))
+			}
+			if !stats.senderIDs.isEmpty {
+				smsInsightRow(
+					title: "Mango9 number",
+					value: stats.senderIDs
+						.map(Mango9CallerIdentity.formattedPhoneNumber)
+						.joined(separator: ", ")
+				)
+			}
+		}
+		.padding(18)
+		.background(.white)
+		.cornerRadius(14)
+		.padding(.horizontal, 20)
+		.padding(.bottom, 20)
+	}
+
+	@ViewBuilder
+	private var crmRecordSection: some View {
+		if conversationViewModel.smsInsightsAreLoading && !conversationViewModel.smsCRMLookupComplete {
+			HStack(spacing: 12) {
+				ProgressView()
+				Text("Checking CRM record…")
+					.default_text_style(styleSize: 14)
+			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.padding(18)
+			.background(.white)
+			.cornerRadius(14)
+			.padding(.horizontal, 20)
+			.padding(.bottom, 20)
+		} else if let match = conversationViewModel.smsCRMMatch {
+			VStack(alignment: .leading, spacing: 12) {
+				Text("CRM record")
+					.default_text_style_800(styleSize: 18)
+				smsInsightRow(
+					title: match.kind.singular,
+					value: match.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+						? "Unnamed \(match.kind.singular.lowercased())"
+						: match.name
+				)
+				if !match.ownerName.isEmpty {
+					smsInsightRow(title: "Owner", value: match.ownerName)
+				}
+				if !match.status.isEmpty {
+					smsInsightRow(title: "Status", value: match.status)
+				}
+				if !match.createdAt.isEmpty {
+					smsInsightRow(title: "Created", value: smsCRMDate(match.createdAt))
+				}
+			}
+			.padding(18)
+			.background(.white)
+			.cornerRadius(14)
+			.padding(.horizontal, 20)
+			.padding(.bottom, 20)
+		} else if conversationViewModel.smsCRMLookupComplete,
+			let statusMessage = conversationViewModel.smsCRMStatusMessage {
+			VStack(alignment: .leading, spacing: 8) {
+				Text("CRM record")
+					.default_text_style_800(styleSize: 18)
+				Text(statusMessage)
+					.default_text_style(styleSize: 14)
+					.foregroundStyle(Color.grayMain2c600)
+			}
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.padding(18)
+			.background(.white)
+			.cornerRadius(14)
+			.padding(.horizontal, 20)
+			.padding(.bottom, 20)
+		}
+	}
+
+	@ViewBuilder
+	private var localCallSection: some View {
+		if conversationViewModel.smsCallLookupComplete {
+			let stats = conversationViewModel.smsLocalCallStats
+			VStack(alignment: .leading, spacing: 12) {
+				Text("Calls on this iPhone")
+					.default_text_style_800(styleSize: 18)
+				Text("This includes matching call history stored on this device, not PBX-wide history.")
+					.default_text_style(styleSize: 13)
+					.foregroundStyle(Color.grayMain2c600)
+				HStack(spacing: 10) {
+					smsInsightMetric(title: "Calls", value: String(stats.total))
+					smsInsightMetric(title: "Inbound", value: String(stats.inbound))
+					smsInsightMetric(title: "Outbound", value: String(stats.outbound))
+				}
+				if stats.missed > 0 {
+					smsInsightRow(title: "Missed", value: String(stats.missed))
+				}
+				if stats.connectedDuration > 0 {
+					smsInsightRow(
+						title: "Connected time",
+						value: smsCallDuration(stats.connectedDuration)
+					)
+				}
+				if let lastCall = stats.lastCall {
+					smsInsightRow(title: "Last call", value: smsInsightDate(lastCall))
+				}
+			}
+			.padding(18)
+			.background(.white)
+			.cornerRadius(14)
+			.padding(.horizontal, 20)
+			.padding(.bottom, 28)
+		}
+	}
+
+	private func smsInsightMetric(
+		title: String,
+		value: String,
+		isWarning: Bool = false
+	) -> some View {
+		VStack(alignment: .leading, spacing: 4) {
+			Text(value)
+				.default_text_style_800(styleSize: 20)
+				.foregroundStyle(isWarning ? Color.redDanger500 : Color.orangeMain500)
+			Text(title)
+				.default_text_style(styleSize: 12)
+				.foregroundStyle(Color.grayMain2c600)
+				.lineLimit(1)
+				.minimumScaleFactor(0.8)
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(12)
+		.background(Color.gray100)
+		.cornerRadius(10)
+	}
+
+	private func smsInsightRow(title: String, value: String) -> some View {
+		HStack(alignment: .firstTextBaseline, spacing: 12) {
+			Text(title)
+				.default_text_style(styleSize: 14)
+				.foregroundStyle(Color.grayMain2c600)
+			Spacer(minLength: 10)
+			Text(value)
+				.default_text_style_800(styleSize: 14)
+				.multilineTextAlignment(.trailing)
+		}
+		.frame(maxWidth: .infinity)
+	}
+
+	private func smsInsightDate(_ date: Date) -> String {
+		date.formatted(date: .abbreviated, time: .shortened)
+	}
+
+	private func smsCRMDate(_ value: String) -> String {
+		if let date = Mango9SMSConversationAdapter.date(from: value) {
+			return date.formatted(date: .abbreviated, time: .omitted)
+		}
+		return value.replacingOccurrences(of: "T", with: " ")
+	}
+
+	private func smsCallDuration(_ seconds: Int) -> String {
+		let hours = seconds / 3600
+		let minutes = (seconds % 3600) / 60
+		let remainingSeconds = seconds % 60
+		if hours > 0 { return "\(hours)h \(minutes)m" }
+		if minutes > 0 { return "\(minutes)m \(remainingSeconds)s" }
+		return "\(remainingSeconds)s"
 	}
 }
 

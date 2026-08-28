@@ -2903,7 +2903,7 @@ struct Mango9Lead: Decodable, Identifiable {
 	let createdAt: String
 }
 
-enum Mango9CRMRecordKind {
+enum Mango9CRMRecordKind: Equatable {
 	case lead
 	case client
 

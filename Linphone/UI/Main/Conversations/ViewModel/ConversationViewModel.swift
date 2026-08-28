@@ -107,6 +107,134 @@ enum Mango9SMSMutePreferences {
 }
 
 @MainActor
+struct Mango9SMSConversationStats: Equatable {
+	let total: Int
+	let sent: Int
+	let received: Int
+	let attachments: Int
+	let failed: Int
+	let firstAvailableMessage: Date?
+	let latestMessage: Date?
+	let senderIDs: [String]
+
+	static let empty = Mango9SMSConversationStats(
+		total: 0,
+		sent: 0,
+		received: 0,
+		attachments: 0,
+		failed: 0,
+		firstAvailableMessage: nil,
+		latestMessage: nil,
+		senderIDs: []
+	)
+
+	static func build(from messages: [Mango9ServerSMSMessage]) -> Self {
+		let dates = messages.compactMap { Mango9SMSConversationAdapter.date(from: $0.time) }
+		return Mango9SMSConversationStats(
+			total: messages.count,
+			sent: messages.filter { !$0.isIncoming }.count,
+			received: messages.filter(\.isIncoming).count,
+			attachments: messages.reduce(0) { count, message in
+				count + Mango9ChatMedia.parse(message.files).count
+			},
+			failed: messages.filter { !$0.isIncoming && $0.status == 99 }.count,
+			firstAvailableMessage: dates.min(),
+			latestMessage: dates.max(),
+			senderIDs: Array(
+				Set(
+					messages
+						.filter { !$0.isIncoming }
+						.map(\.senderID)
+						.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+				)
+			).sorted()
+		)
+	}
+}
+
+struct Mango9SMSCRMMatch: Equatable {
+	let id: Int
+	let kind: Mango9CRMRecordKind
+	let name: String
+	let ownerName: String
+	let status: String
+	let createdAt: String
+
+	static func exactMatch(
+		phone: String,
+		clients: [Mango9Client],
+		leads: [Mango9Lead]
+	) -> Self? {
+		let normalizedTarget = Mango9SMSMutePreferences.normalizedPhone(phone)
+		guard !normalizedTarget.isEmpty else { return nil }
+		if let client = clients.first(where: {
+			Mango9SMSMutePreferences.normalizedPhone($0.phone) == normalizedTarget
+		}) {
+			return Self(record: client, kind: .client)
+		}
+		if let lead = leads.first(where: {
+			Mango9SMSMutePreferences.normalizedPhone($0.phone) == normalizedTarget
+		}) {
+			return Self(record: lead, kind: .lead)
+		}
+		return nil
+	}
+
+	private init(record: Mango9Lead, kind: Mango9CRMRecordKind) {
+		self.id = record.id
+		self.kind = kind
+		self.name = record.name
+		self.ownerName = record.ownerName
+		self.status = record.status
+		self.createdAt = record.createdAt
+	}
+}
+
+struct Mango9LocalCallFact: Equatable {
+	let phone: String
+	let isOutgoing: Bool
+	let isMissed: Bool
+	let isConnected: Bool
+	let startDate: Date?
+	let duration: Int
+}
+
+struct Mango9LocalCallStats: Equatable {
+	let total: Int
+	let inbound: Int
+	let outbound: Int
+	let missed: Int
+	let connectedDuration: Int
+	let lastCall: Date?
+
+	static let empty = Mango9LocalCallStats(
+		total: 0,
+		inbound: 0,
+		outbound: 0,
+		missed: 0,
+		connectedDuration: 0,
+		lastCall: nil
+	)
+
+	static func build(phone: String, facts: [Mango9LocalCallFact]) -> Self {
+		let normalizedTarget = Mango9SMSMutePreferences.normalizedPhone(phone)
+		let matches = facts.filter {
+			Mango9SMSMutePreferences.normalizedPhone($0.phone) == normalizedTarget
+		}
+		return Mango9LocalCallStats(
+			total: matches.count,
+			inbound: matches.filter { !$0.isOutgoing }.count,
+			outbound: matches.filter(\.isOutgoing).count,
+			missed: matches.filter(\.isMissed).count,
+			connectedDuration: matches
+				.filter(\.isConnected)
+				.reduce(0) { $0 + max(0, $1.duration) },
+			lastCall: matches.compactMap(\.startDate).max()
+		)
+	}
+}
+
+@MainActor
 final class Mango9SMSConversationAdapter: ObservableObject {
 	let target: Mango9SMSTarget
 
@@ -117,6 +245,7 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 	@Published private(set) var isSending = false
 	@Published private(set) var errorMessage: String?
 	@Published private(set) var isMuted: Bool
+	@Published private(set) var stats = Mango9SMSConversationStats.empty
 
 	private let store = Mango9ChatStore.shared
 	private let muteIdentity: String?
@@ -262,6 +391,7 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 	}
 
 	private func synchronize() {
+		stats = Mango9SMSConversationStats.build(from: store.smsMessages)
 		senderIDs = store.smsSenders
 		if selectedSenderID.isEmpty || !senderIDs.contains(where: { $0.senderID == selectedSenderID }) {
 			selectedSenderID = senderIDs.first?.senderID ?? ""
@@ -363,6 +493,13 @@ class ConversationViewModel: ObservableObject {
 	@Published private(set) var smsErrorMessage: String?
 	@Published private(set) var smsIsMuted = false
 	@Published private(set) var smsIsLoading = false
+	@Published private(set) var smsStats = Mango9SMSConversationStats.empty
+	@Published private(set) var smsCRMMatch: Mango9SMSCRMMatch?
+	@Published private(set) var smsCRMLookupComplete = false
+	@Published private(set) var smsCRMStatusMessage: String?
+	@Published private(set) var smsInsightsAreLoading = false
+	@Published private(set) var smsLocalCallStats = Mango9LocalCallStats.empty
+	@Published private(set) var smsCallLookupComplete = false
 	@Published var requestedComposerText: String?
 
 	var isSMSConversation: Bool { smsAdapter != nil }
@@ -436,6 +573,109 @@ class ConversationViewModel: ObservableObject {
 
 	func smsDeliveryLabel(for message: Message) -> String? {
 		smsAdapter?.statusLabel(for: message)
+	}
+
+	func refreshSMSConversationInsights() {
+		guard let target = smsTarget, !smsInsightsAreLoading else { return }
+		smsInsightsAreLoading = true
+		smsCRMLookupComplete = false
+		smsCRMStatusMessage = nil
+		loadLocalCallStats(phone: target.phone)
+		Task { await loadCRMMatch(phone: target.phone) }
+	}
+
+	private func loadLocalCallStats(phone: String) {
+		coreContext.doOnCoreQueue { core in
+			let logs = core.accountList.count > 1
+				? (core.defaultAccount?.callLogs ?? core.callLogs)
+				: core.callLogs
+			let facts = logs.compactMap { log -> Mango9LocalCallFact? in
+				let directionalAddress = log.dir == .Outgoing
+					? log.toAddress
+					: log.fromAddress
+				let addresses = [
+					log.remoteAddress,
+					directionalAddress,
+					log.toAddress,
+					log.fromAddress
+				].compactMap { $0 }
+				guard let remotePhone = addresses.compactMap({
+					Mango9CallerIdentity.externalPhoneNumber(for: $0)
+				}).first else {
+					return nil
+				}
+				return Mango9LocalCallFact(
+					phone: remotePhone,
+					isOutgoing: log.dir == .Outgoing,
+					isMissed: log.status == .Missed,
+					isConnected: log.status == .Success,
+					startDate: log.startDate > 0
+						? Date(timeIntervalSince1970: TimeInterval(log.startDate))
+						: nil,
+					duration: log.duration
+				)
+			}
+			let stats = Mango9LocalCallStats.build(phone: phone, facts: facts)
+			DispatchQueue.main.async {
+				guard self.smsTarget?.phone == phone else { return }
+				self.smsLocalCallStats = stats
+				self.smsCallLookupComplete = true
+			}
+		}
+	}
+
+	private func loadCRMMatch(phone: String) async {
+		defer { smsInsightsAreLoading = false }
+		guard var session = Mango9SessionStore.load() else {
+			smsCRMStatusMessage = "Connect your Mango9 account to check CRM records."
+			smsCRMLookupComplete = true
+			return
+		}
+
+		do {
+			let match: Mango9SMSCRMMatch?
+			do {
+				match = try await fetchCRMMatch(phone: phone, session: session)
+			} catch Mango9CRMAPIError.unauthorized {
+				session = try await Mango9CRMAPI.refresh(session: session)
+				try Mango9SessionStore.save(session)
+				match = try await fetchCRMMatch(phone: phone, session: session)
+			}
+			guard smsTarget?.phone == phone, Mango9SessionStore.isActive(session) else { return }
+			smsCRMMatch = match
+			smsCRMStatusMessage = match == nil
+				? "No exact CRM phone-number match was found."
+				: nil
+			smsCRMLookupComplete = true
+		} catch {
+			Log.warn("[Mango9 SMS] CRM insight unavailable: \(String(reflecting: error))")
+			guard smsTarget?.phone == phone else { return }
+			smsCRMMatch = nil
+			smsCRMStatusMessage = "CRM data is unavailable right now."
+			smsCRMLookupComplete = true
+		}
+	}
+
+	private func fetchCRMMatch(
+		phone: String,
+		session: Mango9Session
+	) async throws -> Mango9SMSCRMMatch? {
+		let normalizedPhone = Mango9SMSMutePreferences.normalizedPhone(phone)
+		async let clientsPayload = Mango9CRMAPI.clients(
+			session: session,
+			search: normalizedPhone
+		)
+		async let leadsPayload = Mango9CRMAPI.leads(
+			session: session,
+			search: normalizedPhone,
+			status: ""
+		)
+		let (clients, leads) = try await (clientsPayload, leadsPayload)
+		return Mango9SMSCRMMatch.exactMatch(
+			phone: phone,
+			clients: clients.clients,
+			leads: leads.leads
+		)
 	}
 	
 	@Published var displayedConversationHistorySize: Int = 0
@@ -597,6 +837,9 @@ class ConversationViewModel: ObservableObject {
 		adapter.$isLoading
 			.receive(on: RunLoop.main)
 			.assign(to: &$smsIsLoading)
+		adapter.$stats
+			.receive(on: RunLoop.main)
+			.assign(to: &$smsStats)
 	}
 	
 	func addConversationDelegate(chatRoom: ChatRoom) {

@@ -88,6 +88,138 @@ final class Mango9MultiAccountTests: XCTestCase {
 		)
 	}
 
+	@MainActor
+	func testSMSConversationStatsUseOnlyServerRecordsAndValidDates() throws {
+		let messages = [
+			Mango9ServerSMSMessage(
+				id: "incoming",
+				phone: "8185550100",
+				text: "Photo",
+				time: "2026-08-20 12:30:00",
+				senderID: "",
+				status: 2,
+				isIncoming: true,
+				files: "https://cdn.example.com/photo.jpg"
+			),
+			Mango9ServerSMSMessage(
+				id: "sent",
+				phone: "8185550100",
+				text: "Hello",
+				time: "2026-08-21T14:45:00Z",
+				senderID: "18185550199",
+				status: 2,
+				isIncoming: false,
+				files: ""
+			),
+			Mango9ServerSMSMessage(
+				id: "failed-with-invalid-time",
+				phone: "8185550100",
+				text: "Retry",
+				time: "not-a-date",
+				senderID: "18185550199",
+				status: 99,
+				isIncoming: false,
+				files: ""
+			)
+		]
+
+		let stats = Mango9SMSConversationStats.build(from: messages)
+
+		XCTAssertEqual(stats.total, 3)
+		XCTAssertEqual(stats.received, 1)
+		XCTAssertEqual(stats.sent, 2)
+		XCTAssertEqual(stats.attachments, 1)
+		XCTAssertEqual(stats.failed, 1)
+		XCTAssertEqual(stats.senderIDs, ["18185550199"])
+		XCTAssertEqual(
+			try XCTUnwrap(stats.firstAvailableMessage).timeIntervalSince1970,
+			Date(timeIntervalSince1970: 1_787_229_000).timeIntervalSince1970,
+			accuracy: 1
+		)
+		XCTAssertEqual(
+			try XCTUnwrap(stats.latestMessage).timeIntervalSince1970,
+			Date(timeIntervalSince1970: 1_787_323_500).timeIntervalSince1970,
+			accuracy: 1
+		)
+	}
+
+	func testCRMConversationMatchRequiresExactNormalizedPhone() throws {
+		let fuzzyClient = Mango9Lead(
+			id: 1,
+			ownerUserId: 1,
+			ownerName: "Owner A",
+			name: "Wrong client",
+			phone: "8185550109",
+			email: "wrong@example.com",
+			status: "Active",
+			source: "Test",
+			createdAt: "2026-08-01"
+		)
+		let exactLead = Mango9Lead(
+			id: 2,
+			ownerUserId: 2,
+			ownerName: "Owner B",
+			name: "Exact lead",
+			phone: "+1 (818) 555-0100",
+			email: "exact@example.com",
+			status: "New",
+			source: "Test",
+			createdAt: "2026-08-02"
+		)
+
+		let match = try XCTUnwrap(
+			Mango9SMSCRMMatch.exactMatch(
+				phone: "818-555-0100",
+				clients: [fuzzyClient],
+				leads: [exactLead]
+			)
+		)
+
+		XCTAssertEqual(match.id, 2)
+		XCTAssertEqual(match.kind, .lead)
+		XCTAssertEqual(match.name, "Exact lead")
+	}
+
+	func testLocalCallStatsOnlyCountMatchingDeviceHistory() throws {
+		let first = Date(timeIntervalSince1970: 100)
+		let latest = Date(timeIntervalSince1970: 300)
+		let facts = [
+			Mango9LocalCallFact(
+				phone: "+1 (818) 555-0100",
+				isOutgoing: false,
+				isMissed: true,
+				isConnected: false,
+				startDate: first,
+				duration: 0
+			),
+			Mango9LocalCallFact(
+				phone: "18185550100",
+				isOutgoing: true,
+				isMissed: false,
+				isConnected: true,
+				startDate: latest,
+				duration: 125
+			),
+			Mango9LocalCallFact(
+				phone: "18185550101",
+				isOutgoing: true,
+				isMissed: false,
+				isConnected: true,
+				startDate: Date(timeIntervalSince1970: 500),
+				duration: 999
+			)
+		]
+
+		let stats = Mango9LocalCallStats.build(phone: "818-555-0100", facts: facts)
+
+		XCTAssertEqual(stats.total, 2)
+		XCTAssertEqual(stats.inbound, 1)
+		XCTAssertEqual(stats.outbound, 1)
+		XCTAssertEqual(stats.missed, 1)
+		XCTAssertEqual(stats.connectedDuration, 125)
+		XCTAssertEqual(try XCTUnwrap(stats.lastCall), latest)
+	}
+
 	func testRegistrationErrorDistinguishesPushFromCredentials() {
 		let pushFailure = Mango9RegistrationFailure(
 			sipMessage: "555 Push Notification Service Not Supported"
