@@ -6,8 +6,8 @@ CRM access, contacts, Team Chat, SMS/MMS, and Firebase Cloud Messaging support.
 
 This repository is the public corresponding-source location displayed by the
 Mango9 app. The immutable release tag
-[`android-6.2.7-build-602018`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.7-build-602018)
-corresponds to Mango9 Android version 6.2.7, version code 602018.
+[`android-6.2.7-build-602019`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.7-build-602019)
+corresponds to Mango9 Android version 6.2.7, version code 602019.
 
 Mango9 modified the upstream Linphone Android application in 2026. Mango9 is
 not affiliated with or endorsed by Belledonne Communications SARL.
@@ -46,7 +46,7 @@ dependency license information.
 ## Source relationship
 
 - Mango9 release source:
-  [`android-6.2.7-build-602018`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.7-build-602018)
+  [`android-6.2.7-build-602019`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.7-build-602019)
 - Upstream Linphone Android tag: [`6.2.6`](https://github.com/BelledonneCommunications/linphone-android/tree/6.2.6)
 - Upstream application commit:
   [`42b1fcce3c8037e6f5a891cf8d108eb47e308386`](https://github.com/BelledonneCommunications/linphone-android/commit/42b1fcce3c8037e6f5a891cf8d108eb47e308386)

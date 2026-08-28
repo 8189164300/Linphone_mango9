@@ -91,6 +91,7 @@ class StartConversationFragment : GenericAddressPickerFragment() {
 
         viewModel.chatRoomCreatedEvent.observe(viewLifecycleOwner) {
             it.consume { conversationId ->
+                sharedViewModel.completePendingShareRecipientSelection()
                 Log.i(
                     "$TAG Conversation [$conversationId] has been created, navigating to it"
                 )

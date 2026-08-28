@@ -10,7 +10,9 @@ import android.content.Context
 import android.database.Cursor
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.webkit.MimeTypeMap
 import androidx.core.content.edit
+import java.io.File
 import java.net.URI
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -508,6 +510,19 @@ class Mango9ChatStore private constructor(context: Context) {
         return Mango9PendingAttachment(uri, name.take(MAX_FILE_NAME_LENGTH), mime, size)
     }
 
+    fun attachment(path: String): Mango9PendingAttachment? {
+        val file = File(path)
+        if (!file.isFile || !file.canRead()) return null
+        val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+            ?: "application/octet-stream"
+        return Mango9PendingAttachment(
+            Uri.fromFile(file),
+            file.name.take(MAX_FILE_NAME_LENGTH),
+            mime,
+            file.length(),
+        )
+    }
+
     private suspend fun loadDirectory() {
         val rawUsers = rpc("getAllUsers", JSONArray())
         val rawRooms = rpc("getAllRooms", JSONArray())
@@ -911,7 +926,11 @@ class Mango9ChatStore private constructor(context: Context) {
         override fun contentLength(): Long = attachment.size
 
         override fun writeTo(sink: BufferedSink) {
-            val stream = context.contentResolver.openInputStream(attachment.uri)
+            val stream = if (attachment.uri.scheme == "file") {
+                attachment.uri.path?.let(::File)?.takeIf(File::isFile)?.inputStream()
+            } else {
+                context.contentResolver.openInputStream(attachment.uri)
+            }
                 ?: throw IllegalStateException("The selected attachment is no longer available.")
             stream.source().use(sink::writeAll)
         }

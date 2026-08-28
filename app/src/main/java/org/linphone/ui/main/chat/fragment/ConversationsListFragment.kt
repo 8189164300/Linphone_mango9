@@ -240,6 +240,7 @@ class ConversationsListFragment : AbstractMainFragment() {
 
         adapter.conversationClickedEvent.observe(viewLifecycleOwner) {
             it.consume { model ->
+                sharedViewModel.completePendingShareRecipientSelection()
                 Log.i("$TAG Show conversation with ID [${model.id}]")
                 sharedViewModel.displayedChatRoom = model.chatRoom
                 sharedViewModel.showConversationEvent.value = Event(model.id)
@@ -250,6 +251,7 @@ class ConversationsListFragment : AbstractMainFragment() {
             it.consume { friend ->
                 coreContext.postOnCoreThread {
                     coreContext.contactsManager.mango9ChatTarget(friend)?.let { target ->
+                        sharedViewModel.completePendingShareRecipientSelection()
                         Mango9ChatRouting.open(target)
                         return@postOnCoreThread
                     }
@@ -312,6 +314,7 @@ class ConversationsListFragment : AbstractMainFragment() {
 
         listViewModel.chatRoomCreatedEvent.observe(viewLifecycleOwner) {
             it.consume { conversationId ->
+                sharedViewModel.completePendingShareRecipientSelection()
                 Log.i("$TAG Conversation [$conversationId] has been created, navigating to it")
                 val action = ConversationFragmentDirections.actionGlobalConversationFragment(conversationId)
                 binding.chatNavContainer.findNavController().navigate(action)
@@ -549,6 +552,7 @@ class ConversationsListFragment : AbstractMainFragment() {
     }
 
     private fun openMango9Item(item: Mango9MessagingListItem) {
+        sharedViewModel.completePendingShareRecipientSelection()
         when (item) {
             is Mango9MessagingListItem.Group -> openMango9Conversation(
                 Mango9MessagingListFragment.TYPE_TEAM,

@@ -70,6 +70,26 @@ class Mango9ParityBehaviorTest {
     }
 
     @Test
+    fun externalShareAcceptsImagesAndGeneralFilesWithinComposerLimit() {
+        val selection = Mango9PendingShare.selectFiles(
+            listOf("/tmp/photo.jpg", "/tmp/document.pdf", "/tmp/notes.txt"),
+            existingCount = 10,
+            limit = 12,
+        )
+
+        assertEquals(listOf("/tmp/photo.jpg", "/tmp/document.pdf"), selection.acceptedPaths)
+        assertEquals(1, selection.rejectedCount)
+    }
+
+    @Test
+    fun externalSharePreservesCaptionAlongsideAnAttachment() {
+        assertEquals(
+            "Draft\nShared caption",
+            Mango9PendingShare.mergeText("Draft", "Shared caption"),
+        )
+    }
+
+    @Test
     fun accountLineLabelKeepsExtensionVisibleWithoutDid() {
         assertEquals(
             "Ext 700",

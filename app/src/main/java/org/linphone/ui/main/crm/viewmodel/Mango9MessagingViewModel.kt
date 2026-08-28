@@ -92,6 +92,8 @@ class Mango9MessagingViewModel : GenericViewModel() {
 
     fun attachment(uri: Uri): Mango9PendingAttachment? = store.attachment(uri)
 
+    fun attachment(path: String): Mango9PendingAttachment? = store.attachment(path)
+
     fun roomTitle(room: Mango9ChatRoom): String = store.roomTitle(room)
 
     fun userName(userId: Int): String = store.userName(userId)

@@ -36,6 +36,7 @@ import org.linphone.mango9.Mango9ChatMedia
 import org.linphone.mango9.Mango9ChatRoom
 import org.linphone.mango9.Mango9ChatState
 import org.linphone.mango9.Mango9PendingAttachment
+import org.linphone.mango9.Mango9PendingShare
 import org.linphone.mango9.Mango9SmsConversationInsights
 import org.linphone.ui.main.crm.adapter.Mango9MessageAdapter
 import org.linphone.ui.main.crm.adapter.Mango9MessageListItem
@@ -48,6 +49,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
     private lateinit var viewModel: Mango9MessagingViewModel
     private lateinit var adapter: Mango9MessageAdapter
     private val attachments = mutableListOf<Mango9PendingAttachment>()
+    private val importedAttachmentFiles = mutableSetOf<File>()
     private var senderIds = emptyList<String>()
     private var recorder: MediaRecorder? = null
     private var voiceFile: File? = null
@@ -99,6 +101,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         binding.microphone.setOnClickListener { toggleRecording() }
         binding.send.setOnClickListener { sendMessage() }
         binding.pendingAttachments.setOnClickListener {
+            deleteImportedAttachments()
             attachments.clear()
             renderPendingAttachments()
         }
@@ -111,6 +114,8 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
             event.consume(::showConversationInsights)
         }
         viewModel.sending.observe(viewLifecycleOwner) { updateComposerState(viewModel.state.value ?: Mango9ChatState()) }
+        sharedViewModel.filesToShareFromIntent.observe(viewLifecycleOwner, ::consumeSharedFiles)
+        sharedViewModel.textToShareFromIntent.observe(viewLifecycleOwner, ::consumeSharedText)
 
         if (isSms) {
             viewModel.openSmsConversation(phone.orEmpty())
@@ -239,10 +244,13 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         val text = binding.message.text?.toString().orEmpty()
         val outgoing = attachments.toList()
         val complete: (Boolean) -> Unit = { sent ->
-            if (sent && isAdded) {
-                binding.message.text?.clear()
-                attachments.clear()
-                renderPendingAttachments()
+            if (sent) {
+                deleteImportedAttachments()
+                if (isAdded) {
+                    binding.message.text?.clear()
+                    attachments.clear()
+                    renderPendingAttachments()
+                }
             }
         }
         if (isSms) {
@@ -547,6 +555,35 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
             )
         }
         updateComposerState(viewModel.currentState())
+    }
+
+    private fun consumeSharedFiles(paths: ArrayList<String>) {
+        if (paths.isEmpty() || sharedViewModel.pendingShareNeedsRecipientSelection) return
+        val selection = Mango9PendingShare.selectFiles(paths, attachments.size, MAX_ATTACHMENTS)
+        val imported = selection.acceptedPaths.mapNotNull { path ->
+            viewModel.attachment(path)?.also { importedAttachmentFiles += File(path) }
+        }
+        attachments += imported
+        sharedViewModel.filesToShareFromIntent.value = arrayListOf()
+        when {
+            imported.isEmpty() -> showLocalError(getString(R.string.mango9_chat_attachment_unavailable))
+            selection.rejectedCount > 0 -> showLocalError(getString(R.string.mango9_chat_attachment_limit))
+        }
+        renderPendingAttachments()
+    }
+
+    private fun consumeSharedText(shared: String) {
+        if (shared.isEmpty() || sharedViewModel.pendingShareNeedsRecipientSelection) return
+        binding.message.setText(
+            Mango9PendingShare.mergeText(binding.message.text?.toString().orEmpty(), shared),
+        )
+        binding.message.setSelection(binding.message.text?.length ?: 0)
+        sharedViewModel.textToShareFromIntent.value = ""
+    }
+
+    private fun deleteImportedAttachments() {
+        importedAttachmentFiles.forEach { file -> runCatching { file.delete() } }
+        importedAttachmentFiles.clear()
     }
 
     private fun showLocalError(message: String) {

@@ -547,7 +547,11 @@ open class ConversationFragment : SlidingPaneChildFragment() {
                     }
 
                     sharedViewModel.textToShareFromIntent.observe(viewLifecycleOwner) { text ->
-                        if (text.isNotEmpty() && sharedViewModel.displayedChatRoom != null) {
+                        if (
+                            text.isNotEmpty() &&
+                            sharedViewModel.displayedChatRoom != null &&
+                            !sharedViewModel.pendingShareNeedsRecipientSelection
+                        ) {
                             Log.i("$TAG Found text to share from intent")
                             sendMessageViewModel.textToSend.value = text
 
@@ -556,7 +560,11 @@ open class ConversationFragment : SlidingPaneChildFragment() {
                     }
 
                     sharedViewModel.filesToShareFromIntent.observe(viewLifecycleOwner) { files ->
-                        if (files.isNotEmpty() && sharedViewModel.displayedChatRoom != null) {
+                        if (
+                            files.isNotEmpty() &&
+                            sharedViewModel.displayedChatRoom != null &&
+                            !sharedViewModel.pendingShareNeedsRecipientSelection
+                        ) {
                             Log.i("$TAG Found [${files.size}] files to share from intent")
                             for (path in files) {
                                 sendMessageViewModel.addAttachments(arrayListOf(path))

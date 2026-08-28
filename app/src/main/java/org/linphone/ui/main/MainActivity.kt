@@ -291,6 +291,7 @@ class MainActivity : GenericActivity() {
 
         viewModel.clearFilesOrTextPendingSharingEvent.observe(this) {
             it.consume {
+                sharedViewModel.completePendingShareRecipientSelection()
                 sharedViewModel.filesToShareFromIntent.value = arrayListOf()
                 sharedViewModel.textToShareFromIntent.value = ""
             }
@@ -782,26 +783,22 @@ class MainActivity : GenericActivity() {
                 if (path != null) list.add(path)
             }
 
-            var textToShare = ""
-            if (intent.type == "text/plain") {
-                Log.i("$TAG Intent type is [${intent.type}], expecting text in Intent.EXTRA_TEXT")
-                textToShare = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
-                if (textToShare.isEmpty()) {
-                    Log.e("$TAG Intent.EXTRA_TEXT not found in intent!")
-                } else {
-                    Log.i("$TAG Found extra text in intent, long of [${textToShare.length}]")
-                }
+            val textToShare = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
+            if (textToShare.isNotEmpty()) {
+                Log.i("$TAG Found [${textToShare.length}] characters of text in the share intent")
             }
 
             if (list.isNotEmpty()) {
+                sharedViewModel.beginPendingShareRecipientSelection()
                 sharedViewModel.filesToShareFromIntent.postValue(list)
-            } else {
-                if (textToShare.isNotEmpty()) {
-                    Log.i("$TAG Found plain text to share")
-                    sharedViewModel.textToShareFromIntent.postValue(textToShare)
-                } else {
-                    Log.w("$TAG Failed to find at least one file or text to share!")
-                }
+            }
+            if (textToShare.isNotEmpty()) {
+                sharedViewModel.beginPendingShareRecipientSelection()
+                sharedViewModel.textToShareFromIntent.postValue(textToShare)
+            }
+            if (list.isEmpty() && textToShare.isEmpty()) {
+                sharedViewModel.completePendingShareRecipientSelection()
+                Log.w("$TAG Failed to find at least one file or text to share!")
             }
 
             if (findNavController().currentDestination?.id == R.id.debugFragment) {
@@ -810,6 +807,7 @@ class MainActivity : GenericActivity() {
                 )
                 val conversationId = parseShortcutIfAny(intent)
                 if (conversationId != null) {
+                    sharedViewModel.completePendingShareRecipientSelection()
                     Log.i(
                         "$TAG Navigating from debug to conversation with ID [$conversationId], computed from shortcut ID"
                     )
@@ -826,6 +824,7 @@ class MainActivity : GenericActivity() {
             } else {
                 val conversationId = parseShortcutIfAny(intent)
                 if (conversationId != null) {
+                    sharedViewModel.completePendingShareRecipientSelection()
                     Log.i(
                         "$TAG Navigating to conversation with conversation ID [$conversationId] addresses, computed from shortcut ID"
                     )

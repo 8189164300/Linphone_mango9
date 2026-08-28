@@ -121,6 +121,18 @@ class SharedMainViewModel
 
     val filesToShareFromIntent = MutableLiveData<ArrayList<String>>()
 
+    @Volatile
+    var pendingShareNeedsRecipientSelection: Boolean = false
+        private set
+
+    fun beginPendingShareRecipientSelection() {
+        pendingShareNeedsRecipientSelection = true
+    }
+
+    fun completePendingShareRecipientSelection() {
+        pendingShareNeedsRecipientSelection = false
+    }
+
     val messageToForwardEvent: MutableLiveData<Event<MessageModel>> by lazy {
         MutableLiveData()
     }

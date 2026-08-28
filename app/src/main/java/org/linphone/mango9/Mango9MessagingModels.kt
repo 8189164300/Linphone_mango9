@@ -78,6 +78,27 @@ data class Mango9PendingAttachment(
     val size: Long,
 )
 
+data class Mango9PendingShareSelection(
+    val acceptedPaths: List<String>,
+    val rejectedCount: Int,
+)
+
+internal object Mango9PendingShare {
+    fun selectFiles(paths: List<String>, existingCount: Int, limit: Int): Mango9PendingShareSelection {
+        val available = (limit - existingCount).coerceAtLeast(0)
+        return Mango9PendingShareSelection(
+            acceptedPaths = paths.take(available),
+            rejectedCount = (paths.size - available).coerceAtLeast(0),
+        )
+    }
+
+    fun mergeText(existing: String, shared: String): String = when {
+        shared.isBlank() -> existing
+        existing.isBlank() -> shared
+        else -> "$existing\n$shared"
+    }
+}
+
 data class Mango9ChatState(
     val connection: Mango9ChatConnectionState = Mango9ChatConnectionState.Disconnected,
     val connectedIdentity: String? = null,
