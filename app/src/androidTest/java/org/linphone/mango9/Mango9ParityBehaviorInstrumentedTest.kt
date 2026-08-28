@@ -10,6 +10,7 @@ import android.content.Context
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import androidx.test.platform.app.InstrumentationRegistry
+import coil3.imageLoader
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -120,5 +121,16 @@ class Mango9ParityBehaviorInstrumentedTest {
         assertEquals(token, store.load())
         store.clear()
         assertNull(store.load())
+    }
+
+    @Test
+    fun applicationImageLoaderIncludesHttpsFetcherForMango9Media() {
+        val fetchers = context.imageLoader.components.fetcherFactories
+            .map { (factory, _) -> factory.javaClass.name }
+
+        assertTrue(
+            "Expected Coil's network fetcher, found: $fetchers",
+            fetchers.any { it == "coil3.network.NetworkFetcher\$Factory" },
+        )
     }
 }

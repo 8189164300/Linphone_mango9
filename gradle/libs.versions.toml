@@ -67,6 +67,7 @@ google-protobuf = { group = "com.google.protobuf", name = "protobuf-javalite", v
 
 coil = { group = "io.coil-kt.coil3", name = "coil", version.ref = "coil" }
 coil-gif = { group = "io.coil-kt.coil3", name = "coil-gif", version.ref = "coil" }
+coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 coil-svg = { group = "io.coil-kt.coil3", name = "coil-svg", version.ref = "coil" }
 coil-video = { group = "io.coil-kt.coil3", name = "coil-video", version.ref = "coil" }
 dots-indicator = { group = "com.tbuonomo", name = "dotsindicator", version.ref = "dotsIndicator" }

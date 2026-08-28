@@ -18,7 +18,7 @@ plugins {
 val packageName = "com.mango9.phone"
 val useDifferentPackageNameForDebugBuild = false
 val mango9VersionName = "6.2.7"
-val mango9VersionCode = 602019
+val mango9VersionCode = 602020
 val mango9ReleaseTag = "android-$mango9VersionName-build-$mango9VersionCode"
 
 val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
@@ -350,6 +350,7 @@ dependencies {
     // https://github.com/coil-kt/coil/blob/main/LICENSE.txt Apache v2.0
     implementation(libs.coil)
     implementation(libs.coil.gif)
+    implementation(libs.coil.network.okhttp)
     implementation(libs.coil.svg)
     implementation(libs.coil.video)
     // https://github.com/tommybuonomo/dotsindicator/blob/master/LICENSE Apache v2.0
@@ -374,7 +375,7 @@ dependencies {
 
 val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
     group = "verification"
-    description = "Rejects Mango9 identity, transport, credential, and upstream-service regressions."
+    description = "Rejects Mango9 identity, transport, credential, media, and upstream-service regressions."
 
     val manifest = file("src/main/AndroidManifest.xml")
     val mainActivity = file("src/main/java/org/linphone/ui/main/MainActivity.kt")
@@ -634,6 +635,11 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         requirePolicy(
             versionCatalogText.contains("linphone = \"5.5.17-pre.1+3896ec0681\""),
             "Linphone SDK must remain pinned to the audited exact artifact",
+        )
+        requirePolicy(
+            versionCatalogText.contains("coil-network-okhttp") &&
+                buildText.contains("implementation(libs.coil.network.okhttp)"),
+            "Mango9 SMS and Team Chat require Coil's HTTPS network fetcher to display remote media",
         )
         requirePolicy(
             buildText.contains("MANGO9_SOURCE_CODE_URL"),
