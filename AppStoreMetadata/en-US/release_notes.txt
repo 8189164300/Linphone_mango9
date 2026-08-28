@@ -7,5 +7,6 @@ What’s new in 6.2.7:
 • Unmuting now remains stable when returning to the conversation list
 • Conversation Info shows SMS activity and exact CRM record matches
 • Matching call history stored on this iPhone is summarized separately
+• The installed app name is consistently shown as Mango9
 • Consistent Mango9 colors across launch, onboarding, permissions, and sign-in
 • Additional messaging and interface reliability improvements
