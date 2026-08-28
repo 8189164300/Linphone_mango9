@@ -65,9 +65,9 @@ class Mango9ChatStore private constructor(context: Context) {
         .followRedirects(false)
         .build()
     private val pushClient = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
-        .callTimeout(5, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(15, TimeUnit.SECONDS)
         .followRedirects(false)
         .build()
     private val pendingCalls = ConcurrentHashMap<String, PendingCall>()
@@ -182,22 +182,35 @@ class Mango9ChatStore private constructor(context: Context) {
         val session = sessions.load(identity) ?: return@withContext false
         val token = Mango9MessagePushTokenStore(appContext).load() ?: return@withContext false
         val authorization = chatToken ?: return@withContext false
-        val request = Mango9MessagePushRegistration.registerRequest(
-            session,
-            authorization,
-            token,
-            deviceId,
-            identity,
-        ) ?: return@withContext false
-        runCatching {
-            pushClient.newCall(request).execute().use { response -> response.isSuccessful }
-        }.getOrDefault(false).also { registered ->
-            if (registered) {
-                Log.i("[Mango9 Message Push] Registration refreshed for the active account")
-            } else {
-                Log.w("[Mango9 Message Push] Registration was rejected or unavailable")
+        var lastStatusCode: Int? = null
+        for (attempt in 0 until PUSH_REGISTRATION_ATTEMPTS) {
+            if (!sessions.isActive(identity) || state.value.connectedIdentity != identity) {
+                return@withContext false
             }
+            val request = Mango9MessagePushRegistration.registerRequest(
+                session,
+                authorization,
+                token,
+                deviceId,
+                identity,
+            ) ?: return@withContext false
+            val statusCode = runCatching {
+                pushClient.newCall(request).execute().use { response -> response.code }
+            }.getOrNull()
+            lastStatusCode = statusCode
+            if (statusCode != null && statusCode in 200..299) {
+                Log.i("[Mango9 Message Push] Registration refreshed for the active account")
+                return@withContext true
+            }
+            val retryable = statusCode?.let { it == 408 || it == 425 || it == 429 || it >= 500 } ?: true
+            if (!retryable || attempt == PUSH_REGISTRATION_ATTEMPTS - 1) break
+            delay(PUSH_REGISTRATION_RETRY_DELAYS_MS[attempt])
         }
+        Log.w(
+            "[Mango9 Message Push] Registration was rejected or unavailable" +
+                (lastStatusCode?.let { " (status $it)" } ?: ""),
+        )
+        false
     }
 
     suspend fun unregisterRemotePushToken(
@@ -269,7 +282,11 @@ class Mango9ChatStore private constructor(context: Context) {
 
     suspend fun openDirectConversation(userId: Int, fallbackName: String = "") {
         closeSmsConversation()
-        mutableState.update { it.copy(activeRoomId = null, messages = emptyList(), errorMessage = null) }
+        mutableState.update { current ->
+            val existingRoomId = current.rooms.firstOrNull { it.isDirect && it.userIds.contains(userId) }?.id
+            val updated = existingRoomId?.let(current::markRoomReadLocally) ?: current
+            updated.copy(activeRoomId = null, messages = emptyList(), errorMessage = null)
+        }
         connect()
         if (!state.value.isConnected) return
         try {
@@ -296,9 +313,12 @@ class Mango9ChatStore private constructor(context: Context) {
 
     suspend fun openRoom(roomId: String) {
         closeSmsConversation()
+        mutableState.update { it.markRoomReadLocally(roomId) }
         connect()
         if (!state.value.isConnected) return
-        mutableState.update { it.copy(activeRoomId = roomId, messages = emptyList(), errorMessage = null) }
+        mutableState.update {
+            it.markRoomReadLocally(roomId).copy(activeRoomId = roomId, messages = emptyList(), errorMessage = null)
+        }
         try {
             loadChatMessages(roomId)
         } catch (error: Exception) {
@@ -383,7 +403,7 @@ class Mango9ChatStore private constructor(context: Context) {
             return
         }
         mutableState.update {
-            it.copy(
+            it.markSmsReadLocally(normalized).copy(
                 activeSmsPhone = normalized,
                 smsMessages = smsCache[smsCacheKey(normalized)].orEmpty(),
                 errorMessage = null,
@@ -391,6 +411,7 @@ class Mango9ChatStore private constructor(context: Context) {
         }
         connect()
         if (!state.value.isConnected) return
+        mutableState.update { it.markSmsReadLocally(normalized).copy(activeSmsPhone = normalized) }
         try {
             loadSmsMessages(normalized)
             if (state.value.smsSenders.isEmpty()) loadSmsDirectory()
@@ -423,6 +444,9 @@ class Mango9ChatStore private constructor(context: Context) {
         if (!state.value.isConnected) return false
         return try {
             val normalized = normalizedPhone(phone)
+            if (normalized.length < 10) {
+                throw Mango9ChatException("Enter a valid mobile number.")
+            }
             val files = upload(attachments)
             rpc(
                 "sendSmsMessage",
@@ -498,7 +522,10 @@ class Mango9ChatStore private constructor(context: Context) {
         rooms.filter { it.unread > 0 && moderation.isConversationDeleted(it.id) }.forEach {
             moderation.setConversationDeleted(it.id, false)
         }
-        mutableState.update { current -> current.copy(users = users, rooms = rooms, errorMessage = null) }
+        mutableState.update { current ->
+            val refreshed = current.copy(users = users, rooms = rooms, errorMessage = null)
+            current.activeRoomId?.let(refreshed::markRoomReadLocally) ?: refreshed
+        }
         applyPresence(array(rawPresence))
     }
 
@@ -507,7 +534,10 @@ class Mango9ChatStore private constructor(context: Context) {
             .sortedByDescending(Mango9SmsParty::latest)
         val senders = array(rpc("getSmsSenders", JSONArray())).objects().mapNotNull(::parseSmsSender)
         ensureActiveIdentity()
-        mutableState.update { it.copy(smsParties = parties, smsSenders = senders) }
+        mutableState.update { current ->
+            val refreshed = current.copy(smsParties = parties, smsSenders = senders)
+            current.activeSmsPhone?.let(refreshed::markSmsReadLocally) ?: refreshed
+        }
     }
 
     private suspend fun loadChatMessages(roomId: String) {
@@ -523,9 +553,7 @@ class Mango9ChatStore private constructor(context: Context) {
                 rpc("notifyChatMessageStatus", JSONArray().put(roomId).put(JSONArray(inbound)).put(3))
             }
         }
-        mutableState.update { current ->
-            current.copy(rooms = current.rooms.map { if (it.id == roomId) it.copy(unread = 0) else it })
-        }
+        mutableState.update { it.markRoomReadLocally(roomId) }
     }
 
     private suspend fun loadSmsMessages(phone: String) {
@@ -676,7 +704,14 @@ class Mango9ChatStore private constructor(context: Context) {
         val cached = (smsCache[key].orEmpty().filterNot { it.id == message.id } + message).sortedBy(Mango9SmsMessage::time)
         smsCache[key] = cached
         mutableState.update { current ->
-            current.copy(smsMessages = if (current.activeSmsPhone == normalizedPhone(message.phone)) cached else current.smsMessages)
+            val updated = current.copy(
+                smsMessages = if (current.activeSmsPhone == normalizedPhone(message.phone)) cached else current.smsMessages,
+            )
+            if (current.activeSmsPhone == normalizedPhone(message.phone)) {
+                updated.markSmsReadLocally(message.phone)
+            } else {
+                updated
+            }
         }
         scope.launch { runCatching { loadSmsDirectory() } }
     }
@@ -888,6 +923,8 @@ class Mango9ChatStore private constructor(context: Context) {
         private const val WEBSOCKET_PROTOCOL_HEADER = "Sec-WebSocket-Protocol"
         private const val RPC_TIMEOUT_MS = 20_000L
         private const val RECONNECT_DELAY_MS = 2_000L
+        private const val PUSH_REGISTRATION_ATTEMPTS = 4
+        private val PUSH_REGISTRATION_RETRY_DELAYS_MS = longArrayOf(2_000L, 5_000L, 10_000L)
         private const val TYPING_EXPIRY_MS = 3_500L
         private const val MAX_SOCKET_MESSAGE_CHARS = 2 * 1024 * 1024
         private const val MAX_HTTP_RESPONSE_BYTES = 2 * 1024 * 1024

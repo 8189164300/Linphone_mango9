@@ -67,7 +67,7 @@ iOS platform conventions where Android has a native equivalent.
       explicit Mango9 file, and the current APK enables the Mango9 FCM service.
 - [x] Licensing, README, and open-source notices link the exact upstream
       Android/SDK revisions and immutable Mango9 corresponding-source tag
-      `android-6.2.6-build-602014`; the static policy requires these links to
+      `android-6.2.6-build-602016`; the static policy requires these links to
       remain consistent.
 
 ## Enrollment and account lifecycle
@@ -132,6 +132,13 @@ and `Mango9PushCallerIdentityTests.swift`.
 - [~] Android Telecom/full-screen incoming-call behavior is inherited for
       foreground, background, locked, killed, reboot, and network-change cases,
       but the complete Mango9 physical-device matrix is not yet run.
+- [~] Android Telecom now reports an audio-only call as
+      `CALL_TYPE_AUDIO_CALL` instead of advertising every call as video merely
+      because the app supports video. This matches Android's per-call media
+      contract and allows Telecom to activate the voice path directly; physical
+      inbound/outbound timing remains in the regression matrix.
+- [x] The generic "Call is not encrypted" banner is suppressed like iOS while
+      genuine encrypted-call status and controls remain available.
 - [x] Incoming push caller identity is parsed from the same payload variants as
       iOS, scoped by SIP Call-ID, expired after 120 seconds, and removed when the
       call is released. Parser, cache-isolation, expiry, notification, call UI,
@@ -204,13 +211,27 @@ Reference: `Mango9ChatStore` and the Mango9 adapters in conversation views.
 - [~] Report, block/unblock, hide/restore message, and delete-conversation safety
       controls match iOS behavior.
 - [~] FCM message pushes use the iOS-compatible HTTPS `/push/register` contract,
-      register after chat bootstrap/token refresh, unregister before managed
-      logout, reject unknown accounts, atomically select the stored account, and
-      deep-link to the intended Team Chat, SMS, or lead target. Parser, request,
-      intent round-trip, token-store, and isolation behavior pass locally. Firebase
+      connect and register immediately after login or saved-session restore as
+      iOS does, refresh on later token changes, unregister before managed logout,
+      reject unknown accounts, atomically select the stored account, and deep-link
+      to the intended Team Chat, SMS, or lead target. Parser, request, intent
+      round-trip, token-store, and isolation behavior pass locally. Firebase
       initializes and issues an FCM registration token in the emulator; live FCM
-      delivery still awaits the backend sender integration and a physical-device
-      test.
+      delivery still awaits a physical-device test of the new build.
+- [~] Message-push registration now uses the iOS 15-second network window and
+      retries transient network, rate-limit, and server failures without logging
+      device tokens or message content.
+- [~] SMS conversations opened from the existing-party list use the normalized
+      active destination and fall back to the first approved sending number while
+      Android's spinner completes selection, matching the manual-number flow.
+- [x] Carrier-SMS mute state is account scoped, immediately updates the
+      conversation header, survives list refreshes, suppresses Android alerts,
+      and displays the same crossed-bell list indicator as iOS. Emulator UI
+      automation verifies both the mute and unmute return-to-list paths.
+- [x] Carrier-SMS Conversation info uses only available real data: totals and
+      delivery facts from the server-returned messages, an exact normalized-phone
+      CRM match, and call history explicitly labeled as stored on this Android
+      device. The aggregation and exact-match rules have deterministic tests.
 
 ## Contacts, settings, help, and resilience
 

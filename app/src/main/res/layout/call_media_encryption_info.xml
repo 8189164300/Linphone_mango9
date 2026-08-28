@@ -25,7 +25,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             app:constraint_referenced_ids="no_media_encryption_icon, no_media_encryption_label"
-            android:visibility="@{!viewModel.fullScreenMode &amp;&amp; !viewModel.pipMode &amp;&amp; !viewModel.waitingForEncryptionInfo &amp;&amp; !viewModel.isMediaEncrypted ? View.VISIBLE : View.GONE, default=gone}" />
+            android:visibility="gone" />
 
         <androidx.constraintlayout.widget.Group
             android:layout_width="wrap_content"

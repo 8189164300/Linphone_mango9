@@ -144,6 +144,11 @@ object Mango9MessagePushCoordinator {
 
     @SuppressLint("MissingPermission")
     private fun showNotification(context: Context, push: Mango9MessagePush) {
+        val sms = push.target as? Mango9MessagePushTarget.Sms
+        if (sms != null && Mango9ChatModerationStore(context).isSmsMuted(sms.phone, push.sipIdentity)) {
+            Log.i("$TAG Suppressing the alert for a muted SMS conversation")
+            return
+        }
         ensureChannel(context)
         val serialized = push.toJson()
         val requestCode = serialized.hashCode() and Int.MAX_VALUE

@@ -139,15 +139,17 @@ class TelecomManager
             friend?.name ?: LinphoneUtils.getDisplayName(address)
         }
 
-        // Always set type to video (if enabled in Core) as it indicates that video is supported, not that it's being used at the time
-        // https://developer.android.com/reference/kotlin/androidx/core/telecom/CallAttributesCompat#CALL_TYPE_VIDEO_CALL()
-        val type = if (!call.core.isVideoEnabled) {
-            CallAttributesCompat.CALL_TYPE_AUDIO_CALL
-        } else if (Build.DEVICE in SAMSUNG_S23s) {
+        // CAPABILITY_SUPPORTS_VIDEO_CALLING declares app capability when registering with
+        // Telecom. The per-call attribute must describe the media state of this call so
+        // Android can activate the voice audio path without treating an audio call as video.
+        val isVideoCall = LinphoneUtils.isVideoEnabled(call)
+        val type = if (isVideoCall && Build.DEVICE in SAMSUNG_S23s) {
             Log.w("$TAG Samsung S23, S23 FE, S23+ or S23 Ultra detected [${Build.MODEL}], applying workaround to prevent no audio on earpiece issue")
             CallAttributesCompat.CALL_TYPE_AUDIO_CALL
-        } else {
+        } else if (isVideoCall) {
             CallAttributesCompat.CALL_TYPE_VIDEO_CALL
+        } else {
+            CallAttributesCompat.CALL_TYPE_AUDIO_CALL
         }
 
         scope.launch {

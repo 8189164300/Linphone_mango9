@@ -65,6 +65,17 @@
                 tools:text="Last message preview" />
         </LinearLayout>
 
+        <ImageView
+            android:id="@+id/muted"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="8dp"
+            android:contentDescription="@string/content_description_chat_muted"
+            android:src="@drawable/bell_slash"
+            android:visibility="gone"
+            android:padding="2dp"
+            tools:visibility="visible" />
+
         <TextView
             android:id="@+id/unread"
             android:layout_width="wrap_content"

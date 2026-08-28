@@ -32,7 +32,8 @@ class Mango9ChatModerationStore(context: Context) {
 
     fun setConversationDeleted(roomId: String, deleted: Boolean) = update(KEY_DELETED_ROOMS, roomId, deleted)
 
-    fun isSmsMuted(phone: String): Boolean = values(KEY_MUTED_SMS).contains(normalizedPhone(phone))
+    fun isSmsMuted(phone: String, identity: String? = null): Boolean =
+        values(KEY_MUTED_SMS, identity).contains(normalizedPhone(phone))
 
     fun setSmsMuted(phone: String, muted: Boolean) = update(KEY_MUTED_SMS, normalizedPhone(phone), muted)
 
@@ -42,7 +43,8 @@ class Mango9ChatModerationStore(context: Context) {
     fun setSmsMessageHidden(phone: String, messageId: String, hidden: Boolean) =
         update("$KEY_HIDDEN_SMS.${normalizedPhone(phone)}", messageId, hidden)
 
-    private fun values(prefix: String): Set<String> = preferences.getStringSet(key(prefix), emptySet()).orEmpty()
+    private fun values(prefix: String, identity: String? = null): Set<String> =
+        preferences.getStringSet(key(prefix, identity), emptySet()).orEmpty()
 
     private fun update(prefix: String, value: String, enabled: Boolean) {
         val key = key(prefix)
@@ -52,7 +54,8 @@ class Mango9ChatModerationStore(context: Context) {
         preferences.edit(commit = true) { putStringSet(key, updated) }
     }
 
-    private fun key(prefix: String): String = "$prefix.${identityHash(sessions.activeIdentity ?: "no-account")}"
+    private fun key(prefix: String, identity: String? = null): String =
+        "$prefix.${identityHash(identity ?: sessions.activeIdentity ?: "no-account")}"
 
     companion object {
         private const val FILE_NAME = "mango9_chat_moderation"

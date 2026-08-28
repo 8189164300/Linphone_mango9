@@ -94,4 +94,77 @@ class Mango9ParityBehaviorTest {
         gate.invalidate()
         assertTrue(!gate.isLatest(latestRequest))
     }
+
+    @Test
+    fun openingTeamConversationClearsOnlyThatRoomImmediately() {
+        val first = Mango9ChatRoom("first", listOf(1), "", "", 3, true)
+        val second = Mango9ChatRoom("second", listOf(2), "", "", 2, true)
+
+        val updated = Mango9ChatState(rooms = listOf(first, second)).markRoomReadLocally("first")
+
+        assertEquals(0, updated.rooms.first { it.id == "first" }.unread)
+        assertEquals(2, updated.rooms.first { it.id == "second" }.unread)
+    }
+
+    @Test
+    fun openingSmsConversationClearsNormalizedPartyImmediately() {
+        val selected = Mango9SmsParty("+1 (818) 916-4300", "", "", 4, "")
+        val other = Mango9SmsParty("18189007897", "", "", 1, "")
+
+        val updated = Mango9ChatState(smsParties = listOf(selected, other))
+            .markSmsReadLocally("8189164300")
+
+        assertEquals(0, updated.smsParties.first().unread)
+        assertEquals(1, updated.smsParties.last().unread)
+    }
+
+    @Test
+    fun smsConversationStatsUseOnlyAvailableServerMessages() {
+        val messages = listOf(
+            Mango9SmsMessage("in", "8185550100", "Photo", "2026-08-20 12:30:00", "", 2, true, "https://cdn.example.com/photo.jpg"),
+            Mango9SmsMessage("sent", "8185550100", "Hello", "2026-08-21T14:45:00Z", "18185550199", 2, false, ""),
+            Mango9SmsMessage("failed", "8185550100", "Retry", "not-a-date", "18185550199", 99, false, ""),
+        )
+
+        val stats = Mango9SmsConversationStats.build(messages)
+
+        assertEquals(3, stats.total)
+        assertEquals(2, stats.sent)
+        assertEquals(1, stats.received)
+        assertEquals(1, stats.attachments)
+        assertEquals(1, stats.failed)
+        assertEquals(listOf("18185550199"), stats.senderIds)
+        assertTrue(stats.firstAvailableMessage != null)
+        assertTrue(stats.latestMessage != null)
+    }
+
+    @Test
+    fun crmConversationMatchRequiresAnExactNormalizedPhone() {
+        val fuzzy = Mango9CrmRecord(1, 1, "Owner A", "Wrong client", "8185550109", "", "Active", "", "2026-08-01")
+        val exact = Mango9CrmRecord(2, 2, "Owner B", "Exact lead", "+1 (818) 555-0100", "", "New", "", "2026-08-02")
+
+        val match = Mango9SmsCrmMatch.exactMatch("818-555-0100", listOf(fuzzy), listOf(exact))
+
+        assertEquals(2, match?.id)
+        assertEquals(Mango9RecordKind.Lead, match?.kind)
+        assertEquals("Exact lead", match?.name)
+    }
+
+    @Test
+    fun localCallStatsOnlyCountMatchingDeviceHistory() {
+        val facts = listOf(
+            Mango9LocalCallFact("+1 (818) 555-0100", false, true, false, 100, 0),
+            Mango9LocalCallFact("18185550100", true, false, true, 300, 125),
+            Mango9LocalCallFact("18185550101", true, false, true, 500, 999),
+        )
+
+        val stats = Mango9LocalCallStats.build("818-555-0100", facts)
+
+        assertEquals(2, stats.total)
+        assertEquals(1, stats.inbound)
+        assertEquals(1, stats.outbound)
+        assertEquals(1, stats.missed)
+        assertEquals(125, stats.connectedDurationSeconds)
+        assertEquals(300L, stats.lastCallEpochSeconds)
+    }
 }

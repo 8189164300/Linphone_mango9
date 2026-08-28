@@ -66,6 +66,7 @@ class Mango9MessagingListFragment : GenericMainFragment() {
 
     override fun onResume() {
         super.onResume()
+        render(viewModel.currentState())
         viewModel.refresh()
     }
 
@@ -107,7 +108,9 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     }
 
     private fun smsItems(state: Mango9ChatState): List<Mango9MessagingListItem> =
-        state.smsParties.map(Mango9MessagingListItem::Sms)
+        state.smsParties.map { party ->
+            Mango9MessagingListItem.Sms(party, viewModel.moderation.isSmsMuted(party.phone))
+        }
 
     private fun openItem(item: Mango9MessagingListItem) {
         when (item) {

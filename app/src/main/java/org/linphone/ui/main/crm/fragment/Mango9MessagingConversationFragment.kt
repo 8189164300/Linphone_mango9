@@ -25,6 +25,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.io.File
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import org.linphone.R
 import org.linphone.databinding.Mango9MessagingConversationFragmentBinding
 import org.linphone.mango9.Mango9ChatConnectionState
@@ -32,6 +36,7 @@ import org.linphone.mango9.Mango9ChatMedia
 import org.linphone.mango9.Mango9ChatRoom
 import org.linphone.mango9.Mango9ChatState
 import org.linphone.mango9.Mango9PendingAttachment
+import org.linphone.mango9.Mango9SmsConversationInsights
 import org.linphone.ui.main.crm.adapter.Mango9MessageAdapter
 import org.linphone.ui.main.crm.adapter.Mango9MessageListItem
 import org.linphone.ui.main.crm.viewmodel.Mango9MessagingViewModel
@@ -48,6 +53,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
     private var voiceFile: File? = null
     private var recording = false
     private var openedRoomId: String? = null
+    private var insightsLoadingDialog: androidx.appcompat.app.AlertDialog? = null
 
     private val type: String by lazy {
         requireArguments().getString(Mango9MessagingListFragment.ARG_TYPE, Mango9MessagingListFragment.TYPE_TEAM)
@@ -101,6 +107,9 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
             updateComposerState(viewModel.state.value ?: Mango9ChatState())
         }
         viewModel.state.observe(viewLifecycleOwner, ::render)
+        viewModel.conversationInsightsEvent.observe(viewLifecycleOwner) { event ->
+            event.consume(::showConversationInsights)
+        }
         viewModel.sending.observe(viewLifecycleOwner) { updateComposerState(viewModel.state.value ?: Mango9ChatState()) }
 
         if (isSms) {
@@ -111,6 +120,8 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
     }
 
     override fun onDestroyView() {
+        insightsLoadingDialog?.dismiss()
+        insightsLoadingDialog = null
         cancelRecording()
         if (isSms) viewModel.closeSmsConversation(phone) else viewModel.closeTeamConversation(openedRoomId ?: requestedRoomId)
         super.onDestroyView()
@@ -165,7 +176,11 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         if (isSms) {
             binding.title.text = targetName.ifBlank { phone.orEmpty() }
             binding.status.text = getString(
-                if (viewModel.moderation.isSmsMuted(phone.orEmpty())) R.string.mango9_sms_mute else R.string.mango9_chat_connected,
+                if (viewModel.moderation.isSmsMuted(phone.orEmpty())) {
+                    R.string.mango9_sms_muted_status
+                } else {
+                    R.string.mango9_chat_connected
+                },
             )
             binding.statusDot.setBackgroundResource(R.drawable.mango9_chat_online_background)
             return
@@ -231,13 +246,15 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
             }
         }
         if (isSms) {
-            viewModel.sendSms(phone.orEmpty(), selectedSender(), text, outgoing, complete)
+            val destination = viewModel.currentState().activeSmsPhone ?: phone.orEmpty()
+            viewModel.sendSms(destination, selectedSender(), text, outgoing, complete)
         } else {
             viewModel.sendTeamMessage(text, outgoing, complete)
         }
     }
 
-    private fun selectedSender(): String = senderIds.getOrNull(binding.sender.selectedItemPosition).orEmpty()
+    private fun selectedSender(): String = senderIds.getOrNull(binding.sender.selectedItemPosition)
+        ?: senderIds.firstOrNull().orEmpty()
 
     private fun showConversationOptions() {
         val state = viewModel.currentState()
@@ -246,6 +263,15 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         val options = mutableListOf<Option>()
         if (isSms) {
             val muted = viewModel.moderation.isSmsMuted(phone.orEmpty())
+            options += Option(R.string.mango9_sms_conversation_info) {
+                insightsLoadingDialog?.dismiss()
+                insightsLoadingDialog = MaterialAlertDialogBuilder(requireContext())
+                    .setTitle(R.string.mango9_sms_conversation_info)
+                    .setMessage(R.string.mango9_sms_insights_loading)
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+                viewModel.loadConversationInsights(phone.orEmpty())
+            }
             options += Option(if (muted) R.string.mango9_sms_unmute else R.string.mango9_sms_mute) {
                 viewModel.moderation.setSmsMuted(phone.orEmpty(), !muted)
                 renderHeader(viewModel.currentState())
@@ -302,6 +328,71 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         MaterialAlertDialogBuilder(requireContext())
             .setItems(options.map { getString(it.title) }.toTypedArray()) { _, index -> options[index].action() }
             .show()
+    }
+
+    private fun showConversationInsights(insights: Mango9SmsConversationInsights) {
+        if (!isAdded) return
+        insightsLoadingDialog?.dismiss()
+        insightsLoadingDialog = null
+        val stats = insights.stats
+        val crm = insights.crmMatch
+        val calls = insights.localCalls
+        val message = buildString {
+            appendLine(getString(R.string.mango9_sms_activity_heading))
+            appendLine(getString(R.string.mango9_sms_activity_messages, stats.total, stats.sent, stats.received))
+            appendLine(getString(R.string.mango9_sms_activity_delivery, stats.attachments, stats.failed))
+            stats.firstAvailableMessage?.let {
+                appendLine(getString(R.string.mango9_sms_activity_first, formatInsightDate(it.toInstant().epochSecond)))
+            }
+            stats.latestMessage?.let {
+                appendLine(getString(R.string.mango9_sms_activity_latest, formatInsightDate(it.toInstant().epochSecond)))
+            }
+            if (stats.senderIds.isNotEmpty()) {
+                appendLine(getString(R.string.mango9_sms_activity_senders, stats.senderIds.joinToString { formattedPhone(it) }))
+            }
+            appendLine()
+            appendLine(getString(R.string.mango9_sms_crm_heading))
+            when {
+                crm != null -> {
+                    appendLine(getString(R.string.mango9_sms_crm_match, crm.kind.name, crm.name))
+                    if (crm.ownerName.isNotBlank()) appendLine(getString(R.string.mango9_sms_crm_owner, crm.ownerName))
+                    if (crm.status.isNotBlank()) appendLine(getString(R.string.mango9_sms_crm_status, crm.status))
+                    if (crm.createdAt.isNotBlank()) appendLine(getString(R.string.mango9_sms_crm_created, crm.createdAt))
+                }
+                insights.crmLookupSucceeded -> appendLine(getString(R.string.mango9_sms_crm_no_match))
+                else -> appendLine(getString(R.string.mango9_sms_crm_unavailable))
+            }
+            appendLine()
+            appendLine(getString(R.string.mango9_sms_device_calls_heading))
+            appendLine(getString(R.string.mango9_sms_device_calls_counts, calls.total, calls.inbound, calls.outbound))
+            if (calls.missed > 0) appendLine(getString(R.string.mango9_sms_device_calls_missed, calls.missed))
+            if (calls.connectedDurationSeconds > 0) {
+                appendLine(getString(R.string.mango9_sms_device_calls_duration, formatDuration(calls.connectedDurationSeconds)))
+            }
+            calls.lastCallEpochSeconds?.let {
+                appendLine(getString(R.string.mango9_sms_device_calls_latest, formatInsightDate(it)))
+            }
+        }.trim()
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.mango9_sms_conversation_info)
+            .setMessage(message)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    private fun formatInsightDate(epochSeconds: Long): String = Instant.ofEpochSecond(epochSeconds)
+        .atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT))
+
+    private fun formatDuration(seconds: Int): String {
+        val hours = seconds / 3600
+        val minutes = (seconds % 3600) / 60
+        val remaining = seconds % 60
+        return when {
+            hours > 0 -> "${hours}h ${minutes}m"
+            minutes > 0 -> "${minutes}m ${remaining}s"
+            else -> "${remaining}s"
+        }
     }
 
     private fun showGroupMembers(room: Mango9ChatRoom) {

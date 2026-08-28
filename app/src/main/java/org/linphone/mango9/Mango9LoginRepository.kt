@@ -7,6 +7,7 @@
 package org.linphone.mango9
 
 import android.content.Context
+import org.linphone.BuildConfig
 import org.linphone.core.tools.Log
 
 class Mango9LoginRepository(context: Context) {
@@ -14,9 +15,10 @@ class Mango9LoginRepository(context: Context) {
         private const val TAG = "[Mango9 Login]"
     }
 
-    private val api = Mango9ApiClient(context)
-    private val lineIdentities = Mango9LineIdentityStore(context)
-    val sessions = Mango9SessionStore(context)
+    private val appContext = context.applicationContext
+    private val api = Mango9ApiClient(appContext)
+    private val lineIdentities = Mango9LineIdentityStore(appContext)
+    val sessions = Mango9SessionStore(appContext)
 
     suspend fun signIn(username: String, password: String, rememberLogin: Boolean) {
         completeLogin(api.signIn(username, password), rememberLogin)
@@ -60,6 +62,7 @@ class Mango9LoginRepository(context: Context) {
             enrollment.identity,
         )
         Mango9AccountProvisioner.install(enrollment, associated.displayName)
+        connectMessagingForActiveSession()
     }
 
     private suspend fun completeLogin(login: Mango9LoginResponse, rememberLogin: Boolean) {
@@ -102,5 +105,14 @@ class Mango9LoginRepository(context: Context) {
             Log.e("$TAG Authentication and enrollment succeeded but SIP installation failed: ${error.javaClass.simpleName}")
             throw error
         }
+        connectMessagingForActiveSession()
+    }
+
+    /** Mirrors iOS by registering message push immediately after login or session restore. */
+    private suspend fun connectMessagingForActiveSession() {
+        if (BuildConfig.MANGO9_FCM_ENABLED) {
+            Mango9FirebaseTokenSync.refresh(appContext)
+        }
+        Mango9ChatStore.get(appContext).connect(force = true)
     }
 }

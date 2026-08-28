@@ -27,7 +27,10 @@ sealed class Mango9MessagingListItem(val stableId: String) {
         val online: Boolean,
     ) : Mango9MessagingListItem("user:${user.id}")
 
-    data class Sms(val party: Mango9SmsParty) : Mango9MessagingListItem("sms:${party.phone}")
+    data class Sms(
+        val party: Mango9SmsParty,
+        val muted: Boolean,
+    ) : Mango9MessagingListItem("sms:${party.phone}")
 }
 
 class Mango9MessagingListAdapter(
@@ -87,6 +90,7 @@ class Mango9MessagingListAdapter(
             )
             binding.unread.visibility = if (unread > 0) View.VISIBLE else View.GONE
             binding.unread.text = if (unread > 99) "99+" else unread.toString()
+            binding.muted.visibility = if (item is Mango9MessagingListItem.Sms && item.muted) View.VISIBLE else View.GONE
             binding.root.setOnClickListener { onClick(item) }
         }
     }

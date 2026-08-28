@@ -97,6 +97,21 @@ data class Mango9ChatState(
     val isConnected: Boolean get() = connection == Mango9ChatConnectionState.Connected
 }
 
+internal fun Mango9ChatState.markRoomReadLocally(roomId: String): Mango9ChatState {
+    if (rooms.none { it.id == roomId && it.unread > 0 }) return this
+    return copy(rooms = rooms.map { room -> if (room.id == roomId) room.copy(unread = 0) else room })
+}
+
+internal fun Mango9ChatState.markSmsReadLocally(phone: String): Mango9ChatState {
+    val normalized = Mango9PhoneNumber.normalized(phone)
+    if (smsParties.none { Mango9PhoneNumber.normalized(it.phone) == normalized && it.unread > 0 }) return this
+    return copy(
+        smsParties = smsParties.map { party ->
+            if (Mango9PhoneNumber.normalized(party.phone) == normalized) party.copy(unread = 0) else party
+        },
+    )
+}
+
 data class Mango9ChatMedia(
     val source: String,
     val url: String,

@@ -15,16 +15,20 @@ import org.linphone.mango9.Mango9ChatModerationStore
 import org.linphone.mango9.Mango9ChatRoom
 import org.linphone.mango9.Mango9ChatState
 import org.linphone.mango9.Mango9ChatStore
+import org.linphone.mango9.Mango9ConversationInsightsRepository
 import org.linphone.mango9.Mango9PendingAttachment
+import org.linphone.mango9.Mango9SmsConversationInsights
 import org.linphone.ui.GenericViewModel
 import org.linphone.utils.Event
 
 class Mango9MessagingViewModel : GenericViewModel() {
     private val store = Mango9ChatStore.get(coreContext.context)
+    private val insights = Mango9ConversationInsightsRepository(coreContext.context)
     val moderation = Mango9ChatModerationStore(coreContext.context)
     val state = MutableLiveData(store.state.value)
     val sending = MutableLiveData(false)
     val openedRoomEvent = MutableLiveData<Event<Mango9ChatRoom>>()
+    val conversationInsightsEvent = MutableLiveData<Event<Mango9SmsConversationInsights>>()
 
     init {
         viewModelScope.launch { store.state.collect(state::postValue) }
@@ -104,4 +108,11 @@ class Mango9MessagingViewModel : GenericViewModel() {
     fun clearError() = store.clearError()
 
     fun currentState(): Mango9ChatState = store.state.value
+
+    fun loadConversationInsights(phone: String) {
+        val messages = store.state.value.smsMessages.toList()
+        viewModelScope.launch {
+            conversationInsightsEvent.postValue(Event(insights.load(phone, messages)))
+        }
+    }
 }
