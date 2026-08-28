@@ -469,6 +469,20 @@ class Mango9ChatStore private constructor(context: Context) {
         }
     }
 
+    suspend fun sendSmsFromNotification(phone: String, text: String): Boolean {
+        if (text.isBlank()) return false
+        connect()
+        if (!state.value.isConnected) return false
+        if (state.value.smsSenders.isEmpty()) {
+            runCatching { loadSmsDirectory() }.onFailure { updateError(userMessage(it)) }
+        }
+        val senderId = state.value.smsSenders.firstOrNull()?.senderId ?: run {
+            updateError("No Mango9 SMS sender number is available.")
+            return false
+        }
+        return sendSms(phone, senderId, text, emptyList())
+    }
+
     fun deleteConversationLocally(roomId: String) {
         if (state.value.connectedIdentity != sessions.activeIdentity) {
             updateError("The Mango9 chat server is disconnected.")

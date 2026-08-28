@@ -7,6 +7,7 @@
 package org.linphone.mango9
 
 import android.annotation.SuppressLint
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -150,6 +151,50 @@ object Mango9MessagePushCoordinator {
             return
         }
         ensureChannel(context)
+        val notificationId = nextNotificationId.getAndIncrement()
+        val notification = buildNotification(context, push, notificationId)
+        publishNotification(context, notificationId, notification)
+    }
+
+    @SuppressLint("MissingPermission")
+    internal fun updateSmsReplyNotification(
+        context: Context,
+        push: Mango9MessagePush,
+        notificationId: Int,
+        state: Mango9SmsReplyState,
+    ) {
+        if (push.target !is Mango9MessagePushTarget.Sms) return
+        ensureChannel(context)
+        val body = context.getString(
+            when (state) {
+                Mango9SmsReplyState.Sending -> R.string.mango9_push_sms_reply_sending
+                Mango9SmsReplyState.Sent -> R.string.mango9_push_sms_reply_sent
+                Mango9SmsReplyState.Failed -> R.string.mango9_push_sms_reply_failed
+            },
+        )
+        val notification = buildNotification(
+            context,
+            push,
+            notificationId,
+            bodyOverride = body,
+            includeSmsReply = state == Mango9SmsReplyState.Failed,
+        )
+        publishNotification(context, notificationId, notification)
+        if (state == Mango9SmsReplyState.Sent) {
+            scope.launch {
+                delay(REPLY_CONFIRMATION_MS)
+                NotificationManagerCompat.from(context).cancel(notificationId)
+            }
+        }
+    }
+
+    private fun buildNotification(
+        context: Context,
+        push: Mango9MessagePush,
+        notificationId: Int,
+        bodyOverride: String? = null,
+        includeSmsReply: Boolean = true,
+    ): Notification {
         val serialized = push.toJson()
         val requestCode = serialized.hashCode() and Int.MAX_VALUE
         val intent = Intent(context, MainActivity::class.java).apply {
@@ -175,14 +220,27 @@ object Mango9MessagePushCoordinator {
         )
             .setSmallIcon(R.drawable.chat_teardrop_text)
             .setContentTitle(title)
-            .setContentText(body)
+            .setContentText(bodyOverride ?: body)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
-            .build()
+            .setOnlyAlertOnce(bodyOverride != null)
+        val sms = push.target as? Mango9MessagePushTarget.Sms
+        if (
+            includeSmsReply &&
+            sms != null &&
+            Mango9SessionStore(context).isActive(push.sipIdentity)
+        ) {
+            notification.addAction(Mango9MessageReplyAction.create(context, push, notificationId))
+        }
+        return notification.build()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun publishNotification(context: Context, notificationId: Int, notification: Notification) {
         runCatching {
-            NotificationManagerCompat.from(context).notify(nextNotificationId.getAndIncrement(), notification)
+            NotificationManagerCompat.from(context).notify(notificationId, notification)
         }.onFailure { Log.e("$TAG Failed to publish a message notification: $it") }
     }
 
@@ -199,4 +257,6 @@ object Mango9MessagePushCoordinator {
             ),
         )
     }
+
+    private const val REPLY_CONFIRMATION_MS = 1_500L
 }

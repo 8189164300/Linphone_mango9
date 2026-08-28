@@ -206,6 +206,9 @@
     <string name="notification_channel_account_error_name">Account error notifications</string>
     <string name="mango9_push_team_chat">New Team Chat message</string>
     <string name="mango9_push_sms">New SMS message</string>
+    <string name="mango9_push_sms_reply_sending">Sending SMS…</string>
+    <string name="mango9_push_sms_reply_sent">SMS sent</string>
+    <string name="mango9_push_sms_reply_failed">SMS couldn’t be sent. Open the conversation to try again.</string>
     <string name="mango9_push_lead">A lead was created or assigned to you</string>
     <string name="notification_chat_message_reaction_received">Reacted by %1$s to: %2$s</string>
     <string name="notification_mark_message_as_read">Mark as read</string>

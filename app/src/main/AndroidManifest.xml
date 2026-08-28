@@ -228,6 +228,11 @@
             android:enabled="true"
             android:exported="false" />
 
+        <receiver
+            android:name=".mango9.Mango9MessageReplyReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
         <receiver android:name=".core.BootReceiver"
             android:exported="true">
             <intent-filter>

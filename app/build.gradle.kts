@@ -18,7 +18,7 @@ plugins {
 val packageName = "com.mango9.phone"
 val useDifferentPackageNameForDebugBuild = false
 val mango9VersionName = "6.2.7"
-val mango9VersionCode = 602020
+val mango9VersionCode = 602021
 val mango9ReleaseTag = "android-$mango9VersionName-build-$mango9VersionCode"
 
 val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
@@ -409,6 +409,7 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
     val crmViewModel = file("src/main/java/org/linphone/ui/main/crm/viewmodel/Mango9CrmViewModel.kt")
     val chatStore = file("src/main/java/org/linphone/mango9/Mango9ChatStore.kt")
     val messagePush = file("src/main/java/org/linphone/mango9/Mango9MessagePush.kt")
+    val messageReplyReceiver = file("src/main/java/org/linphone/mango9/Mango9MessageReplyReceiver.kt")
     val accountProfile = file("src/main/java/org/linphone/ui/main/settings/viewmodel/AccountProfileViewModel.kt")
     val backupRules = file("src/main/res/xml/backup_rules.xml")
     val dataExtractionRules = file("src/main/res/xml/data_extraction_rules.xml")
@@ -451,6 +452,7 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         crmViewModel,
         chatStore,
         messagePush,
+        messageReplyReceiver,
         accountProfile,
         backupRules,
         dataExtractionRules,
@@ -494,6 +496,7 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         val crmViewModelText = crmViewModel.readText()
         val chatStoreText = chatStore.readText()
         val messagePushText = messagePush.readText()
+        val messageReplyReceiverText = messageReplyReceiver.readText()
         val accountProfileText = accountProfile.readText()
         val backupRulesText = backupRules.readText()
         val dataExtractionRulesText = dataExtractionRules.readText()
@@ -688,6 +691,15 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
                 messagePushText.contains("lead.assigned") &&
                 mainActivityText.contains("Mango9MessagePushCoordinator.activateForOpen"),
             "account-scoped Mango9 message-push parsing and deep-link routing are missing",
+        )
+        requirePolicy(
+            manifestText.contains(".mango9.Mango9MessageReplyReceiver") &&
+                messageReplyReceiverText.contains("Mango9MessageReplyAction") &&
+                messageReplyReceiverText.contains("sendSmsFromNotification") &&
+                messageReplyReceiverText.contains("canReply(sessions.activeIdentity, push.sipIdentity)") &&
+                !messageReplyReceiverText.contains("activateStoredAccount") &&
+                chatStoreText.contains("suspend fun sendSmsFromNotification"),
+            "notification replies must use Mango9 CRM SMS without switching the active calling account",
         )
         requirePolicy(
             chatStoreText.contains("registerRemotePushTokenIfAvailable") &&

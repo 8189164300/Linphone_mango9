@@ -11,6 +11,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SmallTest
 import androidx.test.platform.app.InstrumentationRegistry
 import coil3.imageLoader
+import androidx.core.app.NotificationCompat
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -132,5 +133,20 @@ class Mango9ParityBehaviorInstrumentedTest {
             "Expected Coil's network fetcher, found: $fetchers",
             fetchers.any { it == "coil3.network.NetworkFetcher\$Factory" },
         )
+    }
+
+    @Test
+    fun mango9SmsNotificationReplyUsesRemoteInputWithoutOpeningTheApp() {
+        val push = Mango9MessagePush(
+            Mango9MessagePushTarget.Sms("8189164300", "Tester"),
+            "sip:700@manushak.mango9.com",
+            "crm-1",
+        )
+        val action = Mango9MessageReplyAction.create(context, push, 3901)
+
+        assertEquals(NotificationCompat.Action.SEMANTIC_ACTION_REPLY, action.semanticAction)
+        assertFalse(action.showsUserInterface)
+        assertEquals(1, action.remoteInputs?.size)
+        assertEquals(Mango9MessageReplyAction.KEY_TEXT_REPLY, action.remoteInputs?.first()?.resultKey)
     }
 }

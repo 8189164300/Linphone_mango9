@@ -7,6 +7,7 @@
 package org.linphone.mango9
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -87,6 +88,24 @@ class Mango9ParityBehaviorTest {
             "Draft\nShared caption",
             Mango9PendingShare.mergeText("Draft", "Shared caption"),
         )
+    }
+
+    @Test
+    fun notificationSmsReplyRequiresTheAlreadyActiveAccount() {
+        assertTrue(
+            Mango9SmsNotificationReplyPolicy.canReply(
+                "sip:700@manushak.mango9.com",
+                "SIP:700@MANUSHAK.MANGO9.COM",
+            ),
+        )
+        assertFalse(
+            Mango9SmsNotificationReplyPolicy.canReply(
+                "sip:700@manushak.mango9.com",
+                "sip:701@other.mango9.com",
+            ),
+        )
+        assertEquals("Reply from the shade", Mango9SmsNotificationReplyPolicy.text("  Reply from the shade  "))
+        assertEquals(null, Mango9SmsNotificationReplyPolicy.text("   "))
     }
 
     @Test
