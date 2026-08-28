@@ -119,6 +119,7 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 	@Published private(set) var isMuted: Bool
 
 	private let store = Mango9ChatStore.shared
+	private let muteIdentity: String?
 	private var subscriptions = Set<AnyCancellable>()
 	private var hiddenMessageIDs: Set<String>
 	private static let fractionalISOFormatter: ISO8601DateFormatter = {
@@ -141,8 +142,13 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 	}
 
 	init(target: Mango9SMSTarget) {
+		let activeIdentity = Mango9SessionStore.activeIdentity
 		self.target = target
-		self.isMuted = Mango9SMSMutePreferences.isMuted(phone: target.phone)
+		self.muteIdentity = activeIdentity
+		self.isMuted = Mango9SMSMutePreferences.isMuted(
+			phone: target.phone,
+			identity: activeIdentity
+		)
 		self.hiddenMessageIDs = Set(
 			UserDefaults.standard.stringArray(forKey: Self.hiddenKey(for: target.phone)) ?? []
 		)
@@ -154,6 +160,20 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 		store.$smsSenders
 			.receive(on: RunLoop.main)
 			.sink { [weak self] _ in self?.synchronize() }
+			.store(in: &subscriptions)
+		NotificationCenter.default.publisher(for: .mango9SMSMuteDidChange)
+			.receive(on: RunLoop.main)
+			.sink { [weak self] notification in
+				guard let self,
+					notification.object as? String
+						== Mango9SMSMutePreferences.normalizedPhone(self.target.phone) else {
+					return
+				}
+				self.isMuted = Mango9SMSMutePreferences.isMuted(
+					phone: self.target.phone,
+					identity: self.muteIdentity
+				)
+			}
 			.store(in: &subscriptions)
 	}
 
@@ -205,8 +225,19 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 		}
 	}
 
-	func toggleMute() {
-		isMuted = Mango9SMSMutePreferences.toggle(phone: target.phone)
+	@discardableResult
+	func toggleMute() -> Bool {
+		// Toggle from the state presented to the user, using the account that
+		// opened this conversation. Re-reading the active account here can
+		// invert an Unmute action during navigation or an account refresh.
+		let newValue = !isMuted
+		isMuted = newValue
+		Mango9SMSMutePreferences.setMuted(
+			newValue,
+			phone: target.phone,
+			identity: muteIdentity
+		)
+		return newValue
 	}
 
 	func deleteLocally(messageID: String) {
@@ -378,12 +409,19 @@ class ConversationViewModel: ObservableObject {
 		}
 	}
 
-	func toggleConversationMute() {
+	@discardableResult
+	func toggleConversationMute() -> Bool {
 		if let smsAdapter {
-			smsAdapter.toggleMute()
-		} else {
-			sharedMainViewModel.displayedConversation?.toggleMute()
+			let newValue = smsAdapter.toggleMute()
+			smsIsMuted = newValue
+			return newValue
 		}
+		guard let conversation = sharedMainViewModel.displayedConversation else {
+			return false
+		}
+		let newValue = !conversation.isMuted
+		conversation.setMuted(newValue)
+		return newValue
 	}
 
 	func callActiveConversation() {

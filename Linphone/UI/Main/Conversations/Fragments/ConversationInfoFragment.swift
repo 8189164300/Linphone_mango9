@@ -870,8 +870,7 @@ struct ConversationInfoFragment: View {
 					HStack {
 						Spacer()
 						Button {
-							conversationViewModel.toggleConversationMute()
-							isMuted = conversationViewModel.conversationIsMuted
+							isMuted = conversationViewModel.toggleConversationMute()
 						} label: {
 							VStack {
 								Image(isMuted ? "bell-simple" : "bell-simple-slash")

@@ -504,8 +504,7 @@ struct ConversationFragment: View {
 								if !activeConversationIsReadOnly {
 									Button {
 										isMenuOpen = false
-										conversationViewModel.toggleConversationMute()
-										isMuted = conversationViewModel.conversationIsMuted
+										isMuted = conversationViewModel.toggleConversationMute()
 									} label: {
 										HStack {
 											Text(isMuted ? "conversation_action_unmute" : "conversation_action_mute")

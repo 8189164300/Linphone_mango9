@@ -57,6 +57,37 @@ final class Mango9MultiAccountTests: XCTestCase {
 		)
 	}
 
+	func testSMSMutePreferenceUnmuteSurvivesListReload() {
+		let phone = "+1 (818) 555-0177"
+		let identity = "sip:702@tenant.example.com"
+		defer {
+			Mango9SMSMutePreferences.setMuted(
+				false,
+				phone: phone,
+				identity: identity
+			)
+		}
+
+		Mango9SMSMutePreferences.setMuted(
+			true,
+			phone: phone,
+			identity: identity
+		)
+		XCTAssertFalse(
+			Mango9SMSMutePreferences.toggle(
+				phone: "818-555-0177",
+				identity: identity
+			)
+		)
+		XCTAssertFalse(
+			Mango9SMSMutePreferences.isMuted(
+				phone: phone,
+				identity: identity
+			),
+			"Returning to the conversation list must preserve the unmuted state."
+		)
+	}
+
 	func testRegistrationErrorDistinguishesPushFromCredentials() {
 		let pushFailure = Mango9RegistrationFailure(
 			sipMessage: "555 Push Notification Service Not Supported"

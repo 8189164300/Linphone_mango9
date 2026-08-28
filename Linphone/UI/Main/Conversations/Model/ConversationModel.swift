@@ -188,11 +188,19 @@ class ConversationModel: ObservableObject, Identifiable {
 	}
 	
 	func toggleMute() {
+		setMuted(!isMuted)
+	}
+
+	func setMuted(_ muted: Bool) {
+		// Publish the requested state immediately so the list and detail views
+		// cannot reconstruct themselves from the old value while the core queue
+		// is applying it.
+		isMuted = muted
 		coreContext.doOnCoreQueue { _ in
-			let chatRoomMuted = self.chatRoom.muted
-			self.chatRoom.muted.toggle()
+			self.chatRoom.muted = muted
+			let appliedValue = self.chatRoom.muted
 			DispatchQueue.main.async {
-				self.isMuted = !chatRoomMuted
+				self.isMuted = appliedValue
 			}
 		}
 	}
