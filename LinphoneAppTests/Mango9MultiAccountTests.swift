@@ -13,6 +13,50 @@ import XCTest
 @testable import LinphoneApp
 
 final class Mango9MultiAccountTests: XCTestCase {
+	func testSMSMutePreferencePersistsAndSeparatesAccounts() {
+		let phone = "8185550199"
+		let firstIdentity = "sip:700@tenant-a.example.com"
+		let secondIdentity = "sip:700@tenant-b.example.com"
+		defer {
+			Mango9SMSMutePreferences.setMuted(false, phone: phone, identity: firstIdentity)
+			Mango9SMSMutePreferences.setMuted(false, phone: phone, identity: secondIdentity)
+		}
+
+		Mango9SMSMutePreferences.setMuted(false, phone: phone, identity: firstIdentity)
+		Mango9SMSMutePreferences.setMuted(false, phone: phone, identity: secondIdentity)
+		Mango9SMSMutePreferences.setMuted(true, phone: phone, identity: firstIdentity)
+
+		XCTAssertTrue(
+			Mango9SMSMutePreferences.isMuted(phone: phone, identity: firstIdentity)
+		)
+		XCTAssertFalse(
+			Mango9SMSMutePreferences.isMuted(phone: phone, identity: secondIdentity)
+		)
+	}
+
+	func testSMSMutePreferenceNormalizesPhoneNumbers() {
+		let identity = "sip:701@tenant.example.com"
+		defer {
+			Mango9SMSMutePreferences.setMuted(
+				false,
+				phone: "+1 (818) 555-0188",
+				identity: identity
+			)
+		}
+
+		Mango9SMSMutePreferences.setMuted(
+			true,
+			phone: "818-555-0188",
+			identity: identity
+		)
+		XCTAssertTrue(
+			Mango9SMSMutePreferences.isMuted(
+				phone: "+1 (818) 555-0188",
+				identity: identity
+			)
+		)
+	}
+
 	func testRegistrationErrorDistinguishesPushFromCredentials() {
 		let pushFailure = Mango9RegistrationFailure(
 			sipMessage: "555 Push Notification Service Not Supported"

@@ -5,6 +5,6 @@ MANGO9_BUNDLE_ID = com.mango9.phone
 MANGO9_MESSAGE_GROUP_NAME = group.com.mango9.phone.msgNotification
 MANGO9_SHARE_GROUP_NAME = group.com.mango9.phone.share
 // Immutable corresponding source for the exact App Store binary.
-MANGO9_SOURCE_CODE_URL = https:/$()/github.com/8189164300/Linphone_mango9/tree/ios-6.2.7-build-25
+MANGO9_SOURCE_CODE_URL = https:/$()/github.com/8189164300/Linphone_mango9/tree/ios-6.2.7-build-26
 
 APP_GROUP_NAME = $(MANGO9_MESSAGE_GROUP_NAME)

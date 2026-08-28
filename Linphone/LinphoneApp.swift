@@ -36,6 +36,8 @@ extension Notification.Name {
 		Notification.Name("mango9AccountContextChanged")
 	static let mango9LineIdentityChanged =
 		Notification.Name("mango9LineIdentityChanged")
+	static let mango9SMSMuteDidChange =
+		Notification.Name("mango9SMSMuteDidChange")
 }
 
 class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
@@ -208,11 +210,19 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 			return
 		}
 
-		if mango9SMSTarget(from: userInfo) != nil {
+		if let target = mango9SMSTarget(from: userInfo) {
 			Task { @MainActor in
 				await Mango9ChatStore.shared.refreshSMSDirectory()
 			}
-			completionHandler([.banner, .sound, .badge])
+			if Mango9SMSMutePreferences.isMuted(
+				phone: target.phone,
+				identity: mango9AccountIdentity(from: userInfo)
+			) {
+				Log.info("Mango9 SMS notification is muted for \(target.phone)")
+				completionHandler([.badge])
+			} else {
+				completionHandler([.banner, .sound, .badge])
+			}
 			return
 		}
 
@@ -342,18 +352,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	private func activateMango9AccountIfNeeded(
 		from userInfo: [AnyHashable: Any]
 	) {
-		let nested = userInfo["mango9"] as? [String: Any]
-		let pushedIdentity = (nested?["sip_identity"] as? String)
-			?? (nested?["sipIdentity"] as? String)
-			?? (userInfo["sip_identity"] as? String)
-			?? (userInfo["sipIdentity"] as? String)
-		let crmId = (nested?["crm_id"] as? String)
-			?? (nested?["crmId"] as? String)
-			?? (userInfo["crm_id"] as? String)
-			?? (userInfo["crmId"] as? String)
-		let identity = Mango9SessionStore.normalizedIdentity(pushedIdentity)
-			?? crmId.flatMap(Mango9SessionStore.identity(forCRMId:))
-		guard let identity,
+		guard let identity = mango9AccountIdentity(from: userInfo),
 		      Mango9SessionStore.hasSession(for: identity) else {
 			Log.info("Ignoring Mango9 message push for an account not stored on this device")
 			return
@@ -370,6 +369,22 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 			}
 			core.defaultAccount = account
 		}
+	}
+
+	private func mango9AccountIdentity(
+		from userInfo: [AnyHashable: Any]
+	) -> String? {
+		let nested = userInfo["mango9"] as? [String: Any]
+		let pushedIdentity = (nested?["sip_identity"] as? String)
+			?? (nested?["sipIdentity"] as? String)
+			?? (userInfo["sip_identity"] as? String)
+			?? (userInfo["sipIdentity"] as? String)
+		let crmId = (nested?["crm_id"] as? String)
+			?? (nested?["crmId"] as? String)
+			?? (userInfo["crm_id"] as? String)
+			?? (userInfo["crmId"] as? String)
+		return Mango9SessionStore.normalizedIdentity(pushedIdentity)
+			?? crmId.flatMap(Mango9SessionStore.identity(forCRMId:))
 	}
 	
 	func application(_ application: UIApplication,

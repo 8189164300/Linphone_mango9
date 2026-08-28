@@ -281,6 +281,14 @@ private struct Mango9InboxConversationRow: View {
 
 private struct Mango9SMSConversationRow: View {
 	let party: Mango9SMSParty
+	@State private var isMuted: Bool
+
+	init(party: Mango9SMSParty) {
+		self.party = party
+		_isMuted = State(
+			initialValue: Mango9SMSMutePreferences.isMuted(phone: party.phone)
+		)
+	}
 
 	var body: some View {
 		HStack(spacing: 12) {
@@ -306,17 +314,38 @@ private struct Mango9SMSConversationRow: View {
 				Text(displayTime(party.latest))
 					.default_text_style(styleSize: 11)
 					.foregroundStyle(Color.grayMain2c400)
-				if party.unread > 0 {
-					Text(party.unread < 100 ? String(party.unread) : "99+")
-						.font(.system(size: 10, weight: .bold))
-						.foregroundStyle(Color.white)
-						.frame(minWidth: 20, minHeight: 20)
-						.background(Color.redDanger500)
-						.clipShape(Capsule())
+				HStack(spacing: 6) {
+					if isMuted {
+						Image("bell-slash")
+							.renderingMode(.template)
+							.resizable()
+							.foregroundStyle(Color.grayMain2c400)
+							.frame(width: 18, height: 18)
+					}
+					if party.unread > 0 {
+						Text(party.unread < 100 ? String(party.unread) : "99+")
+							.font(.system(size: 10, weight: .bold))
+							.foregroundStyle(Color.white)
+							.frame(minWidth: 20, minHeight: 20)
+							.background(Color.redDanger500)
+							.clipShape(Capsule())
+					}
 				}
 			}
 		}
 		.frame(minHeight: 50)
+		.onAppear {
+			isMuted = Mango9SMSMutePreferences.isMuted(phone: party.phone)
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9SMSMuteDidChange)) { notification in
+			guard notification.object as? String == Mango9SMSMutePreferences.normalizedPhone(party.phone) else {
+				return
+			}
+			isMuted = Mango9SMSMutePreferences.isMuted(phone: party.phone)
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in
+			isMuted = Mango9SMSMutePreferences.isMuted(phone: party.phone)
+		}
 	}
 
 	private func displayTime(_ value: String) -> String {

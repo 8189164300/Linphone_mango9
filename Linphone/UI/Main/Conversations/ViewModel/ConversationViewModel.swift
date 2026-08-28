@@ -28,6 +28,84 @@ import Combine
 // swiftlint:disable type_body_length
 // swiftlint:disable cyclomatic_complexity
 
+enum Mango9SMSMutePreferences {
+	private static let keyPrefix = "mango9_sms_muted"
+	private static let currentAccountKeyPrefix = "mango9_sms_muted.current"
+
+	static func normalizedPhone(_ value: String) -> String {
+		let digits = value.filter(\.isNumber)
+		return digits.count == 10 ? "1\(digits)" : digits
+	}
+
+	static func isMuted(phone: String, identity: String? = nil) -> Bool {
+		let key = muteKey(phone: phone, identity: identity)
+		let defaults = sharedDefaults
+		if defaults.object(forKey: key) != nil {
+			return defaults.bool(forKey: key)
+		}
+
+		// Migrate the build-25 app-local preference into the notification
+		// extension's shared container the first time it is read.
+		if UserDefaults.standard.object(forKey: key) != nil {
+			let legacyValue = UserDefaults.standard.bool(forKey: key)
+			defaults.set(legacyValue, forKey: key)
+			if usesActiveIdentity(identity) {
+				defaults.set(legacyValue, forKey: currentAccountKey(phone: phone))
+			}
+			return legacyValue
+		}
+
+		if identity == nil {
+			return defaults.bool(forKey: currentAccountKey(phone: phone))
+		}
+		return false
+	}
+
+	@discardableResult
+	static func toggle(phone: String, identity: String? = nil) -> Bool {
+		let newValue = !isMuted(phone: phone, identity: identity)
+		setMuted(newValue, phone: phone, identity: identity)
+		return newValue
+	}
+
+	static func setMuted(_ isMuted: Bool, phone: String, identity: String? = nil) {
+		let defaults = sharedDefaults
+		defaults.set(isMuted, forKey: muteKey(phone: phone, identity: identity))
+		if usesActiveIdentity(identity) {
+			defaults.set(isMuted, forKey: currentAccountKey(phone: phone))
+		}
+		let normalizedPhone = normalizedPhone(phone)
+		DispatchQueue.main.async {
+			NotificationCenter.default.post(
+				name: .mango9SMSMuteDidChange,
+				object: normalizedPhone
+			)
+		}
+	}
+
+	private static var sharedDefaults: UserDefaults {
+		UserDefaults(suiteName: SharedMainViewModel.appGroupName) ?? .standard
+	}
+
+	private static func muteKey(phone: String, identity: String?) -> String {
+		"\(keyPrefix).\(contextSuffix(identity)).\(normalizedPhone(phone))"
+	}
+
+	private static func currentAccountKey(phone: String) -> String {
+		"\(currentAccountKeyPrefix).\(normalizedPhone(phone))"
+	}
+
+	private static func contextSuffix(_ identity: String?) -> String {
+		Mango9SessionStore.normalizedIdentity(
+			identity ?? Mango9SessionStore.activeIdentity
+		) ?? "no-account"
+	}
+
+	private static func usesActiveIdentity(_ identity: String?) -> Bool {
+		contextSuffix(identity) == contextSuffix(Mango9SessionStore.activeIdentity)
+	}
+}
+
 @MainActor
 final class Mango9SMSConversationAdapter: ObservableObject {
 	let target: Mango9SMSTarget
@@ -64,7 +142,7 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 
 	init(target: Mango9SMSTarget) {
 		self.target = target
-		self.isMuted = UserDefaults.standard.bool(forKey: Self.muteKey(for: target.phone))
+		self.isMuted = Mango9SMSMutePreferences.isMuted(phone: target.phone)
 		self.hiddenMessageIDs = Set(
 			UserDefaults.standard.stringArray(forKey: Self.hiddenKey(for: target.phone)) ?? []
 		)
@@ -128,8 +206,7 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 	}
 
 	func toggleMute() {
-		isMuted.toggle()
-		UserDefaults.standard.set(isMuted, forKey: Self.muteKey(for: target.phone))
+		isMuted = Mango9SMSMutePreferences.toggle(phone: target.phone)
 	}
 
 	func deleteLocally(messageID: String) {
@@ -232,10 +309,6 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 
 	private static func contextSuffix() -> String {
 		Mango9SessionStore.activeIdentity ?? "no-account"
-	}
-
-	private static func muteKey(for phone: String) -> String {
-		"mango9_sms_muted.\(contextSuffix()).\(normalizedPhone(phone))"
 	}
 
 	private static func hiddenKey(for phone: String) -> String {

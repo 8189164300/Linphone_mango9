@@ -19,8 +19,61 @@
 
 // swiftlint:disable identifier_name
 
+import Foundation
 import UserNotifications
 import linphonesw
+
+private enum Mango9SMSMutePreferenceReader {
+	private static let keyPrefix = "mango9_sms_muted"
+	private static let currentAccountKeyPrefix = "mango9_sms_muted.current"
+
+	static func mutedState(from userInfo: [AnyHashable: Any]) -> Bool? {
+		let nested = userInfo["mango9"] as? [String: Any]
+		let event = (nested?["event"] as? String)
+			?? (userInfo["mango9_event"] as? String)
+			?? (userInfo["event"] as? String)
+		guard event == "sms.received" else { return nil }
+
+		let rawPhone = (nested?["phone"] as? String)
+			?? (userInfo["phone"] as? String)
+			?? ""
+		let phone = normalizedPhone(rawPhone)
+		guard phone.count >= 10 else { return nil }
+
+		let rawIdentity = (nested?["sip_identity"] as? String)
+			?? (nested?["sipIdentity"] as? String)
+			?? (userInfo["sip_identity"] as? String)
+			?? (userInfo["sipIdentity"] as? String)
+		let defaults = UserDefaults(suiteName: appGroupName) ?? .standard
+		if let identity = normalizedIdentity(rawIdentity) {
+			let key = "\(keyPrefix).\(identity).\(phone)"
+			if defaults.object(forKey: key) != nil {
+				return defaults.bool(forKey: key)
+			}
+		}
+		return defaults.bool(forKey: "\(currentAccountKeyPrefix).\(phone)")
+	}
+
+	private static func normalizedPhone(_ value: String) -> String {
+		let digits = value.filter(\.isNumber)
+		return digits.count == 10 ? "1\(digits)" : digits
+	}
+
+	private static func normalizedIdentity(_ rawValue: String?) -> String? {
+		guard var value = rawValue?
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+			.lowercased(),
+			  !value.isEmpty else { return nil }
+		if let openingBracket = value.firstIndex(of: "<"),
+		   let closingBracket = value[openingBracket...].firstIndex(of: ">") {
+			value = String(value[value.index(after: openingBracket)..<closingBracket])
+		}
+		if let parameterIndex = value.firstIndex(of: ";") {
+			value = String(value[..<parameterIndex])
+		}
+		return value
+	}
+}
 
 var LINPHONE_DUMMY_SUBJECT = "dummy subject"
 
@@ -105,6 +158,18 @@ class NotificationService: UNNotificationServiceExtension {
                 contentHandler(bestAttemptContent)
                 return
             }
+
+			if let isMuted = Mango9SMSMutePreferenceReader.mutedState(
+				from: bestAttemptContent.userInfo
+			) {
+				if isMuted {
+					Log.info("Mango9 SMS notification is muted")
+					contentHandler(UNNotificationContent())
+				} else {
+					contentHandler(bestAttemptContent)
+				}
+				return
+			}
             
 			if !createCore() {
 				bestAttemptContent.title = String(localized: "notification_chat_message_received_title")

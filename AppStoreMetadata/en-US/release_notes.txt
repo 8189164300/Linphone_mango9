@@ -3,5 +3,6 @@ What’s new in 6.2.7:
 • App badge counts remain synchronized with unread conversations
 • Suggested contacts now open directly in a new conversation
 • Carrier SMS menus now show only supported messaging actions
+• Muted SMS conversations show a crossed bell and suppress alerts
 • Consistent Mango9 colors across launch, onboarding, permissions, and sign-in
 • Additional messaging and interface reliability improvements
