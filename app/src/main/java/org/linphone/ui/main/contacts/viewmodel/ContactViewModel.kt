@@ -45,6 +45,7 @@ import org.linphone.core.tools.Log
 import org.linphone.mango9.Mango9ChatRouting
 import org.linphone.mango9.Mango9ChatState
 import org.linphone.mango9.Mango9ChatStore
+import org.linphone.mango9.Mango9SmsRouting
 import org.linphone.ui.GenericViewModel
 import org.linphone.ui.main.contacts.model.ContactAvatarModel
 import org.linphone.ui.main.contacts.model.ContactDeviceModel
@@ -544,6 +545,7 @@ class ContactViewModel
     @WorkerThread
     private fun goToConversation(remote: Address) {
         if (Mango9ChatRouting.openIfNeeded(remote)) return
+        if (Mango9SmsRouting.openIfNeeded(remote, friend.name)) return
         val core = coreContext.core
         val account = core.defaultAccount
         val localSipUri = account?.params?.identityAddress?.asStringUriOnly()

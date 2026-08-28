@@ -7,6 +7,7 @@
 package org.linphone.mango9
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class Mango9PhoneNumberTest {
@@ -22,5 +23,27 @@ class Mango9PhoneNumberTest {
             Mango9PhoneNumber.normalized("George <sip:+18189164300@manushak.mango9.com;user=phone>"),
         )
         assertEquals(expected, Mango9PhoneNumber.normalized("tel:+1-818-916-4300;ext=12"))
+    }
+
+    @Test
+    fun historySipNumberResolvesToMango9SmsTarget() {
+        assertEquals(
+            Mango9SmsTarget("18189164300", "Ani Paytyan"),
+            Mango9SmsRoutePolicy.target("sip:8189164300@manushak.mango9.com", "Ani Paytyan"),
+        )
+    }
+
+    @Test
+    fun historyExtensionStaysOnSipChatPath() {
+        assertNull(Mango9SmsRoutePolicy.target("sip:109@manushak.mango9.com", "Extension 109"))
+        assertNull(Mango9SmsRoutePolicy.target("sip:user1234567890@manushak.mango9.com", "User"))
+    }
+
+    @Test
+    fun unnamedHistoryNumberGetsReadableTitle() {
+        assertEquals(
+            Mango9SmsTarget("18189164300", "818-916-4300"),
+            Mango9SmsRoutePolicy.target("+1 (818) 916-4300", " "),
+        )
     }
 }

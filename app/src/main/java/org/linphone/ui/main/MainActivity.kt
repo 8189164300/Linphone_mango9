@@ -70,6 +70,7 @@ import org.linphone.mango9.Mango9ChatTarget
 import org.linphone.mango9.Mango9MessagePush
 import org.linphone.mango9.Mango9MessagePushCoordinator
 import org.linphone.mango9.Mango9MessagePushTarget
+import org.linphone.mango9.Mango9SmsRouting
 import org.linphone.mango9.Mango9SmsTarget
 import org.linphone.ui.GenericActivity
 import org.linphone.ui.assistant.AssistantActivity
@@ -210,6 +211,11 @@ class MainActivity : GenericActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 Mango9ChatRouting.openRequests.collect(::openMango9Chat)
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                Mango9SmsRouting.openRequests.collect(::openMango9Sms)
             }
         }
         refreshMango9AccountContext()

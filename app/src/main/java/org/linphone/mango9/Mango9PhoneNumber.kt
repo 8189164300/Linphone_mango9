@@ -19,6 +19,8 @@ object Mango9PhoneNumber {
         return if (digits.length == 10) "1$digits" else digits
     }
 
+    fun smsDestination(value: String): String? = normalized(value).takeIf { it.length in 10..15 }
+
     private fun unwrapDisplayAddress(value: String): String {
         val start = value.indexOf('<')
         if (start < 0) return value

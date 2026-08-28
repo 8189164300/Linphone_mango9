@@ -34,6 +34,40 @@ object Mango9ChatRouting {
     }
 }
 
+/** Routes external call-history and contact phone numbers through Mango9 SMS instead of SIP chat. */
+object Mango9SmsRouting {
+    private const val TAG = "[Mango9 SMS Routing]"
+    private val mutableOpenRequests = MutableSharedFlow<Mango9SmsTarget>(extraBufferCapacity = 8)
+    val openRequests = mutableOpenRequests.asSharedFlow()
+
+    fun openIfNeeded(remote: Address, displayName: String? = null): Boolean {
+        val sessions = Mango9SessionStore(coreContext.context)
+        val identity = Mango9SessionStore.normalizedIdentity(
+            coreContext.core.defaultAccount?.params?.identityAddress?.asStringUriOnly(),
+        )
+        if (!sessions.isActive(identity) || sessions.load(identity) == null) return false
+
+        val contactName = displayName?.trim().orEmpty().ifBlank {
+            coreContext.contactsManager.findContactByAddress(remote)?.name?.trim().orEmpty()
+        }
+        val target = Mango9SmsRoutePolicy.target(remote.asStringUriOnly(), contactName) ?: return false
+        Log.i("$TAG Routing [${remote.asStringUriOnly()}] to Mango9 SMS [${target.phone}]")
+        mutableOpenRequests.tryEmit(target)
+        return true
+    }
+}
+
+internal object Mango9SmsRoutePolicy {
+    fun target(rawAddress: String, displayName: String?): Mango9SmsTarget? {
+        val externalNumber = Mango9CallerIdentity.externalPhoneNumber(rawAddress) ?: return null
+        val phone = Mango9PhoneNumber.smsDestination(externalNumber) ?: return null
+        val name = displayName?.trim().orEmpty().ifBlank {
+            Mango9CallerIdentity.formattedPhoneNumber(phone)
+        }
+        return Mango9SmsTarget(phone, name)
+    }
+}
+
 /**
  * Switches the CRM session, teammate directory, and chat socket as one account-scoped operation.
  * A persisted directory from another account is cleared before any network request is made.
