@@ -27,6 +27,7 @@ import android.view.ViewGroup
 import android.view.animation.Animation
 import android.view.animation.AnimationUtils
 import androidx.annotation.UiThread
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -36,12 +37,14 @@ import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
+import com.google.android.material.tabs.TabLayout
 import kotlinx.coroutines.launch
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.R
 import org.linphone.contacts.getListOfSipAddressesAndPhoneNumbers
 import org.linphone.core.tools.Log
 import org.linphone.databinding.ChatListFragmentBinding
+import org.linphone.mango9.Mango9ChatModerationStore
 import org.linphone.mango9.Mango9ChatConnectionState
 import org.linphone.mango9.Mango9ChatState
 import org.linphone.mango9.Mango9ChatStore
@@ -56,6 +59,9 @@ import org.linphone.ui.main.chat.viewmodel.ConversationsListViewModel
 import org.linphone.ui.main.contacts.model.ContactNumberOrAddressClickListener
 import org.linphone.ui.main.contacts.model.ContactNumberOrAddressModel
 import org.linphone.ui.main.contacts.model.NumberOrAddressPickerDialogModel
+import org.linphone.ui.main.crm.adapter.Mango9MessagingListAdapter
+import org.linphone.ui.main.crm.adapter.Mango9MessagingListItem
+import org.linphone.ui.main.crm.adapter.Mango9MessagingListItems
 import org.linphone.ui.main.crm.fragment.Mango9MessagingListFragment
 import org.linphone.ui.main.fragment.AbstractMainFragment
 import org.linphone.utils.ConfirmationDialogModel
@@ -68,6 +74,8 @@ import org.linphone.utils.RecyclerViewHeaderDecoration
 class ConversationsListFragment : AbstractMainFragment() {
     companion object {
         private const val TAG = "[Conversations List Fragment]"
+        private const val TEAM_TAB_POSITION = 0
+        private const val SMS_TAB_POSITION = 1
     }
 
     private lateinit var binding: ChatListFragmentBinding
@@ -76,10 +84,15 @@ class ConversationsListFragment : AbstractMainFragment() {
 
     private lateinit var adapter: ConversationsListAdapter
 
+    private lateinit var mango9MessagesAdapter: Mango9MessagingListAdapter
+
+    private var mango9Tab = Mango9Tab.Team
+
     private var bottomSheetDialog: BottomSheetDialogFragment? = null
 
     private val mango9ChatStore by lazy { Mango9ChatStore.get(requireContext()) }
     private val mango9Sessions by lazy { Mango9SessionStore(requireContext()) }
+    private val mango9Moderation by lazy { Mango9ChatModerationStore(requireContext()) }
 
     private val numberOrAddressClickListener = object : ContactNumberOrAddressClickListener {
         @UiThread
@@ -134,6 +147,7 @@ class ConversationsListFragment : AbstractMainFragment() {
         super.onCreate(savedInstanceState)
 
         adapter = ConversationsListAdapter()
+        mango9MessagesAdapter = Mango9MessagingListAdapter(::openMango9Item)
     }
 
     override fun onCreateView(
@@ -158,6 +172,34 @@ class ConversationsListFragment : AbstractMainFragment() {
         binding.conversationsList.layoutManager = LinearLayoutManager(requireContext())
         binding.conversationsList.outlineProvider = outlineProvider
         binding.conversationsList.clipToOutline = true
+
+        binding.mango9MessagesList.layoutManager = LinearLayoutManager(requireContext())
+        binding.mango9MessagesList.adapter = mango9MessagesAdapter
+        binding.mango9MessagesTabs.addTab(
+            binding.mango9MessagesTabs.newTab().setText(R.string.mango9_team_chat),
+        )
+        binding.mango9MessagesTabs.addTab(
+            binding.mango9MessagesTabs.newTab().setText(R.string.mango9_sms),
+        )
+        binding.mango9MessagesTabs.addOnTabSelectedListener(
+            object : TabLayout.OnTabSelectedListener {
+                override fun onTabSelected(tab: TabLayout.Tab) {
+                    mango9Tab = if (tab.position == SMS_TAB_POSITION) Mango9Tab.Sms else Mango9Tab.Team
+                    renderMango9Messages(mango9ChatStore.state.value)
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        if (mango9Tab == Mango9Tab.Sms) {
+                            mango9ChatStore.refreshSmsDirectory()
+                        } else {
+                            mango9ChatStore.refreshDirectory()
+                        }
+                    }
+                }
+
+                override fun onTabUnselected(tab: TabLayout.Tab) = Unit
+
+                override fun onTabReselected(tab: TabLayout.Tab) = Unit
+            },
+        )
 
         val headerItemDecoration = RecyclerViewHeaderDecoration(requireContext(), adapter)
         binding.conversationsList.addItemDecoration(headerItemDecoration)
@@ -248,8 +290,6 @@ class ConversationsListFragment : AbstractMainFragment() {
             }
         }
 
-        binding.mango9TeamChatEntry.setOnClickListener { openMango9Messages("team") }
-        binding.mango9SmsEntry.setOnClickListener { openMango9Messages("sms") }
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 mango9ChatStore.state.collect(::renderMango9Messages)
@@ -420,6 +460,10 @@ class ConversationsListFragment : AbstractMainFragment() {
             Log.i("$TAG Keep app alive setting is enabled, refreshing view just in case")
             listViewModel.filter()
         }
+
+        if (mango9Sessions.load() != null) {
+            viewLifecycleOwner.lifecycleScope.launch { mango9ChatStore.refreshDirectory() }
+        }
     }
 
     override fun onPause() {
@@ -454,33 +498,101 @@ class ConversationsListFragment : AbstractMainFragment() {
 
     private fun renderMango9Messages(state: Mango9ChatState) {
         val visible = mango9Sessions.load() != null
-        binding.mango9MessagingBanner.visibility = if (visible) View.VISIBLE else View.GONE
+        listViewModel.mango9MessagesAvailable.value = visible
         if (!visible) return
         val teamUnread = mango9ChatStore.teamUnreadCount(state)
         val smsUnread = mango9ChatStore.smsUnreadCount(state)
-        binding.mango9TeamChatUnread.visibility = if (teamUnread > 0) View.VISIBLE else View.GONE
-        binding.mango9TeamChatUnread.text = unreadLabel(teamUnread)
-        binding.mango9SmsUnread.visibility = if (smsUnread > 0) View.VISIBLE else View.GONE
-        binding.mango9SmsUnread.text = unreadLabel(smsUnread)
-        val latest = mango9ChatStore.inboxPreviewRoom(state)
-        binding.mango9TeamChatPreview.text = when {
-            latest != null && latest.lastMessage.isNotBlank() ->
-                "${mango9ChatStore.roomTitle(latest)}: ${latest.lastMessage}"
-            state.connection == Mango9ChatConnectionState.Connected -> getString(R.string.mango9_chat_no_new_messages)
-            state.connection == Mango9ChatConnectionState.Connecting -> getString(R.string.mango9_chat_connecting)
-            else -> getString(R.string.mango9_chat_disconnected)
+        updateTabBadge(TEAM_TAB_POSITION, teamUnread)
+        updateTabBadge(SMS_TAB_POSITION, smsUnread)
+        val items = if (mango9Tab == Mango9Tab.Team) {
+            Mango9MessagingListItems.team(
+                state,
+                mango9Moderation::isConversationDeleted,
+                mango9ChatStore::roomTitle,
+            )
+        } else {
+            Mango9MessagingListItems.sms(state, mango9Moderation::isSmsMuted)
+        }
+        mango9MessagesAdapter.submitList(items)
+        binding.mango9MessagesEmpty.text = getString(
+            if (mango9Tab == Mango9Tab.Team) R.string.mango9_chat_empty else R.string.mango9_sms_empty,
+        )
+        binding.mango9MessagesEmpty.visibility = if (
+            state.connection != Mango9ChatConnectionState.Connecting && items.isEmpty()
+        ) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
+        binding.mango9MessagesStatus.text = getString(
+            when (state.connection) {
+                Mango9ChatConnectionState.Connecting -> R.string.mango9_chat_connecting
+                Mango9ChatConnectionState.Connected -> R.string.mango9_chat_connected
+                Mango9ChatConnectionState.Disconnected -> R.string.mango9_chat_disconnected
+            },
+        )
+    }
+
+    private fun updateTabBadge(position: Int, unread: Int) {
+        val tab = binding.mango9MessagesTabs.getTabAt(position) ?: return
+        if (unread <= 0) {
+            tab.removeBadge()
+            return
+        }
+        tab.orCreateBadge.apply {
+            number = unread
+            maxCharacterCount = 3
+            backgroundColor = ContextCompat.getColor(requireContext(), R.color.orange_main_500)
+            badgeTextColor = ContextCompat.getColor(requireContext(), R.color.bc_white)
+            isVisible = true
         }
     }
 
-    private fun openMango9Messages(initialTab: String) {
+    private fun openMango9Item(item: Mango9MessagingListItem) {
+        when (item) {
+            is Mango9MessagingListItem.Group -> openMango9Conversation(
+                Mango9MessagingListFragment.TYPE_TEAM,
+                0,
+                item.room.id,
+                item.title,
+                null,
+            )
+            is Mango9MessagingListItem.User -> openMango9Conversation(
+                Mango9MessagingListFragment.TYPE_TEAM,
+                item.user.id,
+                item.room?.id,
+                item.user.name,
+                null,
+            )
+            is Mango9MessagingListItem.Sms -> openMango9Conversation(
+                Mango9MessagingListFragment.TYPE_SMS,
+                0,
+                null,
+                item.party.phone,
+                item.party.phone,
+            )
+        }
+    }
+
+    private fun openMango9Conversation(
+        type: String,
+        userId: Int,
+        roomId: String?,
+        target: String,
+        phone: String?,
+    ) {
         if (findNavController().currentDestination?.id != R.id.conversationsListFragment) return
         val arguments = Bundle().apply {
-            putString(Mango9MessagingListFragment.ARG_INITIAL_TAB, initialTab)
+            putString(Mango9MessagingListFragment.ARG_TYPE, type)
+            putInt(Mango9MessagingListFragment.ARG_USER_ID, userId)
+            putString(Mango9MessagingListFragment.ARG_ROOM_ID, roomId)
+            putString(Mango9MessagingListFragment.ARG_TARGET, target)
+            putString(Mango9MessagingListFragment.ARG_PHONE, phone)
         }
-        findNavController().navigate(R.id.action_global_mango9MessagingListFragment, arguments)
+        findNavController().navigate(R.id.action_global_mango9MessagingConversationFragment, arguments)
     }
 
-    private fun unreadLabel(count: Int): String = if (count > 99) "99+" else count.toString()
+    private enum class Mango9Tab { Team, Sms }
 
     private fun showDeleteConfirmationDialog(conversationModel: ConversationModel) {
         val dialogModel = ConfirmationDialogModel()

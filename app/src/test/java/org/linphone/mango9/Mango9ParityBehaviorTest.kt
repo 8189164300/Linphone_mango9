@@ -10,6 +10,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.linphone.ui.main.crm.adapter.Mango9MessagingListItem
+import org.linphone.ui.main.crm.adapter.Mango9MessagingListItems
 
 class Mango9ParityBehaviorTest {
     @Test
@@ -116,6 +118,35 @@ class Mango9ParityBehaviorTest {
 
         assertEquals(0, updated.smsParties.first().unread)
         assertEquals(1, updated.smsParties.last().unread)
+    }
+
+    @Test
+    fun conversationTabsKeepTeamAndSmsUnreadIndicatorsIndependent() {
+        val teammate = Mango9ChatUser(7, "Ani Paytyan", "", "agent")
+        val directRoom = Mango9ChatRoom("direct", listOf(7), "", "Team message", 3, true)
+        val smsParty = Mango9SmsParty("8189164300", "", "SMS message", 4, "")
+        val state = Mango9ChatState(
+            users = listOf(teammate),
+            rooms = listOf(directRoom),
+            smsParties = listOf(smsParty),
+            onlineUserIds = setOf(teammate.id),
+        )
+
+        val teamItems = Mango9MessagingListItems.team(state, { false }) { "Direct chat" }
+        val smsItems = Mango9MessagingListItems.sms(state) { false }
+
+        val teamRow = teamItems.single() as Mango9MessagingListItem.User
+        val smsRow = smsItems.single() as Mango9MessagingListItem.Sms
+        assertEquals(3, teamRow.room?.unread)
+        assertEquals(4, smsRow.party.unread)
+
+        val afterSmsOpen = state.markSmsReadLocally("+1 (818) 916-4300")
+        val unchangedTeam = Mango9MessagingListItems.team(afterSmsOpen, { false }) { "Direct chat" }
+            .single() as Mango9MessagingListItem.User
+        val clearedSms = Mango9MessagingListItems.sms(afterSmsOpen) { false }
+            .single() as Mango9MessagingListItem.Sms
+        assertEquals(3, unchangedTeam.room?.unread)
+        assertEquals(0, clearedSms.party.unread)
     }
 
     @Test

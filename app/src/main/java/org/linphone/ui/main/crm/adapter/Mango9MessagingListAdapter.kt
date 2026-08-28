@@ -15,6 +15,7 @@ import androidx.recyclerview.widget.RecyclerView
 import org.linphone.R
 import org.linphone.databinding.Mango9MessagingListCellBinding
 import org.linphone.mango9.Mango9ChatRoom
+import org.linphone.mango9.Mango9ChatState
 import org.linphone.mango9.Mango9ChatUser
 import org.linphone.mango9.Mango9SmsParty
 
@@ -31,6 +32,33 @@ sealed class Mango9MessagingListItem(val stableId: String) {
         val party: Mango9SmsParty,
         val muted: Boolean,
     ) : Mango9MessagingListItem("sms:${party.phone}")
+}
+
+/** Builds both conversation lists from the same snapshot so tab badges and row badges stay aligned. */
+object Mango9MessagingListItems {
+    fun team(
+        state: Mango9ChatState,
+        isConversationDeleted: (String) -> Boolean,
+        roomTitle: (Mango9ChatRoom) -> String,
+    ): List<Mango9MessagingListItem> {
+        val groups = state.rooms
+            .filter { !it.isDirect && !isConversationDeleted(it.id) }
+            .map { Mango9MessagingListItem.Group(it, roomTitle(it)) }
+        val people = state.users.map { user ->
+            val room = state.rooms.firstOrNull {
+                it.isDirect && it.userIds.contains(user.id) && !isConversationDeleted(it.id)
+            }
+            Mango9MessagingListItem.User(user, room, state.onlineUserIds.contains(user.id))
+        }
+        return groups + people
+    }
+
+    fun sms(
+        state: Mango9ChatState,
+        isMuted: (String) -> Boolean,
+    ): List<Mango9MessagingListItem> = state.smsParties.map { party ->
+        Mango9MessagingListItem.Sms(party, isMuted(party.phone))
+    }
 }
 
 class Mango9MessagingListAdapter(

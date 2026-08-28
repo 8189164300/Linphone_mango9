@@ -22,6 +22,7 @@ import org.linphone.mango9.Mango9ChatRoom
 import org.linphone.mango9.Mango9ChatState
 import org.linphone.ui.main.crm.adapter.Mango9MessagingListAdapter
 import org.linphone.ui.main.crm.adapter.Mango9MessagingListItem
+import org.linphone.ui.main.crm.adapter.Mango9MessagingListItems
 import org.linphone.ui.main.crm.viewmodel.Mango9MessagingViewModel
 import org.linphone.ui.main.fragment.GenericMainFragment
 
@@ -96,21 +97,15 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     }
 
     private fun teamItems(state: Mango9ChatState): List<Mango9MessagingListItem> {
-        val groups = state.rooms.filter { !it.isDirect && !viewModel.moderation.isConversationDeleted(it.id) }
-            .map { Mango9MessagingListItem.Group(it, viewModel.roomTitle(it)) }
-        val people = state.users.map { user ->
-            val room = state.rooms.firstOrNull {
-                it.isDirect && it.userIds.contains(user.id) && !viewModel.moderation.isConversationDeleted(it.id)
-            }
-            Mango9MessagingListItem.User(user, room, state.onlineUserIds.contains(user.id))
-        }
-        return groups + people
+        return Mango9MessagingListItems.team(
+            state,
+            viewModel.moderation::isConversationDeleted,
+            viewModel::roomTitle,
+        )
     }
 
     private fun smsItems(state: Mango9ChatState): List<Mango9MessagingListItem> =
-        state.smsParties.map { party ->
-            Mango9MessagingListItem.Sms(party, viewModel.moderation.isSmsMuted(party.phone))
-        }
+        Mango9MessagingListItems.sms(state, viewModel.moderation::isSmsMuted)
 
     private fun openItem(item: Mango9MessagingListItem) {
         when (item) {

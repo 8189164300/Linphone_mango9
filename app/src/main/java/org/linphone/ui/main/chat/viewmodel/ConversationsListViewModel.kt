@@ -61,6 +61,8 @@ class ConversationsListViewModel
 
     val fetchInProgress = MutableLiveData<Boolean>()
 
+    val mango9MessagesAvailable = MutableLiveData(false)
+
     val chatRoomCreatedEvent: MutableLiveData<Event<String>> by lazy {
         MutableLiveData()
     }
