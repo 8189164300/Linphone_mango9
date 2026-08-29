@@ -8,7 +8,7 @@ Do not press **Submit for Review** until every required item below is complete.
 - App name: `Mango9`
 - Bundle ID: `com.mango9.phone`
 - Version: `6.2.7`
-- Current build: `28`
+- Current build: `29`
 - Primary category: `Business`
 - Price: `Free`
 - Release method: `Manually release this version`
@@ -171,7 +171,7 @@ Complete this only after the final TestFlight candidate has passed every test:
 
 1. Increment the build number if any code, resource, manifest, entitlement, or
    configuration changes.
-2. Choose the immutable tag name, such as `ios-6.2.7-build-28`, and change
+2. Choose the immutable tag name, such as `ios-6.2.7-build-29`, and change
    `MANGO9_SOURCE_CODE_URL` in `Shared.xcconfig` to that tag URL.
 3. Commit the exact release source, including the final source URL.
 4. Create the chosen tag on that commit and push both the commit and tag.

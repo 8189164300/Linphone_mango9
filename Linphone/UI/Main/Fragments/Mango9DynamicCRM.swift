@@ -242,6 +242,7 @@ final class Mango9ChatStore: ObservableObject {
 	private var connectingIdentity: String?
 	private var connectedIdentity: String?
 	private var smsMessageCache: [String: [Mango9ServerSMSMessage]] = [:]
+	private var pendingSMSStatuses: [String: Int] = [:]
 
 	private init() {}
 
@@ -377,6 +378,7 @@ final class Mango9ChatStore: ObservableObject {
 			onlineUserIds = []
 			typingUserIds = []
 			smsMessageCache = [:]
+			pendingSMSStatuses = [:]
 		}
 	}
 
@@ -796,8 +798,15 @@ final class Mango9ChatStore: ObservableObject {
 				UUID().uuidString.lowercased(),
 			]
 		)
-		try await loadSMSMessages(phone: phone)
-		try await loadSMSDirectory()
+		// The send RPC has succeeded. Keep the composer responsive while live socket events and
+		// fallback refreshes reconcile the server/carrier delivery state.
+		Task { [weak self] in
+			guard let self else { return }
+			try? await self.loadSMSMessages(phone: phone)
+			try? await self.loadSMSDirectory()
+			try? await Task.sleep(nanoseconds: 5_000_000_000)
+			try? await self.loadSMSMessages(phone: phone)
+		}
 	}
 
 	func notifyTyping() {
@@ -1049,11 +1058,17 @@ final class Mango9ChatStore: ObservableObject {
 		}
 		let loadedMessages = Self.array(from: dictionary["list"] as Any)
 			.compactMap(Self.smsMessage(from:))
+			.map(applyPendingSMSStatus)
 			.sorted { $0.time < $1.time }
-		smsMessageCache[smsCacheKey(phone: normalized)] = loadedMessages
+		let cacheKey = smsCacheKey(phone: normalized)
+		let mergedMessages = Self.mergeSMSMessages(
+			server: loadedMessages,
+			live: smsMessageCache[cacheKey] ?? []
+		)
+		smsMessageCache[cacheKey] = mergedMessages
 		if let activeSMSPhone,
 		   Self.normalizedPhone(activeSMSPhone) == normalized {
-			smsMessages = loadedMessages
+			smsMessages = mergedMessages
 			markSMSReadLocally(normalized)
 		}
 	}
@@ -1286,47 +1301,48 @@ final class Mango9ChatStore: ObservableObject {
 			guard let message = params.first.flatMap(Self.smsMessage(from:)) else {
 				return
 			}
-			if let activeSMSPhone,
-			   Self.normalizedPhone(activeSMSPhone) == Self.normalizedPhone(message.phone) {
-				upsertSMS(message)
-			}
+			upsertSMS(message)
 			Task { try? await loadSMSDirectory() }
 		case "updateSmsMessage":
 			guard let dictionary = params.first as? [String: Any],
 				  let id = Self.string(dictionary["id"]),
-				  let status = Self.integer(dictionary["status"]),
-				  let index = smsMessages.firstIndex(where: { $0.id == id }) else {
+				  let status = Self.integer(dictionary["status"]) else {
 				return
 			}
-			let existing = smsMessages[index]
-			smsMessages[index] = Mango9ServerSMSMessage(
-				id: existing.id,
-				phone: existing.phone,
-				text: existing.text,
-				time: existing.time,
-				senderID: existing.senderID,
-				status: status,
-				isIncoming: existing.isIncoming,
-				files: existing.files
-			)
-			smsMessageCache[smsCacheKey(phone: existing.phone)] = smsMessages
+			pendingSMSStatuses[id] = pendingSMSStatuses[id]
+				.map { Mango9SMSDeliveryPolicy.newest($0, status) } ?? status
+			if let existing = smsMessages.first(where: { $0.id == id }) {
+				upsertSMS(existing)
+			}
 		default:
 			break
 		}
 	}
 
 	private func upsertSMS(_ message: Mango9ServerSMSMessage) {
-		if let index = smsMessages.firstIndex(where: { $0.id == message.id }) {
-			smsMessages[index] = message
-		} else {
-			smsMessages.append(message)
-			smsMessages.sort { $0.time < $1.time }
-		}
-		smsMessageCache[smsCacheKey(phone: message.phone)] = smsMessages
+		let resolved = applyPendingSMSStatus(message)
+		let cacheKey = smsCacheKey(phone: resolved.phone)
+		let cached = Self.mergeSMSMessages(
+			server: [resolved],
+			live: smsMessageCache[cacheKey] ?? []
+		)
+		smsMessageCache[cacheKey] = cached
 		if let activeSMSPhone,
-		   Self.normalizedPhone(activeSMSPhone) == Self.normalizedPhone(message.phone) {
-			markSMSReadLocally(message.phone)
+		   Self.normalizedPhone(activeSMSPhone) == Self.normalizedPhone(resolved.phone) {
+			smsMessages = cached
+			markSMSReadLocally(resolved.phone)
 		}
+	}
+
+	private func applyPendingSMSStatus(
+		_ message: Mango9ServerSMSMessage
+	) -> Mango9ServerSMSMessage {
+		guard let pending = pendingSMSStatuses.removeValue(forKey: message.id) else {
+			return message
+		}
+		return message.withStatus(
+			Mango9SMSDeliveryPolicy.newest(message.status, pending)
+		)
 	}
 
 	private func smsCacheKey(phone: String) -> String {
@@ -1530,6 +1546,22 @@ final class Mango9ChatStore: ObservableObject {
 			isIncoming: (dictionary["dir"] as? String) == "i",
 			files: dictionary["files"] as? String ?? ""
 		)
+	}
+
+	static func mergeSMSMessages(
+		server: [Mango9ServerSMSMessage],
+		live: [Mango9ServerSMSMessage]
+	) -> [Mango9ServerSMSMessage] {
+		Swift.Dictionary(grouping: server + live, by: { $0.id })
+			.values
+			.compactMap { versions in
+				guard let latest = versions.last else { return nil }
+				let status = versions
+					.map { $0.status }
+					.reduce(latest.status, Mango9SMSDeliveryPolicy.newest)
+				return latest.withStatus(status)
+			}
+			.sorted { $0.time < $1.time }
 	}
 
 	private static func normalizedPhone(_ value: String) -> String {
@@ -3389,6 +3421,40 @@ struct Mango9ServerSMSMessage: Identifiable, Equatable {
 	let status: Int
 	let isIncoming: Bool
 	let files: String
+
+	func withStatus(_ newStatus: Int) -> Self {
+		Self(
+			id: id,
+			phone: phone,
+			text: text,
+			time: time,
+			senderID: senderID,
+			status: newStatus,
+			isIncoming: isIncoming,
+			files: files
+		)
+	}
+}
+
+enum Mango9SMSDeliveryState: Equatable {
+	case sent
+	case delivered
+	case failed
+}
+
+enum Mango9SMSDeliveryPolicy {
+	static func state(for status: Int) -> Mango9SMSDeliveryState {
+		if status == 99 { return .failed }
+		if status >= 2 { return .delivered }
+		// A record returned by the server is accepted/queued even when the carrier has not
+		// published a receipt. Do not leave it visually "Sending" indefinitely.
+		return .sent
+	}
+
+	static func newest(_ first: Int, _ second: Int) -> Int {
+		if first == 99 || second == 99 { return 99 }
+		return max(first, second)
+	}
 }
 
 struct Mango9ServerSMSSender: Identifiable, Equatable {

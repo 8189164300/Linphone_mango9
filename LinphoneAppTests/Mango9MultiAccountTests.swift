@@ -143,6 +143,36 @@ final class Mango9MultiAccountTests: XCTestCase {
 		)
 	}
 
+	func testServerAcceptedSMSDoesNotRemainVisuallySending() {
+		XCTAssertEqual(Mango9SMSDeliveryPolicy.state(for: 0), .sent)
+		XCTAssertEqual(Mango9SMSDeliveryPolicy.state(for: 1), .sent)
+		XCTAssertEqual(Mango9SMSDeliveryPolicy.state(for: 2), .delivered)
+		XCTAssertEqual(Mango9SMSDeliveryPolicy.state(for: 3), .delivered)
+		XCTAssertEqual(Mango9SMSDeliveryPolicy.state(for: 99), .failed)
+	}
+
+	@MainActor
+	func testSMSRefreshNeverRegressesANewerDeliveryStatus() {
+		let stale = Mango9ServerSMSMessage(
+			id: "same",
+			phone: "8185550100",
+			text: "Photo",
+			time: "2026-08-28T10:00:00Z",
+			senderID: "18185550199",
+			status: 0,
+			isIncoming: false,
+			files: "image.jpg"
+		)
+		let merged = Mango9ChatStore.mergeSMSMessages(
+			server: [stale],
+			live: [stale.withStatus(2)]
+		)
+
+		XCTAssertEqual(merged.map(\.id), ["same"])
+		XCTAssertEqual(merged.first?.status, 2)
+		XCTAssertEqual(Mango9SMSDeliveryPolicy.newest(2, 99), 99)
+	}
+
 	func testCRMConversationMatchRequiresExactNormalizedPhone() throws {
 		let fuzzyClient = Mango9Lead(
 			id: 1,

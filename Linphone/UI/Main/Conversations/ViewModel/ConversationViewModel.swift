@@ -444,11 +444,10 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 
 	private static func messageStatus(for message: Mango9ServerSMSMessage) -> Message.Status {
 		if message.isIncoming { return .received }
-		switch message.status {
-		case 99: return .error
-		case 2...: return .received
-		case 1: return .sent
-		default: return .sending
+		switch Mango9SMSDeliveryPolicy.state(for: message.status) {
+		case .sent: return .sent
+		case .delivered: return .received
+		case .failed: return .error
 		}
 	}
 
