@@ -126,7 +126,9 @@ class Mango9MessagingListFragment : GenericMainFragment() {
 
     private fun showAdapter(tab: Mango9MessagingTab) {
         val selected = adapterFor(tab)
-        if (binding.list.adapter !== selected) binding.list.swapAdapter(selected, false)
+        // A full adapter replacement prevents recycled holders from retaining the other tab's
+        // navigation callback.
+        if (binding.list.adapter !== selected) binding.list.adapter = selected
     }
 
     private fun openItem(sourceTab: Mango9MessagingTab, item: Mango9MessagingListItem) {

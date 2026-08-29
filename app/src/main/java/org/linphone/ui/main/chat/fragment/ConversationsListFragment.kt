@@ -567,7 +567,9 @@ class ConversationsListFragment : AbstractMainFragment() {
             mango9SmsMessagesAdapter
         }
         if (binding.mango9MessagesList.adapter !== selected) {
-            binding.mango9MessagesList.swapAdapter(selected, false)
+            // These adapters own different click routing callbacks. A compatible swap may reuse a
+            // Team ViewHolder in the SMS adapter (or vice versa), retaining the wrong callback.
+            binding.mango9MessagesList.adapter = selected
         }
     }
 
