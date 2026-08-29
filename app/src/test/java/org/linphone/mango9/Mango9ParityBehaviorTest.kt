@@ -91,6 +91,29 @@ class Mango9ParityBehaviorTest {
     }
 
     @Test
+    fun conversationRefreshKeepsLiveMessagesAndUsesTheirLatestStatus() {
+        val server = Mango9ChatMessage("one", 7, "room", "Hello", "2026-08-28T10:00:00Z", 1, "")
+        val live = server.copy(status = 3)
+        val justSent = Mango9ChatMessage("two", 8, "room", "Sent now", "2026-08-28T10:01:00Z", 1, "")
+
+        val merged = Mango9ChatStore.mergeChatMessages(listOf(server), listOf(live, justSent))
+
+        assertEquals(listOf("one", "two"), merged.map(Mango9ChatMessage::id))
+        assertEquals(3, merged.first().status)
+    }
+
+    @Test
+    fun smsRefreshKeepsMessageDeliveredDuringTheRequest() {
+        val server =
+            Mango9SmsMessage("one", "8185550100", "Earlier", "2026-08-28T10:00:00Z", "18185550199", 2, false, "")
+        val live = Mango9SmsMessage("two", "8185550100", "Incoming", "2026-08-28T10:01:00Z", "", 2, true, "")
+
+        val merged = Mango9ChatStore.mergeSmsMessages(listOf(server), listOf(live))
+
+        assertEquals(listOf("one", "two"), merged.map(Mango9SmsMessage::id))
+    }
+
+    @Test
     fun notificationSmsReplyRequiresTheAlreadyActiveAccount() {
         assertTrue(
             Mango9SmsNotificationReplyPolicy.canReply(

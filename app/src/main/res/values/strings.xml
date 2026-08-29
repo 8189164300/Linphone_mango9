@@ -1253,6 +1253,13 @@
     <string name="mango9_chat_unblock_to_send">Unblock this user from the conversation menu to send a message.</string>
     <string name="mango9_chat_attachment_unavailable">This attachment is no longer available.</string>
     <string name="mango9_chat_attachment_limit">You can attach up to 12 files.</string>
+    <string name="mango9_chat_add_attachment">Add an attachment</string>
+    <string name="mango9_chat_take_photo">Camera</string>
+    <string name="mango9_chat_photo_library">Photo or video library</string>
+    <string name="mango9_chat_browse_files">Browse files</string>
+    <string name="mango9_chat_camera_required">Camera access is required to take a photo.</string>
+    <string name="mango9_chat_camera_failed">The camera could not be opened.</string>
+    <string name="mango9_chat_remove_attachment">Remove %1$s</string>
     <string name="mango9_chat_microphone_required">Microphone access is required to record a voice message.</string>
     <string name="mango9_chat_recording_failed">Voice recording could not be started.</string>
     <string name="mango9_chat_remove_attachments">Tap here to remove all selected attachments</string>

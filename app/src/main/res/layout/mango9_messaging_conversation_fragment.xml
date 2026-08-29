@@ -155,15 +155,12 @@
                 android:scrollbars="none"
                 android:visibility="gone">
 
-                <TextView
+                <LinearLayout
                     android:id="@+id/pending_attachments"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:background="@drawable/mango9_chat_avatar_background"
-                    android:padding="9dp"
-                    android:textColor="?attr/color_main2_700"
-                    android:textSize="11sp"
-                    tools:text="photo.jpg  ×   document.pdf  ×" />
+                    android:orientation="horizontal"
+                    tools:ignore="UselessParent" />
             </HorizontalScrollView>
 
             <TextView

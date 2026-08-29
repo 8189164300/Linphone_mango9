@@ -7,6 +7,7 @@
 package org.linphone.ui.main.crm.fragment
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
@@ -16,10 +17,14 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.UiThread
-import androidx.core.net.toUri
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import androidx.core.net.toUri
 import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -49,10 +54,11 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
     private lateinit var viewModel: Mango9MessagingViewModel
     private lateinit var adapter: Mango9MessageAdapter
     private val attachments = mutableListOf<Mango9PendingAttachment>()
-    private val importedAttachmentFiles = mutableSetOf<File>()
+    private val temporaryAttachmentFiles = mutableSetOf<File>()
     private var senderIds = emptyList<String>()
     private var recorder: MediaRecorder? = null
     private var voiceFile: File? = null
+    private var pendingCameraFile: File? = null
     private var recording = false
     private var openedRoomId: String? = null
     private var insightsLoadingDialog: androidx.appcompat.app.AlertDialog? = null
@@ -68,12 +74,37 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
     private val phone: String? by lazy { requireArguments().getString(Mango9MessagingListFragment.ARG_PHONE) }
     private val isSms: Boolean get() = type == Mango9MessagingListFragment.TYPE_SMS
 
-    private val filePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        val remaining = MAX_ATTACHMENTS - attachments.size
-        uris.take(remaining.coerceAtLeast(0)).mapNotNull(viewModel::attachment).forEach(attachments::add)
-        if (uris.size > remaining) showLocalError(getString(R.string.mango9_chat_attachment_limit))
-        renderPendingAttachments()
+    private val mediaPicker = registerForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(maxItems = MAX_ATTACHMENTS),
+    ) { uris -> addPickedAttachments(uris) }
+
+    private val filePicker = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris -> addPickedAttachments(uris) }
+
+    private val cameraCapture = registerForActivityResult(ActivityResultContracts.TakePicture()) { captured ->
+        val file = pendingCameraFile
+        pendingCameraFile = null
+        if (captured && file != null) {
+            viewModel.attachment(file.absolutePath)?.let { attachment ->
+                attachments += attachment
+                temporaryAttachmentFiles += file
+                render(viewModel.currentState())
+                renderPendingAttachments()
+            } ?: run {
+                file.delete()
+                showLocalError(getString(R.string.mango9_chat_camera_failed))
+            }
+        } else {
+            file?.delete()
+        }
     }
+
+    private val cameraPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) launchCamera() else showLocalError(getString(R.string.mango9_chat_camera_required))
+    }
+
     private val microphonePermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startRecording() else showLocalError(getString(R.string.mango9_chat_microphone_required))
@@ -95,16 +126,9 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         binding.sender.visibility = if (isSms) View.VISIBLE else View.GONE
         binding.back.setOnClickListener { goBack() }
         binding.more.setOnClickListener { showConversationOptions() }
-        binding.attach.setOnClickListener {
-            filePicker.launch(arrayOf("image/*", "video/*", "audio/*", "application/pdf", "text/plain"))
-        }
+        binding.attach.setOnClickListener { showAttachmentMenu() }
         binding.microphone.setOnClickListener { toggleRecording() }
         binding.send.setOnClickListener { sendMessage() }
-        binding.pendingAttachments.setOnClickListener {
-            deleteImportedAttachments()
-            attachments.clear()
-            renderPendingAttachments()
-        }
         binding.message.doAfterTextChanged { editable ->
             if (!isSms && !editable.isNullOrEmpty()) viewModel.notifyTyping()
             updateComposerState(viewModel.state.value ?: Mango9ChatState())
@@ -128,6 +152,9 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         insightsLoadingDialog?.dismiss()
         insightsLoadingDialog = null
         cancelRecording()
+        pendingCameraFile?.delete()
+        pendingCameraFile = null
+        deleteTemporaryAttachments()
         if (isSms) viewModel.closeSmsConversation(phone) else viewModel.closeTeamConversation(openedRoomId ?: requestedRoomId)
         super.onDestroyView()
     }
@@ -178,6 +205,19 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         .map(Mango9MessageListItem::Sms)
 
     private fun renderHeader(state: Mango9ChatState) {
+        val connected = state.connection == Mango9ChatConnectionState.Connected
+        if (!connected) {
+            binding.status.setText(
+                if (state.connection == Mango9ChatConnectionState.Connecting) {
+                    R.string.mango9_chat_connecting
+                } else {
+                    R.string.mango9_chat_disconnected
+                },
+            )
+            binding.statusDot.setBackgroundResource(R.drawable.mango9_chat_offline_background)
+            if (isSms) binding.title.text = targetName.ifBlank { phone.orEmpty() }
+            return
+        }
         if (isSms) {
             binding.title.text = targetName.ifBlank { phone.orEmpty() }
             binding.status.text = getString(
@@ -245,7 +285,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         val outgoing = attachments.toList()
         val complete: (Boolean) -> Unit = { sent ->
             if (sent) {
-                deleteImportedAttachments()
+                deleteTemporaryAttachments()
                 if (isAdded) {
                     binding.message.text?.clear()
                     attachments.clear()
@@ -475,6 +515,90 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         }.onFailure { showLocalError(getString(R.string.mango9_chat_attachment_unavailable)) }
     }
 
+    private fun showAttachmentMenu() {
+        if (attachments.size >= MAX_ATTACHMENTS) {
+            showLocalError(getString(R.string.mango9_chat_attachment_limit))
+            return
+        }
+        val options = arrayOf(
+            getString(R.string.mango9_chat_take_photo),
+            getString(R.string.mango9_chat_photo_library),
+            getString(R.string.mango9_chat_browse_files),
+        )
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.mango9_chat_add_attachment)
+            .setItems(options) { _, index ->
+                when (index) {
+                    0 -> requestCamera()
+                    1 -> openMediaPicker()
+                    2 -> openFilePicker()
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun requestCamera() {
+        if (ContextCompat.checkSelfPermission(
+                requireContext(),
+                Manifest.permission.CAMERA,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            launchCamera()
+        } else {
+            cameraPermission.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun launchCamera() {
+        val file = File(requireContext().cacheDir, "mango9-camera-${System.currentTimeMillis()}.jpg")
+        try {
+            if (!file.createNewFile()) throw IllegalStateException("Camera file already exists")
+            val uri = FileProvider.getUriForFile(
+                requireContext(),
+                getString(R.string.file_provider),
+                file,
+            )
+            pendingCameraFile = file
+            cameraCapture.launch(uri)
+        } catch (_: Exception) {
+            file.delete()
+            pendingCameraFile = null
+            showLocalError(getString(R.string.mango9_chat_camera_failed))
+        }
+    }
+
+    private fun openMediaPicker() {
+        try {
+            mediaPicker.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
+            )
+        } catch (_: ActivityNotFoundException) {
+            showLocalError(getString(R.string.mango9_chat_attachment_unavailable))
+        }
+    }
+
+    private fun openFilePicker() {
+        try {
+            filePicker.launch(arrayOf("*/*"))
+        } catch (_: ActivityNotFoundException) {
+            showLocalError(getString(R.string.mango9_chat_attachment_unavailable))
+        }
+    }
+
+    private fun addPickedAttachments(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val remaining = (MAX_ATTACHMENTS - attachments.size).coerceAtLeast(0)
+        val accepted = uris.take(remaining).mapNotNull(viewModel::attachment)
+        attachments += accepted
+        when {
+            accepted.isEmpty() -> showLocalError(getString(R.string.mango9_chat_attachment_unavailable))
+            uris.size > remaining -> showLocalError(getString(R.string.mango9_chat_attachment_limit))
+            else -> render(viewModel.currentState())
+        }
+        renderPendingAttachments()
+    }
+
     private fun toggleRecording() {
         if (recording) {
             finishRecording()
@@ -526,6 +650,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         binding.microphone.setColorFilter(ContextCompat.getColor(requireContext(), R.color.gray_main2_700))
         if (finished && output != null && output.length() > 0) {
             attachments += Mango9PendingAttachment(Uri.fromFile(output), output.name, "audio/mp4", output.length())
+            temporaryAttachmentFiles += output
         } else {
             output?.delete()
         }
@@ -546,22 +671,43 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
 
     private fun renderPendingAttachments() {
         binding.pendingScroll.visibility = if (attachments.isEmpty()) View.GONE else View.VISIBLE
-        binding.pendingAttachments.text = if (attachments.isEmpty()) {
-            ""
-        } else {
-            getString(
-                R.string.mango9_chat_pending_attachments,
-                attachments.joinToString("   ×   ") { it.name },
+        binding.pendingAttachments.removeAllViews()
+        attachments.forEachIndexed { index, attachment ->
+            binding.pendingAttachments.addView(
+                TextView(requireContext()).apply {
+                    text = attachment.name
+                    contentDescription = getString(R.string.mango9_chat_remove_attachment, attachment.name)
+                    setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_main2_700))
+                    textSize = 11f
+                    setBackgroundResource(R.drawable.mango9_chat_avatar_background)
+                    setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.paperclip, 0, R.drawable.x, 0)
+                    compoundDrawablePadding = dp(6)
+                    setPadding(dp(9), dp(7), dp(9), dp(7))
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { marginEnd = dp(7) }
+                    setOnClickListener { removeAttachment(index) }
+                },
             )
         }
         updateComposerState(viewModel.currentState())
+    }
+
+    private fun removeAttachment(index: Int) {
+        val attachment = attachments.getOrNull(index) ?: return
+        attachments.removeAt(index)
+        attachment.uri.path?.let(::File)?.let { file ->
+            if (temporaryAttachmentFiles.remove(file)) runCatching { file.delete() }
+        }
+        renderPendingAttachments()
     }
 
     private fun consumeSharedFiles(paths: ArrayList<String>) {
         if (paths.isEmpty() || sharedViewModel.pendingShareNeedsRecipientSelection) return
         val selection = Mango9PendingShare.selectFiles(paths, attachments.size, MAX_ATTACHMENTS)
         val imported = selection.acceptedPaths.mapNotNull { path ->
-            viewModel.attachment(path)?.also { importedAttachmentFiles += File(path) }
+            viewModel.attachment(path)?.also { temporaryAttachmentFiles += File(path) }
         }
         attachments += imported
         sharedViewModel.filesToShareFromIntent.value = arrayListOf()
@@ -581,9 +727,9 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         sharedViewModel.textToShareFromIntent.value = ""
     }
 
-    private fun deleteImportedAttachments() {
-        importedAttachmentFiles.forEach { file -> runCatching { file.delete() } }
-        importedAttachmentFiles.clear()
+    private fun deleteTemporaryAttachments() {
+        temporaryAttachmentFiles.forEach { file -> runCatching { file.delete() } }
+        temporaryAttachmentFiles.clear()
     }
 
     private fun showLocalError(message: String) {
@@ -605,6 +751,8 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         val digits = raw.filter(Char::isDigit).removePrefix("1")
         return if (digits.length == 10) "(${digits.take(3)}) ${digits.substring(3, 6)}-${digits.takeLast(4)}" else raw
     }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private data class Option(val title: Int, val action: () -> Unit)
 

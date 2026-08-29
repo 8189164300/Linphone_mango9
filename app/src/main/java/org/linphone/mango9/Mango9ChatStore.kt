@@ -107,14 +107,15 @@ class Mango9ChatStore private constructor(context: Context) {
         if (!force && state.value.isConnected && state.value.connectedIdentity == identity) return@withLock
         if (!force && connectingIdentity == identity) return@withLock
 
-        disconnectInternal(clearData = state.value.connectedIdentity != identity, intentional = false)
+        val preserveConversation = state.value.connectedIdentity == identity
+        disconnectInternal(clearData = !preserveConversation, intentional = false)
         val generation = ++connectionGeneration
         intentionallyDisconnected = false
         connectingIdentity = identity
         mutableState.update {
             it.copy(
                 connection = Mango9ChatConnectionState.Connecting,
-                connectedIdentity = null,
+                connectedIdentity = if (preserveConversation) identity else null,
                 errorMessage = null,
             )
         }
@@ -145,20 +146,33 @@ class Mango9ChatStore private constructor(context: Context) {
                 )
             }
             connectingIdentity = null
-            loadDirectory()
-            registerRemotePushTokenAsync()
         } catch (error: Exception) {
             if (connectionGeneration != generation) return@withLock
             connectingIdentity = null
             mutableState.update {
                 it.copy(
                     connection = Mango9ChatConnectionState.Disconnected,
-                    connectedIdentity = null,
+                    connectedIdentity = if (preserveConversation) identity else null,
                     errorMessage = userMessage(error),
                 )
             }
             scheduleReconnect()
+            return@withLock
         }
+
+        val activeRoomId = state.value.activeRoomId
+        val activeSmsPhone = state.value.activeSmsPhone
+        runCatching {
+            loadDirectory()
+            when {
+                activeRoomId != null -> loadChatMessages(activeRoomId)
+                activeSmsPhone != null -> loadSmsMessages(activeSmsPhone)
+            }
+        }.onFailure { error ->
+            Log.w("[Mango9 Chat] Connected, but conversation refresh failed: ${error.message}")
+            updateError(userMessage(error))
+        }
+        registerRemotePushTokenAsync()
     }
 
     fun disconnect(clearData: Boolean = true) {
@@ -384,6 +398,9 @@ class Mango9ChatStore private constructor(context: Context) {
                 JSONArray().put(roomId).put(body).put(JSONArray(files)).put(UUID.randomUUID().toString().lowercase()),
             )
             moderation.setConversationDeleted(roomId, false)
+            runCatching { loadChatMessages(roomId) }.onFailure { error ->
+                Log.w("[Mango9 Chat] Message sent, but conversation refresh failed: ${error.message}")
+            }
             updateError(null)
             true
         } catch (error: Exception) {
@@ -575,14 +592,25 @@ class Mango9ChatStore private constructor(context: Context) {
         val messages = result.optJSONArray("list").orEmpty().objects().mapNotNull(::parseMessage)
             .sortedBy(Mango9ChatMessage::time)
         ensureActiveIdentity()
-        mutableState.update { it.copy(messages = messages, activeRoomId = roomId) }
+        mutableState.update { current ->
+            if (current.activeRoomId != roomId) {
+                current
+            } else {
+                current.copy(
+                    messages = mergeChatMessages(messages, current.messages),
+                    errorMessage = null,
+                )
+            }
+        }
         val inbound = messages.filter { it.fromUserId != state.value.currentUserId && it.status < 3 }.map { it.id }
         if (inbound.isNotEmpty()) {
             runCatching {
                 rpc("notifyChatMessageStatus", JSONArray().put(roomId).put(JSONArray(inbound)).put(3))
             }
         }
-        mutableState.update { it.markRoomReadLocally(roomId) }
+        mutableState.update { current ->
+            if (current.activeRoomId == roomId) current.markRoomReadLocally(roomId) else current
+        }
     }
 
     private suspend fun loadSmsMessages(phone: String) {
@@ -592,8 +620,17 @@ class Mango9ChatStore private constructor(context: Context) {
         val messages = result.optJSONArray("list").orEmpty().objects().mapNotNull(::parseSmsMessage)
             .sortedBy(Mango9SmsMessage::time)
         ensureActiveIdentity()
-        smsCache[smsCacheKey(normalized)] = messages
-        if (state.value.activeSmsPhone == normalized) mutableState.update { it.copy(smsMessages = messages) }
+        val merged = mergeSmsMessages(messages, smsCache[smsCacheKey(normalized)].orEmpty())
+        smsCache[smsCacheKey(normalized)] = merged
+        if (state.value.activeSmsPhone == normalized) {
+            mutableState.update { current ->
+                if (current.activeSmsPhone == normalized) {
+                    current.copy(smsMessages = mergeSmsMessages(merged, current.smsMessages), errorMessage = null)
+                } else {
+                    current
+                }
+            }
+        }
     }
 
     private suspend fun rpc(method: String, params: JSONArray): Any {
@@ -700,7 +737,7 @@ class Mango9ChatStore private constructor(context: Context) {
                 }
                 room.copy(latest = message.time, lastMessage = message.text, unread = unread)
             }.sortedByDescending(Mango9ChatRoom::latest)
-            current.copy(messages = messages, rooms = rooms)
+            current.copy(messages = messages, rooms = rooms, errorMessage = null)
         }
         if (message.roomId == state.value.activeRoomId && message.fromUserId != state.value.currentUserId) {
             scope.launch {
@@ -735,6 +772,7 @@ class Mango9ChatStore private constructor(context: Context) {
         mutableState.update { current ->
             val updated = current.copy(
                 smsMessages = if (current.activeSmsPhone == normalizedPhone(message.phone)) cached else current.smsMessages,
+                errorMessage = null,
             )
             if (current.activeSmsPhone == normalizedPhone(message.phone)) {
                 updated.markSmsReadLocally(message.phone)
@@ -848,7 +886,6 @@ class Mango9ChatStore private constructor(context: Context) {
         mutableState.update {
             it.copy(
                 connection = Mango9ChatConnectionState.Disconnected,
-                connectedIdentity = null,
                 errorMessage = DISCONNECTED,
             )
         }
@@ -882,11 +919,6 @@ class Mango9ChatStore private constructor(context: Context) {
             } else {
                 current.copy(
                     connection = Mango9ChatConnectionState.Disconnected,
-                    connectedIdentity = null,
-                    activeRoomId = null,
-                    activeSmsPhone = null,
-                    messages = emptyList(),
-                    smsMessages = emptyList(),
                 )
             }
         }
@@ -1046,6 +1078,22 @@ class Mango9ChatStore private constructor(context: Context) {
                 json.optString("files"),
             )
         }
+
+        internal fun mergeChatMessages(
+            serverMessages: List<Mango9ChatMessage>,
+            liveMessages: List<Mango9ChatMessage>,
+        ): List<Mango9ChatMessage> = (serverMessages + liveMessages)
+            .associateBy(Mango9ChatMessage::id)
+            .values
+            .sortedBy(Mango9ChatMessage::time)
+
+        internal fun mergeSmsMessages(
+            serverMessages: List<Mango9SmsMessage>,
+            liveMessages: List<Mango9SmsMessage>,
+        ): List<Mango9SmsMessage> = (serverMessages + liveMessages)
+            .associateBy(Mango9SmsMessage::id)
+            .values
+            .sortedBy(Mango9SmsMessage::time)
 
         private fun JSONArray?.orEmpty(): JSONArray = this ?: JSONArray()
 
