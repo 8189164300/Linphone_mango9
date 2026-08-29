@@ -23,6 +23,7 @@ import org.linphone.mango9.Mango9ChatState
 import org.linphone.ui.main.crm.adapter.Mango9MessagingListAdapter
 import org.linphone.ui.main.crm.adapter.Mango9MessagingListItem
 import org.linphone.ui.main.crm.adapter.Mango9MessagingListItems
+import org.linphone.ui.main.crm.adapter.Mango9MessagingTab
 import org.linphone.ui.main.crm.viewmodel.Mango9MessagingViewModel
 import org.linphone.ui.main.fragment.GenericMainFragment
 
@@ -31,7 +32,7 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     private lateinit var binding: Mango9MessagingListFragmentBinding
     private lateinit var viewModel: Mango9MessagingViewModel
     private lateinit var adapter: Mango9MessagingListAdapter
-    private var mode = Mode.Team
+    private var mode = Mango9MessagingTab.Sms
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         binding = Mango9MessagingListFragmentBinding.inflate(inflater, container, false)
@@ -41,7 +42,11 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         viewModel = ViewModelProvider(this)[Mango9MessagingViewModel::class.java]
-        mode = if (arguments?.getString(ARG_INITIAL_TAB) == TYPE_SMS) Mode.Sms else Mode.Team
+        mode = if (arguments?.getString(ARG_INITIAL_TAB) == TYPE_TEAM) {
+            Mango9MessagingTab.Team
+        } else {
+            Mango9MessagingTab.Sms
+        }
         adapter = Mango9MessagingListAdapter(::openItem)
         binding.list.layoutManager = LinearLayoutManager(requireContext())
         binding.list.adapter = adapter
@@ -54,10 +59,10 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         binding.addGroup.setOnClickListener { showCreateGroupDialog() }
         binding.tabs.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (!isChecked) return@addOnButtonCheckedListener
-            mode = if (checkedId == R.id.sms_tab) Mode.Sms else Mode.Team
+            mode = if (checkedId == R.id.sms_tab) Mango9MessagingTab.Sms else Mango9MessagingTab.Team
             render(viewModel.state.value ?: Mango9ChatState())
         }
-        binding.tabs.check(if (mode == Mode.Sms) R.id.sms_tab else R.id.team_tab)
+        binding.tabs.check(if (mode == Mango9MessagingTab.Sms) R.id.sms_tab else R.id.team_tab)
         viewModel.state.observe(viewLifecycleOwner, ::render)
         viewModel.openedRoomEvent.observe(viewLifecycleOwner) { event ->
             event.consume(::openRoom)
@@ -72,13 +77,15 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     }
 
     private fun render(state: Mango9ChatState) {
-        val items = if (mode == Mode.Team) teamItems(state) else smsItems(state)
+        val items = if (mode == Mango9MessagingTab.Team) teamItems(state) else smsItems(state)
         adapter.submitList(items)
         val connecting = state.connection == Mango9ChatConnectionState.Connecting
         binding.loading.visibility = if (connecting && items.isEmpty()) View.VISIBLE else View.GONE
         binding.swipeRefresh.isRefreshing = false
-        binding.addGroup.visibility = if (mode == Mode.Team) View.VISIBLE else View.INVISIBLE
-        binding.empty.text = getString(if (mode == Mode.Team) R.string.mango9_chat_empty else R.string.mango9_sms_empty)
+        binding.addGroup.visibility = if (mode == Mango9MessagingTab.Team) View.VISIBLE else View.INVISIBLE
+        binding.empty.text = getString(
+            if (mode == Mango9MessagingTab.Team) R.string.mango9_chat_empty else R.string.mango9_sms_empty,
+        )
         binding.empty.visibility = if (!connecting && items.isEmpty() && state.errorMessage.isNullOrBlank()) {
             View.VISIBLE
         } else {
@@ -108,6 +115,10 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         Mango9MessagingListItems.sms(state, viewModel.moderation::isSmsMuted)
 
     private fun openItem(item: Mango9MessagingListItem) {
+        if (!mode.accepts(item)) {
+            render(viewModel.currentState())
+            return
+        }
         when (item) {
             is Mango9MessagingListItem.Group -> openRoom(item.room)
             is Mango9MessagingListItem.User -> navigateConversation(
@@ -172,8 +183,6 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         }
         dialog.show()
     }
-
-    private enum class Mode { Team, Sms }
 
     companion object {
         const val ARG_TYPE = "mango9_message_type"

@@ -73,21 +73,12 @@
             android:layout_height="48dp"
             android:layout_marginHorizontal="16dp"
             android:layout_marginTop="10dp"
-            app:checkedButton="@id/team_tab"
+            app:checkedButton="@id/sms_tab"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/header_separator"
             app:selectionRequired="true"
             app:singleSelection="true">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/team_tab"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="0dp"
-                android:layout_height="42dp"
-                android:layout_weight="1"
-                android:checkable="true"
-                android:text="@string/mango9_team_chat" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/sms_tab"
@@ -97,6 +88,15 @@
                 android:layout_weight="1"
                 android:checkable="true"
                 android:text="@string/mango9_sms" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/team_tab"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="42dp"
+                android:layout_weight="1"
+                android:checkable="true"
+                android:text="@string/mango9_team_chat" />
         </com.google.android.material.button.MaterialButtonToggleGroup>
 
         <androidx.swiperefreshlayout.widget.SwipeRefreshLayout

@@ -13,6 +13,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.linphone.ui.main.crm.adapter.Mango9MessagingListItem
 import org.linphone.ui.main.crm.adapter.Mango9MessagingListItems
+import org.linphone.ui.main.crm.adapter.Mango9MessagingTab
 
 class Mango9ParityBehaviorTest {
     @Test
@@ -209,6 +210,18 @@ class Mango9ParityBehaviorTest {
             .single() as Mango9MessagingListItem.Sms
         assertEquals(3, unchangedTeam.room?.unread)
         assertEquals(0, clearedSms.party.unread)
+    }
+
+    @Test
+    fun conversationTabsRejectRowsFromTheOtherTransport() {
+        val user = Mango9ChatUser(7, "Ani Paytyan", "", "agent")
+        val team = Mango9MessagingListItem.User(user, null, true)
+        val sms = Mango9MessagingListItem.Sms(Mango9SmsParty("8189164300", "", "SMS", 0, ""), false)
+
+        assertTrue(Mango9MessagingTab.Sms.accepts(sms))
+        assertFalse(Mango9MessagingTab.Sms.accepts(team))
+        assertTrue(Mango9MessagingTab.Team.accepts(team))
+        assertFalse(Mango9MessagingTab.Team.accepts(sms))
     }
 
     @Test

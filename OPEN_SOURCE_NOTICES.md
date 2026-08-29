@@ -1,7 +1,7 @@
 # Mango9 Android Open-Source Notices
 
 This file identifies the principal open-source components used by Mango9
-Android 6.2.7 (version code 602022). Copyright notices in the source remain with
+Android 6.2.7 (version code 602023). Copyright notices in the source remain with
 their respective owners.
 
 ## Mango9 application and Linphone Android
@@ -11,7 +11,7 @@ their respective owners.
   Communications SARL.
 - Upstream release: [`6.2.6`](https://github.com/BelledonneCommunications/linphone-android/tree/6.2.6).
 - Upstream commit: [`42b1fcce3c8037e6f5a891cf8d108eb47e308386`](https://github.com/BelledonneCommunications/linphone-android/commit/42b1fcce3c8037e6f5a891cf8d108eb47e308386).
-- Mango9 corresponding source: [`android-6.2.7-build-602022`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.7-build-602022).
+- Mango9 corresponding source: [`android-6.2.7-build-602023`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.7-build-602023).
 - License text: [`LICENSE.txt`](LICENSE.txt).
 
 Mango9 modified the upstream application in 2026. Mango9 is not affiliated with

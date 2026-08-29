@@ -34,6 +34,16 @@ sealed class Mango9MessagingListItem(val stableId: String) {
     ) : Mango9MessagingListItem("sms:${party.phone}")
 }
 
+enum class Mango9MessagingTab {
+    Sms,
+    Team;
+
+    fun accepts(item: Mango9MessagingListItem): Boolean = when (this) {
+        Sms -> item is Mango9MessagingListItem.Sms
+        Team -> item !is Mango9MessagingListItem.Sms
+    }
+}
+
 /** Builds both conversation lists from the same snapshot so tab badges and row badges stay aligned. */
 object Mango9MessagingListItems {
     fun team(
