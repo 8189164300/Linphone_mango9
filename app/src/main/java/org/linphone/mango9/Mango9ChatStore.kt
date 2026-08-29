@@ -476,9 +476,17 @@ class Mango9ChatStore private constructor(context: Context) {
                     .put(JSONArray(files))
                     .put(UUID.randomUUID().toString().lowercase()),
             )
-            loadSmsMessages(normalized)
-            loadSmsDirectory()
             updateError(null)
+            // The send request has already been accepted. Do not keep the composer blocked while
+            // two fallback refresh RPCs run; live WebSocket events normally update both views.
+            scope.launch {
+                runCatching { loadSmsMessages(normalized) }.onFailure { error ->
+                    Log.w("[Mango9 Chat] SMS sent, but conversation refresh failed: ${error.message}")
+                }
+                runCatching { loadSmsDirectory() }.onFailure { error ->
+                    Log.w("[Mango9 Chat] SMS sent, but directory refresh failed: ${error.message}")
+                }
+            }
             true
         } catch (error: Exception) {
             updateError(userMessage(error))

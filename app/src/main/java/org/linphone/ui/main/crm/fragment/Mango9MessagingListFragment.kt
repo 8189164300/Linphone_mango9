@@ -31,7 +31,8 @@ import org.linphone.ui.main.fragment.GenericMainFragment
 class Mango9MessagingListFragment : GenericMainFragment() {
     private lateinit var binding: Mango9MessagingListFragmentBinding
     private lateinit var viewModel: Mango9MessagingViewModel
-    private lateinit var adapter: Mango9MessagingListAdapter
+    private lateinit var smsAdapter: Mango9MessagingListAdapter
+    private lateinit var teamAdapter: Mango9MessagingListAdapter
     private var mode = Mango9MessagingTab.Sms
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -47,9 +48,10 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         } else {
             Mango9MessagingTab.Sms
         }
-        adapter = Mango9MessagingListAdapter(::openItem)
+        smsAdapter = Mango9MessagingListAdapter { item -> openItem(Mango9MessagingTab.Sms, item) }
+        teamAdapter = Mango9MessagingListAdapter { item -> openItem(Mango9MessagingTab.Team, item) }
         binding.list.layoutManager = LinearLayoutManager(requireContext())
-        binding.list.adapter = adapter
+        binding.list.adapter = adapterFor(mode)
         binding.back.setOnClickListener { goBack() }
         binding.retry.setOnClickListener {
             viewModel.clearError()
@@ -60,6 +62,7 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         binding.tabs.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (!isChecked) return@addOnButtonCheckedListener
             mode = if (checkedId == R.id.sms_tab) Mango9MessagingTab.Sms else Mango9MessagingTab.Team
+            showAdapter(mode)
             render(viewModel.state.value ?: Mango9ChatState())
         }
         binding.tabs.check(if (mode == Mango9MessagingTab.Sms) R.id.sms_tab else R.id.team_tab)
@@ -77,8 +80,12 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     }
 
     private fun render(state: Mango9ChatState) {
-        val items = if (mode == Mango9MessagingTab.Team) teamItems(state) else smsItems(state)
-        adapter.submitList(items)
+        val teamItems = teamItems(state)
+        val smsItems = smsItems(state)
+        teamAdapter.submitList(teamItems)
+        smsAdapter.submitList(smsItems)
+        showAdapter(mode)
+        val items = if (mode == Mango9MessagingTab.Team) teamItems else smsItems
         val connecting = state.connection == Mango9ChatConnectionState.Connecting
         binding.loading.visibility = if (connecting && items.isEmpty()) View.VISIBLE else View.GONE
         binding.swipeRefresh.isRefreshing = false
@@ -114,8 +121,16 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     private fun smsItems(state: Mango9ChatState): List<Mango9MessagingListItem> =
         Mango9MessagingListItems.sms(state, viewModel.moderation::isSmsMuted)
 
-    private fun openItem(item: Mango9MessagingListItem) {
-        if (!mode.accepts(item)) {
+    private fun adapterFor(tab: Mango9MessagingTab): Mango9MessagingListAdapter =
+        if (tab == Mango9MessagingTab.Team) teamAdapter else smsAdapter
+
+    private fun showAdapter(tab: Mango9MessagingTab) {
+        val selected = adapterFor(tab)
+        if (binding.list.adapter !== selected) binding.list.swapAdapter(selected, false)
+    }
+
+    private fun openItem(sourceTab: Mango9MessagingTab, item: Mango9MessagingListItem) {
+        if (sourceTab != mode || !sourceTab.accepts(item)) {
             render(viewModel.currentState())
             return
         }

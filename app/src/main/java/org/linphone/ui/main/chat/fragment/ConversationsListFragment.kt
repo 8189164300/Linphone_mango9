@@ -85,7 +85,9 @@ class ConversationsListFragment : AbstractMainFragment() {
 
     private lateinit var adapter: ConversationsListAdapter
 
-    private lateinit var mango9MessagesAdapter: Mango9MessagingListAdapter
+    private lateinit var mango9SmsMessagesAdapter: Mango9MessagingListAdapter
+
+    private lateinit var mango9TeamMessagesAdapter: Mango9MessagingListAdapter
 
     private var mango9Tab = Mango9MessagingTab.Sms
 
@@ -148,7 +150,12 @@ class ConversationsListFragment : AbstractMainFragment() {
         super.onCreate(savedInstanceState)
 
         adapter = ConversationsListAdapter()
-        mango9MessagesAdapter = Mango9MessagingListAdapter(::openMango9Item)
+        mango9SmsMessagesAdapter = Mango9MessagingListAdapter { item ->
+            openMango9Item(Mango9MessagingTab.Sms, item)
+        }
+        mango9TeamMessagesAdapter = Mango9MessagingListAdapter { item ->
+            openMango9Item(Mango9MessagingTab.Team, item)
+        }
     }
 
     override fun onCreateView(
@@ -175,7 +182,7 @@ class ConversationsListFragment : AbstractMainFragment() {
         binding.conversationsList.clipToOutline = true
 
         binding.mango9MessagesList.layoutManager = LinearLayoutManager(requireContext())
-        binding.mango9MessagesList.adapter = mango9MessagesAdapter
+        binding.mango9MessagesList.adapter = mango9SmsMessagesAdapter
         binding.mango9MessagesTabs.addTab(
             binding.mango9MessagesTabs.newTab().setText(R.string.mango9_sms).setTag(Mango9MessagingTab.Sms),
         )
@@ -186,6 +193,7 @@ class ConversationsListFragment : AbstractMainFragment() {
             object : TabLayout.OnTabSelectedListener {
                 override fun onTabSelected(tab: TabLayout.Tab) {
                     mango9Tab = tab.tag as? Mango9MessagingTab ?: return
+                    showMango9MessagesAdapter(mango9Tab)
                     renderMango9Messages(mango9ChatStore.state.value)
                     viewLifecycleOwner.lifecycleScope.launch {
                         if (mango9Tab == Mango9MessagingTab.Sms) {
@@ -508,16 +516,16 @@ class ConversationsListFragment : AbstractMainFragment() {
         val smsUnread = mango9ChatStore.smsUnreadCount(state)
         updateTabBadge(TEAM_TAB_POSITION, teamUnread)
         updateTabBadge(SMS_TAB_POSITION, smsUnread)
-        val items = if (mango9Tab == Mango9MessagingTab.Team) {
-            Mango9MessagingListItems.team(
-                state,
-                mango9Moderation::isConversationDeleted,
-                mango9ChatStore::roomTitle,
-            )
-        } else {
-            Mango9MessagingListItems.sms(state, mango9Moderation::isSmsMuted)
-        }
-        mango9MessagesAdapter.submitList(items)
+        val teamItems = Mango9MessagingListItems.team(
+            state,
+            mango9Moderation::isConversationDeleted,
+            mango9ChatStore::roomTitle,
+        )
+        val smsItems = Mango9MessagingListItems.sms(state, mango9Moderation::isSmsMuted)
+        mango9TeamMessagesAdapter.submitList(teamItems)
+        mango9SmsMessagesAdapter.submitList(smsItems)
+        showMango9MessagesAdapter(mango9Tab)
+        val items = if (mango9Tab == Mango9MessagingTab.Team) teamItems else smsItems
         binding.mango9MessagesEmpty.text = getString(
             if (mango9Tab == Mango9MessagingTab.Team) R.string.mango9_chat_empty else R.string.mango9_sms_empty,
         )
@@ -552,8 +560,19 @@ class ConversationsListFragment : AbstractMainFragment() {
         }
     }
 
-    private fun openMango9Item(item: Mango9MessagingListItem) {
-        if (!mango9Tab.accepts(item)) {
+    private fun showMango9MessagesAdapter(tab: Mango9MessagingTab) {
+        val selected = if (tab == Mango9MessagingTab.Team) {
+            mango9TeamMessagesAdapter
+        } else {
+            mango9SmsMessagesAdapter
+        }
+        if (binding.mango9MessagesList.adapter !== selected) {
+            binding.mango9MessagesList.swapAdapter(selected, false)
+        }
+    }
+
+    private fun openMango9Item(sourceTab: Mango9MessagingTab, item: Mango9MessagingListItem) {
+        if (sourceTab != mango9Tab || !sourceTab.accepts(item)) {
             Log.w("$TAG Ignoring stale Mango9 row from a different message tab")
             renderMango9Messages(mango9ChatStore.state.value)
             return
