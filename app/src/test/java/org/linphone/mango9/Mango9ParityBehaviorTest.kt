@@ -115,6 +115,27 @@ class Mango9ParityBehaviorTest {
     }
 
     @Test
+    fun smsRefreshNeverRegressesANewerDeliveryStatus() {
+        val staleServer =
+            Mango9SmsMessage("same", "8185550100", "Photo", "2026-08-28T10:00:00Z", "18185550199", 0, false, "image.jpg")
+        val deliveredLive = staleServer.copy(status = 2)
+
+        val merged = Mango9ChatStore.mergeSmsMessages(listOf(staleServer), listOf(deliveredLive))
+
+        assertEquals(2, merged.single().status)
+        assertEquals(99, Mango9SmsDeliveryPolicy.newest(2, 99))
+    }
+
+    @Test
+    fun serverAcceptedSmsDoesNotRemainVisuallySending() {
+        assertEquals(Mango9SmsDeliveryState.Sent, Mango9SmsDeliveryPolicy.state(0))
+        assertEquals(Mango9SmsDeliveryState.Sent, Mango9SmsDeliveryPolicy.state(1))
+        assertEquals(Mango9SmsDeliveryState.Delivered, Mango9SmsDeliveryPolicy.state(2))
+        assertEquals(Mango9SmsDeliveryState.Delivered, Mango9SmsDeliveryPolicy.state(3))
+        assertEquals(Mango9SmsDeliveryState.Failed, Mango9SmsDeliveryPolicy.state(99))
+    }
+
+    @Test
     fun notificationSmsReplyRequiresTheAlreadyActiveAccount() {
         assertTrue(
             Mango9SmsNotificationReplyPolicy.canReply(

@@ -73,6 +73,7 @@ class Mango9ChatStore private constructor(context: Context) {
         .followRedirects(false)
         .build()
     private val pendingCalls = ConcurrentHashMap<String, PendingCall>()
+    private val pendingSmsStatuses = ConcurrentHashMap<String, Int>()
     private val smsCache = ConcurrentHashMap<String, List<Mango9SmsMessage>>()
     private val typingExpiryJobs = ConcurrentHashMap<Int, Job>()
     private val mutableState = MutableStateFlow(Mango9ChatState())
@@ -486,6 +487,10 @@ class Mango9ChatStore private constructor(context: Context) {
                 runCatching { loadSmsDirectory() }.onFailure { error ->
                     Log.w("[Mango9 Chat] SMS sent, but directory refresh failed: ${error.message}")
                 }
+                delay(SMS_STATUS_RECONCILE_DELAY_MS)
+                runCatching { loadSmsMessages(normalized) }.onFailure { error ->
+                    Log.w("[Mango9 Chat] SMS delivery refresh failed: ${error.message}")
+                }
             }
             true
         } catch (error: Exception) {
@@ -626,6 +631,7 @@ class Mango9ChatStore private constructor(context: Context) {
         val result = rpc("getSmsMessages", JSONArray().put(normalized).put(0).put("json")) as? JSONObject
             ?: throw Mango9ChatException(INVALID_RESPONSE)
         val messages = result.optJSONArray("list").orEmpty().objects().mapNotNull(::parseSmsMessage)
+            .map(::applyPendingSmsStatus)
             .sortedBy(Mango9SmsMessage::time)
         ensureActiveIdentity()
         val merged = mergeSmsMessages(messages, smsCache[smsCacheKey(normalized)].orEmpty())
@@ -774,16 +780,17 @@ class Mango9ChatStore private constructor(context: Context) {
     }
 
     private fun upsertSmsMessage(message: Mango9SmsMessage) {
-        val key = smsCacheKey(message.phone)
-        val cached = (smsCache[key].orEmpty().filterNot { it.id == message.id } + message).sortedBy(Mango9SmsMessage::time)
+        val resolved = applyPendingSmsStatus(message)
+        val key = smsCacheKey(resolved.phone)
+        val cached = mergeSmsMessages(listOf(resolved), smsCache[key].orEmpty())
         smsCache[key] = cached
         mutableState.update { current ->
             val updated = current.copy(
-                smsMessages = if (current.activeSmsPhone == normalizedPhone(message.phone)) cached else current.smsMessages,
+                smsMessages = if (current.activeSmsPhone == normalizedPhone(resolved.phone)) cached else current.smsMessages,
                 errorMessage = null,
             )
-            if (current.activeSmsPhone == normalizedPhone(message.phone)) {
-                updated.markSmsReadLocally(message.phone)
+            if (current.activeSmsPhone == normalizedPhone(resolved.phone)) {
+                updated.markSmsReadLocally(resolved.phone)
             } else {
                 updated
             }
@@ -795,8 +802,17 @@ class Mango9ChatStore private constructor(context: Context) {
         update ?: return
         val id = update.optString("id")
         val status = update.optInt("status")
+        if (id.isBlank()) return
+        pendingSmsStatuses[id] = pendingSmsStatuses[id]
+            ?.let { Mango9SmsDeliveryPolicy.newest(it, status) }
+            ?: status
         val existing = state.value.smsMessages.firstOrNull { it.id == id } ?: return
-        upsertSmsMessage(existing.copy(status = status))
+        upsertSmsMessage(existing)
+    }
+
+    private fun applyPendingSmsStatus(message: Mango9SmsMessage): Mango9SmsMessage {
+        val pending = pendingSmsStatuses.remove(message.id) ?: return message
+        return message.copy(status = Mango9SmsDeliveryPolicy.newest(message.status, pending))
     }
 
     private fun applyPresence(raw: JSONArray) {
@@ -921,6 +937,7 @@ class Mango9ChatStore private constructor(context: Context) {
         chatTokenExpiresAtMillis = 0
         typingExpiryJobs.values.forEach(Job::cancel)
         typingExpiryJobs.clear()
+        if (clearData) pendingSmsStatuses.clear()
         mutableState.update { current ->
             if (clearData) {
                 Mango9ChatState(errorMessage = if (intentional) null else current.errorMessage)
@@ -996,6 +1013,7 @@ class Mango9ChatStore private constructor(context: Context) {
         private const val WEBSOCKET_PROTOCOL_HEADER = "Sec-WebSocket-Protocol"
         private const val RPC_TIMEOUT_MS = 20_000L
         private const val RECONNECT_DELAY_MS = 2_000L
+        private const val SMS_STATUS_RECONCILE_DELAY_MS = 5_000L
         private const val PUSH_REGISTRATION_ATTEMPTS = 4
         private val PUSH_REGISTRATION_RETRY_DELAYS_MS = longArrayOf(2_000L, 5_000L, 10_000L)
         private const val TYPING_EXPIRY_MS = 3_500L
@@ -1099,8 +1117,14 @@ class Mango9ChatStore private constructor(context: Context) {
             serverMessages: List<Mango9SmsMessage>,
             liveMessages: List<Mango9SmsMessage>,
         ): List<Mango9SmsMessage> = (serverMessages + liveMessages)
-            .associateBy(Mango9SmsMessage::id)
+            .groupBy(Mango9SmsMessage::id)
             .values
+            .map { versions ->
+                versions.last().copy(
+                    status = versions.map(Mango9SmsMessage::status)
+                        .reduce(Mango9SmsDeliveryPolicy::newest),
+                )
+            }
             .sortedBy(Mango9SmsMessage::time)
 
         private fun JSONArray?.orEmpty(): JSONArray = this ?: JSONArray()

@@ -30,6 +30,8 @@ import org.linphone.R
 import org.linphone.databinding.Mango9MessageCellBinding
 import org.linphone.mango9.Mango9ChatMedia
 import org.linphone.mango9.Mango9ChatMessage
+import org.linphone.mango9.Mango9SmsDeliveryPolicy
+import org.linphone.mango9.Mango9SmsDeliveryState
 import org.linphone.mango9.Mango9SmsMessage
 
 sealed class Mango9MessageListItem(val stableId: String) {
@@ -87,11 +89,10 @@ class Mango9MessageAdapter(
                     time = item.message.time
                     status = if (outgoing) {
                         binding.root.context.getString(
-                            when {
-                                item.message.status == 99 -> R.string.mango9_chat_failed
-                                item.message.status >= 2 -> R.string.mango9_chat_delivered
-                                item.message.status == 1 -> R.string.mango9_chat_sent
-                                else -> R.string.mango9_chat_sending
+                            when (Mango9SmsDeliveryPolicy.state(item.message.status)) {
+                                Mango9SmsDeliveryState.Sent -> R.string.mango9_chat_sent
+                                Mango9SmsDeliveryState.Delivered -> R.string.mango9_chat_delivered
+                                Mango9SmsDeliveryState.Failed -> R.string.mango9_chat_failed
                             },
                         )
                     } else {

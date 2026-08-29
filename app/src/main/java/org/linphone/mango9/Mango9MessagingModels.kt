@@ -71,6 +71,26 @@ data class Mango9SmsMessage(
 
 data class Mango9SmsSender(val id: Int, val senderId: String)
 
+internal enum class Mango9SmsDeliveryState {
+    Sent,
+    Delivered,
+    Failed,
+}
+
+/** A server-created status-0 SMS is accepted/queued, not a local upload still in progress. */
+internal object Mango9SmsDeliveryPolicy {
+    fun state(status: Int): Mango9SmsDeliveryState = when {
+        status == 99 -> Mango9SmsDeliveryState.Failed
+        status >= 2 -> Mango9SmsDeliveryState.Delivered
+        else -> Mango9SmsDeliveryState.Sent
+    }
+
+    fun newest(first: Int, second: Int): Int = when {
+        first == 99 || second == 99 -> 99
+        else -> maxOf(first, second)
+    }
+}
+
 data class Mango9PendingAttachment(
     val uri: Uri,
     val name: String,
