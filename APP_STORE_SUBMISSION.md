@@ -1,20 +1,20 @@
 # Mango9 iOS App Store Submission
 
-This file is the release gate for the Mango9 iOS 6.2.7 update.
+This file is the release gate for the Mango9 iOS 6.2.8 update.
 Do not press **Submit for Review** until every required item below is complete.
 
 ## Release identity
 
 - App name: `Mango9`
 - Bundle ID: `com.mango9.phone`
-- Version: `6.2.7`
+- Version: `6.2.8`
 - Current build: `29`
 - Primary category: `Business`
 - Price: `Free`
 - Release method: `Manually release this version`
 - Seller/signing identity: George Gabrielyan (individual Apple Developer account)
 
-## What's New in 6.2.7
+## What's New in 6.2.8
 
 Unread indicators now clear immediately when an SMS or Team Chat conversation
 is opened, while read acknowledgements continue in the background. Launch,
@@ -28,6 +28,8 @@ crossed-bell indicator in the conversation list.
 Conversation Info now shows server-backed SMS activity, exact CRM matches, and
 clearly labeled call history stored on the current iPhone. Unmuting remains
 stable when returning to the conversation list.
+SMS delivery updates now reconcile in the background without replacing a newer
+delivered state with an older carrier status.
 
 ## Business model statement
 
@@ -171,7 +173,7 @@ Complete this only after the final TestFlight candidate has passed every test:
 
 1. Increment the build number if any code, resource, manifest, entitlement, or
    configuration changes.
-2. Choose the immutable tag name, such as `ios-6.2.7-build-29`, and change
+2. Choose the immutable tag name, such as `ios-6.2.8-build-29`, and change
    `MANGO9_SOURCE_CODE_URL` in `Shared.xcconfig` to that tag URL.
 3. Commit the exact release source, including the final source URL.
 4. Create the chosen tag on that commit and push both the commit and tag.
