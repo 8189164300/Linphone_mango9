@@ -1638,6 +1638,13 @@ struct Mango9TeamChatListFragment: View {
 	@ObservedObject private var store = Mango9ChatStore.shared
 	@State private var isShowingCreateGroup = false
 	@State private var createdRoom: Mango9ChatRoom?
+	let embedded: Bool
+	let searchText: String
+
+	init(embedded: Bool = false, searchText: String = "") {
+		self.embedded = embedded
+		self.searchText = searchText
+	}
 
 	var body: some View {
 		ZStack {
@@ -1677,7 +1684,7 @@ struct Mango9TeamChatListFragment: View {
 						}
 					}
 					Section("People") {
-						ForEach(store.users) { user in
+						ForEach(visibleUsers) { user in
 							NavigationLink(destination: Mango9ChatFragment(user: user)) {
 								Mango9TeamChatRow(user: user)
 							}
@@ -1705,7 +1712,7 @@ struct Mango9TeamChatListFragment: View {
 			}
 			.hidden()
 		}
-		.navigationTitle("Team Chat")
+		.navigationTitle(embedded ? "" : "Team Chat")
 		.navigationBarTitleDisplayMode(.inline)
 		.toolbar {
 			ToolbarItem(placement: .navigationBarTrailing) {
@@ -1715,6 +1722,9 @@ struct Mango9TeamChatListFragment: View {
 					Image(systemName: "person.2.badge.plus")
 						.foregroundStyle(Color.orangeMain500)
 				}
+				.opacity(embedded ? 0 : 1)
+				.disabled(embedded)
+				.accessibilityHidden(embedded)
 				.accessibilityLabel("New group")
 			}
 		}
@@ -1738,8 +1748,25 @@ struct Mango9TeamChatListFragment: View {
 	}
 
 	private var groupRooms: [Mango9ChatRoom] {
-		store.rooms.filter {
+		let rooms = store.rooms.filter {
 			!$0.isDirect && !Mango9ChatModerationStore.shared.isConversationDeleted($0.id)
+		}
+		let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !query.isEmpty else { return rooms }
+		return rooms.filter {
+			store.groupTitle($0).localizedCaseInsensitiveContains(query)
+				|| $0.lastMessage.localizedCaseInsensitiveContains(query)
+		}
+	}
+
+	private var visibleUsers: [Mango9ChatUser] {
+		let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !query.isEmpty else { return store.users }
+		return store.users.filter { user in
+			user.name.localizedCaseInsensitiveContains(query)
+				|| user.category.localizedCaseInsensitiveContains(query)
+				|| (store.roomPreview(for: user.id)?.lastMessage
+					.localizedCaseInsensitiveContains(query) ?? false)
 		}
 	}
 }
@@ -2586,22 +2613,40 @@ private struct Mango9ChatMediaView: View {
 
 private struct Mango9VideoAttachmentView: View {
 	let media: Mango9ChatMedia
-	@State private var player: AVPlayer
-
-	init(media: Mango9ChatMedia) {
-		self.media = media
-		_player = State(initialValue: AVPlayer(url: media.url))
-	}
+	@State private var isPresentingPlayer = false
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: 5) {
-			VideoPlayer(player: player)
+		Button {
+			isPresentingPlayer = true
+		} label: {
+			VStack(alignment: .leading, spacing: 0) {
+				ZStack {
+					Mango9VideoThumbnailView(
+						videoURL: media.url,
+						thumbnailURL: nil,
+						maxPixelSize: 900
+					)
+					.frame(width: 230, height: 150)
+					.clipShape(RoundedRectangle(cornerRadius: 10))
+					Color.black.opacity(0.18)
+						.clipShape(RoundedRectangle(cornerRadius: 10))
+					Image(systemName: "play.fill")
+						.font(.system(size: 26, weight: .bold))
+						.foregroundStyle(Color.white)
+						.frame(width: 56, height: 56)
+						.background(Color.white.opacity(0.18))
+						.clipShape(Circle())
+				}
 				.frame(width: 230, height: 150)
-				.clipShape(RoundedRectangle(cornerRadius: 10))
-			Text(media.name)
-				.font(.system(size: 10, weight: .medium))
-				.foregroundStyle(Color.white.opacity(0.75))
-				.lineLimit(1)
+			}
+		}
+		.buttonStyle(.plain)
+		.accessibilityLabel("Play video")
+		.fullScreenCover(isPresented: $isPresentingPlayer) {
+			Mango9VideoAttachmentViewer(
+				sourceURL: media.url,
+				name: media.name
+			)
 		}
 	}
 }

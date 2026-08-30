@@ -20,8 +20,12 @@
 import SwiftUI
 import linphonesw
 
+private enum Mango9ConversationTab: Hashable {
+	case sms
+	case team
+}
+
 struct ConversationsListFragment: View {
-	
 	@Environment(\.scenePhase) var scenePhase
 	
 	@EnvironmentObject var navigationManager: NavigationManager
@@ -33,110 +37,39 @@ struct ConversationsListFragment: View {
 	
 	@Binding var text: String
 	@Binding var showingSheet: Bool
+	@State private var mango9Tab: Mango9ConversationTab = .sms
 	
 	var body: some View {
-		VStack {
-			List {
-				ForEach(visibleSMSParties) { party in
-					Mango9SMSConversationRow(party: party)
-						.contentShape(Rectangle())
-						.onTapGesture {
-							Mango9SMSRouting.open(
-								Mango9SMSTarget(
-									phone: party.phone,
-									name: Mango9CallerIdentity.formattedPhoneNumber(party.phone)
-								)
-							)
-						}
-						.listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 14))
-						.listRowSeparator(.hidden)
-						.listRowBackground(Color.white)
-				}
-
-				if hasMango9Inbox {
-					NavigationLink(destination: Mango9TeamChatListFragment()) {
-						Mango9InboxConversationRow()
-					}
-					.listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 14))
-					.listRowSeparator(.hidden)
-					.listRowBackground(Color.white)
-				}
-
-				ForEach(visibleSIPConversations) { conversation in
-					ConversationRow(
-						navigationManager: _navigationManager,
-						conversation: conversation,
-						showingSheet: $showingSheet,
-						text: $text
+		VStack(spacing: 0) {
+			if hasMango9Account {
+				Mango9ConversationTabs(
+					selectedTab: $mango9Tab,
+					smsUnreadCount: mango9ChatStore.smsUnreadCount,
+					teamUnreadCount: mango9ChatStore.teamUnreadCount
+				)
+				Mango9ConversationConnectionStatus(
+					isConnecting: mango9ChatStore.isConnecting,
+					isConnected: mango9ChatStore.isConnected
+				)
+				if mango9Tab == .sms {
+					mango9SMSConversationList
+				} else {
+					Mango9TeamChatListFragment(
+						embedded: true,
+						searchText: conversationsListViewModel.currentFilter
 					)
 				}
-				
-				if !conversationsListViewModel.currentFilter.isEmpty {
-					if !contactsManager.lastSearch.isEmpty {
-						HStack(alignment: .center) {
-							Text("contacts_list_all_contacts_title")
-								.default_text_style_800(styleSize: 16)
-							
-							Spacer()
-						}
-					}
-					
-					ContactsListFragment(showingSheet: .constant(false), startCallFunc: { addr in
-						withAnimation {
-							conversationsListViewModel.createOneToOneChatRoomWith(remote: addr)
-						}
-					})
-					
-					if !contactsManager.lastSearchSuggestions.isEmpty {
-						HStack(alignment: .center) {
-							Text("generic_address_picker_suggestions_list_title")
-								.default_text_style_800(styleSize: 16)
-							
-							Spacer()
-						}
-						
-						suggestionsList
-					}
-				}
-			}
-			.safeAreaInset(edge: .top, content: {
-				Spacer()
-					.frame(height: 12)
-			})
-			.listStyle(.plain)
-			.overlay(
-				VStack {
-					if visibleSIPConversations.isEmpty &&
-						visibleSMSParties.isEmpty &&
-						!hasMango9Inbox &&
-						(
-							conversationsListViewModel.currentFilter.isEmpty ||
-							(!conversationsListViewModel.currentFilter.isEmpty &&
-							 contactsManager.lastSearch.isEmpty &&
-							 contactsManager.lastSearchSuggestions.isEmpty)
-						) {
-						Spacer()
-						Image("illus-belledonne")
-							.resizable()
-							.scaledToFit()
-							.clipped()
-							.padding(.all)
-						Text(!text.isEmpty ? "list_filter_no_result_found" : "conversations_list_empty")
-							.default_text_style_800(styleSize: 16)
-						Spacer()
-						Spacer()
-					}
-				}
-					.padding(.all)
-			)
-			.onDisappear {
-				if !conversationsListViewModel.currentFilter.isEmpty {
-					conversationsListViewModel.resetFilterConversations()
-				}
+			} else {
+				legacyConversationList
 			}
 		}
 		.navigationTitle("")
 		.navigationBarHidden(true)
+		.onDisappear {
+			if !conversationsListViewModel.currentFilter.isEmpty {
+				conversationsListViewModel.resetFilterConversations()
+			}
+		}
 		.onChange(of: scenePhase) { newPhase in
 			if newPhase == .active {
 				if navigationManager.peerAddr != nil {
@@ -145,16 +78,19 @@ struct ConversationsListFragment: View {
 				}
 			}
 		}
-		.task {
-			if Mango9SessionStore.load() != nil {
+		.task(id: mango9Tab) {
+			guard hasMango9Account else { return }
+			if mango9Tab == .sms {
 				await mango9ChatStore.refreshSMSDirectory()
+			} else {
+				await mango9ChatStore.connectIfNeeded()
+				await mango9ChatStore.refreshDirectory()
 			}
 		}
 	}
 
-	private var hasMango9Inbox: Bool {
+	private var hasMango9Account: Bool {
 		Mango9SessionStore.load() != nil
-			&& conversationsListViewModel.currentFilter.isEmpty
 	}
 
 	private var visibleSMSParties: [Mango9SMSParty] {
@@ -170,16 +106,107 @@ struct ConversationsListFragment: View {
 	}
 
 	private var visibleSIPConversations: [ConversationModel] {
-		conversationsListViewModel.conversationsList.filter { conversation in
-			guard Mango9SessionStore.load() != nil,
-				  !conversation.isGroup,
-				  let remote = conversation.chatRoom.peerAddress else {
-				return true
+		conversationsListViewModel.conversationsList
+	}
+
+	private var mango9SMSConversationList: some View {
+		List {
+			ForEach(visibleSMSParties) { party in
+				Mango9SMSConversationRow(party: party)
+					.contentShape(Rectangle())
+					.onTapGesture {
+						Mango9SMSRouting.open(
+							Mango9SMSTarget(
+								phone: party.phone,
+								name: Mango9CallerIdentity.formattedPhoneNumber(party.phone)
+							)
+						)
+					}
+					.listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 14))
+					.listRowSeparator(.hidden)
+					.listRowBackground(Color.white)
 			}
-			return Mango9SMSRouting.target(
-				remote: remote,
-				fallbackName: conversation.subject
-			) == nil
+		}
+		.listStyle(.plain)
+		.refreshable {
+			await mango9ChatStore.refreshSMSDirectory()
+		}
+		.overlay {
+			if visibleSMSParties.isEmpty && !mango9ChatStore.isConnecting {
+				Text(
+					conversationsListViewModel.currentFilter.isEmpty
+						? "No SMS conversations"
+						: "No matching SMS conversations"
+				)
+				.default_text_style_800(styleSize: 16)
+				.foregroundStyle(Color.grayMain2c500)
+				.padding(24)
+			}
+		}
+	}
+
+	private var legacyConversationList: some View {
+		List {
+			ForEach(visibleSIPConversations) { conversation in
+				ConversationRow(
+					navigationManager: _navigationManager,
+					conversation: conversation,
+					showingSheet: $showingSheet,
+					text: $text
+				)
+			}
+
+			if !conversationsListViewModel.currentFilter.isEmpty {
+				if !contactsManager.lastSearch.isEmpty {
+					HStack(alignment: .center) {
+						Text("contacts_list_all_contacts_title")
+							.default_text_style_800(styleSize: 16)
+						Spacer()
+					}
+				}
+
+				ContactsListFragment(showingSheet: .constant(false), startCallFunc: { addr in
+					withAnimation {
+						conversationsListViewModel.createOneToOneChatRoomWith(remote: addr)
+					}
+				})
+
+				if !contactsManager.lastSearchSuggestions.isEmpty {
+					HStack(alignment: .center) {
+						Text("generic_address_picker_suggestions_list_title")
+							.default_text_style_800(styleSize: 16)
+						Spacer()
+					}
+					suggestionsList
+				}
+			}
+		}
+		.safeAreaInset(edge: .top) {
+			Spacer().frame(height: 12)
+		}
+		.listStyle(.plain)
+		.overlay {
+			if visibleSIPConversations.isEmpty &&
+				(
+					conversationsListViewModel.currentFilter.isEmpty ||
+					(!conversationsListViewModel.currentFilter.isEmpty &&
+					 contactsManager.lastSearch.isEmpty &&
+					 contactsManager.lastSearchSuggestions.isEmpty)
+				) {
+				VStack {
+					Spacer()
+					Image("illus-belledonne")
+						.resizable()
+						.scaledToFit()
+						.clipped()
+						.padding(.all)
+					Text(!text.isEmpty ? "list_filter_no_result_found" : "conversations_list_empty")
+						.default_text_style_800(styleSize: 16)
+					Spacer()
+					Spacer()
+				}
+				.padding(.all)
+			}
 		}
 	}
 	
@@ -229,53 +256,90 @@ struct ConversationsListFragment: View {
 	}
 }
 
-private struct Mango9InboxConversationRow: View {
-	@ObservedObject private var store = Mango9ChatStore.shared
+private struct Mango9ConversationTabs: View {
+	@Binding var selectedTab: Mango9ConversationTab
+	let smsUnreadCount: Int
+	let teamUnreadCount: Int
 
 	var body: some View {
-		HStack(spacing: 12) {
-			ZStack {
-				Circle()
-					.fill(Color(uiColor: .systemBlue))
-					.frame(width: 50, height: 50)
-				Image(systemName: "message.fill")
-					.font(.system(size: 21, weight: .semibold))
-					.foregroundStyle(Color.white)
-			}
-
-			VStack(alignment: .leading, spacing: 4) {
-				Text("Mango9 Team Chat")
-					.font(.custom("NotoSans-Bold", size: 14))
-					.foregroundStyle(Color.grayMain2c800)
-					.lineLimit(1)
-				Text(previewText)
-					.default_text_style_uncolored(styleSize: 13)
-					.foregroundStyle(Color.grayMain2c400)
-					.lineLimit(1)
-			}
-			.frame(maxWidth: .infinity, alignment: .leading)
-
-			if store.teamUnreadCount > 0 {
-				Text(store.teamUnreadCount < 100 ? String(store.teamUnreadCount) : "99+")
-					.font(.system(size: 10, weight: .bold))
-					.foregroundStyle(Color.white)
-					.frame(minWidth: 22, minHeight: 22)
-					.padding(.horizontal, store.teamUnreadCount > 9 ? 4 : 0)
-					.background(Color.redDanger500)
-					.clipShape(Capsule())
-					.accessibilityLabel("\(store.teamUnreadCount) unread Mango9 messages")
-			}
+		HStack(spacing: 0) {
+			tabButton(
+				title: "SMS",
+				tab: .sms,
+				unreadCount: smsUnreadCount
+			)
+			tabButton(
+				title: "Team Chat",
+				tab: .team,
+				unreadCount: teamUnreadCount
+			)
 		}
-		.frame(minHeight: 50)
+		.frame(height: 48)
+		.background(Color.white)
+		.overlay(alignment: .bottom) {
+			Rectangle()
+				.fill(Color.gray200)
+				.frame(height: 1)
+		}
 	}
 
-	private var previewText: String {
-		guard let room = store.inboxPreviewRoom else {
-			return store.isConnected ? "No new messages" : "Connect to Team Chat"
+	private func tabButton(
+		title: String,
+		tab: Mango9ConversationTab,
+		unreadCount: Int
+	) -> some View {
+		let isSelected = selectedTab == tab
+		return Button {
+			withAnimation(.easeInOut(duration: 0.18)) {
+				selectedTab = tab
+			}
+		} label: {
+			VStack(spacing: 0) {
+				Spacer(minLength: 2)
+				HStack(spacing: 7) {
+					Text(title)
+						.font(.custom("NotoSans-SemiBold", size: 14))
+						.foregroundStyle(isSelected ? Color.orangeMain500 : Color.grayMain2c500)
+					if unreadCount > 0 {
+						Text(unreadCount < 100 ? String(unreadCount) : "99+")
+							.font(.system(size: 10, weight: .bold))
+							.foregroundStyle(Color.white)
+							.padding(.horizontal, 6)
+							.frame(minHeight: 19)
+							.background(Color.orangeMain500)
+							.clipShape(Capsule())
+					}
+				}
+				.frame(maxWidth: .infinity, maxHeight: .infinity)
+				Capsule()
+					.fill(isSelected ? Color.orangeMain500 : Color.clear)
+					.frame(width: 54, height: 3)
+			}
+			.contentShape(Rectangle())
 		}
-		let message = room.lastMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-		let preview = message.isEmpty ? "Attachment" : message
-		return "\(store.roomTitle(room)): \(preview)"
+		.buttonStyle(.plain)
+		.frame(maxWidth: .infinity)
+		.accessibilityAddTraits(isSelected ? .isSelected : [])
+	}
+}
+
+private struct Mango9ConversationConnectionStatus: View {
+	let isConnecting: Bool
+	let isConnected: Bool
+
+	var body: some View {
+		Text(statusText)
+			.default_text_style(styleSize: 11)
+			.foregroundStyle(Color.grayMain2c500)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.padding(.horizontal, 16)
+			.padding(.vertical, 7)
+			.background(Color.white)
+	}
+
+	private var statusText: String {
+		if isConnecting { return "Connecting…" }
+		return isConnected ? "Connected" : "Disconnected"
 	}
 }
 

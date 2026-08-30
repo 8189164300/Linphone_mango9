@@ -19,6 +19,7 @@
 
 import SwiftUI
 import PhotosUI
+import AVFoundation
 
 // swiftlint:disable line_length
 struct PhotoPicker: UIViewControllerRepresentable {
@@ -94,23 +95,23 @@ struct PhotoPicker: UIViewControllerRepresentable {
 				}
 			} else if itemProvider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
 				itemProvider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { urlFile, error in
-					if urlFile != nil {
-						do {
-							let dataResult = try Data(contentsOf: urlFile!)
-							let urlImage = self.saveMedia(name: urlFile!.lastPathComponent, data: dataResult, type: .video)
-							let urlThumbnail = getURLThumbnail(name: urlFile!.lastPathComponent)
-							
-							if urlImage != nil {
-								let attachment = Attachment(id: UUID().uuidString, name: urlFile!.lastPathComponent, thumbnail: urlThumbnail, full: urlImage!, type: .video)
-								medias.append(attachment)
-							}
-						} catch {
-							
-						}
-					} else {
+					guard let urlFile else {
 						Log.error("Could not load file representation: \(error?.localizedDescription ?? "unknown error")")
+						dispatchGroup.leave()
+						return
 					}
-					dispatchGroup.leave()
+					prepareVideoForMessaging(
+						sourceURL: urlFile,
+						suggestedName: urlFile.lastPathComponent
+					) { result in
+						switch result {
+						case .success(let attachment):
+							medias.append(attachment)
+						case .failure(let error):
+							Log.error("Could not prepare video attachment: \(error.localizedDescription)")
+						}
+						dispatchGroup.leave()
+					}
 				}
 			}
 		}
@@ -151,6 +152,90 @@ struct PhotoPicker: UIViewControllerRepresentable {
 	static func getURLThumbnail(name: String) -> URL {
 		return FileManager.default.temporaryDirectory.appendingPathComponent("preview_" + (name.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? "") + ".png")
 	}
+
+	static func prepareVideoForMessaging(
+		sourceURL: URL,
+		suggestedName: String,
+		completion: @escaping (Result<Attachment, Error>) -> Void
+	) {
+		let temporaryDirectory = FileManager.default.temporaryDirectory
+		let sourceExtension = sourceURL.pathExtension.isEmpty ? "mov" : sourceURL.pathExtension
+		let sourceCopy = temporaryDirectory
+			.appendingPathComponent("mango9-video-source-\(UUID().uuidString.lowercased())")
+			.appendingPathExtension(sourceExtension)
+		let outputURL = temporaryDirectory
+			.appendingPathComponent("mango9-video-\(UUID().uuidString.lowercased())")
+			.appendingPathExtension("mp4")
+
+		do {
+			try FileManager.default.copyItem(at: sourceURL, to: sourceCopy)
+		} catch {
+			completion(.failure(error))
+			return
+		}
+
+		let asset = AVURLAsset(url: sourceCopy)
+		guard let exporter = AVAssetExportSession(
+			asset: asset,
+			presetName: AVAssetExportPresetMediumQuality
+		), exporter.supportedFileTypes.contains(.mp4) else {
+			try? FileManager.default.removeItem(at: sourceCopy)
+			completion(.failure(PhotoPickerVideoError.unsupported))
+			return
+		}
+
+		exporter.outputURL = outputURL
+		exporter.outputFileType = .mp4
+		exporter.shouldOptimizeForNetworkUse = true
+		exporter.exportAsynchronously {
+			defer {
+				try? FileManager.default.removeItem(at: sourceCopy)
+			}
+			guard exporter.status == .completed else {
+				try? FileManager.default.removeItem(at: outputURL)
+				completion(.failure(exporter.error ?? PhotoPickerVideoError.exportFailed))
+				return
+			}
+
+			do {
+				let thumbnailURL = try createVideoThumbnail(for: outputURL)
+				let baseName = (suggestedName as NSString).deletingPathExtension
+				let attachmentName = (baseName.isEmpty ? "video" : baseName) + ".mp4"
+				let size = try outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+				completion(.success(Attachment(
+					id: UUID().uuidString,
+					name: attachmentName,
+					thumbnail: thumbnailURL,
+					full: outputURL,
+					type: .video,
+					size: size
+				)))
+			} catch {
+				try? FileManager.default.removeItem(at: outputURL)
+				completion(.failure(error))
+			}
+		}
+	}
+
+	private static func createVideoThumbnail(for videoURL: URL) throws -> URL {
+		let generator = AVAssetImageGenerator(asset: AVURLAsset(url: videoURL))
+		generator.appliesPreferredTrackTransform = true
+		generator.maximumSize = CGSize(width: 1_280, height: 1_280)
+		generator.requestedTimeToleranceBefore = .positiveInfinity
+		generator.requestedTimeToleranceAfter = .positiveInfinity
+		let image = try generator.copyCGImage(
+			at: CMTime(seconds: 0.1, preferredTimescale: 600),
+			actualTime: nil
+		)
+		guard let data = UIImage(cgImage: image).jpegData(compressionQuality: 0.82) else {
+			throw PhotoPickerVideoError.thumbnailFailed
+		}
+		let thumbnailURL = FileManager.default.temporaryDirectory
+			.appendingPathComponent("mango9-video-thumbnail-\(UUID().uuidString.lowercased())")
+			.appendingPathExtension("jpg")
+		try data.write(to: thumbnailURL, options: .atomic)
+		return thumbnailURL
+	}
 	
 	func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
 	
@@ -169,6 +254,23 @@ struct PhotoPicker: UIViewControllerRepresentable {
 		func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
 			picker.dismiss(animated: true)
 			parent.onComplete(results)
+		}
+	}
+}
+
+private enum PhotoPickerVideoError: LocalizedError {
+	case unsupported
+	case exportFailed
+	case thumbnailFailed
+
+	var errorDescription: String? {
+		switch self {
+		case .unsupported:
+			return "This video format cannot be prepared for messaging."
+		case .exportFailed:
+			return "The video could not be prepared for messaging."
+		case .thumbnailFailed:
+			return "The video preview could not be created."
 		}
 	}
 }

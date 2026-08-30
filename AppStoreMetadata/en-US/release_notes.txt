@@ -1,13 +1,8 @@
-What’s new in 6.2.8:
-• SMS and Team Chat unread indicators clear immediately when opened
-• App badge counts remain synchronized with unread conversations
-• Suggested contacts now open directly in a new conversation
-• Carrier SMS menus now show only supported messaging actions
-• Muted SMS conversations show a crossed bell and suppress alerts
-• Unmuting now remains stable when returning to the conversation list
-• Conversation Info shows SMS activity and exact CRM record matches
-• Matching call history stored on this iPhone is summarized separately
-• The installed app name is consistently shown as Mango9
-• Consistent Mango9 colors across launch, onboarding, permissions, and sign-in
-• SMS delivery updates remain accurate while refreshing in the background
-• Additional messaging and interface reliability improvements
+What’s new in 6.2.9:
+• Conversations now have dedicated SMS and Team Chat tabs
+• Video messages display clear thumbnails with a simple play button
+• Sent and received videos open in a reliable full-screen player
+• Videos selected from Photos or Files are prepared for broader device compatibility
+• Internal storage filenames are no longer shown on video previews
+• Attachment loading and caching are smoother in longer conversations
+• Additional messaging and media reliability improvements

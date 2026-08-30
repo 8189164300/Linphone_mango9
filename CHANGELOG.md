@@ -1,6 +1,20 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [6.2.9] - 2026-08-29
+
+### Added
+- Dedicated SMS and Team Chat tabs in Conversations
+- Video thumbnails and full-screen playback for SMS and Team Chat attachments
+
+### Changed
+- Outgoing videos selected from Photos or Files are prepared as network-optimized MP4 files
+- Image and video attachments use bounded in-memory and temporary-file caching for smoother loading
+
+### Fixed
+- Received remote videos are downloaded and validated before playback
+- Video previews no longer display internal storage filenames
+
 Group changes to describe their impact on the project, as follows:
 
 	Added for new features.

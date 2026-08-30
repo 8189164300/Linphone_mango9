@@ -22,6 +22,7 @@ import WebKit
 import QuickLook
 import Combine
 import AVFoundation
+import AVKit
 import Photos
 import ImageIO
 
@@ -50,6 +51,7 @@ struct ChatBubbleView: View {
 	
 	@State private var selectedURLAttachment: URL?
 	@State private var previewImageAttachment: Attachment?
+	@State private var previewVideoAttachment: Attachment?
 	
 	@State private var showShareSheet = false
 	
@@ -580,6 +582,12 @@ struct ChatBubbleView: View {
 		.fullScreenCover(item: $previewImageAttachment) { attachment in
 			Mango9ImageAttachmentViewer(attachment: attachment)
 		}
+		.fullScreenCover(item: $previewVideoAttachment) { attachment in
+			Mango9VideoAttachmentViewer(
+				sourceURL: attachment.full,
+				name: attachment.name
+			)
+		}
 	}
 	
 	func containsDuplicates(strings: [String]) -> Bool {
@@ -600,23 +608,24 @@ struct ChatBubbleView: View {
 						.frame(width: previewWidth, height: previewHeight)
 
 					if attachment.type == .video {
-						VStack(spacing: 8) {
+						Mango9VideoThumbnailView(
+							videoURL: attachment.full,
+							thumbnailURL: attachment.thumbnail
+						)
+						.frame(width: previewWidth, height: previewHeight)
+						.overlay {
+							Color.black.opacity(0.18)
 							Image("play-fill")
 								.renderingMode(.template)
 								.resizable()
 								.scaledToFit()
 								.foregroundStyle(Color.white)
+								.shadow(radius: 4)
 								.frame(width: 44, height: 44)
-							Text(attachment.name)
-								.font(.system(size: 12, weight: .semibold))
-								.foregroundStyle(Color.white)
-								.lineLimit(1)
 						}
-						.frame(width: previewWidth, height: previewHeight)
-						.background(Color.black.opacity(0.72))
 						.onTapGesture {
 							if !isPressed && !didLongPress {
-								selectedURLAttachment = attachment.full
+								previewVideoAttachment = attachment
 							}
 						}
 					} else {
@@ -753,12 +762,21 @@ struct ChatBubbleView: View {
 									.frame(width: sizeCard, height: sizeCard)
 
 								if attachment.type == .video {
-									Image("play-fill")
-										.renderingMode(.template)
-										.resizable()
-										.scaledToFit()
-										.foregroundStyle(Color.white)
-										.frame(width: 40, height: 40)
+									Mango9VideoThumbnailView(
+										videoURL: attachment.full,
+										thumbnailURL: attachment.thumbnail
+									)
+									.frame(width: sizeCard, height: sizeCard)
+									.overlay {
+										Color.black.opacity(0.18)
+										Image("play-fill")
+											.renderingMode(.template)
+											.resizable()
+											.scaledToFit()
+											.foregroundStyle(Color.white)
+											.shadow(radius: 3)
+											.frame(width: 40, height: 40)
+									}
 								} else {
 									CachedAsyncImage(
 										url: attachment.thumbnail,
@@ -792,7 +810,7 @@ struct ChatBubbleView: View {
 							.onTapGesture {
 								guard !isPressed && !didLongPress else { return }
 								if attachment.type == .video {
-									selectedURLAttachment = attachment.full
+									previewVideoAttachment = attachment
 								} else {
 									previewImageAttachment = attachment
 								}
@@ -1393,6 +1411,109 @@ private actor Mango9AttachmentImagePipeline {
 	}
 }
 
+private final class Mango9VideoThumbnailCache {
+	static let shared: NSCache<NSString, UIImage> = {
+		let cache = NSCache<NSString, UIImage>()
+		cache.countLimit = 40
+		cache.totalCostLimit = 48 * 1_024 * 1_024
+		return cache
+	}()
+}
+
+private actor Mango9VideoThumbnailPipeline {
+	static let shared = Mango9VideoThumbnailPipeline()
+
+	private var inFlight: [String: Task<UIImage?, Never>] = [:]
+
+	func image(from videoURL: URL, maxPixelSize: CGFloat) async -> UIImage? {
+		let cacheKey = "\(videoURL.absoluteString)|\(Int(maxPixelSize))" as NSString
+		if let cachedImage = Mango9VideoThumbnailCache.shared.object(forKey: cacheKey) {
+			return cachedImage
+		}
+		if let task = inFlight[cacheKey as String] {
+			return await task.value
+		}
+
+		let task = Task.detached(priority: .utility) { () -> UIImage? in
+			let generator = AVAssetImageGenerator(asset: AVURLAsset(url: videoURL))
+			generator.appliesPreferredTrackTransform = true
+			generator.maximumSize = CGSize(width: maxPixelSize, height: maxPixelSize)
+			generator.requestedTimeToleranceBefore = .positiveInfinity
+			generator.requestedTimeToleranceAfter = .positiveInfinity
+			guard let cgImage = try? generator.copyCGImage(
+				at: CMTime(seconds: 0.1, preferredTimescale: 600),
+				actualTime: nil
+			) else {
+				return nil
+			}
+			return UIImage(cgImage: cgImage)
+		}
+
+		inFlight[cacheKey as String] = task
+		let image = await task.value
+		inFlight[cacheKey as String] = nil
+		if let image {
+			let pixelWidth = Int(image.size.width * image.scale)
+			let pixelHeight = Int(image.size.height * image.scale)
+			Mango9VideoThumbnailCache.shared.setObject(
+				image,
+				forKey: cacheKey,
+				cost: max(pixelWidth * pixelHeight * 4, 1)
+			)
+		}
+		return image
+	}
+}
+
+struct Mango9VideoThumbnailView: View {
+	let videoURL: URL
+	let thumbnailURL: URL?
+	var maxPixelSize: CGFloat = 1_200
+
+	@State private var image: UIImage?
+	@State private var failed = false
+
+	var body: some View {
+		ZStack {
+			Color.black.opacity(0.72)
+			if let image {
+				Image(uiImage: image)
+					.resizable()
+					.interpolation(.medium)
+					.scaledToFill()
+			} else if failed {
+				Image(systemName: "video.fill")
+					.font(.system(size: 30, weight: .semibold))
+					.foregroundStyle(Color.white.opacity(0.72))
+			} else {
+				ProgressView()
+					.tint(.white)
+			}
+		}
+		.clipped()
+		.task(id: "\(videoURL.absoluteString)|\(thumbnailURL?.absoluteString ?? "")") {
+			image = nil
+			failed = false
+			if let thumbnailURL, thumbnailURL != videoURL,
+			   let thumbnail = await Mango9AttachmentImagePipeline.shared.image(
+				from: thumbnailURL,
+				maxPixelSize: maxPixelSize
+			   ) {
+				guard !Task.isCancelled else { return }
+				image = thumbnail
+				return
+			}
+			let generated = await Mango9VideoThumbnailPipeline.shared.image(
+				from: videoURL,
+				maxPixelSize: maxPixelSize
+			)
+			guard !Task.isCancelled else { return }
+			image = generated
+			failed = generated == nil
+		}
+	}
+}
+
 struct CachedAsyncImage<Placeholder: View>: View {
 	let url: URL
 	let placeholder: Placeholder
@@ -1578,6 +1699,221 @@ struct Mango9RemoteAudioPlayer: View {
 	private func formatTime(_ seconds: Double) -> String {
 		let totalSeconds = max(Int(seconds.rounded(.down)), 0)
 		return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+	}
+}
+
+actor Mango9VideoAttachmentPipeline {
+	static let shared = Mango9VideoAttachmentPipeline()
+
+	private var preparedURLs: [URL: URL] = [:]
+	private var didPruneCache = false
+
+	func playableURL(for sourceURL: URL, name: String) async throws -> URL {
+		if sourceURL.isFileURL {
+			guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+				throw Mango9VideoAttachmentError.fileUnavailable
+			}
+			return sourceURL
+		}
+
+		if let preparedURL = preparedURLs[sourceURL],
+		   FileManager.default.fileExists(atPath: preparedURL.path) {
+			return preparedURL
+		}
+
+		let cacheDirectory = try Self.cacheDirectory()
+		if !didPruneCache {
+			Self.pruneCache(in: cacheDirectory)
+			didPruneCache = true
+		}
+
+		var request = URLRequest(url: sourceURL)
+		request.cachePolicy = .returnCacheDataElseLoad
+		request.timeoutInterval = 120
+		let (temporaryURL, response) = try await URLSession.shared.download(for: request)
+		if let httpResponse = response as? HTTPURLResponse,
+		   !(200...299).contains(httpResponse.statusCode) {
+			throw Mango9VideoAttachmentError.downloadFailed
+		}
+
+		let resourceValues = try temporaryURL.resourceValues(forKeys: [.fileSizeKey])
+		guard (resourceValues.fileSize ?? 0) > 0 else {
+			throw Mango9VideoAttachmentError.downloadFailed
+		}
+
+		let fileExtension = Self.preferredExtension(
+			name: name,
+			sourceURL: sourceURL,
+			response: response
+		)
+		let destination = cacheDirectory
+			.appendingPathComponent(UUID().uuidString.lowercased())
+			.appendingPathExtension(fileExtension)
+		do {
+			try FileManager.default.moveItem(at: temporaryURL, to: destination)
+		} catch {
+			throw Mango9VideoAttachmentError.downloadFailed
+		}
+
+		preparedURLs[sourceURL] = destination
+		return destination
+	}
+
+	private nonisolated static func cacheDirectory() throws -> URL {
+		let baseURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+		let directory = baseURL.appendingPathComponent("Mango9VideoAttachments", isDirectory: true)
+		try FileManager.default.createDirectory(
+			at: directory,
+			withIntermediateDirectories: true
+		)
+		return directory
+	}
+
+	private nonisolated static func preferredExtension(
+		name: String,
+		sourceURL: URL,
+		response: URLResponse
+	) -> String {
+		let candidates = [
+			(name as NSString).pathExtension,
+			((response.suggestedFilename ?? "") as NSString).pathExtension,
+			sourceURL.pathExtension,
+		]
+		for candidate in candidates {
+			let value = candidate.lowercased()
+			if ["mp4", "mov", "m4v"].contains(value) {
+				return value
+			}
+		}
+		return "mp4"
+	}
+
+	private nonisolated static func pruneCache(in directory: URL) {
+		guard let files = try? FileManager.default.contentsOfDirectory(
+			at: directory,
+			includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+			options: [.skipsHiddenFiles]
+		) else {
+			return
+		}
+		let expirationDate = Date().addingTimeInterval(-24 * 60 * 60)
+		for file in files {
+			let values = try? file.resourceValues(forKeys: [.contentModificationDateKey])
+			if (values?.contentModificationDate ?? .distantPast) < expirationDate {
+				try? FileManager.default.removeItem(at: file)
+			}
+		}
+	}
+}
+
+enum Mango9VideoAttachmentError: LocalizedError {
+	case fileUnavailable
+	case downloadFailed
+	case unsupported
+
+	var errorDescription: String? {
+		"This video could not be loaded. Check your connection and try again."
+	}
+}
+
+struct Mango9VideoAttachmentViewer: View {
+	@Environment(\.dismiss) private var dismiss
+
+	let sourceURL: URL
+	let name: String
+
+	@State private var player: AVPlayer?
+	@State private var isLoading = true
+	@State private var errorMessage: String?
+	@State private var reloadToken = 0
+
+	var body: some View {
+		ZStack {
+			Color.black.ignoresSafeArea()
+
+			if let player {
+				VideoPlayer(player: player)
+					.ignoresSafeArea(edges: .horizontal)
+			} else if isLoading {
+				VStack(spacing: 12) {
+					ProgressView()
+						.tint(.white)
+					Text("Preparing video…")
+						.font(.system(size: 14, weight: .medium))
+						.foregroundStyle(Color.white.opacity(0.85))
+				}
+			} else {
+				VStack(spacing: 16) {
+					Image(systemName: "exclamationmark.triangle")
+						.font(.system(size: 34, weight: .semibold))
+					Text(errorMessage ?? Mango9VideoAttachmentError.unsupported.localizedDescription)
+						.font(.system(size: 15, weight: .medium))
+						.foregroundStyle(Color.white)
+						.multilineTextAlignment(.center)
+						.padding(.horizontal, 32)
+					Button("Try Again") {
+						reloadToken += 1
+					}
+					.buttonStyle(.borderedProminent)
+				}
+				.foregroundStyle(Color.white)
+			}
+
+			VStack {
+				HStack(spacing: 12) {
+					Button(action: { dismiss() }) {
+						Image(systemName: "xmark")
+							.font(.system(size: 16, weight: .bold))
+							.foregroundStyle(Color.white)
+							.frame(width: 42, height: 42)
+							.background(.ultraThinMaterial)
+							.clipShape(Circle())
+					}
+					.accessibilityLabel("Close video")
+
+					Spacer()
+				}
+				.padding(.horizontal, 18)
+				.padding(.top, 12)
+				Spacer()
+			}
+		}
+		.task(id: "\(sourceURL.absoluteString)|\(reloadToken)") {
+			await preparePlayer()
+		}
+		.onDisappear {
+			player?.pause()
+			player = nil
+		}
+	}
+
+	@MainActor
+	private func preparePlayer() async {
+		player?.pause()
+		player = nil
+		isLoading = true
+		errorMessage = nil
+		do {
+			let playableURL = try await Mango9VideoAttachmentPipeline.shared.playableURL(
+				for: sourceURL,
+				name: name
+			)
+			guard !Task.isCancelled else { return }
+			let asset = AVURLAsset(url: playableURL)
+			guard try await asset.load(.isPlayable) else {
+				throw Mango9VideoAttachmentError.unsupported
+			}
+			guard !Task.isCancelled else { return }
+			let newPlayer = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+			player = newPlayer
+			isLoading = false
+			newPlayer.play()
+		} catch {
+			guard !Task.isCancelled else { return }
+			isLoading = false
+			errorMessage = (error as? LocalizedError)?.errorDescription
+				?? Mango9VideoAttachmentError.downloadFailed.localizedDescription
+		}
 	}
 }
 

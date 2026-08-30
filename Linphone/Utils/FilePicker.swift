@@ -63,8 +63,6 @@ struct FilePicker: UIViewControllerRepresentable {
 				if !mimeType.isEmpty {
 					let type = mimeType.components(separatedBy: "/").first ?? ""
 					let subtype = mimeType.components(separatedBy: "/").last ?? ""
-					let dataResult = try Data(contentsOf: urlFile)
-					
 					var typeTmp: AttachmentType = .other
 					switch type {
 					case "image":
@@ -82,26 +80,31 @@ struct FilePicker: UIViewControllerRepresentable {
 					}
 					
 					if typeTmp == .video {
-						let urlImage = PhotoPicker.saveMedia(name: urlFile.lastPathComponent, data: dataResult, type: .video)
-						let urlThumbnail = PhotoPicker.getURLThumbnail(name: urlFile.lastPathComponent)
-						
-						if urlImage != nil {
-							let attachment = Attachment(id: UUID().uuidString, name: urlImage!.lastPathComponent, thumbnail: urlThumbnail, full: urlImage!, type: .video)
-							medias.append(attachment)
+						PhotoPicker.prepareVideoForMessaging(
+							sourceURL: urlFile,
+							suggestedName: urlFile.lastPathComponent
+						) { result in
+							if case .success(let attachment) = result {
+								medias.append(attachment)
+							}
+							dispatchGroup.leave()
 						}
 					} else {
+						let dataResult = try Data(contentsOf: urlFile)
 						let urlImage = PhotoPicker.saveMedia(name: urlFile.lastPathComponent, data: dataResult, type: typeTmp)
 						
 						if urlImage != nil {
 							let attachment = Attachment(id: UUID().uuidString, name: urlImage!.lastPathComponent, url: urlImage!, type: typeTmp)
 							medias.append(attachment)
 						}
+						dispatchGroup.leave()
 					}
+				} else {
+					dispatchGroup.leave()
 				}
 			} catch {
-				
+				dispatchGroup.leave()
 			}
-			dispatchGroup.leave()
 		}
 		
 		dispatchGroup.notify(queue: .main) {
