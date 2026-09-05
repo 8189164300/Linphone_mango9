@@ -1,6 +1,14 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [6.2.10] - 2026-09-04
+
+### Fixed
+- Opening a Team Chat push now preserves the intended conversation and its history
+- Older navigation tasks cannot clear a newer conversation
+- Account selection completes before opening the notification's conversation
+- Reconnection preserves the active conversation, with loading and retry feedback
+
 ## [6.2.9] - 2026-08-29
 
 ### Added

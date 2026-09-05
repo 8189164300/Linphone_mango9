@@ -1,8 +1,4 @@
-What’s new in 6.2.9:
-• Conversations now have dedicated SMS and Team Chat tabs
-• Video messages display clear thumbnails with a simple play button
-• Sent and received videos open in a reliable full-screen player
-• Videos selected from Photos or Files are prepared for broader device compatibility
-• Internal storage filenames are no longer shown on video previews
-• Attachment loading and caching are smoother in longer conversations
-• Additional messaging and media reliability improvements
+What’s new in 6.2.10:
+• Fixed an issue where tapping a Team Chat notification could open an empty conversation
+• Improved conversation loading when reconnecting or switching accounts
+• Added clearer loading and retry feedback when chat history cannot be loaded

@@ -28,7 +28,11 @@ The test host must be signed, including on the simulator: Linphone requires its 
 
 Validation on September 4, 2026: all 33 selected tests passed on iOS 26.5, including eight new navigation tests. The development-signed iPhone build succeeded with version 6.2.9 and build number 31 (`CURRENT_PROJECT_VERSION=31`). Build outputs and test results are on the external Mango9BuildCache volume; no App Store submission is part of this change.
 
-## Physical-device acceptance still required
+## Physical-device acceptance
+
+On September 4, 2026, the user confirmed that a fresh Team Chat push arrived and opened the conversation correctly on the installed 6.2.9 development build 31. Earlier tests targeted this phone's stale production registration on an inactive account. Opening Team Chat on the intended account refreshed its sandbox registration; the next test passed. This confirms the tested scenario, not every variation below. The App Store package uses version 6.2.10 (31), since 6.2.9 is already released, with the same runtime fix.
+
+Additional scenarios for regression coverage:
 
 1. With Mango9 backgrounded on the correct account, tap a lead chat push. The existing conversation and its history must open without backing out.
 2. Repeat from a cold launch and while another conversation is already open.

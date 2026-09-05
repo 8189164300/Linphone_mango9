@@ -1,26 +1,25 @@
 # Mango9 iOS App Store Submission
 
-This file is the release gate for the Mango9 iOS 6.2.9 update.
+This file is the release gate for the Mango9 iOS 6.2.10 update.
 Do not press **Submit for Review** until every required item below is complete.
 
 ## Release identity
 
 - App name: `Mango9`
 - Bundle ID: `com.mango9.phone`
-- Version: `6.2.9`
-- Current build: `30`
+- Version: `6.2.10`
+- Current build: `31`
 - Primary category: `Business`
 - Price: `Free`
 - Release method: `Manually release this version`
 - Seller/signing identity: George Gabrielyan (individual Apple Developer account)
 
-## What's New in 6.2.9
+## What's New in 6.2.10
 
-Conversations now use dedicated SMS and Team Chat tabs. Video messages display
-thumbnails and open in a full-screen player in both carrier SMS and Team Chat.
-Videos selected from Photos or Files are prepared as network-optimized MP4 files
-for broader device compatibility. Video previews no longer expose internal
-storage filenames, and media caching improves loading in longer conversations.
+Fixed an issue where tapping a Team Chat notification could open an empty
+conversation. Conversation loading is more reliable when reconnecting or
+switching accounts, and failed history requests provide clearer retry feedback.
+The existing SMS, calls, and message-delivery routes are unchanged.
 
 ## Business model statement
 
@@ -164,7 +163,7 @@ Complete this only after the final TestFlight candidate has passed every test:
 
 1. Increment the build number if any code, resource, manifest, entitlement, or
    configuration changes.
-2. Choose the immutable tag name, such as `ios-6.2.9-build-30`, and change
+2. Choose the immutable tag name, such as `ios-6.2.10-build-31`, and change
    `MANGO9_SOURCE_CODE_URL` in `Shared.xcconfig` to that tag URL.
 3. Commit the exact release source, including the final source URL.
 4. Create the chosen tag on that commit and push both the commit and tag.
