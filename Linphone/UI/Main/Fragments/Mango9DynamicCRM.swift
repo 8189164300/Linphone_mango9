@@ -223,6 +223,8 @@ final class Mango9ChatStore: ObservableObject {
 	@Published private(set) var isConnecting = false
 	@Published private(set) var isConnected = false
 	@Published private(set) var errorMessage: String?
+	@Published private(set) var isOpeningConversation = false
+	@Published private(set) var conversationError: String?
 
 	private struct PendingCall {
 		let method: String
@@ -235,6 +237,7 @@ final class Mango9ChatStore: ObservableObject {
 	private var reconnectTask: Task<Void, Never>?
 	private var intentionallyDisconnected = false
 	private var openingUserId: Int?
+	private var chatOpenState = Mango9ChatOpenState()
 	private var chatToken: String?
 	private var chatTokenExpiresAt: Date?
 	private var uploadURL: URL?
@@ -256,6 +259,7 @@ final class Mango9ChatStore: ObservableObject {
 			return
 		}
 		if isConnected,
+		   !isConnecting,
 		   connectedIdentity == requestedIdentity,
 		   !force {
 			return
@@ -272,10 +276,15 @@ final class Mango9ChatStore: ObservableObject {
 			}
 		}
 
-			if isConnecting || isConnected || socket != nil {
-				let preserveData = connectedIdentity == requestedIdentity ||
-					connectingIdentity == requestedIdentity
-				disconnect(clearData: !preserveData)
+		guard !Task.isCancelled,
+		      Mango9SessionStore.isActive(sipIdentity: requestedIdentity) else { return }
+		if isConnecting || isConnected || socket != nil {
+			let preserveData = connectedIdentity == requestedIdentity ||
+				connectingIdentity == requestedIdentity
+			disconnect(
+				clearData: !preserveData,
+				preserveConversation: preserveData || chatOpenState.current?.identity == requestedIdentity
+			)
 		}
 		connectionGeneration += 1
 		let generation = connectionGeneration
@@ -331,7 +340,11 @@ final class Mango9ChatStore: ObservableObject {
 			receiveNext(on: task)
 
 			try await loadDirectory()
-			await registerRemotePushTokenIfAvailable()
+			// Chat readiness must not wait for the separate push-token HTTP registration.
+			Task { [weak self] in
+				guard let self, self.isCurrentConnection(generation: generation, identity: requestedIdentity) else { return }
+				await self.registerRemotePushTokenIfAvailable()
+			}
 		} catch {
 			guard isCurrentConnection(
 				generation: generation,
@@ -346,7 +359,7 @@ final class Mango9ChatStore: ObservableObject {
 		}
 	}
 
-	func disconnect(clearData: Bool = true) {
+	func disconnect(clearData: Bool = true, preserveConversation: Bool = false) {
 		connectionGeneration += 1
 		intentionallyDisconnected = true
 		reconnectTask?.cancel()
@@ -357,9 +370,14 @@ final class Mango9ChatStore: ObservableObject {
 		isConnected = false
 		connectingIdentity = nil
 		connectedIdentity = nil
-		activeRoomId = nil
-		activeSMSPhone = nil
-		openingUserId = nil
+		if !preserveConversation {
+			activeRoomId = nil
+			activeSMSPhone = nil
+			openingUserId = nil
+			chatOpenState = Mango9ChatOpenState()
+			isOpeningConversation = false
+			conversationError = nil
+		}
 		chatToken = nil
 		chatTokenExpiresAt = nil
 		uploadURL = nil
@@ -395,8 +413,9 @@ final class Mango9ChatStore: ObservableObject {
 			return
 		}
 
-		if activeRoomId == nil && activeSMSPhone == nil {
-			await connectIfNeeded(force: true)
+		if activeRoomId == nil && activeSMSPhone == nil && !isOpeningConversation {
+			// A push may already be bootstrapping the socket before its room is resolved.
+			await connectIfNeeded(force: !isConnecting)
 			return
 		}
 
@@ -407,6 +426,9 @@ final class Mango9ChatStore: ObservableObject {
 
 		do {
 			try await loadDirectory()
+			if let activeRoomId, !isOpeningConversation {
+				try await loadMessages(roomId: activeRoomId)
+			}
 			if let activeSMSPhone {
 				try await loadSMSMessages(phone: activeSMSPhone)
 			}
@@ -421,6 +443,18 @@ final class Mango9ChatStore: ObservableObject {
 		}
 		activeRoomId = nil
 		openingUserId = nil
+		chatOpenState = Mango9ChatOpenState()
+		isOpeningConversation = false
+		conversationError = nil
+		messages = []
+	}
+
+	func closeConversation(owner: UUID) {
+		guard chatOpenState.cancel(owner: owner) else { return }
+		activeRoomId = nil
+		openingUserId = nil
+		isOpeningConversation = false
+		conversationError = nil
 		messages = []
 	}
 
@@ -440,6 +474,9 @@ final class Mango9ChatStore: ObservableObject {
 			return
 		}
 		activeRoomId = nil
+		chatOpenState = Mango9ChatOpenState()
+		isOpeningConversation = false
+		conversationError = nil
 		messages = []
 		activeSMSPhone = normalized
 		smsMessages = smsMessageCache[smsCacheKey(phone: normalized)] ?? []
@@ -492,24 +529,45 @@ final class Mango9ChatStore: ObservableObject {
 		closeConversation(roomId: roomId)
 	}
 
-	func openConversation(with userId: Int, fallbackName: String = "") async {
+	func openConversation(with userId: Int, fallbackName: String = "", owner: UUID) async {
+		await openConversation(roomId: nil, userId: userId, fallbackName: fallbackName, owner: owner)
+	}
+
+	func openRoom(_ room: Mango9ChatRoom, owner: UUID) async {
+		await openConversation(roomId: room.id, userId: nil, fallbackName: "", owner: owner)
+	}
+
+	private func openConversation(roomId: String?, userId: Int?, fallbackName: String, owner: UUID) async {
+		guard !Task.isCancelled else { return }
 		closeSMSConversation()
-		if let existingRoom = directRoom(with: userId) {
-			markRoomReadLocally(existingRoom.id)
-		}
+		let request = chatOpenState.begin(owner: owner, identity: Mango9SessionStore.activeIdentity)
 		openingUserId = userId
 		activeRoomId = nil
 		messages = []
 		errorMessage = nil
-		await connectIfNeeded()
-		guard isConnected, openingUserId == userId else {
-			return
+		conversationError = nil
+		isOpeningConversation = true
+		defer {
+			if chatOpenState.isCurrent(request, identity: Mango9SessionStore.activeIdentity) {
+				isOpeningConversation = false
+			}
 		}
-
 		do {
-			var room = directRoom(with: userId)
-			if room == nil {
+			await connectIfNeeded()
+			guard !Task.isCancelled,
+			      chatOpenState.isCurrent(request, identity: Mango9SessionStore.activeIdentity) else { return }
+			guard isConnected else {
+				throw Mango9ChatError.server(errorMessage ?? "Unable to connect to chat. Please try again.")
+			}
+			var room = roomId.flatMap { id in rooms.first { $0.id == id } }
+			if roomId == nil, let userId {
+				room = directRoom(with: userId)
+			}
+			// A push with a room ID must never create a different conversation with its sender.
+			if room == nil, roomId == nil, let userId {
 				let result = try await rpcCall("createChatGroup", params: [[String(userId)]])
+				guard !Task.isCancelled,
+				      chatOpenState.isCurrent(request, identity: Mango9SessionStore.activeIdentity) else { return }
 				room = Self.room(from: result)
 				if let room, !rooms.contains(where: { $0.id == room.id }) {
 					rooms.append(room)
@@ -521,8 +579,10 @@ final class Mango9ChatStore: ObservableObject {
 			activeRoomId = room.id
 			markRoomReadLocally(room.id)
 			try await loadMessages(roomId: room.id)
+			guard !Task.isCancelled,
+			      chatOpenState.isCurrent(request, identity: Mango9SessionStore.activeIdentity) else { return }
 
-			if users.first(where: { $0.id == userId }) == nil, !fallbackName.isEmpty {
+			if let userId, users.first(where: { $0.id == userId }) == nil, !fallbackName.isEmpty {
 				users.append(
 					Mango9ChatUser(
 						id: userId,
@@ -533,27 +593,9 @@ final class Mango9ChatStore: ObservableObject {
 				)
 			}
 		} catch {
-			errorMessage = error.localizedDescription
-		}
-	}
-
-	func openRoom(_ room: Mango9ChatRoom) async {
-		closeSMSConversation()
-		markRoomReadLocally(room.id)
-		openingUserId = nil
-		activeRoomId = nil
-		messages = []
-		errorMessage = nil
-		await connectIfNeeded()
-		guard isConnected else {
-			return
-		}
-
-		do {
-			activeRoomId = room.id
-			markRoomReadLocally(room.id)
-			try await loadMessages(roomId: room.id)
-		} catch {
+			guard !Task.isCancelled,
+			      chatOpenState.isCurrent(request, identity: Mango9SessionStore.activeIdentity) else { return }
+			conversationError = error.localizedDescription
 			errorMessage = error.localizedDescription
 		}
 	}
@@ -1007,10 +1049,13 @@ final class Mango9ChatStore: ObservableObject {
 	}
 
 	private func loadDirectory() async throws {
+		let generation = connectionGeneration
 		let rawUsers = try await rpcCall("getAllUsers", params: [])
 		let rawRooms = try await rpcCall("getAllRooms", params: [])
 		try await loadSMSDirectory()
 		let rawPresence = try await rpcCall("getPresence", params: [])
+		guard generation == connectionGeneration,
+		      connectedIdentity == Mango9SessionStore.activeIdentity else { throw CancellationError() }
 
 		users = Self.array(from: rawUsers).compactMap(Self.user(from:))
 			.filter { $0.id != currentUserId }
@@ -1074,7 +1119,16 @@ final class Mango9ChatStore: ObservableObject {
 	}
 
 	private func loadMessages(roomId: String) async throws {
+		let generation = connectionGeneration
+		let request = chatOpenState.current
 		let result = try await rpcCall("getChatMessages", params: [roomId, 0])
+		guard !Task.isCancelled,
+		      connectionGeneration == generation,
+		      activeRoomId == roomId,
+		      chatOpenState.current == request,
+		      connectedIdentity == Mango9SessionStore.activeIdentity else {
+			throw CancellationError()
+		}
 		guard let dictionary = result as? [String: Any] else {
 			throw Mango9ChatError.invalidResponse
 		}
@@ -1091,7 +1145,11 @@ final class Mango9ChatStore: ObservableObject {
 				params: [roomId, inboundIds, 3]
 			)
 		}
+		guard connectionGeneration == generation,
+		      activeRoomId == roomId,
+		      chatOpenState.current == request else { throw CancellationError() }
 		markRoomReadLocally(roomId)
+		conversationError = nil
 	}
 
 	private func markRoomReadLocally(_ roomId: String) {
@@ -1415,6 +1473,15 @@ final class Mango9ChatStore: ObservableObject {
 			}
 			reconnectTask = nil
 			await connectIfNeeded(force: true)
+			if isConnected, let activeRoomId, !isOpeningConversation {
+				do {
+					try await loadMessages(roomId: activeRoomId)
+				} catch {
+					if self.activeRoomId == activeRoomId {
+						conversationError = "Messages couldn’t be refreshed. Please try again."
+					}
+				}
+			}
 		}
 	}
 
@@ -1886,6 +1953,9 @@ struct Mango9ChatFragment: View {
 	@State private var isConfirmingDelete = false
 	@State private var reportedMessage: Mango9ChatMessage?
 	@State private var displayedRoomId: String?
+	@State private var conversationOwner = UUID()
+	@State private var reloadAttempt = 0
+	@State private var hasLoadedConversation = false
 	@FocusState private var composerFocused: Bool
 
 	init(user: Mango9ChatUser, onClose: (() -> Void)? = nil) {
@@ -1979,21 +2049,19 @@ struct Mango9ChatFragment: View {
 					.accessibilityLabel("Conversation safety options")
 				}
 		)
-		.task(id: conversationKey) {
+		.task(id: "\(conversationKey)-\(reloadAttempt)") {
+			hasLoadedConversation = false
 			if let user {
-				await store.openConversation(with: user.id, fallbackName: user.name)
+				await store.openConversation(with: user.id, fallbackName: user.name, owner: conversationOwner)
 			} else if let room {
-				await store.openRoom(room)
+				await store.openRoom(room, owner: conversationOwner)
 			}
-			let openedRoomId = store.activeRoomId
-			if Task.isCancelled {
-				store.closeConversation(roomId: openedRoomId)
-			} else {
-				displayedRoomId = openedRoomId
-			}
+			guard !Task.isCancelled else { return }
+			displayedRoomId = store.activeRoomId
+			hasLoadedConversation = true
 		}
 		.onDisappear {
-			store.closeConversation(roomId: displayedRoomId)
+			store.closeConversation(owner: conversationOwner)
 			displayedRoomId = nil
 		}
 		.confirmationDialog(
@@ -2112,7 +2180,18 @@ struct Mango9ChatFragment: View {
 						.foregroundStyle(Color.grayMain2c600)
 						.padding(.vertical, 24)
 					}
-					if store.messages.isEmpty && store.activeRoomId != nil {
+					if !hasLoadedConversation || store.isOpeningConversation {
+						ProgressView("Loading messages…")
+							.padding(.top, 36)
+					} else if let error = store.conversationError {
+						VStack(spacing: 12) {
+							Text("Messages couldn’t be loaded")
+								.font(.headline)
+							Text(error).font(.footnote).multilineTextAlignment(.center)
+							Button("Try Again") { reloadAttempt += 1 }
+						}
+						.padding(.vertical, 24)
+					} else if store.messages.isEmpty && store.activeRoomId != nil {
 						Text(emptyPrompt)
 							.default_text_style(styleSize: 12)
 							.foregroundStyle(Color.grayMain2c500)
@@ -2335,6 +2414,7 @@ struct Mango9ChatFragment: View {
 
 	private var canSend: Bool {
 		(!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !selectedMedia.isEmpty)
+			&& hasLoadedConversation && !store.isOpeningConversation
 			&& store.activeRoomId != nil
 			&& !isSending
 			&& !isDirectUserBlocked
@@ -2925,32 +3005,36 @@ private struct Mango9GroupMembersSheet: View {
 struct Mango9ChatStandaloneFragment: View {
 	@Binding var target: Mango9ChatTarget?
 	@ObservedObject private var store = Mango9ChatStore.shared
+	@State private var destination: Mango9ChatDestination?
+	@State private var loadError: String?
+	@State private var retry = 0
 
 	@ViewBuilder
 	private var conversation: some View {
-		if let roomId = target?.roomId,
-		   let room = store.rooms.first(where: { $0.id == roomId }) {
-			Mango9ChatFragment(
-				room: room,
-				onClose: close
-			)
-		} else if let target, target.roomId != nil, target.userId <= 0 {
-			ProgressView("Opening conversation…")
-				.task {
-					await store.connectIfNeeded()
-					await store.refreshDirectory()
+		switch destination {
+		case .room(let room):
+			Mango9ChatFragment(room: store.rooms.first { $0.id == room.id } ?? room, onClose: close)
+		case .user(let user):
+			Mango9ChatFragment(user: store.users.first { $0.id == user.id } ?? user, onClose: close)
+		case nil:
+			VStack(spacing: 16) {
+				if let loadError {
+					Text("Conversation couldn’t be opened").font(.headline)
+					Text(loadError).font(.footnote).multilineTextAlignment(.center)
+					Button("Try Again") { retry += 1 }
+				} else {
+					ProgressView("Opening conversation…")
 				}
-		} else if let target {
-			Mango9ChatFragment(
-				user: store.users.first(where: { $0.id == target.userId })
-					?? Mango9ChatUser(
-						id: target.userId,
-						name: target.name,
-						avatar: "",
-						category: ""
-					),
-				onClose: close
-			)
+			}
+			.padding(24)
+			.frame(maxWidth: .infinity, maxHeight: .infinity)
+			.navigationTitle(target?.name ?? "Team Chat")
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .navigationBarLeading) {
+					Button("Back", action: close)
+				}
+			}
 		}
 	}
 
@@ -2959,6 +3043,25 @@ struct Mango9ChatStandaloneFragment: View {
 			conversation
 		}
 		.navigationViewStyle(.stack)
+		.task(id: "\(target?.id ?? "")-\(retry)") {
+			guard let target else { return }
+			let identity = Mango9SessionStore.activeIdentity
+			loadError = nil
+			await store.connectIfNeeded()
+			if let roomId = target.roomId, !store.rooms.contains(where: { $0.id == roomId }) {
+				await store.refreshDirectory()
+			}
+			guard !Task.isCancelled, identity == Mango9SessionStore.activeIdentity else { return }
+			do {
+				guard store.isConnected else {
+					throw Mango9ChatError.server(store.errorMessage ?? "Unable to connect to chat. Please try again.")
+				}
+				// Resolve once. Directory updates must not replace a live conversation view.
+				destination = try target.resolve(rooms: store.rooms, users: store.users)
+			} catch {
+				loadError = error.localizedDescription
+			}
+		}
 	}
 
 	private func close() {
@@ -3519,6 +3622,49 @@ struct Mango9ChatTarget: Identifiable, Equatable {
 	}
 
 	var id: String { roomId ?? "user:\(userId)" }
+
+	func resolve(rooms: [Mango9ChatRoom], users: [Mango9ChatUser]) throws -> Mango9ChatDestination {
+		if let roomId {
+			guard let room = rooms.first(where: { $0.id == roomId }) else {
+				throw Mango9ChatError.server("This conversation is not available for the current account. Please try again.")
+			}
+			return .room(room)
+		}
+		guard userId > 0 else { throw Mango9ChatError.invalidResponse }
+		return .user(users.first { $0.id == userId }
+			?? Mango9ChatUser(id: userId, name: name, avatar: "", category: ""))
+	}
+}
+
+enum Mango9ChatDestination: Equatable {
+	case room(Mango9ChatRoom)
+	case user(Mango9ChatUser)
+}
+
+/// Owns an opening attempt, not just a room: an outgoing screen must not clear its replacement.
+struct Mango9ChatOpenState {
+	struct Request: Equatable {
+		let id = UUID()
+		let owner: UUID
+		let identity: String?
+	}
+	private(set) var current: Request?
+
+	mutating func begin(owner: UUID, identity: String?) -> Request {
+		let request = Request(owner: owner, identity: identity)
+		current = request
+		return request
+	}
+
+	func isCurrent(_ request: Request, identity: String?) -> Bool {
+		current == request && request.identity == identity
+	}
+
+	mutating func cancel(owner: UUID) -> Bool {
+		guard current?.owner == owner else { return false }
+		current = nil
+		return true
+	}
 }
 
 typealias Mango9Client = Mango9Lead

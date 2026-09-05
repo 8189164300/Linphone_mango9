@@ -78,6 +78,7 @@ struct ContentView: View {
 	@State var isShowCRMFragment = false
 	@State private var crmDeepLinkLeadId: Int?
 	@State private var mango9ChatTarget: Mango9ChatTarget?
+	@State private var mango9ChatPresentationID = UUID()
 	
 	@State var fullscreenVideo = false
 	
@@ -1768,6 +1769,7 @@ struct ContentView: View {
 
 					if mango9ChatTarget != nil {
 						Mango9ChatStandaloneFragment(target: $mango9ChatTarget)
+							.id(mango9ChatPresentationID)
 							.zIndex(4)
 							.transition(.move(edge: .trailing))
 					}
@@ -2193,8 +2195,17 @@ struct ContentView: View {
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenChat)) { notification in
 			guard let target = notification.object as? Mango9ChatTarget else { return }
+			resetFilter()
+			isShowStartConversationFragment = false
+			isShowCRMFragment = false
+			sharedMainViewModel.displayedSMS = nil
+			sharedMainViewModel.displayedFriend = nil
+			sharedMainViewModel.displayedCall = nil
+			sharedMainViewModel.displayedConversation = nil
+			sharedMainViewModel.displayedMeeting = nil
+			sharedMainViewModel.changeIndexView(indexViewInt: 2)
 			withAnimation {
-				isShowStartConversationFragment = false
+				mango9ChatPresentationID = UUID()
 				mango9ChatTarget = target
 			}
 		}
@@ -2317,7 +2328,7 @@ struct ContentView: View {
 				return
 			}
 			ContactsManager.shared.syncMango9Team(team)
-			await Mango9ChatStore.shared.connectIfNeeded(force: true)
+			await Mango9ChatStore.shared.connectIfNeeded()
 		} catch {
 			Log.error("[Mango9] Failed to switch CRM account context: \(error)")
 		}

@@ -56,6 +56,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	}
  	var navigationManager: NavigationManager?
 	private var pendingRemotePushToken: String?
+	private var chatPushOpenID = UUID()
 	
 	func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
 		let tokenStr = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
@@ -150,17 +151,29 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	// Called when the user interacts with the notification
 	func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
 		let userInfo = response.notification.request.content.userInfo
-		activateMango9AccountIfNeeded(from: userInfo)
-
 		if let target = mango9ChatTarget(from: userInfo) {
-			if navigationManager == nil {
-				launchMango9ChatTarget = target
+			let openID = UUID()
+			chatPushOpenID = openID
+			let openChat = { [weak self] in
+				guard let self, self.chatPushOpenID == openID else { return }
+				if self.navigationManager == nil {
+					self.launchMango9ChatTarget = target
+				} else {
+					NotificationCenter.default.post(name: .mango9OpenChat, object: target)
+				}
+			}
+			if let identity = mango9AccountIdentity(from: userInfo) {
+				// Wait for DefaultAccountChanged to finish clearing the previous account's UI.
+				activateMango9ChatAccount(identity: identity) { activated in
+					if activated { openChat() }
+				}
 			} else {
-				NotificationCenter.default.post(name: .mango9OpenChat, object: target)
+				openChat()
 			}
 			completionHandler()
 			return
 		}
+		activateMango9AccountIfNeeded(from: userInfo)
 
 		if let target = mango9SMSTarget(from: userInfo) {
 			if navigationManager == nil {
@@ -304,7 +317,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 		return Mango9SMSTarget(phone: phone, name: displayName)
 	}
 
-	private func mango9ChatTarget(
+	func mango9ChatTarget(
 		from userInfo: [AnyHashable: Any]
 	) -> Mango9ChatTarget? {
 		let nested = userInfo["mango9"] as? [String: Any]
@@ -329,9 +342,8 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 			userId = 0
 		}
 
-		let roomId = ((nested?["room_id"] as? String)
-			?? (userInfo["room_id"] as? String)
-			?? (userInfo["roomId"] as? String))?
+		let rawRoomId = nested?["room_id"] ?? userInfo["room_id"] ?? userInfo["roomId"]
+		let roomId = ((rawRoomId as? String) ?? (rawRoomId as? NSNumber)?.stringValue)?
 			.trimmingCharacters(in: .whitespacesAndNewlines)
 		let rawName = (nested?["name"] as? String)
 			?? (userInfo["name"] as? String)
@@ -368,6 +380,34 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 				return
 			}
 			core.defaultAccount = account
+		}
+	}
+
+	private func activateMango9ChatAccount(identity: String, completion: @escaping (Bool) -> Void) {
+		guard Mango9SessionStore.hasSession(for: identity) else {
+			completion(false)
+			return
+		}
+		CoreContext.shared.doOnCoreQueue { core in
+			guard let account = core.accountList.first(where: {
+				Mango9SessionStore.normalizedIdentity(
+					$0.params?.identityAddress?.asStringUriOnly()
+				) == identity
+			}) else {
+				DispatchQueue.main.async { completion(false) }
+				return
+			}
+			if Mango9SessionStore.activeIdentity != identity {
+				Mango9SessionStore.activate(sipIdentity: identity)
+			}
+			if Mango9SessionStore.normalizedIdentity(
+				core.defaultAccount?.params?.identityAddress?.asStringUriOnly()
+			) != identity {
+				core.defaultAccount = account
+			}
+			DispatchQueue.main.async {
+				completion(Mango9SessionStore.activeIdentity == identity)
+			}
 		}
 	}
 
