@@ -10,8 +10,10 @@ After login:
 5. In Team Chat, open the safety menu to report or block a user.
 6. Send and receive a voice message in SMS or Team Chat to verify the inline audio player.
 7. Send and receive a video in SMS or Team Chat. Confirm its thumbnail appears and tap it to open the full-screen player.
-8. Open About Mango9 > Licensing to view open-source notices and the exact corresponding source for this build: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.9-build-30
+8. Send a Team Chat message from the second user. Confirm its conversation moves to the top of the appropriate Group or People list. Repeat with a different conversation and confirm the most recently active one moves first.
+9. Background the app and tap a Team Chat notification. Confirm the correct conversation opens with its history.
+10. Open About Mango9 > Licensing to view open-source notices and the exact corresponding source for this build: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.11-build-32
 
-Version 6.2.9 separates SMS and Team Chat into dedicated conversation tabs. Video messages now show thumbnails and open in a full-screen player for both carrier SMS and Team Chat. Videos selected from Photos or Files are prepared as network-optimized MP4 files for broader recipient compatibility. Video previews no longer expose internal storage filenames, and media caching improves loading in longer conversations.
+Version 6.2.11 improves Team Chat conversation ordering. Groups and people are ordered by their latest chat activity, recent direct conversations precede unused directory contacts, and delayed older messages do not replace the latest conversation preview. This update preserves the existing calling, SMS, media, authentication, and notification-delivery routes. It does not change server infrastructure.
 
 The review account, review contact details, service endpoints, and safe test number are supplied only in App Store Connect and are not stored in the public source repository.

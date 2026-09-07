@@ -1062,8 +1062,9 @@ final class Mango9ChatStore: ObservableObject {
 			.sorted {
 				$0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
 			}
-		let loadedRooms = Self.array(from: rawRooms).compactMap(Self.room(from:))
-			.sorted { $0.latest > $1.latest }
+		let loadedRooms = Mango9TeamChatOrdering.roomsByRecency(
+			Self.array(from: rawRooms).compactMap(Self.room(from:))
+		)
 		for room in loadedRooms
 			where room.unread > 0 &&
 				Mango9ChatModerationStore.shared.isConversationDeleted(room.id) {
@@ -1347,11 +1348,13 @@ final class Mango9ChatStore: ObservableObject {
 			}
 		case "updateChatGroup":
 			if let room = params.first.flatMap(Self.room(from:)) {
-				if let index = rooms.firstIndex(where: { $0.id == room.id }) {
-					rooms[index] = room
+				var updatedRooms = rooms
+				if let index = updatedRooms.firstIndex(where: { $0.id == room.id }) {
+					updatedRooms[index] = room
 				} else {
-					rooms.append(room)
+					updatedRooms.append(room)
 				}
+				rooms = Mango9TeamChatOrdering.roomsByRecency(updatedRooms)
 			}
 		case "updatePresence":
 			applyPresence(Self.array(from: params.first as Any))
@@ -1417,18 +1420,22 @@ final class Mango9ChatStore: ObservableObject {
 		}
 
 		if let index = rooms.firstIndex(where: { $0.id == message.roomId }) {
-			let existing = rooms[index]
+			var updatedRooms = rooms
+			let existing = updatedRooms[index]
 			let unread = message.roomId == activeRoomId || message.fromUserId == currentUserId
 				? (message.roomId == activeRoomId ? 0 : existing.unread)
 				: existing.unread + 1
-			rooms[index] = Mango9ChatRoom(
+			updatedRooms[index] = Mango9ChatRoom(
 				id: existing.id,
 				userIds: existing.userIds,
-				latest: message.time,
-				lastMessage: message.text,
+				latest: max(existing.latest, message.time),
+				lastMessage: message.time >= existing.latest ? message.text : existing.lastMessage,
 				unread: unread,
 				isDirect: existing.isDirect
 			)
+			// Publish one stable, ordered snapshot so SwiftUI moves the existing row instead of
+			// briefly rendering an updated row at its old position.
+			rooms = Mango9TeamChatOrdering.roomsByRecency(updatedRooms)
 			if message.roomId == activeRoomId {
 				synchronizeApplicationBadge()
 			}
@@ -1819,22 +1826,28 @@ struct Mango9TeamChatListFragment: View {
 			!$0.isDirect && !Mango9ChatModerationStore.shared.isConversationDeleted($0.id)
 		}
 		let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !query.isEmpty else { return rooms }
-		return rooms.filter {
+		let filteredRooms = query.isEmpty ? rooms : rooms.filter {
 			store.groupTitle($0).localizedCaseInsensitiveContains(query)
 				|| $0.lastMessage.localizedCaseInsensitiveContains(query)
 		}
+		return Mango9TeamChatOrdering.roomsByRecency(filteredRooms)
 	}
 
 	private var visibleUsers: [Mango9ChatUser] {
 		let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !query.isEmpty else { return store.users }
-		return store.users.filter { user in
+		let filteredUsers = query.isEmpty ? store.users : store.users.filter { user in
 			user.name.localizedCaseInsensitiveContains(query)
 				|| user.category.localizedCaseInsensitiveContains(query)
 				|| (store.roomPreview(for: user.id)?.lastMessage
 					.localizedCaseInsensitiveContains(query) ?? false)
 		}
+		let previews = Swift.Dictionary(uniqueKeysWithValues: filteredUsers.compactMap { user in
+			store.roomPreview(for: user.id).map { (user.id, $0) }
+		})
+		return Mango9TeamChatOrdering.usersByRecency(
+			filteredUsers,
+			roomPreviews: previews
+		)
 	}
 }
 
@@ -3538,6 +3551,41 @@ struct Mango9ChatRoom: Identifiable, Equatable {
 	let lastMessage: String
 	let unread: Int
 	let isDirect: Bool
+}
+
+enum Mango9TeamChatOrdering {
+	static func roomsByRecency(_ rooms: [Mango9ChatRoom]) -> [Mango9ChatRoom] {
+		rooms.sorted { lhs, rhs in
+			if lhs.latest != rhs.latest {
+				return lhs.latest > rhs.latest
+			}
+			return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
+		}
+	}
+
+	static func usersByRecency(
+		_ users: [Mango9ChatUser],
+		roomPreviews: [Int: Mango9ChatRoom]
+	) -> [Mango9ChatUser] {
+		users.sorted { lhs, rhs in
+			let lhsLatest = roomPreviews[lhs.id]?.latest
+			let rhsLatest = roomPreviews[rhs.id]?.latest
+			switch (lhsLatest, rhsLatest) {
+			case let (lhsLatest?, rhsLatest?) where lhsLatest != rhsLatest:
+				return lhsLatest > rhsLatest
+			case (_?, nil):
+				return true
+			case (nil, _?):
+				return false
+			default:
+				let nameOrder = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+				if nameOrder != .orderedSame {
+					return nameOrder == .orderedAscending
+				}
+				return lhs.id < rhs.id
+			}
+		}
+	}
 }
 
 struct Mango9ChatMessage: Identifiable, Equatable {

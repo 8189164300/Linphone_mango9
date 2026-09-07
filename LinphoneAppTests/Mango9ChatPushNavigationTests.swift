@@ -4,8 +4,43 @@ import XCTest
 final class Mango9ChatPushNavigationTests: XCTestCase {
 	private let identity = "sip:700@tenant.example.com"
 
-	private func room(_ id: String, direct: Bool = true) -> Mango9ChatRoom {
-		Mango9ChatRoom(id: id, userIds: [42], latest: "", lastMessage: "Test message", unread: 1, isDirect: direct)
+	private func room(
+		_ id: String,
+		direct: Bool = true,
+		userIds: [Int] = [42],
+		latest: String = ""
+	) -> Mango9ChatRoom {
+		Mango9ChatRoom(
+			id: id,
+			userIds: userIds,
+			latest: latest,
+			lastMessage: "Test message",
+			unread: 1,
+			isDirect: direct
+		)
+	}
+
+	func testRoomsSortNewestFirstAfterLiveUpdates() {
+		let older = room("12", latest: "2026-09-06T12:00:00.000Z")
+		let newest = room("91", latest: "2026-09-06T12:01:00.000Z")
+		XCTAssertEqual(
+			Mango9TeamChatOrdering.roomsByRecency([older, newest]).map(\.id),
+			["91", "12"]
+		)
+	}
+
+	func testPeopleWithConversationsSortByRecencyBeforeDirectoryOnlyUsers() {
+		let alphabeticalOnly = Mango9ChatUser(id: 1, name: "Aaron", avatar: "", category: "")
+		let older = Mango9ChatUser(id: 2, name: "Beth", avatar: "", category: "")
+		let newest = Mango9ChatUser(id: 3, name: "Zoe", avatar: "", category: "")
+		let ordered = Mango9TeamChatOrdering.usersByRecency(
+			[alphabeticalOnly, older, newest],
+			roomPreviews: [
+				older.id: room("12", userIds: [older.id], latest: "2026-09-06T12:00:00.000Z"),
+				newest.id: room("91", userIds: [newest.id], latest: "2026-09-06T12:01:00.000Z"),
+			]
+		)
+		XCTAssertEqual(ordered.map(\.id), [newest.id, older.id, alphabeticalOnly.id])
 	}
 
 	func testPushAlwaysResolvesExactRoomNotSenderConversation() throws {

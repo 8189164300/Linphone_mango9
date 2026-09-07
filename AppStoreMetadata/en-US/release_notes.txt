@@ -1,4 +1,4 @@
-What’s new in 6.2.10:
-• Fixed an issue where tapping a Team Chat notification could open an empty conversation
-• Improved conversation loading when reconnecting or switching accounts
-• Added clearer loading and retry feedback when chat history cannot be loaded
+What’s new in 6.2.11:
+• Team Chat conversations now move to the top of their lists when new messages arrive
+• Recent direct conversations appear ahead of contacts without chat activity
+• Improved conversation ordering when delayed messages arrive
