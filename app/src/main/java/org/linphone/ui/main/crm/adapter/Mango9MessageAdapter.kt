@@ -56,6 +56,8 @@ class Mango9MessageAdapter(
     override fun onBindViewHolder(holder: ViewHolder, position: Int) = holder.bind(getItem(position))
 
     inner class ViewHolder(private val binding: Mango9MessageCellBinding) : RecyclerView.ViewHolder(binding.root) {
+        private var boundMedia: List<Mango9ChatMedia>? = null
+
         fun bind(item: Mango9MessageListItem) {
             val outgoing: Boolean
             val sender: String?
@@ -117,16 +119,35 @@ class Mango9MessageAdapter(
         }
 
         private fun bindMedia(media: List<Mango9ChatMedia>) {
+            if (media == boundMedia) return
+            boundMedia = media
             binding.media.removeAllViews()
             binding.media.visibility = if (media.isEmpty()) View.GONE else View.VISIBLE
             media.forEachIndexed { index, item ->
                 val view = if (item.kind == Mango9ChatMedia.Kind.Image || item.kind == Mango9ChatMedia.Kind.Video) {
-                    ImageView(binding.root.context).apply {
-                        scaleType = ImageView.ScaleType.CENTER_CROP
+                    FrameLayout(binding.root.context).apply {
                         contentDescription = item.name
-                        load(item.url)
                         layoutParams = LinearLayout.LayoutParams(dp(230), dp(150)).apply {
                             if (index > 0) topMargin = dp(7)
+                        }
+                        addView(
+                            ImageView(context).apply {
+                            scaleType = ImageView.ScaleType.CENTER_CROP
+                            load(item.url)
+                        },
+                            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                        )
+                        if (item.kind == Mango9ChatMedia.Kind.Video) {
+                            addView(
+                                TextView(context).apply {
+                                text = "▶"
+                                setTextColor(Color.WHITE)
+                                textSize = 32f
+                                gravity = Gravity.CENTER
+                                setShadowLayer(4f, 0f, 1f, Color.BLACK)
+                            },
+                                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                            )
                         }
                     }
                 } else {

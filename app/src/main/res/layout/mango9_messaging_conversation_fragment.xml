@@ -148,6 +148,14 @@
                 tools:text="Message could not be sent."
                 tools:visibility="visible" />
 
+            <Button
+                android:id="@+id/retry_history"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:text="@string/mango9_chat_retry_history"
+                android:visibility="gone" />
+
             <HorizontalScrollView
                 android:id="@+id/pending_scroll"
                 android:layout_width="match_parent"

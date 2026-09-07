@@ -18,6 +18,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -60,6 +61,9 @@ class Mango9ChatStore private constructor(context: Context) {
     private val preferences = appContext.getSharedPreferences(DEVICE_PREFERENCES, Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connectMutex = Mutex()
+    private val conversationOwnership = Mango9ConversationOwnership()
+
+    @Volatile private var directoryReady = false
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -177,6 +181,7 @@ class Mango9ChatStore private constructor(context: Context) {
     }
 
     fun disconnect(clearData: Boolean = true) {
+        if (clearData) conversationOwnership.invalidate()
         connectionGeneration++
         disconnectInternal(clearData, intentional = true)
     }
@@ -297,7 +302,8 @@ class Mango9ChatStore private constructor(context: Context) {
         runCatching { loadSmsDirectory() }.onFailure { updateError(userMessage(it)) }
     }
 
-    suspend fun openDirectConversation(userId: Int, fallbackName: String = "") {
+    suspend fun openDirectConversation(userId: Int, fallbackName: String = "", owner: String = UUID.randomUUID().toString()) {
+        val lease = conversationOwnership.claim(owner, sessions.activeIdentity)
         closeSmsConversation()
         mutableState.update { current ->
             val existingRoomId = current.rooms.firstOrNull { it.isDirect && it.userIds.contains(userId) }?.id
@@ -305,12 +311,15 @@ class Mango9ChatStore private constructor(context: Context) {
             updated.copy(activeRoomId = null, messages = emptyList(), errorMessage = null)
         }
         connect()
-        if (!state.value.isConnected) return
+        if (!state.value.isConnected || !conversationOwnership.owns(lease, sessions.activeIdentity)) return
         try {
+            if (!directoryReady) loadDirectory()
+            if (!conversationOwnership.owns(lease, sessions.activeIdentity)) return
             var room = state.value.rooms.firstOrNull { it.isDirect && it.userIds.contains(userId) }
             if (room == null) {
                 room = parseRoom(rpc("createChatGroup", JSONArray().put(JSONArray().put(userId.toString()))))
                     ?: throw Mango9ChatException(INVALID_RESPONSE)
+                if (!conversationOwnership.owns(lease, sessions.activeIdentity)) return
                 mutableState.update { current ->
                     current.copy(rooms = (current.rooms + room).distinctBy(Mango9ChatRoom::id))
                 }
@@ -322,30 +331,46 @@ class Mango9ChatStore private constructor(context: Context) {
                     )
                 }
             }
-            openRoom(room.id)
+            loadOwnedRoom(room.id, lease)
         } catch (error: Exception) {
-            updateError(userMessage(error))
+            if (error is CancellationException) throw error
+            if (conversationOwnership.owns(lease, sessions.activeIdentity)) updateError(userMessage(error))
         }
     }
 
-    suspend fun openRoom(roomId: String) {
+    suspend fun openRoom(roomId: String, owner: String = UUID.randomUUID().toString()) {
+        val lease = conversationOwnership.claim(owner, sessions.activeIdentity)
         closeSmsConversation()
         mutableState.update { it.markRoomReadLocally(roomId) }
         connect()
-        if (!state.value.isConnected) return
+        if (!state.value.isConnected || !conversationOwnership.owns(lease, sessions.activeIdentity)) return
+        loadOwnedRoom(roomId, lease)
+    }
+
+    private suspend fun loadOwnedRoom(roomId: String, lease: Mango9ConversationOwnership.Lease) {
+        if (!conversationOwnership.owns(lease, sessions.activeIdentity)) return
         mutableState.update {
             it.markRoomReadLocally(roomId).copy(activeRoomId = roomId, messages = emptyList(), errorMessage = null)
         }
         try {
             loadChatMessages(roomId)
         } catch (error: Exception) {
-            updateError(userMessage(error))
+            if (error is CancellationException) throw error
+            if (conversationOwnership.owns(lease, sessions.activeIdentity)) updateError(userMessage(error))
         }
     }
+
+    fun closeOwnedConversation(owner: String) {
+        if (conversationOwnership.release(owner)) closeConversation()
+    }
+
+    fun ownsConversation(owner: String): Boolean =
+        conversationOwnership.ownsOwner(owner, sessions.activeIdentity)
 
     fun closeConversation(roomId: String? = null) {
         val current = state.value.activeRoomId
         if (roomId != null && roomId != current) return
+        conversationOwnership.invalidate()
         mutableState.update { it.copy(activeRoomId = null, messages = emptyList()) }
     }
 
@@ -388,16 +413,20 @@ class Mango9ChatStore private constructor(context: Context) {
     }
 
     suspend fun sendChatMessage(text: String, attachments: List<Mango9PendingAttachment>): Boolean {
+        val identity = sessions.activeIdentity ?: return false
+        val generation = connectionGeneration
         val body = text.trim()
         val roomId = state.value.activeRoomId ?: return false
         if (body.isEmpty() && attachments.isEmpty()) return false
         updateError(null)
         return try {
             val files = upload(attachments)
+            ensureCurrent(generation, identity)
             rpc(
                 "sendChatMessage",
                 JSONArray().put(roomId).put(body).put(JSONArray(files)).put(UUID.randomUUID().toString().lowercase()),
             )
+            ensureCurrent(generation, identity)
             moderation.setConversationDeleted(roomId, false)
             runCatching { loadChatMessages(roomId) }.onFailure { error ->
                 Log.w("[Mango9 Chat] Message sent, but conversation refresh failed: ${error.message}")
@@ -459,15 +488,18 @@ class Mango9ChatStore private constructor(context: Context) {
     ): Boolean {
         val body = text.trim()
         if ((body.isEmpty() && attachments.isEmpty()) || senderId.isBlank()) return false
+        val identity = sessions.activeIdentity ?: return false
         updateError(null)
         connect()
-        if (!state.value.isConnected) return false
+        if (!state.value.isConnected || !sessions.isActive(identity)) return false
+        val generation = connectionGeneration
         return try {
             val normalized = normalizedPhone(phone)
             if (normalized.length < 10) {
                 throw Mango9ChatException("Enter a valid mobile number.")
             }
             val files = upload(attachments)
+            ensureCurrent(generation, identity)
             rpc(
                 "sendSmsMessage",
                 JSONArray()
@@ -568,11 +600,11 @@ class Mango9ChatStore private constructor(context: Context) {
     }
 
     private suspend fun loadDirectory() {
+        val generation = connectionGeneration
+        val identity = sessions.activeIdentity ?: throw Mango9ChatException(DISCONNECTED)
         val rawUsers = rpc("getAllUsers", JSONArray())
         val rawRooms = rpc("getAllRooms", JSONArray())
-        loadSmsDirectory()
-        val rawPresence = rpc("getPresence", JSONArray())
-        ensureActiveIdentity()
+        ensureCurrent(generation, identity)
         val currentUser = state.value.currentUserId
         val users = array(rawUsers).objects().mapNotNull(::parseUser)
             .filterNot { it.id == currentUser }
@@ -585,14 +617,31 @@ class Mango9ChatStore private constructor(context: Context) {
             val refreshed = current.copy(users = users, rooms = rooms, errorMessage = null)
             current.activeRoomId?.let(refreshed::markRoomReadLocally) ?: refreshed
         }
-        applyPresence(array(rawPresence))
+        directoryReady = true
+        // SMS/presence outages must not prevent Team Chat directory/history loading.
+        scope.launch {
+            runCatching {
+                ensureCurrent(generation, identity)
+                loadSmsDirectory()
+            }.onFailure { if (it is CancellationException) throw it }
+        }
+        scope.launch {
+            runCatching {
+                ensureCurrent(generation, identity)
+                val presence = rpc("getPresence", JSONArray())
+                ensureCurrent(generation, identity)
+                applyPresence(array(presence))
+            }.onFailure { if (it is CancellationException) throw it }
+        }
     }
 
     private suspend fun loadSmsDirectory() {
+        val generation = connectionGeneration
+        val identity = sessions.activeIdentity ?: throw Mango9ChatException(DISCONNECTED)
         val parties = array(rpc("getUserSmsParties", JSONArray())).objects().mapNotNull(::parseSmsParty)
             .sortedByDescending(Mango9SmsParty::latest)
         val senders = array(rpc("getSmsSenders", JSONArray())).objects().mapNotNull(::parseSmsSender)
-        ensureActiveIdentity()
+        ensureCurrent(generation, identity)
         mutableState.update { current ->
             val refreshed = current.copy(smsParties = parties, smsSenders = senders)
             current.activeSmsPhone?.let(refreshed::markSmsReadLocally) ?: refreshed
@@ -600,11 +649,14 @@ class Mango9ChatStore private constructor(context: Context) {
     }
 
     private suspend fun loadChatMessages(roomId: String) {
+        val generation = connectionGeneration
+        val identity = sessions.activeIdentity ?: throw Mango9ChatException(DISCONNECTED)
         val result = rpc("getChatMessages", JSONArray().put(roomId).put(0)) as? JSONObject
             ?: throw Mango9ChatException(INVALID_RESPONSE)
         val messages = result.optJSONArray("list").orEmpty().objects().mapNotNull(::parseMessage)
             .sortedBy(Mango9ChatMessage::time)
-        ensureActiveIdentity()
+        ensureCurrent(generation, identity)
+        if (state.value.activeRoomId != roomId) return
         mutableState.update { current ->
             if (current.activeRoomId != roomId) {
                 current
@@ -749,7 +801,11 @@ class Mango9ChatStore private constructor(context: Context) {
                     message.fromUserId == current.currentUserId -> room.unread
                     else -> room.unread + 1
                 }
-                room.copy(latest = message.time, lastMessage = message.text, unread = unread)
+                room.copy(
+                    latest = maxOf(room.latest, message.time),
+                    lastMessage = if (message.time >= room.latest) message.text else room.lastMessage,
+                    unread = unread,
+                )
             }.sortedByDescending(Mango9ChatRoom::latest)
             current.copy(messages = messages, rooms = rooms, errorMessage = null)
         }
@@ -839,14 +895,18 @@ class Mango9ChatStore private constructor(context: Context) {
     private suspend fun upload(attachments: List<Mango9PendingAttachment>): List<String> {
         if (attachments.isEmpty()) return emptyList()
         if (attachments.size > MAX_ATTACHMENTS) throw Mango9ChatException("You can attach up to $MAX_ATTACHMENTS files.")
+        val identity = sessions.activeIdentity ?: throw Mango9ChatException(DISCONNECTED)
+        val generation = connectionGeneration
         refreshUploadTokenIfNeeded()
-        val session = sessions.load() ?: throw Mango9ChatException(DISCONNECTED)
+        ensureCurrent(generation, identity)
+        val session = sessions.load(identity) ?: throw Mango9ChatException(DISCONNECTED)
         val base = Mango9Configuration.verifiedHttpsUrl(session.smsChatApi)
             ?: throw Mango9ChatException("The Mango9 attachment endpoint is not configured.")
         val uploadUrl = base.toString().trimEnd('/') + "/upload"
         val token = chatToken ?: throw Mango9ChatException(DISCONNECTED)
         return withContext(Dispatchers.IO) {
             attachments.map { attachment ->
+                ensureCurrent(generation, identity)
                 if (attachment.size > MAX_ATTACHMENT_BYTES) {
                     throw Mango9ChatException("${attachment.name} is larger than 50 MB.")
                 }
@@ -889,6 +949,7 @@ class Mango9ChatStore private constructor(context: Context) {
                 client.newCall(put).execute().use { response ->
                     if (!response.isSuccessful) throw Mango9ChatException("The attachment could not be uploaded.")
                 }
+                ensureCurrent(generation, identity)
                 verifiedGetUrl
             }
         }
@@ -926,6 +987,7 @@ class Mango9ChatStore private constructor(context: Context) {
     }
 
     private fun disconnectInternal(clearData: Boolean, intentional: Boolean) {
+        directoryReady = false
         intentionallyDisconnected = intentional
         reconnectJob?.cancel()
         reconnectJob = null

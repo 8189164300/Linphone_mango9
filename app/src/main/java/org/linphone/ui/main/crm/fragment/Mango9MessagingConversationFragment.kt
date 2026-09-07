@@ -27,6 +27,10 @@ import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.io.File
@@ -38,6 +42,8 @@ import org.linphone.R
 import org.linphone.databinding.Mango9MessagingConversationFragmentBinding
 import org.linphone.mango9.Mango9ChatConnectionState
 import org.linphone.mango9.Mango9ChatMedia
+import org.linphone.mango9.Mango9MediaCache
+import org.linphone.ui.fileviewer.MediaViewerActivity
 import org.linphone.mango9.Mango9ChatRoom
 import org.linphone.mango9.Mango9ChatState
 import org.linphone.mango9.Mango9PendingAttachment
@@ -61,6 +67,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
     private var pendingCameraFile: File? = null
     private var recording = false
     private var openedRoomId: String? = null
+    private var mediaOpenJob: Job? = null
     private var insightsLoadingDialog: androidx.appcompat.app.AlertDialog? = null
 
     private val type: String by lazy {
@@ -134,6 +141,10 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
             updateComposerState(viewModel.state.value ?: Mango9ChatState())
         }
         viewModel.state.observe(viewLifecycleOwner, ::render)
+        viewModel.openingConversation.observe(viewLifecycleOwner) { render(viewModel.currentState()) }
+        binding.retryHistory.setOnClickListener {
+            viewModel.openTeamConversation(userId, requestedRoomId, targetName)
+        }
         viewModel.conversationInsightsEvent.observe(viewLifecycleOwner) { event ->
             event.consume(::showConversationInsights)
         }
@@ -163,16 +174,21 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         if (!isSms) openedRoomId = state.activeRoomId ?: openedRoomId
         val items = if (isSms) smsMessages(state) else teamMessages(state)
         val previousSize = adapter.itemCount
+        val layout = binding.messages.layoutManager as LinearLayoutManager
+        val wasAtBottom = previousSize == 0 || layout.findLastVisibleItemPosition() >= previousSize - 2
         adapter.submitList(items) {
-            if (items.isNotEmpty() && items.size >= previousSize) binding.messages.scrollToPosition(items.lastIndex)
+            if (view != null && wasAtBottom && items.size > previousSize) {
+                binding.messages.scrollToPosition(items.lastIndex)
+            }
         }
-        binding.empty.visibility = if (items.isEmpty() && state.connection == Mango9ChatConnectionState.Connected) {
+        val opening = !isSms && viewModel.openingConversation.value == true
+        binding.empty.visibility = if (items.isEmpty() && !opening && state.errorMessage.isNullOrBlank() && state.connection == Mango9ChatConnectionState.Connected) {
             View.VISIBLE
         } else {
             View.GONE
         }
         binding.loading.visibility = if (
-            state.connection == Mango9ChatConnectionState.Connecting && items.isEmpty()
+            (opening || state.connection == Mango9ChatConnectionState.Connecting) && items.isEmpty()
         ) {
             View.VISIBLE
         } else {
@@ -180,15 +196,19 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         }
         binding.error.text = state.errorMessage.orEmpty()
         binding.error.visibility = if (state.errorMessage.isNullOrBlank()) View.GONE else View.VISIBLE
+        binding.retryHistory.visibility = if (!isSms && !opening && !state.errorMessage.isNullOrBlank()) View.VISIBLE else View.GONE
         if (isSms) renderSmsSenders(state)
         renderHeader(state)
         updateComposerState(state)
     }
 
     private fun teamMessages(state: Mango9ChatState): List<Mango9MessageListItem> {
+        val expectedRoom = requestedRoomId ?: state.rooms.firstOrNull {
+            it.isDirect && it.userIds.contains(userId)
+        }?.id
         val blocked = directUserId(state)?.let(viewModel.moderation::isBlocked) == true
         return state.messages.filter { message ->
-            !viewModel.moderation.isMessageHidden(message.id) &&
+            message.roomId == expectedRoom && !viewModel.moderation.isMessageHidden(message.id) &&
                 (message.fromUserId == state.currentUserId || !viewModel.moderation.isBlocked(message.fromUserId)) &&
                 !(blocked && message.fromUserId != state.currentUserId)
         }.map { message ->
@@ -271,7 +291,8 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         val connected = state.connection == Mango9ChatConnectionState.Connected
         val hasContent = !binding.message.text.isNullOrBlank() || attachments.isNotEmpty()
         val senderAvailable = !isSms || senderIds.isNotEmpty()
-        val busy = viewModel.sending.value == true || recording
+        val busy = viewModel.sending.value == true || recording ||
+            (!isSms && (viewModel.openingConversation.value == true || !viewModel.ownsTeamConversation()))
         binding.send.isEnabled = connected && hasContent && senderAvailable && !blocked && !busy
         binding.message.isEnabled = !blocked && !recording
         binding.attach.isEnabled = !blocked && !busy
@@ -509,10 +530,30 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
     }
 
     private fun openMedia(media: Mango9ChatMedia) {
-        val uri = media.url.toUri()
-        runCatching {
-            startActivity(Intent(Intent.ACTION_VIEW, uri).apply { setDataAndType(uri, media.mimeType) })
-        }.onFailure { showLocalError(getString(R.string.mango9_chat_attachment_unavailable)) }
+        if (mediaOpenJob?.isActive == true) return
+        mediaOpenJob = viewLifecycleOwner.lifecycleScope.launch {
+            binding.loading.visibility = View.VISIBLE
+            try {
+                val file = Mango9MediaCache.localFile(requireContext().applicationContext, media)
+                if (media.kind == Mango9ChatMedia.Kind.File) {
+                    val uri = FileProvider.getUriForFile(requireContext(), getString(R.string.file_provider), file)
+                    startActivity(
+                        Intent(Intent.ACTION_VIEW).setDataAndType(uri, media.mimeType)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    )
+                } else {
+                    startActivity(
+                        Intent(requireContext(), MediaViewerActivity::class.java)
+                        .putExtra("path", file.absolutePath)
+                    )
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                showLocalError(getString(R.string.mango9_chat_attachment_unavailable))
+            } finally {
+                binding.loading.visibility = View.GONE
+            }
+        }
     }
 
     private fun showAttachmentMenu() {

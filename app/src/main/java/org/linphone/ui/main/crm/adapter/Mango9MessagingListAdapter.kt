@@ -53,13 +53,19 @@ object Mango9MessagingListItems {
     ): List<Mango9MessagingListItem> {
         val groups = state.rooms
             .filter { !it.isDirect && !isConversationDeleted(it.id) }
+            .sortedWith(compareByDescending<Mango9ChatRoom> { it.latest }.thenBy { it.id })
             .map { Mango9MessagingListItem.Group(it, roomTitle(it)) }
         val people = state.users.map { user ->
             val room = state.rooms.firstOrNull {
                 it.isDirect && it.userIds.contains(user.id) && !isConversationDeleted(it.id)
             }
             Mango9MessagingListItem.User(user, room, state.onlineUserIds.contains(user.id))
-        }
+        }.sortedWith(
+            compareByDescending<Mango9MessagingListItem.User> { it.room?.latest.orEmpty() }
+                .thenByDescending { it.room != null }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.user.name }
+                .thenBy { it.user.id },
+        )
         return groups + people
     }
 

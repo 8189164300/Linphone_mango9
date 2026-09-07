@@ -100,9 +100,12 @@ object Mango9AccountContextSync {
             onCoreThread {
                 coreContext.contactsManager.syncMango9Team(identity, members)
             }
-            Mango9ChatStore.get(appContext).connect(force = true)
         } catch (error: Exception) {
             Log.e("$TAG Failed to refresh the active Mango9 account context: $error")
+        }
+        // A CRM contacts failure must not prevent the independent messaging connection.
+        if (sessions.isActive(identity) && defaultAccountIdentity() == identity) {
+            Mango9ChatStore.get(appContext).connect()
         }
     }
 
@@ -110,6 +113,7 @@ object Mango9AccountContextSync {
         val identity = Mango9SessionStore.normalizedIdentity(requestedIdentity) ?: return false
         val sessions = Mango9SessionStore(context.applicationContext)
         if (!sessions.hasSession(identity)) return false
+        if (sessions.isActive(identity) && defaultAccountIdentity() == identity) return true
         val accountFound = onCoreThread {
             val account = coreContext.core.accountList.firstOrNull {
                 Mango9SessionStore.normalizedIdentity(

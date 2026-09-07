@@ -10,6 +10,8 @@ import android.net.Uri
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import java.util.UUID
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.mango9.Mango9ChatModerationStore
 import org.linphone.mango9.Mango9ChatRoom
@@ -27,6 +29,10 @@ class Mango9MessagingViewModel : GenericViewModel() {
     val moderation = Mango9ChatModerationStore(coreContext.context)
     val state = MutableLiveData(store.state.value)
     val sending = MutableLiveData(false)
+    val openingConversation = MutableLiveData(false)
+    private val conversationOwner = UUID.randomUUID().toString()
+    private var openingJob: Job? = null
+    private var openingAttempt = 0L
     val openedRoomEvent = MutableLiveData<Event<Mango9ChatRoom>>()
     val conversationInsightsEvent = MutableLiveData<Event<Mango9SmsConversationInsights>>()
 
@@ -49,8 +55,19 @@ class Mango9MessagingViewModel : GenericViewModel() {
     }
 
     fun openTeamConversation(userId: Int, roomId: String?, name: String) {
-        viewModelScope.launch {
-            if (roomId.isNullOrBlank()) store.openDirectConversation(userId, name) else store.openRoom(roomId)
+        openingJob?.cancel()
+        val attempt = ++openingAttempt
+        openingConversation.value = true
+        openingJob = viewModelScope.launch {
+            try {
+                if (roomId.isNullOrBlank()) {
+                    store.openDirectConversation(userId, name, conversationOwner)
+                } else {
+                    store.openRoom(roomId, conversationOwner)
+                }
+            } finally {
+                if (openingAttempt == attempt) openingConversation.value = false
+            }
         }
     }
 
@@ -58,12 +75,15 @@ class Mango9MessagingViewModel : GenericViewModel() {
         viewModelScope.launch { store.openSmsConversation(phone) }
     }
 
-    fun closeTeamConversation(roomId: String?) = store.closeConversation(roomId)
+    fun closeTeamConversation(roomId: String?) {
+        openingJob?.cancel()
+        store.closeOwnedConversation(conversationOwner)
+    }
 
     fun closeSmsConversation(phone: String?) = store.closeSmsConversation(phone)
 
     fun sendTeamMessage(text: String, attachments: List<Mango9PendingAttachment>, done: (Boolean) -> Unit) {
-        if (sending.value == true) return
+        if (sending.value == true || !store.ownsConversation(conversationOwner)) return
         sending.value = true
         viewModelScope.launch {
             val sent = store.sendChatMessage(text, attachments)
@@ -88,7 +108,11 @@ class Mango9MessagingViewModel : GenericViewModel() {
         }
     }
 
-    fun notifyTyping() = store.notifyTyping()
+    fun notifyTyping() {
+        if (store.ownsConversation(conversationOwner)) store.notifyTyping()
+    }
+
+    fun ownsTeamConversation(): Boolean = store.ownsConversation(conversationOwner)
 
     fun attachment(uri: Uri): Mango9PendingAttachment? = store.attachment(uri)
 
