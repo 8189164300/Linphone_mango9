@@ -12,3 +12,9 @@ app/release/
 .idea/
 app/bc-android.keystore
 .kotlin/
+
+# Internal operational documentation is not public app source.
+MANGO9_ANDROID_PARITY.md
+IOS_ANDROID_PARITY_*.md
+PLAY_STORE_SUBMISSION.md
+private-notes/
