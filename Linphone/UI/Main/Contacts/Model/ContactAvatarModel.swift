@@ -21,6 +21,17 @@ import Foundation
 import linphonesw
 import Combine
 
+enum Mango9ContactRemovalSource: Equatable {
+	case mango9, iPhone, directory
+	var message: String {
+		switch self {
+		case .mango9: return "This removes the contact from Mango9. This action can't be undone."
+		case .iPhone: return "This removes the contact from Mango9's current list, not from your iPhone. It may reappear when contacts refresh."
+		case .directory: return "This removes the contact from its synced address book. The change may also appear on your other devices."
+		}
+	}
+}
+
 class ContactAvatarModel: ObservableObject, Identifiable {
 	let id = UUID()
 	
@@ -33,8 +44,10 @@ class ContactAvatarModel: ObservableObject, Identifiable {
 	@Published var emails: [String] = []
 	
 	var nativeUri: String = ""
+	var sourceName: String = ""
 	var editable: Bool = true
 	var isReadOnly: Bool = false
+	var removalSource: Mango9ContactRemovalSource = .mango9
 	var withPresence: Bool?
 	
 	@Published var starred: Bool = false
@@ -54,11 +67,13 @@ class ContactAvatarModel: ObservableObject, Identifiable {
 	init(friend: Friend?, name: String, address: String, withPresence: Bool?) {
 		self.name = name
 	 	self.address = address
+		guard friend != nil else { self.withPresence = withPresence; return }
 		self.resetContactAvatarModel(friend: friend, name: name, address: address, withPresence: withPresence)
 	}
 	
 	func resetContactAvatarModel(friend: Friend?, name: String, address: String, withPresence: Bool?) {
 		CoreContext.shared.doOnCoreQueue { _ in
+			if self.friend !== friend || withPresence != true { self.removeFriendDelegate() }
 			self.friend = friend
 			let nameTmp = name
 			let addressTmp = address
@@ -75,6 +90,9 @@ class ContactAvatarModel: ObservableObject, Identifiable {
 				}
 			}
 			let nativeUriTmp = friend?.nativeUri ?? ""
+			let sourceName = friend?.friendList?.displayName ?? ""
+			let removalSource: Mango9ContactRemovalSource = friend?.friendList?.type == .CardDAV ? .directory :
+				(friend?.friendList?.displayName == "Native address-book" ? .iPhone : .mango9)
 			let editableTmp = friend?.friendList?.type == .CardDAV || nativeUriTmp.isEmpty
 			let isReadOnlyTmp = (friend?.isReadOnly == true) || (friend?.inList() == false)
 			let withPresenceTmp = withPresence
@@ -93,8 +111,9 @@ class ContactAvatarModel: ObservableObject, Identifiable {
 			var lastPresenceInfoTmp = ""
 			var presenceStatusTmp: ConsolidatedPresence = .Offline
 			
-			let unsafeFriendTmp = (friend?.securityLevel ?? .None) == .Unsafe
-			let trustedFriendTmp = (friend?.securityLevel ?? .None) == .EndToEndEncryptedAndVerified
+			let security = withPresence == true ? (friend?.securityLevel ?? .None) : .None
+			let unsafeFriendTmp = security == .Unsafe
+			let trustedFriendTmp = security == .EndToEndEncryptedAndVerified
 			
 			if let friend = friend, withPresence == true {
                 
@@ -103,47 +122,52 @@ class ContactAvatarModel: ObservableObject, Identifiable {
 				presenceStatusTmp = friend.consolidatedPresence
                 
 				if friend.consolidatedPresence == .Online || friend.consolidatedPresence == .Busy {
-					if friend.consolidatedPresence == .Online || friend.presenceModel?.latestActivityTimestamp != -1 {
+					let timestamp = friend.presenceModel?.latestActivityTimestamp ?? -1
+					if friend.consolidatedPresence == .Online || timestamp != -1 {
 						lastPresenceInfoTmp = (friend.consolidatedPresence == .Online) ?
-						"Online" : self.getCallTime(startDate: friend.presenceModel!.latestActivityTimestamp)
+						"Online" : self.getCallTime(startDate: timestamp)
 					} else {
 						lastPresenceInfoTmp = "Away"
 					}
 				}
 				
-				if let delegate = self.friendDelegate {
-					self.friend?.removeDelegate(delegate: delegate)
-					self.friendDelegate = nil
-				}
-				
-				self.addFriendDelegate()
+				if self.friendDelegate == nil { self.addFriendDelegate() }
 			}
 			
 			DispatchQueue.main.async {
-				self.name = nameTmp
-				self.address = addressTmp
-				self.addresses = addressesTmp
-				self.phoneNumbersWithLabel = phoneNumbersWithLabelTmp
+				if self.name != nameTmp { self.name = nameTmp }
+				if self.address != addressTmp { self.address = addressTmp }
+				if self.addresses != addressesTmp { self.addresses = addressesTmp }
+				if !self.phoneNumbersWithLabel.elementsEqual(phoneNumbersWithLabelTmp, by: { $0.label == $1.label && $0.phoneNumber == $1.phoneNumber }) { self.phoneNumbersWithLabel = phoneNumbersWithLabelTmp }
 				self.nativeUri = nativeUriTmp
+				self.sourceName = sourceName
+				self.removalSource = removalSource
 				self.editable = editableTmp
 				self.isReadOnly = isReadOnlyTmp
 				self.withPresence = withPresenceTmp
-				self.starred = starredTmp
+				if self.starred != starredTmp { self.starred = starredTmp }
 				self.vcard = vcardTmp
-				self.emails = emailsTmp
+				if self.emails != emailsTmp { self.emails = emailsTmp }
 				self.organization = organizationTmp
 				self.jobTitle = jobTitleTmp
-				self.photo = photoTmp
-				self.lastPresenceInfo = lastPresenceInfoTmp
-				self.presenceStatus = presenceStatusTmp
-				self.unsafeFriend = unsafeFriendTmp
-				self.trustedFriend = trustedFriendTmp
+				if self.photo != photoTmp { self.photo = photoTmp }
+				if self.lastPresenceInfo != lastPresenceInfoTmp { self.lastPresenceInfo = lastPresenceInfoTmp }
+				if self.presenceStatus != presenceStatusTmp { self.presenceStatus = presenceStatusTmp }
+				if self.unsafeFriend != unsafeFriendTmp { self.unsafeFriend = unsafeFriendTmp }
+				if self.trustedFriend != trustedFriendTmp { self.trustedFriend = trustedFriendTmp }
 			}
 		}
 	}
 	
+	func isSameContact(as other: ContactAvatarModel) -> Bool {
+		guard sourceName == other.sourceName else { return false }
+		if !nativeUri.isEmpty || !other.nativeUri.isEmpty { return !nativeUri.isEmpty && nativeUri == other.nativeUri }
+		return !address.isEmpty && address == other.address
+	}
+
 	func addFriendDelegate() {
-		friendDelegate = FriendDelegateStub(onPresenceReceived: { (friend: Friend) in
+		friendDelegate = FriendDelegateStub(onPresenceReceived: { [weak self] (friend: Friend) in
+			guard let self else { return }
 			let latestActivityTimestamp = friend.presenceModel?.latestActivityTimestamp ?? -1
 			let consolidatedPresenceTmp = friend.consolidatedPresence
 			DispatchQueue.main.async {
@@ -175,6 +199,18 @@ class ContactAvatarModel: ObservableObject, Identifiable {
 				friendTmp.removeDelegate(delegate: delegate)
 			}
 			friendDelegate = nil
+		}
+	}
+
+	deinit {
+		// SwiftUI may release a row on the main thread. Keep the final SDK wrapper
+		// references alive until they can be released alongside core operations.
+		let retainedFriend = friend, retainedVcard = vcard, retainedDelegate = friendDelegate
+		guard retainedFriend != nil || retainedVcard != nil || retainedDelegate != nil else { return }
+		coreQueue.async {
+			if let retainedDelegate { retainedFriend?.removeDelegate(delegate: retainedDelegate) }
+			withExtendedLifetime(retainedFriend) {}
+			withExtendedLifetime(retainedVcard) {}
 		}
 	}
 	

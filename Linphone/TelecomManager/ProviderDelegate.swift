@@ -26,6 +26,39 @@ import AVFoundation
 import os
 import SwiftUI
 
+/// CallKit formats dialable handles and resolves native contacts itself. A phone
+/// number or SIP URI is an identifier, not a name override for Apple's Recents.
+enum Mango9OutgoingCallPresentation {
+	static func handle(_ value: String) -> CXHandle {
+		let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+		let phoneCharacters = CharacterSet(charactersIn: "+0123456789-(). ")
+		// Preserve complete SIP identifiers, including extension domains, for redial.
+		// Only remove presentation punctuation from an already numeric handle.
+		if trimmed.unicodeScalars.allSatisfy({ phoneCharacters.contains($0) }),
+		   let number = Mango9CallerIdentity.dialedNumber(trimmed) {
+			return CXHandle(type: .phoneNumber, value: number)
+		}
+		return CXHandle(type: .generic, value: trimmed)
+	}
+
+	static func callerName(_ value: String?) -> String? {
+		guard let name = Mango9CallerIdentity.normalizedLabel(value),
+			  Mango9CallerIdentity.dialedNumber(name) == nil,
+			  !name.lowercased().hasPrefix("sip:"),
+			  !name.lowercased().hasPrefix("sips:"),
+			  !name.lowercased().hasPrefix("tel:"),
+			  !name.contains("@") else { return nil }
+		return name
+	}
+
+	static func update(handle: CXHandle, displayName: String?) -> CXCallUpdate {
+		let update = CXCallUpdate()
+		update.remoteHandle = handle
+		update.localizedCallerName = callerName(displayName)
+		return update
+	}
+}
+
 class CallInfo {
 	var callId: String = ""
 	var toAddr: Address?
@@ -328,9 +361,7 @@ extension ProviderDelegate: CXProviderDelegate {
 	func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
 		let uuid = action.callUUID
 		let callInfo = callInfos[uuid]
-		let update = CXCallUpdate()
-		update.remoteHandle = action.handle
-		update.localizedCallerName = callInfo?.displayName
+		let update = Mango9OutgoingCallPresentation.update(handle: action.handle, displayName: callInfo?.displayName)
 		self.provider.reportCall(with: action.callUUID, updated: update)
 		
 		let addr = callInfo?.toAddr

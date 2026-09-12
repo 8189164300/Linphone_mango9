@@ -20,670 +20,203 @@
 import SwiftUI
 import linphonesw
 
-// swiftlint:disable type_body_length
+enum Mango9ContactStyle {
+	/// Retain the app's indigo in light mode, with readable contrast in dark mode.
+	static let tint = Color(uiColor: UIColor { traits in
+		traits.userInterfaceStyle == .dark
+			? UIColor(red: 0.58, green: 0.63, blue: 1, alpha: 1)
+			: UIColor(Color.mango9Primary)
+	})
+}
+
 struct ContactInnerActionsFragment: View {
-	
-	@ObservedObject private var telecomManager = TelecomManager.shared
-	@ObservedObject private var contactsManager = ContactsManager.shared
 	@ObservedObject private var sharedMainViewModel = SharedMainViewModel.shared
-	
 	@EnvironmentObject var contactAvatarModel: ContactAvatarModel
 	@EnvironmentObject var contactsListViewModel: ContactsListViewModel
-	
-	@State private var trustIsOpen = true
-	@State private var informationIsOpen = true
-	
+
 	@Binding var showingSheet: Bool
 	@Binding var showShareSheet: Bool
 	@Binding var isShowDeletePopup: Bool
 	@Binding var isShowDismissPopup: Bool
-	@Binding var isShowTrustLevelPopup: Bool
 	@Binding var isShowMediaFilesFragment: Bool
 	@Binding var isShowDocumentsFilesFragment: Bool
-	@Binding var isShowIncreaseTrustLevelPopup: Bool
 	@Binding var isShowEditContactFragmentInContactDetails: Bool
-	
-	let geometry: GeometryProxy
-	
 	var actionEditButton: () -> Void
-	
+
+	private var canEdit: Bool {
+		!contactAvatarModel.isReadOnly && !AppServices.corePreferences.hideContactEdition
+	}
+	private var visibleAddresses: [String] {
+		AppServices.corePreferences.hideSipAddresses ? [] : contactAvatarModel.addresses
+	}
+
 	var body: some View {
-		if (!AppServices.corePreferences.hideSipAddresses && !contactAvatarModel.addresses.isEmpty)
-			|| !contactAvatarModel.phoneNumbersWithLabel.isEmpty
-			|| !contactAvatarModel.emails.isEmpty {
-			HStack(alignment: .center) {
-				Text("contact_details_numbers_and_addresses_title")
-					.default_text_style_800(styleSize: 15)
-				
-				Spacer()
-				
-				Image(informationIsOpen ? "caret-up" : "caret-down")
-					.renderingMode(.template)
-					.resizable()
-					.foregroundStyle(Color.grayMain2c600)
-					.frame(width: 25, height: 25, alignment: .leading)
-					.padding(.all, 10)
-			}
-			.padding(.top, 30)
-			.padding(.bottom, 10)
-			.padding(.horizontal, 16)
-			.background(Color.gray100)
-			.onTapGesture {
-				withAnimation {
-					informationIsOpen.toggle()
-				}
-			}
-			
-			
-			if informationIsOpen {
+		VStack(spacing: 20) {
+			if !visibleAddresses.isEmpty || !contactAvatarModel.phoneNumbersWithLabel.isEmpty || !contactAvatarModel.emails.isEmpty {
 				VStack(spacing: 0) {
-					if !AppServices.corePreferences.hideSipAddresses {
-						ForEach(0..<contactAvatarModel.addresses.count, id: \.self) { index in
-							HStack {
-								HStack {
-									VStack {
-										Text(String(localized: "sip_address") + ":")
-											.default_text_style_700(styleSize: 14)
-											.frame(maxWidth: .infinity, alignment: .leading)
-										Text(contactAvatarModel.addresses[index].dropFirst(4))
-											.default_text_style(styleSize: 14)
-											.frame(maxWidth: .infinity, alignment: .leading)
-											.lineLimit(1)
-											.fixedSize(horizontal: false, vertical: true)
-									}
-									
-									Spacer()
-									
-									Image("phone")
-										.renderingMode(.template)
-										.resizable()
-										.foregroundStyle(Color.grayMain2c600)
-										.frame(width: 25, height: 25)
-										.padding(.all, 10)
-								}
-								.padding(.vertical, 15)
-								.padding(.horizontal, 20)
-							}
-							.background(.white)
-							.onTapGesture {
-								CoreContext.shared.doOnCoreQueue { core in
-									do {
-										let address = try Factory.Instance.createAddress(addr: contactAvatarModel.addresses[index])
-										telecomManager.doCallOrJoinConf(address: address)
-									} catch {
-										Log.error("[ContactInnerActionsFragment] unable to create address for a new outgoing call : \(contactAvatarModel.addresses[index]) \(error) ")
-									}
-								}
-							}
-							.onLongPressGesture(minimumDuration: 0.2) {
-								contactsListViewModel.stringToCopy = contactAvatarModel.addresses[index]
-								showingSheet.toggle()
-							}
-							
-							if !contactAvatarModel.phoneNumbersWithLabel.isEmpty
-								|| !contactAvatarModel.emails.isEmpty
-								|| index < contactAvatarModel.addresses.count - 1 {
-								VStack {
-									Divider()
-								}
-								.padding(.horizontal)
-							}
+					ForEach(Array(contactAvatarModel.phoneNumbersWithLabel.enumerated()), id: \.offset) { index, entry in
+						contactValue(label: entry.label.isEmpty ? String(localized: "phone_number") : Mango9ContactLabel.localized(entry.label),
+							value: entry.phoneNumber, icon: "phone", accessibilityID: "contact.phone.\(index)") {
+							call(entry.phoneNumber)
+						}
+						.contextMenu { copyButton(entry.phoneNumber) }
+						if index < contactAvatarModel.phoneNumbersWithLabel.count - 1 || !visibleAddresses.isEmpty || !contactAvatarModel.emails.isEmpty {
+							insetDivider
 						}
 					}
-					
-					ForEach(contactAvatarModel.phoneNumbersWithLabel.indices, id: \.self) { index in
-						let entry = contactAvatarModel.phoneNumbersWithLabel[index]
-						HStack {
-							HStack {
-								VStack {
-									if !entry.label.isEmpty {
-										Text(String(localized: "phone_number") + " (\(entry.label)):")
-											.default_text_style_700(styleSize: 14)
-											.frame(maxWidth: .infinity, alignment: .leading)
-									} else {
-										Text(String(localized: "phone_number") + ":")
-											.default_text_style_700(styleSize: 14)
-											.frame(maxWidth: .infinity, alignment: .leading)
-									}
-									Text(entry.phoneNumber)
-										.default_text_style(styleSize: 14)
-										.frame(maxWidth: .infinity, alignment: .leading)
-										.lineLimit(1)
-										.fixedSize(horizontal: false, vertical: true)
-								}
-								
-								Spacer()
-								
-								Image("phone")
-									.renderingMode(.template)
-									.resizable()
-									.foregroundStyle(Color.grayMain2c600)
-									.frame(width: 25, height: 25)
-									.padding(.all, 10)
-							}
-							.padding(.vertical, 15)
-							.padding(.horizontal, 20)
-						}
-						.background(.white)
-						.onTapGesture {
-							CoreContext.shared.doOnCoreQueue { core in
-								let address = core.interpretUrl(url: contactAvatarModel.phoneNumbersWithLabel[index].phoneNumber, applyInternationalPrefix: LinphoneUtils.applyInternationalPrefix(core: core))
-								if address != nil {
-									TelecomManager.shared.doCallOrJoinConf(address: address!)
-								}
-							}
-						}
-						.onLongPressGesture(minimumDuration: 0.2) {
-							contactsListViewModel.stringToCopy = entry.phoneNumber
-							showingSheet.toggle()
-						}
-						
-						if index < contactAvatarModel.phoneNumbersWithLabel.count - 1
-							|| !contactAvatarModel.emails.isEmpty {
-							VStack {
-								Divider()
-							}
-							.padding(.horizontal)
-						}
+					ForEach(Array(visibleAddresses.enumerated()), id: \.offset) { index, address in
+						contactValue(label: String(localized: "sip_address"), value: displayAddress(address),
+							icon: "phone", accessibilityID: "contact.sip.\(index)") { call(address) }
+							.contextMenu { copyButton(address) }
+						if index < visibleAddresses.count - 1 || !contactAvatarModel.emails.isEmpty { insetDivider }
 					}
-
-					ForEach(contactAvatarModel.emails.indices, id: \.self) { index in
-						let email = contactAvatarModel.emails[index]
-						HStack {
-							VStack {
-								Text(String(localized: "contact_email") + ":")
-									.default_text_style_700(styleSize: 14)
-									.frame(maxWidth: .infinity, alignment: .leading)
-								Text(email)
-									.default_text_style(styleSize: 14)
-									.frame(maxWidth: .infinity, alignment: .leading)
-									.lineLimit(1)
-									.fixedSize(horizontal: false, vertical: true)
-							}
-
-							Spacer()
-
-							Image("envelope-simple")
-								.renderingMode(.template)
-								.resizable()
-								.foregroundStyle(Color.grayMain2c600)
-								.frame(width: 25, height: 25)
-								.padding(.all, 10)
+					ForEach(Array(contactAvatarModel.emails.enumerated()), id: \.offset) { index, email in
+						contactValue(label: String(localized: "contact_email"), value: email,
+							icon: "envelope", accessibilityID: "contact.email.\(index)") {
+							var url = URLComponents()
+							url.scheme = "mailto"; url.path = email
+							if let target = url.url { UIApplication.shared.open(target) }
 						}
-						.padding(.vertical, 15)
-						.padding(.horizontal, 20)
-						.background(.white)
-						.onTapGesture {
-							guard
-								let encodedEmail = email.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-								let emailURL = URL(string: "mailto:\(encodedEmail)")
-							else { return }
-							UIApplication.shared.open(emailURL)
-						}
-						.onLongPressGesture(minimumDuration: 0.2) {
-							UIPasteboard.general.string = email
-							ToastViewModel.shared.show("Success_address_copied_into_clipboard")
-						}
-
-						if index < contactAvatarModel.emails.count - 1 {
-							VStack {
-								Divider()
-							}
-							.padding(.horizontal)
-						}
+						.contextMenu { copyButton(email) }
+						if index < contactAvatarModel.emails.count - 1 { insetDivider }
 					}
 				}
-				.background(.white)
-				.cornerRadius(15)
-				.padding(.horizontal)
-				.zIndex(-1)
-				.transition(.move(edge: .top))
-				.background(Color.gray100)
+				.contactDetailCard()
 			}
-		} else {
-			HStack {}
-				.frame(height: 20)
-		}
-		
-		
-		if !contactAvatarModel.organization.isEmpty || !contactAvatarModel.jobTitle.isEmpty {
-			VStack {
-				if !contactAvatarModel.organization.isEmpty {
-					Text(.init(String(format:"**%@ :** %@", String(localized: "contact_editor_company"), contactAvatarModel.organization)))
-						.default_text_style(styleSize: 14)
-						.padding(.vertical, 15)
-						.padding(.horizontal, 20)
-						.frame(maxWidth: .infinity, alignment: .leading)
+
+			if !contactAvatarModel.organization.isEmpty || !contactAvatarModel.jobTitle.isEmpty {
+				VStack(spacing: 0) {
+					if !contactAvatarModel.organization.isEmpty {
+						informationRow(String(localized: "contact_editor_company"), value: contactAvatarModel.organization)
+					}
+					if !contactAvatarModel.organization.isEmpty && !contactAvatarModel.jobTitle.isEmpty { insetDivider }
+					if !contactAvatarModel.jobTitle.isEmpty {
+						informationRow(String(localized: "contact_editor_job_title"), value: contactAvatarModel.jobTitle)
+					}
 				}
-				
-				if !contactAvatarModel.jobTitle.isEmpty {
-					Text(.init(String(format:"**%@ :** %@", String(localized: "contact_editor_job_title"), contactAvatarModel.jobTitle)))
-						.default_text_style(styleSize: 14)
-						.padding(.top, !contactAvatarModel.organization.isEmpty ? 0 : 15)
-						.padding(.bottom, 15)
-						.padding(.horizontal, 20)
-						.frame(maxWidth: .infinity, alignment: .leading)
+				.contactDetailCard()
+			}
+
+			if sharedMainViewModel.displayedFriendExistingChatRoom != nil {
+				VStack(spacing: 0) {
+					Button { isShowMediaFilesFragment = true } label: {
+						actionRow("conversation_menu_media_files", icon: "photo.on.rectangle")
+					}
+					insetDivider
+					Button { isShowDocumentsFilesFragment = true } label: {
+						actionRow("conversation_menu_documents_files", icon: "doc")
+					}
 				}
+				.contactDetailCard()
 			}
-			.background(.white)
-			.cornerRadius(15)
-			.padding(.top)
-			.padding(.horizontal)
-			.zIndex(-1)
-			.transition(.move(edge: .top))
-		}
-		
-		HStack(alignment: .center) {
-			Button {
-				isShowTrustLevelPopup = true
-			} label: {
-				HStack {
-					Text("contact_details_trust_title")
-						.default_text_style_800(styleSize: 15)
-					
-					Image("question")
-						.renderingMode(.template)
-						.resizable()
-						.foregroundStyle(Color.grayMain2c600)
-						.frame(width: 22, height: 22)
-				}
-			}
-			
-			Spacer()
-			
-			Image(trustIsOpen ? "caret-up" : "caret-down")
-				.renderingMode(.template)
-				.resizable()
-				.foregroundStyle(Color.grayMain2c600)
-				.frame(width: 25, height: 25, alignment: .leading)
-				.padding(.all, 10)
-		}
-		.padding(.vertical, 10)
-		.padding(.horizontal, 16)
-		.background(Color.gray100)
-		.onTapGesture {
-			withAnimation {
-				trustIsOpen.toggle()
-			}
-		}
-		
-		if trustIsOpen {
+
 			VStack(spacing: 0) {
-				if !contactsListViewModel.devices.isEmpty {
-					Text("contact_details_trusted_devices_count")
-						.default_text_style_700(styleSize: 14)
-						.frame(maxWidth: .infinity, alignment: .leading)
-						.padding(.top, 20)
-						.padding(.horizontal, 20)
-						.padding(.bottom, 10)
-					
-					let radius = geometry.size.height * 0.5
-					let barWidth = min(geometry.size.width - 70, SharedMainViewModel.shared.maxWidth - 70)
-					
-					ZStack(alignment: .leading) {
-						Rectangle()
-							.foregroundColor(Color.blueInfo500.opacity(0.2))
-							.frame(width: barWidth, height: 30)
-							.clipShape(RoundedRectangle(cornerRadius: radius))
-						
-						if contactsListViewModel.trustedDevicesPercentage >= 15 {
-							Rectangle()
-								.foregroundColor(Color.blueInfo500)
-								.frame(width: ((contactsListViewModel.trustedDevicesPercentage / 100) * barWidth) - 6, height: 25)
-								.clipShape(RoundedRectangle(cornerRadius: radius))
-								.padding(.horizontal, 3)
-						} else if contactsListViewModel.trustedDevicesPercentage > 0 {
-							Rectangle()
-								.foregroundColor(Color.blueInfo500)
-								.frame(width: ((10 / 100) * barWidth) - 6, height: 25)
-								.clipShape(RoundedRectangle(cornerRadius: radius))
-								.padding(.horizontal, 3)
-						}
-						
-						if contactsListViewModel.trustedDevicesPercentage >= 30 {
-							Text(String(Int(contactsListViewModel.trustedDevicesPercentage)) + "%")
-								.default_text_style_white_700(styleSize: 14)
-								.frame(width: (contactsListViewModel.trustedDevicesPercentage / 100) * barWidth, height: 25, alignment: .center)
-						} else {
-							Text(String(Int(contactsListViewModel.trustedDevicesPercentage)) + "%")
-								.foregroundStyle(contactsListViewModel.trustedDevicesPercentage == 0 ? Color.redDanger500 : Color.blueInfo500)
-								.default_text_style_white_700(styleSize: 14)
-								.frame(width: barWidth, height: 25, alignment: .center)
-						}
+				if canEdit {
+					Button { contactsListViewModel.toggleStarredSelectedFriend() } label: {
+						actionRow(contactAvatarModel.starred ? "contact_details_remove_from_favourites" : "contact_details_add_to_favourites",
+							icon: contactAvatarModel.starred ? "star.fill" : "star")
 					}
-					.frame(width: barWidth, height: 30)
-					.contentShape(Rectangle())
-					.padding(.bottom, 10)
-					
-					ForEach(contactsListViewModel.devices) { device in
-						HStack {
-							Text(device.name)
-								.default_text_style(styleSize: 14)
-								.frame(maxWidth: .infinity, alignment: .leading)
-							
-							HStack {
-								if !device.trusted {
-									Button {
-										SharedMainViewModel.shared.increaseTrustLevelPopupDeviceName = device.name
-										SharedMainViewModel.shared.increaseTrustLevelPopupDeviceAddress = device.address
-										isShowIncreaseTrustLevelPopup = true
-									} label: {
-										HStack {
-											Image("warning-circle")
-												.renderingMode(.template)
-												.resizable()
-												.foregroundStyle(Color.orangeMain500)
-												.frame(width: 25, height: 25)
-												.padding(.all, 6)
-											
-											Text("contact_make_call_check_device_trust")
-												.foregroundStyle(Color.orangeMain500)
-												.default_text_style(styleSize: 14)
-												.lineLimit(1)
-												.padding(.leading, -5)
-												.padding(.trailing, 15)
-										}
-									}
-									.background(Color.orangeMain100)
-									.cornerRadius(25)
-								} else {
-									ZStack {
-										Button {
-										} label: {
-											HStack {
-												Image("warning-circle")
-													.renderingMode(.template)
-													.resizable()
-													.foregroundStyle(Color.orangeMain500)
-													.frame(width: 25, height: 25)
-													.padding(.all, 6)
-												
-												Text("contact_make_call_check_device_trust")
-													.foregroundStyle(Color.orangeMain500)
-													.default_text_style(styleSize: 14)
-													.lineLimit(1)
-													.padding(.leading, -5)
-													.padding(.trailing, 15)
-											}
-										}
-										.background(Color.orangeMain100)
-										.cornerRadius(25)
-										.hidden()
-										
-										Image("trusted")
-											.resizable()
-											.frame(width: 28, height: 28)
-									}
-								}
-							}
-							.frame(height: 40)
-						}
-						.background(.white)
-						.padding(.vertical, 10)
-						.padding(.horizontal, 20)
-					}
-				} else {
-					Text("contact_details_no_device_found")
-						.default_text_style_700(styleSize: 14)
-						.frame(maxWidth: .infinity, alignment: .leading)
-						.padding(.top, 15)
-						.padding(.horizontal, 20)
-						.padding(.bottom, 10)
+					.accessibilityIdentifier("contact.favorite")
+					insetDivider
 				}
+				Button { showShareSheet = true } label: {
+					actionRow("contact_details_share", icon: "square.and.arrow.up")
+				}
+				.accessibilityIdentifier("contact.share")
 			}
-			.padding(.bottom, 5)
-			.background(.white)
-			.cornerRadius(15)
-			.padding(.horizontal)
-			.zIndex(-2)
-			.transition(.move(edge: .top))
-		}
-		
-		if sharedMainViewModel.displayedFriendExistingChatRoom != nil {
-			HStack(alignment: .center) {
-				Text("conversation_details_media_documents_title")
-					.default_text_style_800(styleSize: 16)
-				
-				Spacer()
-				
-				Image("caret-up")
-					.renderingMode(.template)
-					.resizable()
-					.foregroundStyle(Color.grayMain2c600)
-					.frame(width: 25, height: 25, alignment: .leading)
-					.padding(.all, 10)
-					.hidden()
+			.contactDetailCard()
+
+			// iPhone contacts are deleted in Apple's editor. Keep the existing
+			// deletion route for contacts belonging to other address books.
+			if canEdit && contactAvatarModel.removalSource != .iPhone {
+				Button(role: .destructive) { isShowDeletePopup = true } label: {
+					Text("Delete Contact")
+						.font(.body)
+						.foregroundColor(.red)
+						.frame(maxWidth: .infinity, minHeight: 48)
+						.padding(.vertical, 4)
+						.contentShape(Rectangle())
+				}
+				.accessibilityIdentifier("contact.remove")
+				.contactDetailCard()
 			}
-			.padding(.top, 20)
-			.padding(.bottom, 10)
-			.padding(.horizontal, 16)
-			.background(Color.gray100)
-			
-			VStack(spacing: 0) {
-				Button {
-					withAnimation {
-						isShowMediaFilesFragment = true
-					}
-				} label: {
-					HStack {
-						Image("image")
-							.renderingMode(.template)
-							.resizable()
-							.foregroundStyle(Color.grayMain2c600)
-							.frame(width: 25, height: 25)
-							.padding(.all, 10)
-						
-						Text("conversation_menu_media_files")
-							.default_text_style(styleSize: 14)
-							.frame(maxWidth: .infinity, alignment: .leading)
-							.lineLimit(1)
-							.fixedSize(horizontal: false, vertical: true)
-						Spacer()
-					}
-					.padding(.vertical, 15)
-					.padding(.horizontal, 20)
-				}
-				
-				VStack {
-					Divider()
-				}
-				.padding(.horizontal)
-				
-				Button {
-					withAnimation {
-						isShowDocumentsFilesFragment = true
-					}
-				} label: {
-					HStack {
-						Image("file-pdf")
-							.renderingMode(.template)
-							.resizable()
-							.foregroundStyle(Color.grayMain2c600)
-							.frame(width: 25, height: 25)
-							.padding(.all, 10)
-						
-						Text("conversation_menu_documents_files")
-							.default_text_style(styleSize: 14)
-							.frame(maxWidth: .infinity, alignment: .leading)
-							.lineLimit(1)
-							.fixedSize(horizontal: false, vertical: true)
-						Spacer()
-					}
-					.padding(.vertical, 15)
-					.padding(.horizontal, 20)
-				}
-			}
-			.background(.white)
-			.cornerRadius(15)
-			.padding(.horizontal)
-			.zIndex(-1)
-			.transition(.move(edge: .top))
 		}
-		
-		HStack(alignment: .center) {
-			Text("contact_details_actions_title")
-				.default_text_style_800(styleSize: 16)
-			
-			Spacer()
-			
-			Image("caret-up")
-				.renderingMode(.template)
-				.resizable()
-				.foregroundStyle(Color.grayMain2c600)
-				.frame(width: 25, height: 25, alignment: .leading)
-				.padding(.all, 10)
-				.hidden()
-		}
-		.padding(.top, 20)
-		.padding(.bottom, 10)
+		.buttonStyle(.plain)
 		.padding(.horizontal, 16)
-		.background(Color.gray100)
-		
-		VStack(spacing: 0) {
-			if !contactAvatarModel.isReadOnly && !AppServices.corePreferences.hideContactEdition {
-				if !contactAvatarModel.editable {
-					Button {
-						actionEditButton()
-					} label: {
-						HStack {
-							Image("pencil-simple")
-								.renderingMode(.template)
-								.resizable()
-								.foregroundStyle(Color.grayMain2c600)
-								.frame(width: 25, height: 25)
-								.padding(.all, 10)
+		.padding(.top, 24)
+		.padding(.bottom, 28)
+	}
 
-							Text("contact_details_edit")
-								.default_text_style(styleSize: 14)
-								.frame(maxWidth: .infinity, alignment: .leading)
-								.lineLimit(1)
-								.fixedSize(horizontal: false, vertical: true)
-							Spacer()
-						}
-						.padding(.vertical, 15)
-						.padding(.horizontal, 20)
-					}
-				} else {
-					NavigationLink(destination: EditContactFragment(
-						contactAvatarModel: contactAvatarModel,
-						isShowEditContactFragment: $isShowEditContactFragmentInContactDetails,
-						isShowDismissPopup: $isShowDismissPopup)) {
-							HStack {
-								Image("pencil-simple")
-									.renderingMode(.template)
-									.resizable()
-									.foregroundStyle(Color.grayMain2c600)
-									.frame(width: 25, height: 25)
-									.padding(.all, 10)
+	private var insetDivider: some View { Divider().padding(.leading, 16) }
 
-								Text("contact_details_edit")
-									.default_text_style(styleSize: 14)
-									.frame(maxWidth: .infinity, alignment: .leading)
-									.lineLimit(1)
-									.fixedSize(horizontal: false, vertical: true)
-								Spacer()
-							}
-							.padding(.vertical, 15)
-							.padding(.horizontal, 20)
-						}
-						.simultaneousGesture(
-							TapGesture().onEnded {
-								isShowEditContactFragmentInContactDetails = true
-							}
-						)
-				}
-
-				VStack {
-					Divider()
-				}
-				.padding(.horizontal)
-
-				Button {
-					contactsListViewModel.toggleStarredSelectedFriend()
-				} label: {
-					HStack {
-						Image(contactAvatarModel.starred == true ? "heart-fill" : "heart")
-							.renderingMode(.template)
-							.resizable()
-							.foregroundStyle(contactAvatarModel.starred == true ? Color.redDanger500 : Color.grayMain2c500)
-							.frame(width: 25, height: 25)
-							.padding(.all, 10)
-						Text(contactAvatarModel.starred == true
-							 ? "contact_details_remove_from_favourites"
-							 : "contact_details_add_to_favourites")
-						.default_text_style(styleSize: 14)
-						.frame(maxWidth: .infinity, alignment: .leading)
-						.lineLimit(1)
-						.fixedSize(horizontal: false, vertical: true)
-						Spacer()
-					}
-					.padding(.vertical, 15)
-					.padding(.horizontal, 20)
-				}
-
-				VStack {
-					Divider()
-				}
-				.padding(.horizontal)
-			}
-			
-			Button {
-				showShareSheet.toggle()
-			} label: {
-				HStack {
-					Image("share-network")
-						.renderingMode(.template)
-						.resizable()
-						.foregroundStyle(Color.grayMain2c600)
-						.frame(width: 25, height: 25)
-						.padding(.all, 10)
-					
-					Text("contact_details_share")
-						.default_text_style(styleSize: 14)
-						.frame(maxWidth: .infinity, alignment: .leading)
-						.lineLimit(1)
-						.fixedSize(horizontal: false, vertical: true)
-					Spacer()
-				}
-				.padding(.vertical, 15)
-				.padding(.horizontal, 20)
-			}
-			
-			if !contactAvatarModel.isReadOnly && !AppServices.corePreferences.hideContactEdition {
-				VStack {
-					Divider()
-				}
-				.padding(.horizontal)
-
-				Button {
-					isShowDeletePopup.toggle()
-				} label: {
-					HStack {
-						Image("trash-simple")
-							.renderingMode(.template)
-							.resizable()
-							.foregroundStyle(Color.redDanger500)
-							.frame(width: 25, height: 25)
-							.padding(.all, 10)
-
-						Text("contact_details_delete")
-							.foregroundStyle(Color.redDanger500)
-							.default_text_style(styleSize: 14)
-							.frame(maxWidth: .infinity, alignment: .leading)
-							.lineLimit(1)
-							.fixedSize(horizontal: false, vertical: true)
-						Spacer()
-					}
-					.padding(.vertical, 15)
-					.padding(.horizontal, 20)
-				}
-			}
+	private func informationRow(_ label: String, value: String) -> some View {
+		VStack(alignment: .leading, spacing: 4) {
+			Text(label).font(.subheadline).foregroundColor(.secondary)
+			Text(value).font(.body).foregroundColor(.primary)
+				.fixedSize(horizontal: false, vertical: true)
 		}
-		.background(.white)
-		.cornerRadius(15)
-		.padding(.horizontal)
-		.zIndex(-1)
-		.transition(.move(edge: .top))
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(16)
+	}
+
+	private func contactValue(label: String, value: String, icon: String, accessibilityID: String,
+							  action: @escaping () -> Void) -> some View {
+		Button(action: action) {
+			HStack(spacing: 12) {
+				VStack(alignment: .leading, spacing: 5) {
+					Text(label).font(.subheadline).foregroundColor(.primary)
+					Text(value).font(.body).foregroundColor(Mango9ContactStyle.tint)
+						.fixedSize(horizontal: false, vertical: true)
+						.environment(\.layoutDirection, .leftToRight)
+				}
+				.frame(maxWidth: .infinity, alignment: .leading)
+				Image(systemName: icon).font(.system(size: 20)).foregroundColor(Mango9ContactStyle.tint)
+					.accessibilityHidden(true)
+			}
+			.padding(16)
+			.frame(minHeight: 64)
+			.contentShape(Rectangle())
+		}
+		.accessibilityIdentifier(accessibilityID)
+	}
+
+	private func actionRow(_ title: LocalizedStringKey, icon: String) -> some View {
+		HStack(spacing: 12) {
+			Text(title).font(.body).fixedSize(horizontal: false, vertical: true)
+				.frame(maxWidth: .infinity, alignment: .leading)
+			Image(systemName: icon).font(.system(size: 20)).accessibilityHidden(true)
+		}
+		.foregroundColor(Mango9ContactStyle.tint)
+		.padding(.horizontal, 16)
+		.padding(.vertical, 14)
+		.frame(minHeight: 48)
+		.contentShape(Rectangle())
+	}
+
+	private func copyButton(_ value: String) -> some View {
+		Button {
+			UIPasteboard.general.string = value
+			ToastViewModel.shared.show("Success_address_copied_into_clipboard")
+		} label: { Label("Copy", systemImage: "doc.on.doc") }
+	}
+
+	private func displayAddress(_ value: String) -> String {
+		if value.lowercased().hasPrefix("sips:") { return String(value.dropFirst(5)) }
+		if value.lowercased().hasPrefix("sip:") { return String(value.dropFirst(4)) }
+		return value
+	}
+
+	private func call(_ value: String) {
+		CoreContext.shared.doOnCoreQueue { core in
+			guard let address = core.interpretUrl(url: value, applyInternationalPrefix: LinphoneUtils.applyInternationalPrefix(core: core)) else { return }
+			TelecomManager.shared.doCallOrJoinConf(address: address)
+		}
 	}
 }
-// swiftlint:enable type_body_length
+
+private extension View {
+	func contactDetailCard() -> some View {
+		background(Color(uiColor: .secondarySystemGroupedBackground))
+			.clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+	}
+}

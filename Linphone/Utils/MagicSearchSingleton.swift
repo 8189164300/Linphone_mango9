@@ -28,6 +28,20 @@ final class MagicSearchSingleton: ObservableObject {
 	private var contactsManager = ContactsManager.shared
 	
 	private var magicSearch: MagicSearch?
+	// SDK wrappers and their delegates are owned/reused on the core queue, not
+	// read back from a main-queue @Published array during a search callback.
+	private var modelsByFriend: [OpaquePointer: ContactAvatarModel] = [:]
+
+	/// SearchResult retains the SDK friend, not its temporary Swift wrapper.
+	/// Wrapper allocations can reuse an ObjectIdentifier within the same loop.
+	/// The SDK pointer stays valid while these results/models retain the friend.
+	static func uniqueFriendResults(_ results: [SearchResult]) -> [SearchResult] {
+		var seen = Set<OpaquePointer>()
+		return results.filter { result in
+			guard let key = result.friend?.getCobject else { return false }
+			return seen.insert(key).inserted
+		}
+	}
 	
 	var currentFilter: String = ""
 	var previousFilter: String?
@@ -78,20 +92,15 @@ final class MagicSearchSingleton: ObservableObject {
 				var lastSearchSuggestions: [SearchResult] = []
 				
 				magicSearch.lastSearch.forEach { searchResult in
-                    if searchResult.friend != nil && (searchResult.friend?.friendList?.displayName == self.nativeAddressBookFriendList || searchResult.friend?.friendList?.displayName == self.linphoneAddressBookFriendList || searchResult.friend?.friendList?.displayName == self.tempRemoteAddressBookFriendList) {
-						if let address = searchResult.address,
-						   !lastSearchFriend.contains(where: { $0.address?.weakEqual(address2: address) ?? false }) {
-							lastSearchFriend.append(searchResult)
-						} else if let phoneNumber = searchResult.phoneNumber,
-								  !lastSearchFriend.contains(where: { $0.phoneNumber == phoneNumber }) {
-							lastSearchFriend.append(searchResult)
-						}
+					if let friend = searchResult.friend, (friend.friendList?.displayName == self.nativeAddressBookFriendList || friend.friendList?.displayName == self.linphoneAddressBookFriendList || friend.friendList?.displayName == self.tempRemoteAddressBookFriendList) {
+						lastSearchFriend.append(searchResult)
 					} else if searchResult.friend != nil && (searchResult.hasSourceFlag(source: .RemoteCardDAV) || searchResult.friend?.friendList?.type == .CardDAV || searchResult.hasSourceFlag(source: .LdapServers)) {
 						lastSearchFriend.append(searchResult)
 					} else {
 						lastSearchSuggestions.append(searchResult)
 					}
 				}
+				lastSearchFriend = Self.uniqueFriendResults(lastSearchFriend)
 				
 				lastSearchSuggestions.sort(by: {
 					($0.address?.asStringUriOnly() ?? "") < ($1.address?.asStringUriOnly() ?? "")
@@ -103,51 +112,36 @@ final class MagicSearchSingleton: ObservableObject {
 					}
 				}
 				
-				let sortedLastSearch = lastSearchFriend.sorted {
-					let name1 = $0.friend?.name?.lowercased()
-						.folding(options: .diacriticInsensitive, locale: .current) ?? ""
-					let name2 = $1.friend?.name?.lowercased()
-						.folding(options: .diacriticInsensitive, locale: .current) ?? ""
-					return name1 < name2
+				var sortable: [(index: Int, result: SearchResult, name: String)] = []
+				for (index, result) in lastSearchFriend.enumerated() {
+					let name = (result.friend?.name ?? "").folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+					sortable.append((index: index, result: result, name: name))
 				}
+				sortable.sort { lhs, rhs in lhs.name == rhs.name ? lhs.index < rhs.index : lhs.name < rhs.name }
+				let sortedLastSearch: [SearchResult] = sortable.map(\.result)
 				
-				var addedAvatarListModel: [ContactAvatarModel] = []
-				sortedLastSearch.forEach { searchResult in
-					if searchResult.friend != nil {
-                        if (searchResult.friend?.friendList?.displayName == self.nativeAddressBookFriendList || searchResult.friend?.friendList?.displayName == self.linphoneAddressBookFriendList || searchResult.friend?.friendList?.displayName == self.tempRemoteAddressBookFriendList) {
-                            addedAvatarListModel.append(
-                                ContactAvatarModel(
-                                    friend: searchResult.friend!,
-                                    name: searchResult.friend?.name ?? "",
-                                    address: searchResult.friend?.address?.clone()?.asStringUriOnly() ?? "",
-                                    withPresence: true
-                                )
-                            )
-						} else if searchResult.hasSourceFlag(source: .RemoteCardDAV) || searchResult.friend?.friendList?.type == .CardDAV {
-							addedAvatarListModel.append(
-								ContactAvatarModel(
-									friend: searchResult.friend!,
-									name: searchResult.friend?.name ?? "",
-									address: searchResult.friend?.address?.clone()?.asStringUriOnly() ?? "",
-									withPresence: true
-								)
-							)
-						} else if searchResult.hasSourceFlag(source: .LdapServers) {
-							addedAvatarListModel.append(
-								ContactAvatarModel(
-									friend: searchResult.friend!,
-									name: searchResult.friend?.name ?? "",
-									address: searchResult.friend?.address?.clone()?.asStringUriOnly() ?? "",
-									withPresence: false
-								)
-							)
-						}
-					}
+				var nextModels: [OpaquePointer: ContactAvatarModel] = [:]
+				let addedAvatarListModel = sortedLastSearch.compactMap { result -> ContactAvatarModel? in
+					guard let friend = result.friend else { return nil }
+					guard let key = friend.getCobject else { return nil }
+					guard nextModels[key] == nil else { return nil }
+					let name = friend.name ?? ""
+					let address = friend.address?.asStringUriOnly() ?? ""
+					let presence = friend.friendList?.displayName != self.nativeAddressBookFriendList && !result.hasSourceFlag(source: .LdapServers)
+					let model: ContactAvatarModel
+					if let existing = self.modelsByFriend[key] {
+						model = existing
+						model.resetContactAvatarModel(friend: friend, name: name, address: address, withPresence: presence)
+					} else { model = ContactAvatarModel(friend: friend, name: name, address: address, withPresence: presence) }
+					nextModels[key] = model
+					return model
 				}
-				
-				self.contactsManager.avatarListModel.forEach { contactAvatarModel in
-					contactAvatarModel.removeFriendDelegate()
-				}
+				for (key, model) in self.modelsByFriend where nextModels[key] == nil { model.removeFriendDelegate() }
+				self.modelsByFriend = nextModels
+				#if DEBUG
+				let nativeCount = sortedLastSearch.filter { $0.friend?.friendList?.displayName == self.nativeAddressBookFriendList }.count
+				print("[ContactsSearch] raw=\(magicSearch.lastSearch.count) visible=\(addedAvatarListModel.count) native=\(nativeCount) all=\(self.allContact) filterLength=\(self.currentFilter.count)")
+				#endif
                 
                 self.updateContacts(sortedLastSearch: sortedLastSearch, lastSearchSuggestions: lastSearchSuggestions, addedAvatarListModel: addedAvatarListModel)
 			})
@@ -168,17 +162,24 @@ final class MagicSearchSingleton: ObservableObject {
         addedAvatarListModel: [ContactAvatarModel]
     ) {
         DispatchQueue.main.async {			
-			if SharedMainViewModel.shared.displayedFriend != nil {
-				if let avatarModel = addedAvatarListModel.first(where: { $0.address == SharedMainViewModel.shared.displayedFriend?.address }) {
-					SharedMainViewModel.shared.displayedFriend = avatarModel
+			if let displayed = SharedMainViewModel.shared.displayedFriend {
+				if displayed.removalSource == .iPhone && !Mango9ContactAccess.current.canRead {
+					SharedMainViewModel.shared.displayedFriend = nil
+				} else if let updated = addedAvatarListModel.first(where: { displayed.isSameContact(as: $0) }) {
+					// Keep the open page's identity/scroll position. Phone-only entries
+					// often have an empty SIP address; that is never an identity key.
+					displayed.resetContactAvatarModel(friend: updated.friend, name: updated.name,
+						address: updated.address, withPresence: updated.withPresence)
 				}
 			}
 			
+            let retiredResults = self.contactsManager.lastSearch + self.contactsManager.lastSearchSuggestions
             self.contactsManager.lastSearch = sortedLastSearch
             self.contactsManager.lastSearchSuggestions = lastSearchSuggestions
+            coreQueue.async { withExtendedLifetime(retiredResults) {} }
             
-            self.contactsManager.avatarListModel.removeAll()
-            self.contactsManager.avatarListModel += addedAvatarListModel
+            // One publication: never flash an empty list during a refresh.
+            self.contactsManager.avatarListModel = addedAvatarListModel
 
             // Cancel previous debounce task
             self.contactLoadedDebounceWorkItem?.cancel()

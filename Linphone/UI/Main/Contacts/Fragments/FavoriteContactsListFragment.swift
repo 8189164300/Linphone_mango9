@@ -30,8 +30,8 @@ struct FavoriteContactsListFragment: View {
     
     var body: some View {
         ScrollView(.horizontal) {
-            HStack {
-				ForEach(contactsManager.avatarListModel) { contactAvatarModel in
+            LazyHStack {
+				ForEach(contactsManager.avatarListModel.filter(\.starred)) { contactAvatarModel in
 					FavoriteContactRow(contactAvatarModel: contactAvatarModel, showingSheet: $showingSheet)
                 }
             }

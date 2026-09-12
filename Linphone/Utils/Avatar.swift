@@ -19,6 +19,95 @@
 
 import SwiftUI
 import linphonesw
+import Contacts
+import ImageIO
+
+/// Only visible native contacts load thumbnails. The cache is memory bounded and
+/// automatically discarded on address-book changes or memory pressure.
+final class Mango9ContactPhotoCache {
+	static let shared = Mango9ContactPhotoCache()
+	private final class Entry { let image: UIImage?; init(_ image: UIImage?) { self.image = image } }
+	private let cache = NSCache<NSString, Entry>()
+	private let queue = DispatchQueue(label: "mango9.contacts.thumbnails", qos: .utility)
+	private var observers: [NSObjectProtocol] = []
+	init() {
+		cache.countLimit = 128; cache.totalCostLimit = 8 * 1024 * 1024
+		for name in [Notification.Name.CNContactStoreDidChange, UIApplication.didReceiveMemoryWarningNotification] {
+			observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+				self?.queue.async { self?.cache.removeAllObjects() }
+			})
+		}
+	}
+	deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+	func image(identifier: String) async -> UIImage? {
+		guard !identifier.isEmpty, !Task.isCancelled else { return nil }
+		return await withCheckedContinuation { continuation in
+			queue.async {
+				let image: UIImage? = autoreleasepool {
+					guard Mango9ContactAccess.current.canRead else { self.cache.removeAllObjects(); return nil }
+					if let entry = self.cache.object(forKey: identifier as NSString) { return entry.image }
+					let contact = try? CNContactStore().unifiedContact(withIdentifier: identifier,
+						keysToFetch: [CNContactThumbnailImageDataKey as CNKeyDescriptor])
+					var image: UIImage?
+					if let data = contact?.thumbnailImageData, data.count <= 4 * 1024 * 1024,
+						let source = CGImageSourceCreateWithData(data as CFData, nil),
+						let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+							kCGImageSourceCreateThumbnailFromImageAlways: true,
+							kCGImageSourceCreateThumbnailWithTransform: true,
+							kCGImageSourceThumbnailMaxPixelSize: 160,
+							kCGImageSourceShouldCacheImmediately: true] as CFDictionary) {
+						image = UIImage(cgImage: thumbnail)
+					}
+					self.cache.setObject(Entry(image), forKey: identifier as NSString,
+						cost: image?.cgImage.map { $0.bytesPerRow * $0.height } ?? 1)
+					return image
+				}
+				continuation.resume(returning: image)
+			}
+		}
+	}
+}
+
+struct Mango9ContactInitials: View {
+	let name: String
+	let size: CGFloat
+	static func initials(_ name: String) -> String {
+		let parts = name.split(whereSeparator: \.isWhitespace)
+		return parts.prefix(2).compactMap { $0.first(where: \.isLetter).map { String($0).uppercased() } }.joined()
+	}
+	var body: some View {
+		ZStack {
+			Circle().fill(Color.grayMain2c200)
+			let letters = Self.initials(name)
+			if letters.isEmpty { Image(systemName: "person.fill").font(.system(size: size * 0.45)) }
+			else { Text(letters).font(.system(size: size * 0.35, weight: .bold)).lineLimit(1).minimumScaleFactor(0.6) }
+		}.foregroundStyle(Color.grayMain2c600).frame(width: size, height: size)
+	}
+}
+
+private struct Mango9NativeContactPhoto: View {
+	let identifier: String
+	let name: String
+	let size: CGFloat
+	@State private var image: UIImage?
+	@State private var revision = 0
+	var body: some View {
+		Group {
+			if let image { Image(uiImage: image).resizable().scaledToFill().frame(width: size, height: size).clipShape(Circle()) }
+			else { Mango9ContactInitials(name: name, size: size) }
+		}
+		.task(id: "\(identifier):\(revision)") {
+			image = nil
+			let loaded = await Mango9ContactPhotoCache.shared.image(identifier: identifier)
+			guard !Task.isCancelled else { return }
+			image = loaded
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .CNContactStoreDidChange).receive(on: DispatchQueue.main)) { _ in revision &+= 1 }
+		.onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification).receive(on: DispatchQueue.main)) { _ in
+			if !Mango9ContactAccess.current.canRead { image = nil }; revision &+= 1
+		}
+	}
+}
 
 struct Avatar: View {
 	
@@ -37,7 +126,9 @@ struct Avatar: View {
 	
 	var body: some View {
 		ZStack {
-			if !contactAvatarModel.photo.isEmpty {
+			if contactAvatarModel.removalSource == .iPhone, !contactAvatarModel.nativeUri.isEmpty {
+				Mango9NativeContactPhoto(identifier: contactAvatarModel.nativeUri, name: contactAvatarModel.name, size: avatarSize)
+			} else if !contactAvatarModel.photo.isEmpty {
 				let uniqueUrl = ContactsManager.shared.getImagePath(friendPhotoPath: contactAvatarModel.photo)
 				//let finalUrl = uniqueUrl.appendingQueryItem("v", value: UUID().uuidString)
 				
@@ -64,16 +155,7 @@ struct Avatar: View {
 					}
 				}
 			} else if !contactAvatarModel.name.isEmpty {
-				ZStack {
-					Image(uiImage: contactsManager.textToImage(
-						firstName: contactAvatarModel.name,
-						lastName: contactAvatarModel.name.components(separatedBy: " ").count > 1
-						? contactAvatarModel.name.components(separatedBy: " ")[1]
-						: ""))
-					.resizable()
-					.frame(width: avatarSize, height: avatarSize)
-					.clipShape(Circle())
-				}
+				Mango9ContactInitials(name: contactAvatarModel.name, size: avatarSize)
 			} else {
 				Image("profil-picture-default")
 					.resizable()

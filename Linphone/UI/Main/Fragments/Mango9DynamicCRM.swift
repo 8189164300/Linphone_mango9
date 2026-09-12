@@ -6087,6 +6087,11 @@ struct Mango9LeadDetailFragment: View {
 						VStack(spacing: 14) {
 							if let lead = viewModel.lead {
 								leadHeader(lead)
+								if !viewModel.isEditing {
+									Mango9LinkedAppointmentsSection(contact: Mango9AppointmentContact(
+										id: lead.id, name: lead.name,
+										kind: viewModel.recordKind == .client ? "client" : "lead"))
+								}
 							}
 
 							if let error = viewModel.errorMessage {

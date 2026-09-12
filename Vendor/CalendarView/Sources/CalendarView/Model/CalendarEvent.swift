@@ -1,0 +1,77 @@
+//
+//  CalendarEvent.swift
+//
+//
+//  Created by Alisa Mylnikova on 14.04.2025.
+//
+
+import SwiftUI
+
+@available(iOS 18.0, *)
+public struct CalendarEvent: CalendarEntity, Hashable {
+    public let id: String
+    public var calendarID: String
+
+    public var title: String
+    public var notes: String
+    public var calendarColor: Color
+    public var calendarName: String
+    public var startDate: Date
+    public var endDate: Date
+    public var isAllDay: Bool
+    public var isDetached: Bool
+
+    public var repeatType: RepeatType
+    public var alertType: AlertType
+    public var priorityType: PriorityType
+    public var vibrationType: VibrationType
+
+    public var type: EntityType { .event }
+
+    public var duration: CGFloat { // in seconds
+        endDate.timeIntervalSince(startDate)
+    }
+
+    public init(
+        id: String = CalendarEvent.newLocalID(),
+        calendarID: String = "",
+        title: String = "",
+        notes: String = "",
+        calendarColor: Color = .gray,
+        calendarName: String = "",
+        startDate: Date = Date(),
+        endDate: Date? = nil,
+        isAllDay: Bool = false,
+        isDetached: Bool = false,
+        repeatType: RepeatType = .never,
+        alertType: AlertType = .none,
+        priorityType: PriorityType = .none,
+        vibrationType: VibrationType = .none,
+        payload: [String: Sendable] = [:]
+    ) {
+        self.id = id
+        self.calendarID = calendarID
+        self.title = title
+        self.notes = notes
+        self.calendarColor = calendarColor
+        self.calendarName = calendarName
+        self.startDate = startDate
+        self.endDate = endDate ?? startDate.adding(.hour, value: 1)
+        self.isAllDay = isAllDay
+        self.isDetached = isDetached
+        self.repeatType = repeatType
+        self.alertType = alertType
+        self.priorityType = priorityType
+        self.vibrationType = vibrationType
+    }
+
+    func toString() -> String {
+        title + startDate.formatted(" HH:mm") + endDate.formatted(" - HH:mm")
+    }
+
+    public mutating func stripTime() {
+        guard isAllDay else { return }
+        self.startDate = startDate.startOfDay
+        self.endDate = endDate.endOfDay
+    }
+}

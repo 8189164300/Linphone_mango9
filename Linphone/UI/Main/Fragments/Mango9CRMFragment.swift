@@ -21,11 +21,6 @@ struct Mango9CRMFragment: View {
 	@State private var pushedLeadId: Int?
 	@State private var showPushedLead: Bool
 
-	private let columns = [
-		GridItem(.flexible(), spacing: 12),
-		GridItem(.flexible(), spacing: 12)
-	]
-
 	init(
 		isPresented: Binding<Bool>,
 		initialLeadId: Int? = nil,
@@ -52,7 +47,6 @@ struct Mango9CRMFragment: View {
 							accountCard
 
 							if viewModel.session != nil {
-								dashboard
 								workspace
 							} else {
 								connectAccountCard
@@ -95,6 +89,7 @@ struct Mango9CRMFragment: View {
 				await viewModel.reload()
 			}
 		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9AppointmentDidChange)) { _ in Task { await viewModel.reloadAppointmentCount() } }
 		.onChange(of: initialLeadId) { leadId in
 			guard let leadId else { return }
 			pushedLeadId = leadId
@@ -191,70 +186,6 @@ struct Mango9CRMFragment: View {
 		.shadow(color: Color.gray200.opacity(0.6), radius: 5, x: 0, y: 2)
 	}
 
-	@ViewBuilder
-	private var dashboard: some View {
-		VStack(alignment: .leading, spacing: 12) {
-			Text("Overview")
-				.default_text_style_800(styleSize: 17)
-				.frame(maxWidth: .infinity, alignment: .leading)
-
-			LazyVGrid(columns: columns, spacing: 12) {
-				NavigationLink(destination: Mango9LeadsFragment()) {
-					metricCard(
-						icon: "users-three-square",
-						title: "Leads",
-						value: viewModel.dashboard?.leads.description ?? "—"
-					)
-				}
-				.buttonStyle(.plain)
-				.accessibilityLabel("Open Leads")
-
-				NavigationLink(destination: Mango9ClientsFragment()) {
-					metricCard(
-						icon: "address-book",
-						title: "Clients",
-						value: viewModel.dashboard?.clients.description ?? "—"
-					)
-				}
-				.buttonStyle(.plain)
-				.accessibilityLabel("Open Clients")
-			}
-		}
-	}
-
-	private func metricCard(icon: String, title: String, value: String) -> some View {
-		HStack(spacing: 11) {
-			Image(icon)
-				.renderingMode(.template)
-				.resizable()
-				.foregroundStyle(Color.orangeMain500)
-				.frame(width: 24, height: 24)
-				.padding(9)
-				.background(Color.orangeMain100)
-				.cornerRadius(10)
-
-			VStack(alignment: .leading, spacing: 2) {
-				Text(value)
-					.default_text_style_800(styleSize: 19)
-					.lineLimit(1)
-				Text(title)
-					.default_text_style(styleSize: 11)
-					.foregroundStyle(Color.grayMain2c500)
-					.lineLimit(1)
-			}
-
-			Spacer(minLength: 0)
-		}
-		.padding(12)
-		.frame(maxWidth: .infinity, minHeight: 74)
-		.background(Color.white)
-		.cornerRadius(14)
-		.overlay {
-			RoundedRectangle(cornerRadius: 14)
-				.stroke(Color.gray200, lineWidth: 1)
-		}
-	}
-
 	private var workspace: some View {
 		VStack(alignment: .leading, spacing: 12) {
 			Text("CRM workspace")
@@ -263,31 +194,44 @@ struct Mango9CRMFragment: View {
 
 			NavigationLink(destination: Mango9LeadsFragment()) {
 				workspaceRow(
-					icon: "users-three-square",
+					icon: "person.2.fill",
 					title: "Leads",
-					subtitle: "Pipeline with dynamic CRM fields"
+					subtitle: "Your sales pipeline",
+					color: .purple,
+					count: viewModel.dashboard?.leads
 				)
 			}
 			.buttonStyle(.plain)
 
 			NavigationLink(destination: Mango9ClientsFragment()) {
 				workspaceRow(
-					icon: "address-book",
+					icon: "person.crop.square.fill",
 					title: "Clients",
-					subtitle: "Customer records in your CRM scope"
+					subtitle: "Customer records and relationships",
+					color: .orange,
+					count: viewModel.dashboard?.clients
 				)
 			}
 			.buttonStyle(.plain)
 
 			NavigationLink(destination: Mango9TeamChatListFragment()) {
 				workspaceRow(
-					icon: "chat-teardrop-text",
+					icon: "bubble.left.and.bubble.right.fill",
 					title: "Team Chat",
-					subtitle: "Private and group CRM chat with presence",
-					unreadCount: chatStore.unreadCount
+					subtitle: chatStore.teamUnreadCount > 0 ? "New messages from your team" : "Stay connected with your team",
+					color: .pink,
+					unreadCount: chatStore.teamUnreadCount
 				)
 			}
 			.buttonStyle(.plain)
+
+			NavigationLink(destination: Mango9AppointmentsFragment()) {
+				workspaceRow(icon: "calendar", title: "Appointments",
+					subtitle: viewModel.appointmentCount == nil ? "Schedule, share and manage appointments" : "Appointments this month", color: .mango9Primary, count: viewModel.appointmentCount)
+			}.buttonStyle(.plain)
+			NavigationLink(destination: Mango9CRMSettings()) {
+				workspaceRow(icon: "slider.horizontal.3", title: "CRM Settings", subtitle: "Calendar, reminders and message notifications", color: .indigo)
+			}.buttonStyle(.plain)
 		}
 	}
 
@@ -295,16 +239,19 @@ struct Mango9CRMFragment: View {
 		icon: String,
 		title: String,
 		subtitle: String,
+		color: Color,
+		count: Int? = nil,
 		unreadCount: Int = 0
 	) -> some View {
 		HStack(spacing: 12) {
-			Image(icon)
+			Image(systemName: icon)
 				.renderingMode(.template)
 				.resizable()
-				.foregroundStyle(Color.orangeMain500)
+				.scaledToFit()
+				.foregroundStyle(color)
 				.frame(width: 25, height: 25)
 				.padding(10)
-				.background(Color.orangeMain100)
+				.background(color.opacity(0.12))
 				.cornerRadius(11)
 
 			VStack(alignment: .leading, spacing: 3) {
@@ -316,6 +263,10 @@ struct Mango9CRMFragment: View {
 			}
 
 			Spacer()
+			if let count {
+				Text(count.formatted()).font(.system(size: 19, weight: .bold, design: .rounded))
+					.foregroundColor(color).accessibilityLabel("\(count) \(title)")
+			}
 
 			if unreadCount > 0 {
 				Text(unreadCount < 100 ? String(unreadCount) : "99+")
@@ -327,6 +278,7 @@ struct Mango9CRMFragment: View {
 					.clipShape(Capsule())
 					.accessibilityLabel("\(unreadCount) unread Team Chat messages")
 			}
+			Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundColor(.secondary)
 		}
 		.padding(13)
 		.background(Color.white)
@@ -396,6 +348,7 @@ struct Mango9CRMFragment: View {
 
 @MainActor
 final class Mango9CRMViewModel: ObservableObject {
+	@Published private(set) var appointmentCount: Int?
 	@Published private(set) var session: Mango9Session?
 	@Published private(set) var dashboard: Mango9CRMDashboard?
 	@Published private(set) var isLoading = false
@@ -406,6 +359,10 @@ final class Mango9CRMViewModel: ObservableObject {
 		reloadGeneration += 1
 		let generation = reloadGeneration
 		let storedSession = Mango9SessionStore.load()
+		if session.map(Mango9CalendarAPI.accountKey) != storedSession.map(Mango9CalendarAPI.accountKey) {
+			dashboard = nil
+			appointmentCount = nil
+		}
 		session = storedSession
 		errorMessage = nil
 
@@ -441,6 +398,7 @@ final class Mango9CRMViewModel: ObservableObject {
 			session = currentSession
 			dashboard = context.dashboard
 			ContactsManager.shared.syncMango9Team(context.team)
+			await reloadAppointmentCount()
 		} catch Mango9CRMAPIError.unauthorized {
 			if reloadGeneration == generation,
 			   Mango9SessionStore.isActive(currentSession) {
@@ -463,6 +421,7 @@ final class Mango9CRMViewModel: ObservableObject {
 	}
 
 	private func loadContext(
+		// Calendar failures are intentionally isolated from the working leads/team dashboard.
 		session: Mango9Session
 	) async throws -> (
 		dashboard: Mango9CRMDashboard,
@@ -471,6 +430,18 @@ final class Mango9CRMViewModel: ObservableObject {
 		let dashboard = try await Mango9CRMAPI.dashboard(session: session)
 		let team = try await Mango9CRMAPI.teamMembers(session: session)
 		return (dashboard, team)
+	}
+	func reloadAppointmentCount() async {
+		guard let current = session, Mango9SessionStore.isActive(current) else { appointmentCount = nil; return }
+		let generation = reloadGeneration
+		do {
+			let month = Mango9AppointmentsStore.monthRange(Date())
+			let result = try await Mango9CalendarAPI.send(Mango9AppointmentPage.self, session: current, path: "events", query: [
+				.init(name: "start_at", value: Mango9CalendarAPI.timestamp(month.start)),
+				.init(name: "end_at", value: Mango9CalendarAPI.timestamp(month.end)), .init(name: "limit", value: "1")])
+			guard generation == reloadGeneration, Mango9SessionStore.isActive(current) else { return }
+			appointmentCount = result.pagination.total
+		} catch { if generation == reloadGeneration, Mango9SessionStore.isActive(current) { appointmentCount = nil } }
 	}
 }
 

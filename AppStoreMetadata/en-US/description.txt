@@ -8,6 +8,8 @@ Use your existing Mango9 account to:
 • Collaborate through tenant-scoped Team Chat
 • Manage multiple business lines
 • Open customer records directly from call and message activity
+• Manage CRM appointments with calendar and list views, status updates, sharing and assignment
+• Customize in-app appointment reminders and messaging notification preferences
 
 Sign in with your Mango9 password or request a secure code by email. Your organization’s assigned services and calling line are provisioned automatically after authentication.
 

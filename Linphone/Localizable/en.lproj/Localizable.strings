@@ -198,7 +198,7 @@
 "contact_dialog_devices_trust_help_title" = "Trust level";
 "contact_dialog_devices_trust_help_message" = "Check all of your contact devices to make sure your communications will be secured an unaltered.\nWhen all will be verified, you'll reach maximum trust level.";
 "contact_dialog_delete_title" = "Delete %@?";
-"contact_dialog_delete_message" = "This contact will be definitively removed.";
+"contact_dialog_delete_message" = "Remove this contact from its address book?";
 "contact_dialog_pick_phone_number_or_sip_address_title" = "Choose a number or an extension";
 "contact_edit_title" = "Edit contact";
 "contact_editor_company" = "Company";

@@ -26,6 +26,23 @@ import SwiftUI
 import ContactsUI
 import Combine
 
+/// A serial, bounded import with one queued batch at a time. The caller supplies
+/// its SDK queue; a stopped core/revoked permission can abort before any batch.
+enum Mango9ContactBatchImport {
+	static func run<Value>(_ values: [Value], batchSize: Int,
+		schedule: @escaping (@escaping () -> Void) -> Void,
+		apply: @escaping (ArraySlice<Value>) -> Bool, completion: @escaping (Bool) -> Void) {
+		func advance(_ offset: Int) {
+			schedule {
+				let end = min(offset + max(1, batchSize), values.count)
+				guard apply(values[offset..<end]) else { completion(false); return }
+				if end == values.count { completion(true) } else { advance(end) }
+			}
+		}
+		advance(0)
+	}
+}
+
 final class ContactsManager: ObservableObject {
 	
 	static let TAG = "[ContactsManager]"
@@ -60,13 +77,61 @@ final class ContactsManager: ObservableObject {
 	private var coreDelegate: CoreDelegate?
 	private var friendListDelegate: FriendListDelegate?
 	private var magicSearchDelegate: MagicSearchDelegate?
+	// Owned by the core queue. Registration refreshes and the Settings button
+	// share one import so they cannot clear/repopulate the native list concurrently.
+	private var contactReloadInProgress = false
+	private var contactReloadNeedsFollowUp = false
+	private var contactReloadCompletions: [(Bool) -> Void] = []
+	private var automaticRefresh: Mango9ContactsAutoRefresh?
+	private var lifecycleSubscriptions = Set<AnyCancellable>()
+	// Only the single-flight import reads/writes this snapshot.
+	private var lastNativeContacts: [CNContact]?
+	static let nativeFetchKeys: [CNKeyDescriptor] = [CNContactEmailAddressesKey, CNContactPhoneNumbersKey,
+		CNContactFamilyNameKey, CNContactGivenNameKey, CNContactNicknameKey, CNContactIdentifierKey,
+		CNContactInstantMessageAddressesKey, CNContactOrganizationNameKey] as [CNKeyDescriptor]
+	static let nativeImportBatchSize = 64
 	
-	private init() {}
+	private init() {
+		DispatchQueue.main.async { [weak self] in self?.observeContactChanges() }
+	}
+
+	@MainActor private func observeContactChanges() {
+		let refresh = Mango9ContactsAutoRefresh(readAccess: { .current }, ready: { CoreContext.shared.coreIsStarted }) { done in
+			self.fetchContacts(requestPermissionIfNeeded: false, requireFreshSnapshot: true) { _ in Task { @MainActor in done() } }
+		}
+		automaticRefresh = refresh
+		NotificationCenter.default.publisher(for: .CNContactStoreDidChange).receive(on: DispatchQueue.main)
+			.sink { _ in refresh.requestRefresh() }.store(in: &lifecycleSubscriptions)
+		NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification).receive(on: DispatchQueue.main)
+			.sink { _ in refresh.becameActive() }.store(in: &lifecycleSubscriptions)
+		NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification).receive(on: DispatchQueue.main)
+			.sink { _ in refresh.enteredBackground() }.store(in: &lifecycleSubscriptions)
+		CoreContext.shared.$coreIsStarted.receive(on: DispatchQueue.main)
+			.sink { if $0 { refresh.requestRefresh() } }.store(in: &lifecycleSubscriptions)
+		if UIApplication.shared.applicationState == .active { refresh.becameActive() }
+	}
+
+	func refreshContactsAutomatically() {
+		Task { @MainActor in self.automaticRefresh?.requestRefresh() }
+	}
 	
-	func fetchContacts() {
+	func fetchContacts(requestPermissionIfNeeded: Bool = true, requireFreshSnapshot: Bool = false, completion: ((Bool) -> Void)? = nil) {
 		self.coreContext.doOnCoreQueue { core in
+			if let completion { self.contactReloadCompletions.append(completion) }
+			guard !self.contactReloadInProgress else {
+				// A contact-store change may arrive after the in-flight snapshot was
+				// read. Do not mistake joining that older read for a fresh import.
+				self.contactReloadNeedsFollowUp = self.contactReloadNeedsFollowUp || requireFreshSnapshot
+				return
+			}
+			self.contactReloadInProgress = true
+			#if DEBUG
+			print("[ContactsImport] begin access=\(Mango9ContactAccess.current) state=\(core.globalState)")
+			#endif
 			if core.globalState == GlobalState.Shutdown || core.globalState == GlobalState.Off {
 				print("\(#function) - Core is being stopped or already destroyed, abort")
+				self.finishContactReload(success: false)
+				return
 			} else {
 				do {
 					self.friendList = try core.getFriendListByName(name: self.nativeAddressBookFriendList) ?? core.createFriendList()
@@ -80,11 +145,6 @@ final class ContactsManager: ObservableObject {
 						friendList.databaseStorageEnabled = false // We don't want to store local address-book in DB
 						friendList.displayName = self.nativeAddressBookFriendList
 						core.addFriendList(list: friendList)
-					} else {
-						print("\(#function) - Friend list '\(friendList.displayName!) found, removing existing friends if any")
-						friendList.friends.forEach { friend in
-							_ = friendList.removeFriend(linphoneFriend: friend)
-						}
 					}
 				}
 				
@@ -134,83 +194,143 @@ final class ContactsManager: ObservableObject {
 				self.refreshCardDavContacts()
 			}
 			
+			// Only value identifiers cross to the Contacts worker, never SDK wrappers.
+			let nativeIdentifiers = Set((self.friendList?.friends ?? []).compactMap(\.nativeUri))
 			let store = CNContactStore()
-			store.requestAccess(for: .contacts) { (granted, error) in
+			let importContacts: (Error?) -> Void = { error in
 				if let error = error {
 					print("\(#function) - failed to request access", error)
 					self.addFriendListDelegate()
 					self.addCoreDelegate(core: core)
 					MagicSearchSingleton.shared.searchForContacts()
+					self.finishContactReload(success: false)
 					return
 				}
-				if granted {
-					let keys = [CNContactEmailAddressesKey, CNContactPhoneNumbersKey,
-								CNContactFamilyNameKey, CNContactGivenNameKey, CNContactNicknameKey,
-								CNContactPostalAddressesKey, CNContactIdentifierKey,
-								CNInstantMessageAddressUsernameKey, CNContactInstantMessageAddressesKey,
-								CNContactOrganizationNameKey, CNContactImageDataAvailableKey, CNContactImageDataKey, CNContactThumbnailImageDataKey]
-					
-					let request = CNContactFetchRequest(keysToFetch: keys as [CNKeyDescriptor])
-					
-					let dispatchGroup = DispatchGroup()
-					
-					do {
-						try store.enumerateContacts(with: request, usingBlock: { (contact, _) in
-							
-							dispatchGroup.enter()
-							
-							let newContact = Contact(
-								identifier: contact.identifier,
-								firstName: contact.givenName,
-								lastName: contact.familyName,
-								organizationName: contact.organizationName,
-								jobTitle: "",
-								displayName: contact.nickname,
-								sipAddresses: contact.instantMessageAddresses.map { $0.value.service.lowercased() == "SIP".lowercased() ? $0.value.username : "" },
-								phoneNumbers: contact.phoneNumbers.map { PhoneNumber(numLabel: $0.label ?? "", num: $0.value.stringValue)},
-								emails: contact.emailAddresses.map { String($0.value) },
-								imageData: ""
-							)
-							
-							let imageThumbnail = UIImage(data: contact.thumbnailImageData ?? Data())
-							if let image = imageThumbnail {
-								self.saveImage(
-									image: image,
-									name: contact.givenName + contact.familyName,
-									prefix: "",
-									contact: newContact, linphoneFriend: self.nativeAddressBookFriendList, existingFriend: nil) {
-										dispatchGroup.leave()
-									}
-							} else {
-								let image = self.textToImage(firstName: contact.givenName, lastName: contact.familyName)
-								self.saveImage(
-									image: image,
-									name: contact.givenName + contact.familyName,
-									prefix: "-default",
-									contact: newContact, linphoneFriend: self.nativeAddressBookFriendList, existingFriend: nil) {
-										dispatchGroup.leave()
-									}
+				if Mango9ContactAccess.current.canRead {
+					DispatchQueue.global(qos: .userInitiated).async {
+						// Fetch only text required by search/caller matching. Photos are read
+						// lazily for visible rows, never retained for the entire address book.
+						let request = CNContactFetchRequest(keysToFetch: Self.nativeFetchKeys)
+
+						do {
+							var contacts: [CNContact] = []
+							try store.enumerateContacts(with: request) { contact, _ in contacts.append(contact) }
+							contacts.sort { $0.identifier < $1.identifier }
+							#if DEBUG
+							print("[ContactsImport] fetched=\(contacts.count) existing=\(nativeIdentifiers.count)")
+							#endif
+							// Avoid regenerating avatars and rebuilding the list on every
+							// registration or foreground event when nothing changed.
+							if let previous = self.lastNativeContacts, previous == contacts,
+								nativeIdentifiers == Set(contacts.map(\.identifier)) {
+								self.finishContactReload(success: true)
+								return
 							}
-						})
-						
-						dispatchGroup.notify(queue: .main) {
-							self.addFriendListDelegate()
-							self.addCoreDelegate(core: core)
-							MagicSearchSingleton.shared.searchForContacts()
+							let fetchedIDs = Set(contacts.map(\.identifier))
+							DispatchQueue.main.async {
+								if let displayed = SharedMainViewModel.shared.displayedFriend,
+									displayed.removalSource == .iPhone, !fetchedIDs.contains(displayed.nativeUri) {
+									// Deleted contacts and contacts removed from an iOS limited
+									// selection must not remain open with a stale cached record.
+									SharedMainViewModel.shared.displayedFriend = nil
+								}
+							}
+							self.coreContext.doOnCoreQueue { _ in
+								// Reconcile only missing contacts, keeping existing SDK objects
+								// and favorites stable when one address-book entry changes.
+								self.friendList?.friends.filter { !fetchedIDs.contains($0.nativeUri ?? "") }
+									.forEach { friend in _ = self.friendList?.removeFriend(linphoneFriend: friend) }
+							}
+							let previousByID = Swift.Dictionary((self.lastNativeContacts ?? []).map { ($0.identifier, $0) }, uniquingKeysWith: { first, _ in first })
+							let changed = contacts.filter { !nativeIdentifiers.contains($0.identifier) || previousByID[$0.identifier] != $0 }
+							self.importNativeBatch(changed, snapshot: contacts)
+						} catch let error {
+							print("\(#function) - Failed to enumerate contact", error)
+							self.finishContactReload(success: false)
 						}
-					} catch let error {
-						print("\(#function) - Failed to enumerate contact", error)
-						self.addFriendListDelegate()
-						self.addCoreDelegate(core: core)
-						MagicSearchSingleton.shared.searchForContacts()
 					}
 				} else {
 					print("\(#function) - access denied")
+					self.lastNativeContacts = nil
+					self.coreContext.doOnCoreQueue { _ in
+						self.friendList?.friends.forEach { friend in _ = self.friendList?.removeFriend(linphoneFriend: friend) }
+					}
 					self.addFriendListDelegate()
 					self.addCoreDelegate(core: core)
 					MagicSearchSingleton.shared.searchForContacts()
+					self.finishContactReload(success: false)
 				}
 			}
+			if requestPermissionIfNeeded && Mango9ContactAccess.current == .notRequested {
+				store.requestAccess(for: .contacts) { _, error in importContacts(error) }
+			} else { importContacts(nil) }
+		}
+	}
+
+	private func importNativeBatch(_ changed: [CNContact], snapshot: [CNContact]) {
+		// Explicitly yield between batches, even when called from the core queue.
+		// Do not enqueue one SDK/main-queue closure and bitmap per contact.
+		coreQueue.async {
+			let existing = Swift.Dictionary((self.friendList?.friends ?? []).compactMap { friend -> (String, Friend)? in
+				guard let id = friend.nativeUri else { return nil }
+				return (id, friend)
+			}, uniquingKeysWith: { first, _ in first })
+			Mango9ContactBatchImport.run(changed, batchSize: Self.nativeImportBatchSize,
+				schedule: { coreQueue.async(execute: $0) }, apply: { batch in
+			guard self.coreContext.coreIsStarted, self.coreContext.mCore.globalState == .On,
+				Mango9ContactAccess.current.canRead else {
+				#if DEBUG
+				print("[ContactsImport] aborted ready=\(self.coreContext.coreIsStarted) state=\(self.coreContext.mCore.globalState) access=\(Mango9ContactAccess.current)")
+				#endif
+				return false
+			}
+			var succeeded = true
+			for contact in batch {
+				autoreleasepool {
+					let value = Contact(identifier: contact.identifier, firstName: contact.givenName,
+						lastName: contact.familyName, organizationName: contact.organizationName, jobTitle: "",
+						displayName: contact.nickname,
+						sipAddresses: contact.instantMessageAddresses.filter { $0.value.service.lowercased() == "sip" }.map { $0.value.username },
+						phoneNumbers: contact.phoneNumbers.map { PhoneNumber(numLabel: $0.label ?? "", num: $0.value.stringValue) },
+						emails: contact.emailAddresses.map { String($0.value) }, imageData: "")
+					self.saveFriend(result: "", contact: value, existingFriend: existing[contact.identifier]) { friend in
+						guard let friend else { succeeded = false; return }
+						if existing[contact.identifier] == nil {
+							let status = self.friendList?.addLocalFriend(linphoneFriend: friend)
+							if status != .OK { succeeded = false }
+						}
+					}
+				}
+			}
+			return succeeded
+			}, completion: { succeeded in
+			#if DEBUG
+			print("[ContactsImport] completed success=\(succeeded) expected=\(snapshot.count) imported=\(self.friendList?.friends.count ?? 0)")
+			#endif
+			if succeeded {
+				self.lastNativeContacts = snapshot
+				self.addFriendListDelegate()
+				self.addCoreDelegate(core: self.coreContext.mCore)
+				MagicSearchSingleton.shared.searchForContacts()
+			} else { self.lastNativeContacts = nil }
+			self.finishContactReload(success: succeeded)
+			})
+		}
+	}
+
+	private func finishContactReload(success: Bool) {
+		// No SDK access here: release waiters even if the core has just stopped.
+		coreQueue.async {
+			self.contactReloadInProgress = false
+			if self.contactReloadNeedsFollowUp && self.coreContext.coreIsStarted {
+				self.contactReloadNeedsFollowUp = false
+				self.fetchContacts(requestPermissionIfNeeded: false)
+				return
+			}
+			self.contactReloadNeedsFollowUp = false
+			let completions = self.contactReloadCompletions
+			self.contactReloadCompletions.removeAll()
+			DispatchQueue.main.async { completions.forEach { $0(success) } }
 		}
 	}
 
@@ -428,13 +548,17 @@ final class ContactsManager: ObservableObject {
 	
 	func saveImage(image: UIImage, name: String, prefix: String, contact: Contact, linphoneFriend: String, existingFriend: Friend?, editingFriend: Bool = false, completion: @escaping () -> Void) {
 		guard let data = image.jpegData(compressionQuality: 1) ?? image.pngData() else {
+			DispatchQueue.main.async { completion() }
 			return
 		}
 		
-		let base64Tmp = existingFriend?.friendList?.type == .CardDAV || linphoneAddressBookFriendList != AppServices.corePreferences.friendListInWhichStoreNewlyCreatedFriends
+		let isNative = linphoneFriend == nativeAddressBookFriendList
+		// Native enumeration/thumbnail writes run in the background. Determine its
+		// known list type without touching an existing SDK Friend off the core queue.
+		let base64Tmp = (!isNative && existingFriend?.friendList?.type == .CardDAV) || linphoneAddressBookFriendList != AppServices.corePreferences.friendListInWhichStoreNewlyCreatedFriends
 		
 		awaitDataWrite(data: data, name: name, prefix: prefix, base64: base64Tmp) { result in
-			if existingFriend?.friendList?.type != .CardDAV
+			if isNative || existingFriend?.friendList?.type != .CardDAV
 				|| (existingFriend?.friendList?.type == .CardDAV && linphoneFriend == self.linphoneAddressBookFriendList)
 				|| (editingFriend && linphoneFriend == AppServices.corePreferences.friendListInWhichStoreNewlyCreatedFriends) {
 				self.saveFriend(result: result, contact: contact, existingFriend: existingFriend) { resultFriend in
@@ -515,8 +639,8 @@ final class ContactsManager: ObservableObject {
 				friend.phoneNumbersWithLabel.forEach { friend.removePhoneNumberWithLabel(phoneNumber: $0) }
 				for phone in contact.phoneNumbers {
 					do {
-						let labelDrop = String(phone.numLabel.dropFirst(4).dropLast(4))
-						let phoneNumber = try Factory.Instance.createFriendPhoneNumber(phoneNumber: phone.num, label: labelDrop)
+						let label = Mango9ContactLabel.localized(phone.numLabel)
+						let phoneNumber = try Factory.Instance.createFriendPhoneNumber(phoneNumber: phone.num, label: label)
 						friend.addPhoneNumberWithLabel(phoneNumber: phoneNumber)
 					} catch {
 						print("saveFriend - Failed to create friend phone number for \(phone.numLabel):", error)
@@ -524,7 +648,7 @@ final class ContactsManager: ObservableObject {
 				}
 				
 				// Set photo
-				friend.photo = (friend.friendList?.type != .CardDAV && self.linphoneAddressBookFriendList == AppServices.corePreferences.friendListInWhichStoreNewlyCreatedFriends ? "file:/" : "") + result
+				friend.photo = result.isEmpty ? "" : (friend.friendList?.type != .CardDAV && self.linphoneAddressBookFriendList == AppServices.corePreferences.friendListInWhichStoreNewlyCreatedFriends ? "file:/" : "") + result
 				
 				// Linphone subscription settings
 				try friend.setSubscribesenabled(newValue: false)
@@ -915,6 +1039,9 @@ final class ContactsManager: ObservableObject {
 		cancellables.removeAll()
 		for contact in avatarListModel {
 			contact.$starred
+				.dropFirst()
+				.removeDuplicates()
+				.receive(on: DispatchQueue.main)
 				.sink { [weak self] _ in
 					self?.starredChangeTrigger = UUID()
 				}
@@ -939,6 +1066,14 @@ final class ContactsManager: ObservableObject {
 				}
 			}
 		}
+	}
+}
+
+enum Mango9ContactLabel {
+	static func localized(_ label: String) -> String {
+		// System labels use Apple's encoded tokens; user-defined labels (including
+		// non-Latin text) must never be shortened as if they were encoded tokens.
+		CNLabeledValue<NSString>.localizedString(forLabel: label)
 	}
 }
 

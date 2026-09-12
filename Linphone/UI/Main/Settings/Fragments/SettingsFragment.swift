@@ -24,8 +24,10 @@ struct SettingsFragment: View {
 	
 	@StateObject private var settingsViewModel = SettingsViewModel()
 	@StateObject private var mango9CallSettingsViewModel = Mango9CallSettingsViewModel()
+	@StateObject private var contactsSettingsModel = Mango9ContactsSettingsModel()
 	
 	@Binding var isShowSettingsFragment: Bool
+	@State var crmIsOpen: Bool = false
 	
 	@State var securityIsOpen: Bool = false
 	@State var callsIsOpen: Bool = false
@@ -78,6 +80,24 @@ struct SettingsFragment: View {
 					
 					ScrollView {
 						VStack(spacing: 0) {
+							Button {
+								withAnimation { crmIsOpen.toggle() }
+							} label: {
+								HStack(alignment: .center, spacing: 12) {
+									Mango9SettingsCategoryIcon(systemName: "slider.horizontal.3")
+									Text("CRM Settings").default_text_style_800(styleSize: 18)
+										.frame(maxWidth: .infinity, alignment: .leading)
+									Spacer()
+									Image(crmIsOpen ? "caret-up" : "caret-down")
+										.renderingMode(.template).resizable().foregroundStyle(Color.grayMain2c600)
+										.frame(width: 25, height: 25).padding(10)
+								}.padding(.vertical, 10).padding(.horizontal, 20).background(Color.gray100)
+							}.buttonStyle(.plain).accessibilityValue(crmIsOpen ? "Expanded" : "Collapsed")
+							.accessibilityIdentifier("settings.crmDisclosure")
+							// Retain the draft while collapsed; one parent scroll view owns layout.
+							Mango9CRMSettings(embedded: true, isExpanded: crmIsOpen)
+								.padding(.horizontal, 20).frame(height: crmIsOpen ? nil : 0, alignment: .top)
+								.clipped().opacity(crmIsOpen ? 1 : 0).disabled(!crmIsOpen).accessibilityHidden(!crmIsOpen)
 							// TODO: Wait for VFS fix
 							/*
 							HStack(alignment: .center) {
@@ -139,7 +159,8 @@ struct SettingsFragment: View {
 							}
 							*/
 							
-							HStack(alignment: .center) {
+							HStack(alignment: .center, spacing: 12) {
+								Mango9SettingsCategoryIcon(systemName: "phone.fill")
 								Text("settings_calls_title")
 									.default_text_style_800(styleSize: 18)
 									.frame(maxWidth: .infinity, alignment: .leading)
@@ -237,7 +258,8 @@ struct SettingsFragment: View {
 								.background(Color.gray100)
 							}
 							
-							HStack(alignment: .center) {
+							HStack(alignment: .center, spacing: 12) {
+								Mango9SettingsCategoryIcon(systemName: "bubble.left.and.bubble.right.fill")
 								Text("settings_conversations_title")
 									.default_text_style_800(styleSize: 18)
 									.frame(maxWidth: .infinity, alignment: .leading)
@@ -280,7 +302,8 @@ struct SettingsFragment: View {
 								.background(Color.gray100)
 							}
 							
-							HStack(alignment: .center) {
+							HStack(alignment: .center, spacing: 12) {
+								Mango9SettingsCategoryIcon(systemName: "person.crop.rectangle")
 								Text("settings_contacts_title")
 									.default_text_style_800(styleSize: 18)
 									.frame(maxWidth: .infinity, alignment: .leading)
@@ -306,6 +329,8 @@ struct SettingsFragment: View {
 							if contactsIsOpen {
 								VStack(spacing: 0) {
 									VStack(spacing: 20) {
+										Mango9ContactsAccessSettings(model: contactsSettingsModel)
+										Divider()
 										NavigationLink(destination: {
 											LdapServerConfigurationFragment()
 												.environmentObject(settingsViewModel)
@@ -411,7 +436,8 @@ struct SettingsFragment: View {
 								.background(Color.gray100)
 							}
 							
-							HStack(alignment: .center) {
+							HStack(alignment: .center, spacing: 12) {
+								Mango9SettingsCategoryIcon(systemName: "video.fill")
 								Text("settings_meetings_title")
 									.default_text_style_800(styleSize: 18)
 									.frame(maxWidth: .infinity, alignment: .leading)
@@ -480,7 +506,8 @@ struct SettingsFragment: View {
 								.background(Color.gray100)
 							}
 							
-							HStack(alignment: .center) {
+							HStack(alignment: .center, spacing: 12) {
+								Mango9SettingsCategoryIcon(systemName: "network")
 								Text("settings_network_title")
 									.default_text_style_800(styleSize: 18)
 									.frame(maxWidth: .infinity, alignment: .leading)
@@ -582,6 +609,19 @@ struct SettingsFragment: View {
 			.navigationBarHidden(true)
 		}
 		.navigationViewStyle(StackNavigationViewStyle())
+	}
+}
+
+private struct Mango9SettingsCategoryIcon: View {
+	let systemName: String
+	var body: some View {
+		Image(systemName: systemName)
+			.font(.system(size: 18, weight: .semibold))
+			.foregroundColor(.mango9Primary)
+			.frame(width: 36, height: 36)
+			.background(Color.mango9Surface)
+			.clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+			.accessibilityHidden(true)
 	}
 }
 

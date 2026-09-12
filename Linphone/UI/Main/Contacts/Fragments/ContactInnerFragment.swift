@@ -23,365 +23,274 @@ import ContactsUI
 import linphonesw
 
 struct ContactInnerFragment: View {
-	
+	@Environment(\.dynamicTypeSize) private var dynamicTypeSize
 	@ObservedObject var contactsManager = ContactsManager.shared
-	@ObservedObject private var telecomManager = TelecomManager.shared
 	@ObservedObject private var mango9ChatStore = Mango9ChatStore.shared
-	
 	@EnvironmentObject var contactAvatarModel: ContactAvatarModel
 	@EnvironmentObject var contactsListViewModel: ContactsListViewModel
-	
+
 	@State private var orientation = UIDevice.current.orientation
-	
 	@State var cnContact: CNContact?
 	@State private var presentingEditContact = false
+	@State private var loadingEditor = false
+	@State private var editorError = false
 	@State private var isShowMediaFilesFragment = false
 	@State private var isShowDocumentsFilesFragment = false
-	
+
 	@Binding var isShowDeletePopup: Bool
 	@Binding var showingSheet: Bool
 	@Binding var showShareSheet: Bool
 	@Binding var isShowDismissPopup: Bool
-	@Binding var isShowTrustLevelPopup: Bool
 	@Binding var isShowSipAddressesPopup: Bool
 	@Binding var isShowSipAddressesPopupType: Int
-	@Binding var isShowIncreaseTrustLevelPopup: Bool
 	@Binding var isShowEditContactFragmentInContactDetails: Bool
-	
+
+	private var hasDestination: Bool {
+		!contactAvatarModel.addresses.isEmpty || !contactAvatarModel.phoneNumbersWithLabel.isEmpty
+	}
+
 	var body: some View {
 		NavigationView {
-			GeometryReader { geometry in
-				ZStack {
-					VStack(spacing: 1) {
-						Rectangle()
-							.foregroundColor(Color.orangeMain500)
-							.edgesIgnoringSafeArea(.top)
-							.frame(height: 0)
-						
-						HStack {
-							if !(orientation == .landscapeLeft || orientation == .landscapeRight
-								 || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height) {
-								Image("caret-left")
-									.renderingMode(.template)
-									.resizable()
-									.foregroundStyle(Color.orangeMain500)
-									.frame(width: 25, height: 25, alignment: .leading)
-									.padding(.all, 10)
-									.padding(.top, 2)
-									.padding(.leading, -10)
-									.onTapGesture {
-										withAnimation {
-											SharedMainViewModel.shared.displayedFriend = nil
-										}
-									}
+			ZStack {
+				VStack(spacing: 0) {
+					navigationHeader
+					ScrollView {
+						VStack(spacing: 0) {
+							identityHeader
+							quickActions
+							ContactInnerActionsFragment(
+								showingSheet: $showingSheet, showShareSheet: $showShareSheet,
+								isShowDeletePopup: $isShowDeletePopup, isShowDismissPopup: $isShowDismissPopup,
+								isShowMediaFilesFragment: $isShowMediaFilesFragment,
+								isShowDocumentsFilesFragment: $isShowDocumentsFilesFragment,
+								isShowEditContactFragmentInContactDetails: $isShowEditContactFragmentInContactDetails,
+								actionEditButton: editNativeContact
+							)
+							.onAppear { contactsListViewModel.getOneToOneChatRoomWith() }
+							.onChange(of: contactAvatarModel.addresses + contactAvatarModel.phoneNumbersWithLabel.map { $0.phoneNumber }) { _ in
+								refreshRelatedConversation()
 							}
-							
-							Spacer()
-							
-							if !contactAvatarModel.isReadOnly && !AppServices.corePreferences.hideContactEdition {
-								if !contactAvatarModel.editable {
-									Button(action: {
-										editNativeContact()
-									}, label: {
-										Image("pencil-simple")
-											.renderingMode(.template)
-											.resizable()
-											.foregroundStyle(Color.orangeMain500)
-											.frame(width: 25, height: 25, alignment: .leading)
-											.padding(.all, 10)
-											.padding(.top, 2)
-									})
-								} else {
-									NavigationLink(destination: EditContactFragment(
-										contactAvatarModel: contactAvatarModel,
-										isShowEditContactFragment: $isShowEditContactFragmentInContactDetails,
-										isShowDismissPopup: $isShowDismissPopup)) {
-											Image("pencil-simple")
-												.renderingMode(.template)
-												.resizable()
-												.foregroundStyle(Color.orangeMain500)
-												.frame(width: 25, height: 25, alignment: .leading)
-												.padding(.all, 10)
-												.padding(.top, 2)
-										}
-										.simultaneousGesture(
-											TapGesture().onEnded {
-												isShowEditContactFragmentInContactDetails = true
-											}
-										)
-								}
+							.onChange(of: SharedMainViewModel.shared.displayedFriend?.id) { _ in
+								refreshRelatedConversation()
 							}
+							.onDisappear { SharedMainViewModel.shared.displayedFriendExistingChatRoom = nil }
 						}
+						.frame(maxWidth: SharedMainViewModel.shared.maxWidth)
 						.frame(maxWidth: .infinity)
-						.frame(height: 50)
-						.padding(.horizontal)
-						.padding(.bottom, 4)
-						.background(.white)
-						
-						ScrollView {
-							VStack(spacing: 0) {
-								VStack(spacing: 0) {
-									VStack(spacing: 0) {
-										if SharedMainViewModel.shared.displayedFriend != nil {
-											Avatar(contactAvatarModel: contactAvatarModel, avatarSize: 100)
-											
-											Text(contactAvatarModel.name)
-												.foregroundStyle(Color.grayMain2c700)
-												.multilineTextAlignment(.center)
-												.default_text_style(styleSize: 14)
-												.frame(maxWidth: .infinity)
-												.padding(.top, 10)
-											
-											Text(mango9PresenceText)
-												.foregroundStyle(mango9PresenceText == "Online"
-																 ? Color.greenSuccess500
-																 : Color.orangeWarning600)
-												.multilineTextAlignment(.center)
-												.default_text_style_300(styleSize: 12)
-												.frame(maxWidth: .infinity)
-										}
-									}
-									.frame(minHeight: 150)
-									.frame(maxWidth: .infinity)
-									.padding(.top, 10)
-									.background(Color.gray100)
-									
-									HStack {
-										Spacer()
-										
-										Button(action: {
-											CoreContext.shared.doOnCoreQueue { core in
-												if contactAvatarModel.addresses.count == 1 && contactAvatarModel.phoneNumbersWithLabel.isEmpty {
-													do {
-														let address = try Factory.Instance.createAddress(addr: contactAvatarModel.address)
-														telecomManager.doCallOrJoinConf(address: address, isVideo: false)
-													} catch {
-														Log.error("[ContactInnerFragment] unable to create address for a new outgoing call : \(contactAvatarModel.address) \(error) ")
-													}
-												} else if contactAvatarModel.addresses.isEmpty && contactAvatarModel.phoneNumbersWithLabel.count == 1 {
-													if let firstPhoneNumbersWithLabel = contactAvatarModel.phoneNumbersWithLabel.first, let address = core.interpretUrl(url: firstPhoneNumbersWithLabel.phoneNumber, applyInternationalPrefix: LinphoneUtils.applyInternationalPrefix(core: core)) {
-														telecomManager.doCallOrJoinConf(address: address, isVideo: false)
-													}
-												} else {
-													DispatchQueue.main.async {
-														isShowSipAddressesPopupType = 0
-														isShowSipAddressesPopup = true
-													}
-												}
-											}
-										}, label: {
-											VStack {
-												HStack(alignment: .center) {
-													Image("phone")
-														.renderingMode(.template)
-														.resizable()
-														.foregroundStyle(Color.grayMain2c600)
-														.frame(width: 25, height: 25)
-												}
-												.padding(16)
-												.background(Color.grayMain2c200)
-												.cornerRadius(40)
-												
-												Text("contact_call_action")
-													.default_text_style(styleSize: 14)
-											}
-										})
-										
-										if !AppServices.corePreferences.disableChatFeature {
-											Spacer()
-											
-											Button(action: {
-												if let target = contactsManager.mango9ChatTarget(
-													forNativeUri: contactAvatarModel.nativeUri
-												) {
-													NotificationCenter.default.post(
-														name: .mango9OpenChat,
-														object: target
-													)
-													return
-												}
-												CoreContext.shared.doOnCoreQueue { core in
-													if contactAvatarModel.addresses.count == 1 && contactAvatarModel.phoneNumbersWithLabel.isEmpty {
-														do {
-															let address = try Factory.Instance.createAddress(addr: contactAvatarModel.address)
-															contactsListViewModel.createOneToOneChatRoomWith(remote: address)
-														} catch {
-															Log.error("[ContactInnerFragment] unable to create address for a new outgoing call : \(contactAvatarModel.address) \(error) ")
-														}
-													} else if contactAvatarModel.addresses.isEmpty && contactAvatarModel.phoneNumbersWithLabel.count == 1 {
-														if let firstPhoneNumbersWithLabel = contactAvatarModel.phoneNumbersWithLabel.first, let address = core.interpretUrl(url: firstPhoneNumbersWithLabel.phoneNumber, applyInternationalPrefix: LinphoneUtils.applyInternationalPrefix(core: core)) {
-															contactsListViewModel.createOneToOneChatRoomWith(remote: address)
-														}
-													} else {
-														DispatchQueue.main.async {
-															isShowSipAddressesPopupType = 1
-															isShowSipAddressesPopup = true
-														}
-													}
-												}
-											}, label: {
-												VStack {
-													HStack(alignment: .center) {
-														Image("chat-teardrop-text")
-															.renderingMode(.template)
-															.resizable()
-															.foregroundStyle(Color.grayMain2c600)
-															.frame(width: 25, height: 25)
-													}
-													.padding(16)
-													.background(Color.grayMain2c200)
-													.cornerRadius(40)
-													
-													Text("contact_message_action")
-														.default_text_style(styleSize: 14)
-												}
-											})
-										}
-										
-										Spacer()
-										
-										if !SharedMainViewModel.shared.disableVideoCall {
-											Button(action: {
-												CoreContext.shared.doOnCoreQueue { core in
-													if contactAvatarModel.addresses.count == 1 && contactAvatarModel.phoneNumbersWithLabel.isEmpty {
-														do {
-															let address = try Factory.Instance.createAddress(addr: contactAvatarModel.address)
-															telecomManager.doCallOrJoinConf(address: address, isVideo: true)
-														} catch {
-															Log.error("[ContactInnerFragment] unable to create address for a new outgoing call : \(contactAvatarModel.address) \(error) ")
-														}
-													} else if contactAvatarModel.addresses.isEmpty && contactAvatarModel.phoneNumbersWithLabel.count == 1 {
-														if let firstPhoneNumbersWithLabel = contactAvatarModel.phoneNumbersWithLabel.first, let address = core.interpretUrl(url: firstPhoneNumbersWithLabel.phoneNumber, applyInternationalPrefix: LinphoneUtils.applyInternationalPrefix(core: core)) {
-															telecomManager.doCallOrJoinConf(address: address, isVideo: true)
-														}
-													} else {
-														DispatchQueue.main.async {
-															isShowSipAddressesPopupType = 2
-															isShowSipAddressesPopup = true
-														}
-													}
-												}
-											}, label: {
-												VStack {
-													HStack(alignment: .center) {
-														Image("video-camera")
-															.renderingMode(.template)
-															.resizable()
-															.foregroundStyle(Color.grayMain2c600)
-															.frame(width: 25, height: 25)
-													}
-													.padding(16)
-													.background(Color.grayMain2c200)
-													.cornerRadius(40)
-													
-													Text("contact_video_call_action")
-														.default_text_style(styleSize: 14)
-												}
-											})
-											
-											Spacer()
-										}
-									}
-									.padding(.top, 20)
-									.frame(maxWidth: .infinity)
-									.background(Color.gray100)
-									
-									ContactInnerActionsFragment(
-										showingSheet: $showingSheet,
-										showShareSheet: $showShareSheet,
-										isShowDeletePopup: $isShowDeletePopup,
-										isShowDismissPopup: $isShowDismissPopup,
-										isShowTrustLevelPopup: $isShowTrustLevelPopup,
-										isShowMediaFilesFragment: $isShowMediaFilesFragment,
-										isShowDocumentsFilesFragment: $isShowDocumentsFilesFragment,
-										isShowIncreaseTrustLevelPopup: $isShowIncreaseTrustLevelPopup,
-										isShowEditContactFragmentInContactDetails: $isShowEditContactFragmentInContactDetails,
-										geometry: geometry,
-										actionEditButton: editNativeContact
-									)
-									.onAppear {
-										contactsListViewModel.fetchDevicesAndTrust()
-										contactsListViewModel.getOneToOneChatRoomWith()
-									}
-									.onChange(of: SharedMainViewModel.shared.displayedFriend?.id) { _ in
-										isShowMediaFilesFragment = false
-										isShowDocumentsFilesFragment = false
-										SharedMainViewModel.shared.displayedFriendExistingChatRoom = nil
-										
-										contactsListViewModel.fetchDevicesAndTrust()
-										contactsListViewModel.getOneToOneChatRoomWith()
-									}
-									.onDisappear {
-										SharedMainViewModel.shared.displayedFriendExistingChatRoom = nil
-									}
-								}
-								.frame(maxWidth: SharedMainViewModel.shared.maxWidth)
-							}
-							.frame(maxWidth: .infinity)
-						}
-						.background(Color.gray100)
 					}
-					.background(.white)
-					.navigationBarHidden(true)
-					.onRotate { newOrientation in
-						orientation = newOrientation
+				}
+				.background(Color(uiColor: .systemGroupedBackground))
+				.navigationBarHidden(true)
+				.onRotate { orientation = $0 }
+				.fullScreenCover(isPresented: $presentingEditContact, onDismiss: {
+					contactsManager.refreshContactsAutomatically()
+				}) {
+					NavigationView {
+						EditContactView(contact: $cnContact)
+							.navigationBarTitle("contact_edit_title")
+							.navigationBarTitleDisplayMode(.inline)
+							.edgesIgnoringSafeArea(.vertical)
 					}
-					.fullScreenCover(isPresented: $presentingEditContact) {
-						NavigationView {
-							EditContactView(contact: $cnContact)
-								.navigationBarTitle("contact_edit_title")
-								.navigationBarTitleDisplayMode(.inline)
-								.edgesIgnoringSafeArea(.vertical)
-						}
-					}
-					
-					if isShowMediaFilesFragment {
-						ConversationMediaListFragment(
-							isShowMediaFilesFragment: $isShowMediaFilesFragment
-						)
-						.zIndex(5)
-						.transition(.move(edge: .trailing))
-					}
-					
-					if isShowDocumentsFilesFragment {
-						ConversationDocumentsListFragment(
-							isShowDocumentsFilesFragment: $isShowDocumentsFilesFragment
-						)
-						.zIndex(5)
-						.transition(.move(edge: .trailing))
-					}
+				}
+				.alert("Contact unavailable", isPresented: $editorError) {
+					Button("OK", role: .cancel) {}
+				} message: {
+					Text("This contact may have changed or Contacts access may be limited. Check access in Settings and try again.")
+				}
+
+				if isShowMediaFilesFragment {
+					ConversationMediaListFragment(isShowMediaFilesFragment: $isShowMediaFilesFragment)
+						.zIndex(5).transition(.move(edge: .trailing))
+				}
+				if isShowDocumentsFilesFragment {
+					ConversationDocumentsListFragment(isShowDocumentsFilesFragment: $isShowDocumentsFilesFragment)
+						.zIndex(5).transition(.move(edge: .trailing))
 				}
 			}
 		}
 		.navigationViewStyle(.stack)
+		.tint(Mango9ContactStyle.tint)
+	}
+
+	private var navigationHeader: some View {
+		HStack {
+			if !(orientation == .landscapeLeft || orientation == .landscapeRight
+				 || UIScreen.main.bounds.width > UIScreen.main.bounds.height) {
+				Button {
+					withAnimation { SharedMainViewModel.shared.displayedFriend = nil }
+				} label: {
+					if dynamicTypeSize.isAccessibilitySize {
+						Image(systemName: "chevron.left").font(.title3).frame(minWidth: 44, minHeight: 44)
+					} else {
+						Label("Contacts", systemImage: "chevron.left").font(.body).frame(minHeight: 44)
+					}
+				}
+				.accessibilityLabel("Contacts")
+				.accessibilityIdentifier("contact.back")
+			}
+			Spacer(minLength: 16)
+			if !contactAvatarModel.isReadOnly && !AppServices.corePreferences.hideContactEdition {
+				if !contactAvatarModel.editable {
+					Button(action: editNativeContact) {
+						if loadingEditor { ProgressView() } else { Text("Edit").font(.body) }
+					}
+					.disabled(loadingEditor)
+					.frame(minWidth: 44, minHeight: 44)
+					.accessibilityIdentifier("contact.edit")
+				} else {
+					NavigationLink(destination: EditContactFragment(
+						contactAvatarModel: contactAvatarModel,
+						isShowEditContactFragment: $isShowEditContactFragmentInContactDetails,
+						isShowDismissPopup: $isShowDismissPopup)) {
+							Text("Edit").font(.body).frame(minWidth: 44, minHeight: 44)
+						}
+						.simultaneousGesture(TapGesture().onEnded { isShowEditContactFragmentInContactDetails = true })
+						.accessibilityIdentifier("contact.edit")
+				}
+			}
+		}
+		.foregroundColor(Mango9ContactStyle.tint)
+		.padding(.horizontal, 16)
+		.padding(.vertical, 4)
+	}
+
+	private var identityHeader: some View {
+		VStack(spacing: 12) {
+			Avatar(contactAvatarModel: contactAvatarModel, avatarSize: 96)
+				.accessibilityHidden(true)
+			Text(contactAvatarModel.name)
+				.font(.title.weight(.semibold))
+				.foregroundColor(.primary)
+				.multilineTextAlignment(.center)
+				.fixedSize(horizontal: false, vertical: true)
+				.accessibilityAddTraits(.isHeader)
+			if !mango9PresenceText.isEmpty {
+				Text(mango9PresenceText).font(.subheadline)
+					.foregroundColor(mango9PresenceText == "Online" ? .green : .secondary)
+			}
+		}
+		.frame(maxWidth: .infinity)
+		.padding(.horizontal, 20)
+		.padding(.top, 16)
+		.padding(.bottom, 24)
+	}
+
+	private var quickActions: some View {
+		Group {
+			if dynamicTypeSize.isAccessibilitySize {
+				VStack(spacing: 10) { quickActionButtons }
+			} else {
+				HStack(alignment: .top, spacing: 10) { quickActionButtons }
+			}
+		}
+		.padding(.horizontal, 16)
+	}
+
+	private var quickActionButtons: some View {
+		Group {
+			quickAction("contact_call_action", icon: "phone.fill", enabled: hasDestination) { performContactAction(0) }
+			if !AppServices.corePreferences.disableChatFeature {
+				quickAction("contact_message_action", icon: "message.fill",
+					enabled: hasDestination || contactsManager.mango9ChatTarget(forNativeUri: contactAvatarModel.nativeUri) != nil) {
+					performContactAction(1)
+				}
+			}
+			if !SharedMainViewModel.shared.disableVideoCall {
+				quickAction("contact_video_call_action", icon: "video.fill", enabled: hasDestination) { performContactAction(2) }
+			}
+		}
+	}
+
+	private func quickAction(_ title: LocalizedStringKey, icon: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+		Button(action: action) {
+			Group {
+				if dynamicTypeSize.isAccessibilitySize {
+					HStack(spacing: 16) {
+						Image(systemName: icon).font(.system(size: 22)).accessibilityHidden(true)
+						Text(title).font(.body).fixedSize(horizontal: false, vertical: true)
+							.frame(maxWidth: .infinity, alignment: .leading)
+					}.padding(.horizontal, 16)
+				} else {
+					VStack(spacing: 7) {
+						Image(systemName: icon).font(.system(size: 22)).accessibilityHidden(true)
+						Text(title).font(.caption).multilineTextAlignment(.center)
+							.fixedSize(horizontal: false, vertical: true)
+					}
+				}
+			}
+			.foregroundColor(enabled ? Mango9ContactStyle.tint : .secondary)
+			.frame(maxWidth: .infinity, minHeight: 62)
+			.padding(.vertical, 8)
+			.background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+			.contentShape(Rectangle())
+		}
+		.buttonStyle(.plain)
+		.disabled(!enabled)
+	}
+
+	/// Capture the displayed destinations on the UI queue. SDK interpretation and
+	/// call/chat operations remain on the core queue, using the existing routes.
+	private func performContactAction(_ type: Int) {
+		if type == 1, let target = contactsManager.mango9ChatTarget(forNativeUri: contactAvatarModel.nativeUri) {
+			NotificationCenter.default.post(name: .mango9OpenChat, object: target)
+			return
+		}
+		let addresses = contactAvatarModel.addresses
+		let phones = contactAvatarModel.phoneNumbersWithLabel.map { $0.phoneNumber }
+		let target: String?
+		if addresses.count == 1 && phones.isEmpty { target = addresses[0] }
+		else if addresses.isEmpty && phones.count == 1 { target = phones[0] }
+		else {
+			guard !addresses.isEmpty || !phones.isEmpty else { return }
+			isShowSipAddressesPopupType = type
+			isShowSipAddressesPopup = true
+			return
+		}
+		guard let target else { return }
+		CoreContext.shared.doOnCoreQueue { core in
+			guard let address = core.interpretUrl(url: target, applyInternationalPrefix: LinphoneUtils.applyInternationalPrefix(core: core)) else { return }
+			if type == 1 { contactsListViewModel.createOneToOneChatRoomWith(remote: address) }
+			else { TelecomManager.shared.doCallOrJoinConf(address: address, isVideo: type == 2) }
+		}
+	}
+
+	private func refreshRelatedConversation() {
+		isShowMediaFilesFragment = false
+		isShowDocumentsFilesFragment = false
+		SharedMainViewModel.shared.displayedFriendExistingChatRoom = nil
+		contactsListViewModel.getOneToOneChatRoomWith()
 	}
 
 	private var mango9PresenceText: String {
-		guard let target = contactsManager.mango9ChatTarget(
-			forNativeUri: contactAvatarModel.nativeUri
-		) else {
+		guard let target = contactsManager.mango9ChatTarget(forNativeUri: contactAvatarModel.nativeUri) else {
 			return contactAvatarModel.lastPresenceInfo
 		}
-		if mango9ChatStore.isTyping(target.userId) {
-			return "Typing…"
-		}
+		if mango9ChatStore.isTyping(target.userId) { return "Typing…" }
 		return mango9ChatStore.isOnline(target.userId) ? "Online" : "Offline"
 	}
-	
+
 	func editNativeContact() {
-		do {
-			let store = CNContactStore()
-			let descriptor = CNContactViewController.descriptorForRequiredKeys()
-			cnContact = try store.unifiedContact(
-				withIdentifier: contactAvatarModel.nativeUri,
-				keysToFetch: [descriptor]
-			)
-			
-			if cnContact != nil {
-				presentingEditContact.toggle()
+		guard !loadingEditor else { return }
+		let identifier = contactAvatarModel.nativeUri
+		let selectedID = contactAvatarModel.id
+		loadingEditor = true
+		// Fetch full details only for this one contact, off the UI thread.
+		DispatchQueue.global(qos: .userInitiated).async {
+			let result = Result {
+				try CNContactStore().unifiedContact(withIdentifier: identifier,
+					keysToFetch: [CNContactViewController.descriptorForRequiredKeys()])
 			}
-		} catch {
-			print(error)
+			DispatchQueue.main.async {
+				loadingEditor = false
+				guard SharedMainViewModel.shared.displayedFriend?.id == selectedID else { return }
+				switch result {
+				case .success(let contact):
+					cnContact = contact
+					presentingEditContact = true
+				case .failure:
+					editorError = true
+				}
+			}
 		}
 	}
 }

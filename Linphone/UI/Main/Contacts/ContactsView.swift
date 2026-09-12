@@ -53,6 +53,7 @@ struct ContactsView: View {
 			}
 		}
 		.navigationViewStyle(.stack)
+		.onAppear { ContactsManager.shared.refreshContactsAutomatically() }
 	}
 }
 

@@ -772,7 +772,8 @@ class ConversationViewModel: ObservableObject {
 		var isMe: Bool = false
 	}
 	
-	init() {
+	// Offline render tests use the same model and adapter without starting transport.
+	init(startAutomatically: Bool = true) {
 		if let target = self.sharedMainViewModel.displayedSMS {
 			let pendingComposerText = self.sharedMainViewModel.pendingSMSComposerText
 			self.sharedMainViewModel.pendingSMSComposerText = nil
@@ -789,8 +790,8 @@ class ConversationViewModel: ObservableObject {
 			]
 			bindSMSAdapter(adapter)
 			requestedComposerText = pendingComposerText
-			Task { await adapter.open() }
-		} else if let chatroom = self.sharedMainViewModel.displayedConversation?.chatRoom {
+			if startAutomatically { Task { await adapter.open() } }
+		} else if startAutomatically, let chatroom = self.sharedMainViewModel.displayedConversation?.chatRoom {
 			self.addConversationDelegate(chatRoom: chatroom)
 			self.getMessages()
 		}

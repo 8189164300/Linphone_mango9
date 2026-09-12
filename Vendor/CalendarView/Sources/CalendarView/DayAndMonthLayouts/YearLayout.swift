@@ -1,0 +1,91 @@
+//
+//  YearLayout.swift
+//  CalendarView
+//
+//  Created by Alisa Mylnikova on 14.05.2025.
+//
+
+import SwiftUI
+
+@available(iOS 18.0, *)
+struct YearLayout: View {
+    @Environment(\.calendarTheme) var theme
+
+    var date: Date // Jan 1st of some year
+    var didSelectMonth: (Int)->()
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 3)
+    private static let today = Date().startOfMonth
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            let isCurrentYear = date.getYear() == Self.today.getYear()
+            Text(date.formatted("y")).libraryFont(32, .semibold, isCurrentYear ? theme.year.todayText : theme.year.monthText)
+
+            LazyVGrid(columns: columns, spacing: 16) {
+                ForEach(0..<12) { i in
+                    Button {
+                        didSelectMonth(i+1)
+                    } label: {
+                        YearMonthLayout(
+                            date: date.adding(.month, value: i),
+                            isCurrentMonth: isCurrentYear && (i+1 == Self.today.getMonth())
+                        )
+                        .frame(maxHeight: .infinity, alignment: .top)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@available(iOS 18.0, *)
+struct YearMonthLayout: View, Identifiable {
+    @Environment(\.calendarTheme) var theme
+    @Environment(\.calendarCustomizationParams) var customizationParams
+
+    let id = UUID()
+    var date: Date // 1st of some month
+    var isCurrentMonth: Bool = false
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+    private static let today = Date().startOfMonth
+
+    // number of empty spaces for days of week before 1st of the month
+    var inset: Int {
+        let startOfWeek = date.startOfWeek(customizationParams.firstDayOfWeek)
+        var count = date.getWeekday() - startOfWeek.getWeekday()
+        if count < 0 {
+            count += 7
+        }
+        return count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text(date.formatted("MMM"))
+                .libraryFont(20, .semibold, isCurrentMonth ? theme.year.todayText : theme.year.monthText)
+
+            LazyVGrid(columns: columns, spacing: 4) {
+                let maxMonthDay = date.maxMonthDay
+
+                ForEach(0..<42, id: \.self) { index in
+                    let day = index - inset + 1
+                    if index < inset || day > maxMonthDay {
+                        Color.clear
+                    } else {
+                        let isToday = isCurrentMonth && day == Self.today.getDay()
+
+                        Text("\(day)")
+                            .libraryFont(8, isToday ? .white : theme.year.dateText)
+                            .applyIf(isToday) {
+                                $0
+                                    .frame(width: 14, height: 14)
+                                    .background(Circle().styled(theme.year.todayText))
+                            }
+                    }
+                }
+            }
+        }
+    }
+}

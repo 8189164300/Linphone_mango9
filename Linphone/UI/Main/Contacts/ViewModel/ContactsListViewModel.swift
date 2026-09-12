@@ -249,39 +249,32 @@ class ContactsListViewModel: ObservableObject {
 		}
 	}
 	
+	var deletionMessage: String {
+		(selectedFriend ?? SharedMainViewModel.shared.displayedFriend)?.removalSource.message
+			?? Mango9ContactRemovalSource.mango9.message
+	}
+
 	func deleteSelectedContact() {
-		CoreContext.shared.doOnCoreQueue { core in
-			if self.selectedFriendToDelete != nil && self.selectedFriendToDelete!.friend != nil {
-				if SharedMainViewModel.shared.displayedFriend != nil {
-					DispatchQueue.main.async {
-						withAnimation {
-							SharedMainViewModel.shared.displayedFriend = nil
-						}
-					}
+		// Capture the confirmed target before closing its view; do not read a
+		// mutable global selection after the main queue has already cleared it.
+		guard let target = selectedFriendToDelete ?? selectedFriend ?? SharedMainViewModel.shared.displayedFriend else { return }
+		CoreContext.shared.doOnCoreQueue { _ in
+			guard let friend = target.friend else { return }
+			friend.remove()
+			DispatchQueue.main.async {
+				if SharedMainViewModel.shared.displayedFriend?.id == target.id {
+					SharedMainViewModel.shared.displayedFriend = nil
 				}
-				self.selectedFriendToDelete!.friend!.remove()
-				
-				DispatchQueue.main.async {
-					ToastViewModel.shared.show("Success_remove_contact")
-				}
-			} else if SharedMainViewModel.shared.displayedFriend != nil {
-				DispatchQueue.main.async {
-					withAnimation {
-						SharedMainViewModel.shared.displayedFriend = nil
-					}
-					ToastViewModel.shared.show("Success_remove_contact")
-				}
-				SharedMainViewModel.shared.displayedFriend!.friend!.remove()
+				self.selectedFriendToDelete = nil
+				self.selectedFriend = nil
+				ToastViewModel.shared.show("Success_remove_contact")
 			}
-			
 			MagicSearchSingleton.shared.searchForContacts()
 		}
 	}
 	
 	func changeSelectedFriendToDelete() {
-		if selectedFriend != nil {
-			self.selectedFriendToDelete = self.selectedFriend
-		}
+		self.selectedFriendToDelete = selectedFriend ?? SharedMainViewModel.shared.displayedFriend
 	}
 	
 	func toggleStarredSelectedFriend() {

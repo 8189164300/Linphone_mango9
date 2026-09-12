@@ -687,6 +687,7 @@ struct MainViewSwitcher: View {
 	@ViewBuilder
 	func selectedMainView() -> some View {
 		ContentView()
+			.safeAreaInset(edge: .top, spacing: 0) { Mango9InAppReminderHost() }
 			.onAppear {
 				appDelegate.coreContext = coreContext
 				appDelegate.navigationManager = navigationManager

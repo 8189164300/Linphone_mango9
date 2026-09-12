@@ -342,6 +342,33 @@ class TelecomManager: ObservableObject {
 			Log.info("Can not start a call with null address!")
 			return
 		}
+		// All dialer, contact, CRM, conversation, history and call-intent routes converge here.
+		// Ask before creating a CallKit transaction, holding another call, or sending a SIP INVITE.
+		// A blind transfer does not use this device's microphone.
+		if !nextCallIsTransfer && AVAudioSession.sharedInstance().recordPermission != .granted {
+			guard let target = addr?.clone() else { return }
+			let accountIdentity = core.defaultAccount?.params?.identityAddress?.asStringUriOnly()
+			DispatchQueue.main.async {
+				Mango9CallMicrophonePermission.shared.requestForOutgoingCall { allowed in
+					guard allowed else { return }
+					CoreContext.shared.doOnCoreQueue { currentCore in
+						// A permission sheet must not move the call to another account if the user
+						// switched accounts or logged out while it was open.
+						guard currentCore.defaultAccount?.params?.identityAddress?.asStringUriOnly() == accountIdentity,
+							  !self.nextCallIsTransfer else { return }
+						do {
+							try self.startCallCallKit(
+								core: currentCore, addr: target, isSas: isSas, isVideo: isVideo,
+								isConference: isConference, displayName: displayName, displayHandle: displayHandle
+							)
+						} catch {
+							Log.error("[TelecomManager] Unable to start call after microphone permission: \(error)")
+						}
+					}
+				}
+			}
+			return
+		}
 
 		if TelecomManager.callKitEnabled(core: core) {// && !nextCallIsTransfer != true {
 			let uuid = UUID()
@@ -362,10 +389,7 @@ class TelecomManager: ObservableObject {
 				?? addressUsername
 				?? addr?.asStringUriOnly()
 				?? ""
-			let phoneCharacters = CharacterSet(charactersIn: "+0123456789-(). ")
-			let isPhoneNumber = !handleValue.isEmpty
-				&& handleValue.unicodeScalars.allSatisfy { phoneCharacters.contains($0) }
-			let handle = CXHandle(type: isPhoneNumber ? .phoneNumber : .generic, value: handleValue)
+			let handle = Mango9OutgoingCallPresentation.handle(handleValue)
 			let startCallAction = CXStartCallAction(call: uuid, handle: handle)
 			let transaction = CXTransaction(action: startCallAction)
 			

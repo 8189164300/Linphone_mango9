@@ -22,3 +22,13 @@ GoogleService-Info.plist
 firebase-service-account*.json
 service-account*.json
 Config/Secrets.xcconfig
+
+# Internal operational notes belong outside the public source checkout.
+MANGO9_WHITELABEL_AUDIT.md
+MANGO9_ANDROID_PARITY.md
+IOS_ANDROID_PARITY_*.md
+APP_STORE_SUBMISSION.md
+PLAY_STORE_SUBMISSION.md
+CHAT_PUSH_NAVIGATION_FIX.md
+docs/mobile-appointments-ios.md
+private-notes/

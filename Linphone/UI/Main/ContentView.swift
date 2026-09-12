@@ -1233,10 +1233,8 @@ struct ContentView: View {
 								ContactFragment(
 									isShowDeletePopup: $isShowDeleteContactPopup,
 									isShowDismissPopup: $isShowDismissPopup,
-									isShowTrustLevelPopup: $isShowTrustLevelPopup,
 									isShowSipAddressesPopup: $isShowSipAddressesPopup,
 									isShowSipAddressesPopupType: $isShowSipAddressesPopupType,
-									isShowIncreaseTrustLevelPopup: $isShowIncreaseTrustLevelPopup,
 									isShowEditContactFragmentInContactDetails: $isShowEditContactFragmentInContactDetails
 								)
 								.environmentObject(contactsListVM)
@@ -1458,13 +1456,13 @@ struct ContentView: View {
 								String(
 									format: String(localized: "contact_dialog_delete_title"),
 									contactsListVM.selectedFriend?.name
-									?? (SharedMainViewModel.shared.displayedFriend!.name ?? "Unknown Contact")
+									?? SharedMainViewModel.shared.displayedFriend?.name ?? "Contact"
 								)
 							),
-							content: Text("contact_dialog_delete_message"),
+							content: Text(contactsListVM.deletionMessage),
 							titleFirstButton: nil,
 							actionFirstButton: {},
-							titleSecondButton: Text("dialog_confirm"),
+							titleSecondButton: Text("contact_details_delete"),
 							actionSecondButton: {
 								contactsListVM.deleteSelectedContact()
 								self.isShowDeleteContactPopup.toggle()

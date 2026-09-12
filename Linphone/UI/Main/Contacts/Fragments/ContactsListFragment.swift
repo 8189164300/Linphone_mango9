@@ -31,20 +31,34 @@ struct ContactsListFragment: View {
     var startCallFunc: (_ addr: Address) -> Void
 	
 	var body: some View {
-		ForEach(Array(contactsManager.avatarListModel.enumerated()), id: \.element.id) { index, contactAvatarModel in
-			ContactRow(contactAvatarModel: contactAvatarModel, index: index, showingSheet: $showingSheet, startCallFunc: startCallFunc)
+		let rows = Self.rows(contactsManager.avatarListModel)
+		ForEach(rows) { row in
+			ContactRow(contactAvatarModel: row.contact, heading: row.heading, showingSheet: $showingSheet, startCallFunc: startCallFunc)
+		}
+	}
+
+	struct Row: Identifiable {
+		var id: UUID { contact.id }
+		let contact: ContactAvatarModel
+		let heading: String
+	}
+	static func rows(_ contacts: [ContactAvatarModel]) -> [Row] {
+		var previous: String?
+		return contacts.map { contact in
+			let initial = String(contact.name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current).uppercased().first ?? "#")
+			let heading = initial == previous ? "" : initial
+			previous = initial
+			return Row(contact: contact, heading: heading)
 		}
 	}
 }
 
 struct ContactRow: View {
-	@ObservedObject var contactsManager = ContactsManager.shared
-	
 	@EnvironmentObject var contactsListViewModel: ContactsListViewModel
 	
 	@ObservedObject var contactAvatarModel: ContactAvatarModel
 	
-	let index: Int
+	let heading: String
 	
 	@Binding var showingSheet: Bool
 	
@@ -53,21 +67,8 @@ struct ContactRow: View {
 	var body: some View {
 		HStack {
 			HStack {
-				if index <= 0
-					|| (index < contactsManager.avatarListModel.count && contactAvatarModel.name.lowercased().folding(
-						options: .diacriticInsensitive,
-						locale: .current
-					).first
-					!= contactsManager.avatarListModel[index-1].name.lowercased().folding(
-						options: .diacriticInsensitive,
-						locale: .current
-					).first) {
-					Text(
-						String(
-							(contactAvatarModel.name.uppercased().folding(
-								options: .diacriticInsensitive,
-								locale: .current
-							).first) ?? "?"))
+				if !heading.isEmpty {
+					Text(heading)
 					.contact_text_style_500(styleSize: 20)
 					.frame(width: 18)
 					.padding(.leading, -5)
@@ -84,11 +85,13 @@ struct ContactRow: View {
 				
 				Text(contactAvatarModel.name)
 					.default_text_style(styleSize: 16)
+					.lineLimit(2)
+					.fixedSize(horizontal: false, vertical: true)
 					.frame(maxWidth: .infinity, alignment: .leading)
 					.foregroundStyle(Color.orangeMain500)
 			}
 		}
-		.frame(height: 50)
+		.frame(minHeight: 50)
 		.buttonStyle(.borderless)
 		.listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 20))
 		.listRowSeparator(.hidden)

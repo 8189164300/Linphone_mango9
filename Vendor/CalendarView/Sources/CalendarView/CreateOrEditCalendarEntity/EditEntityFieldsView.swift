@@ -1,0 +1,83 @@
+//
+//  EditEntityFieldsView.swift
+//  CalendarView
+//
+//  Created by Alisa Mylnikova on 18.06.2026.
+//
+
+import SwiftUI
+
+@available(iOS 18.0, *)
+struct EditEntityFieldsView<Entity: CalendarEntity>: View {
+    @Environment(\.calendarTheme) var theme
+    @Environment(CalendarViewModel.self) var viewModel
+
+    @Binding var entity: Entity
+
+    var eventBinding: Binding<CalendarEvent>? {
+        guard let event = entity as? CalendarEvent else { return nil }
+
+        return Binding<CalendarEvent>(
+            get: { event },
+            set: { newValue in
+                if let updated = newValue as? Entity {
+                    entity = updated
+                }
+            }
+        )
+    }
+
+    var calendarBinding: Binding<ProviderCalendar?> {
+        Binding<ProviderCalendar?>(
+            get: { viewModel.calendars.first { $0.id == entity.calendarID } },
+            set: { newValue in
+                if let selectedCalendar = newValue {
+                    entity.calendarID = selectedCalendar.id
+                    entity.calendarColor = selectedCalendar.color
+                    entity.calendarName = selectedCalendar.title
+                }
+            }
+        )
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                HStack(spacing: 4) {
+                    Text("Title")
+                        .libraryFont(15, theme.main.secondaryText.opacity(0.6))
+                    Text("*")
+                        .libraryFont(15, .red)
+                    Spacer()
+                }
+
+                TextField("\(entity.typeString) title...", text: $entity.title)
+                    .libraryFont(20, .semibold, theme.main.secondaryText)
+
+                separatorView
+
+                if let eventBinding {
+                    FieldTimeAndDate(isAllDay: eventBinding.isAllDay, startDate: $entity.startDate, endDate: eventBinding.endDate)
+                } else {
+                    FieldTimeOrDate(date: $entity.startDate)
+                }
+
+                separatorView
+
+                FieldCalendarSelection(selectedCalendar: calendarBinding)
+
+                separatorView
+
+                FieldEnumPicker(selection: $entity.repeatType)
+            }
+        }
+        .scrollIndicators(.hidden)
+        .scrollBounceBehavior(.basedOnSize)
+        .greedyWidth()
+        .padding(16)
+    }
+
+    var separatorView: some View {
+        theme.main.separator.frame(height: 1)
+    }
+}

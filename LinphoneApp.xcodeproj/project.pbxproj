@@ -7,6 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CA1E00612FCA000100000001 /* Mango9ContactsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00622FCA000100000001; };
+		CA1E000B2FCA000100000001 /* Mango9CRMSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E000C2FCA000100000001; };
+		CA1E00402FCA000100000001 /* Mango9AppointmentReminders.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E000A2FCA000100000001; };
+		CA1E00012FCA000100000001 /* Mango9CalendarAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00022FCA000100000001; };
+		CA1E00032FCA000100000001 /* Mango9Appointments.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00042FCA000100000001; };
+		CA1E00052FCA000100000001 /* Mango9ExyteCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00062FCA000100000001; };
+		CA1E00152FCA000100000001 /* Mango9LegacyCalendar.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00162FCA000100000001; };
+		CA1E00072FCA000100000001 /* CalendarView in Frameworks */ = {isa = PBXBuildFile; productRef = CA1E00082FCA000100000001; };
 		660AAF7F2B839272004C0FA6 /* msgNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 660AAF7B2B839271004C0FA6 /* msgNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		6613A0AE2BAEB7DF008923A4 /* MeetingFragment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6613A0AD2BAEB7DF008923A4 /* MeetingFragment.swift */; };
 		6613A0B42BAEBE3F008923A4 /* MeetingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6613A0B32BAEBE3F008923A4 /* MeetingViewModel.swift */; };
@@ -280,6 +288,13 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		CA1E00622FCA000100000001 /* Mango9ContactsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9ContactsSettings.swift; sourceTree = "<group>"; };
+		CA1E000C2FCA000100000001 /* Mango9CRMSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9CRMSettings.swift; sourceTree = "<group>"; };
+		CA1E000A2FCA000100000001 /* Mango9AppointmentReminders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9AppointmentReminders.swift; sourceTree = "<group>"; };
+		CA1E00022FCA000100000001 /* Mango9CalendarAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9CalendarAPI.swift; sourceTree = "<group>"; };
+		CA1E00042FCA000100000001 /* Mango9Appointments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9Appointments.swift; sourceTree = "<group>"; };
+		CA1E00062FCA000100000001 /* Mango9ExyteCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9ExyteCalendar.swift; sourceTree = "<group>"; };
+		CA1E00162FCA000100000001 /* Mango9LegacyCalendar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9LegacyCalendar.swift; sourceTree = "<group>"; };
 		660AAF7B2B839271004C0FA6 /* msgNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = msgNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		660AAF842B8392E0004C0FA6 /* msgNotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = msgNotificationService.entitlements; sourceTree = "<group>"; };
 		6613A0AD2BAEB7DF008923A4 /* MeetingFragment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingFragment.swift; sourceTree = "<group>"; };
@@ -582,6 +597,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D7D5AD7F2DD34F0E00016721 /* AppAuth in Frameworks */,
+				CA1E00072FCA000100000001 /* CalendarView in Frameworks */,
 				D7DF8BE72E2104DC003A3BC7 /* ElegantEmojiPicker in Frameworks */,
 				C618BF562D75CA03005A00E0 /* linphonesw in Frameworks */,
 			);
@@ -954,6 +970,12 @@
 				D706BA812ADD72D100278F45 /* DeviceRotationViewModifier.swift */,
 				D72250682ADFBF2D008FB426 /* SideMenu.swift */,
 				C0D390012F22000100C0FFEE /* Mango9CRMFragment.swift */,
+				CA1E00022FCA000100000001 /* Mango9CalendarAPI.swift */,
+				CA1E00042FCA000100000001 /* Mango9Appointments.swift */,
+				CA1E000A2FCA000100000001 /* Mango9AppointmentReminders.swift */,
+				CA1E000C2FCA000100000001 /* Mango9CRMSettings.swift */,
+				CA1E00062FCA000100000001 /* Mango9ExyteCalendar.swift */,
+				CA1E00162FCA000100000001 /* Mango9LegacyCalendar.swift */,
 				C0D390032F22000100C0FFEE /* Mango9DynamicCRM.swift */,
 				C62817332C1C7C7400DBA646 /* HelpView.swift */,
 				C6DC4E3E2C19C289009096FD /* SideMenuEntry.swift */,
@@ -1235,6 +1257,7 @@
 				D762102B2E97FDF8002E7999 /* CardDavAddressBookConfigurationFragment.swift */,
 				D711B1332E93F18300DF8C71 /* LdapServerConfigurationFragment.swift */,
 				D732C38B2D311D2100F78100 /* SettingsFragment.swift */,
+				CA1E00622FCA000100000001 /* Mango9ContactsSettings.swift */,
 				D78607702D36CB87009E6A7E /* SettingsAdvancedFragment.swift */,
 				D7D67B8C2F62B0EF00DD9976 /* SettingsDeveloperFragment.swift */,
 				D7D67B8A2F62B07F00DD9976 /* SettingsAdvancedCallFragment.swift */,
@@ -1354,6 +1377,9 @@
 				D792F1602F02BCC2002E3225 /* PBXTargetDependency */,
 			);
 			name = LinphoneApp;
+			packageProductDependencies = (
+				CA1E00082FCA000100000001 /* CalendarView */,
+			);
 			productName = Linphone;
 			productReference = D719ABB32ABC67BF00B41C10 /* LinphoneApp.app */;
 			productType = "com.apple.product-type.application";
@@ -1483,6 +1509,7 @@
 			);
 			mainGroup = D719ABAA2ABC67BF00B41C10;
 			packageReferences = (
+				CA1E00092FCA000100000001 /* XCLocalSwiftPackageReference "CalendarView" */,
 				D7D5AD7B2DD34E4D00016721 /* XCRemoteSwiftPackageReference "AppAuth-iOS" */,
 				D7DF8BE42E2104D0003A3BC7 /* XCRemoteSwiftPackageReference "Elegant-Emoji-Picker" */,
 				D7127F822FE995D400631F65 /* XCRemoteSwiftPackageReference "linphone-sdk-swift-ios" */,
@@ -1790,6 +1817,12 @@
 				66D382052CEB7E0A0063E1C5 /* ShortcutModel.swift in Sources */,
 				D72250692ADFBF2D008FB426 /* SideMenu.swift in Sources */,
 				C0D390022F22000100C0FFEE /* Mango9CRMFragment.swift in Sources */,
+				CA1E00012FCA000100000001 /* Mango9CalendarAPI.swift in Sources */,
+				CA1E00032FCA000100000001 /* Mango9Appointments.swift in Sources */,
+				CA1E00402FCA000100000001 /* Mango9AppointmentReminders.swift in Sources */,
+				CA1E000B2FCA000100000001 /* Mango9CRMSettings.swift in Sources */,
+				CA1E00052FCA000100000001 /* Mango9ExyteCalendar.swift in Sources */,
+				CA1E00152FCA000100000001 /* Mango9LegacyCalendar.swift in Sources */,
 				C0D390042F22000100C0FFEE /* Mango9DynamicCRM.swift in Sources */,
 				D7AEB9A02F3E219600298546 /* ContactDeviceModel.swift in Sources */,
 				D703F7082DC8C605005B8F75 /* FilePicker.swift in Sources */,
@@ -1800,6 +1833,7 @@
 				D71968922B86369D00DF4459 /* ChatBubbleView.swift in Sources */,
 				C642277B2E8E4AC50094FEDC /* ThemeManager.swift in Sources */,
 				D732C38C2D311D2500F78100 /* SettingsFragment.swift in Sources */,
+				CA1E00612FCA000100000001 /* Mango9ContactsSettings.swift in Sources */,
 				D78290B82ADD3910004AA85C /* ContactsFragment.swift in Sources */,
 				D7CEE03D2B7A23B200FD79B7 /* ConversationsListFragment.swift in Sources */,
 				D74C9CFC2ACACF370021626A /* WelcomePage3Fragment.swift in Sources */,
@@ -1921,7 +1955,7 @@
 				CODE_SIGN_ENTITLEMENTS = msgNotificationService/msgNotificationService.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -1941,7 +1975,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.11;
+				MARKETING_VERSION = 6.2.12;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).msgNotificationService";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1963,7 +1997,7 @@
 				CODE_SIGN_ENTITLEMENTS = msgNotificationService/msgNotificationService.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -1980,7 +2014,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.11;
+				MARKETING_VERSION = 6.2.12;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).msgNotificationService";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -2004,7 +2038,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).ui-tests";
@@ -2032,7 +2066,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).ui-tests";
@@ -2061,7 +2095,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).tests";
@@ -2090,7 +2124,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).tests";
@@ -2235,7 +2269,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = Linphone/Linphone.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"Linphone/Preview Content\"";
@@ -2255,7 +2289,7 @@
 				INFOPLIST_KEY_NSCameraUsageDescription = "Mango9 uses the camera for video calls and to attach a photo or video you choose.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Mango9 uses your contacts to display names and let you call or message people you choose.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Mango9 uses the local network to connect calls to SIP services available on your network.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Mango9 uses the microphone during calls and when you choose to record a voice message.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Mango9 needs microphone access so the other person can hear you during calls and so you can record voice messages.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Mango9 accesses only the photos or videos you choose to share in chat or use as an avatar.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Mango9 saves only the images you choose to your photo library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -2278,7 +2312,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 13.3;
 				MANGO9_APS_ENVIRONMENT = development;
-				MARKETING_VERSION = 6.2.11;
+				MARKETING_VERSION = 6.2.12;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2298,7 +2332,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = Linphone/Linphone.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"Linphone/Preview Content\"";
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
@@ -2314,7 +2348,7 @@
 				INFOPLIST_KEY_NSCameraUsageDescription = "Mango9 uses the camera for video calls and to attach a photo or video you choose.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Mango9 uses your contacts to display names and let you call or message people you choose.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Mango9 uses the local network to connect calls to SIP services available on your network.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Mango9 uses the microphone during calls and when you choose to record a voice message.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Mango9 needs microphone access so the other person can hear you during calls and so you can record voice messages.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Mango9 accesses only the photos or videos you choose to share in chat or use as an avatar.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Mango9 saves only the images you choose to your photo library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -2337,7 +2371,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 13.3;
 				MANGO9_APS_ENVIRONMENT = production;
-				MARKETING_VERSION = 6.2.11;
+				MARKETING_VERSION = 6.2.12;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2355,7 +2389,7 @@
 				CODE_SIGN_ENTITLEMENTS = linphoneExtension/linphoneExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2370,7 +2404,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.11;
+				MARKETING_VERSION = 6.2.12;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).share";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2389,7 +2423,7 @@
 				CODE_SIGN_ENTITLEMENTS = linphoneExtension/linphoneExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2404,7 +2438,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.11;
+				MARKETING_VERSION = 6.2.12;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).share";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2422,7 +2456,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2430,14 +2464,14 @@
 				INFOPLIST_FILE = intentsExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Mango9 Intents";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.11;
+				MARKETING_VERSION = 6.2.12;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).intents";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2458,7 +2492,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 32;
+				CURRENT_PROJECT_VERSION = 33;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2466,14 +2500,14 @@
 				INFOPLIST_FILE = intentsExtension/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Mango9 Intents";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.11;
+				MARKETING_VERSION = 6.2.12;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).intents";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2557,6 +2591,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		CA1E00092FCA000100000001 /* XCLocalSwiftPackageReference "CalendarView" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Vendor/CalendarView;
+		};
 		C618BF542D75CA03005A00E0 /* XCRemoteSwiftPackageReference "linphone-sdk-swift-ios" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://gitlab.linphone.org/BC/public/linphone-sdk-swift-ios.git";
@@ -2592,6 +2630,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		CA1E00082FCA000100000001 /* CalendarView */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CA1E00092FCA000100000001;
+			productName = CalendarView;
+		};
 		C618BF552D75CA03005A00E0 /* linphonesw */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C618BF542D75CA03005A00E0 /* XCRemoteSwiftPackageReference "linphone-sdk-swift-ios" */;

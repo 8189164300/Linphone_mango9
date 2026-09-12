@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import LinphoneApp
 
 final class Mango9ChatPushNavigationTests: XCTestCase {
@@ -113,5 +114,113 @@ final class Mango9ChatPushNavigationTests: XCTestCase {
 		XCTAssertNil(delegate.mango9ChatTarget(from: ["mango9": ["event": "sms.message", "room_id": "91"]]))
 		XCTAssertNil(delegate.mango9ChatTarget(from: ["CallId": "call-only"]))
 		XCTAssertNil(delegate.mango9ChatTarget(from: ["mango9": ["event": "chat.message"]]))
+	}
+}
+
+// Exercise the real conversation builder, not just SMS transport helpers. The
+// device crash was in generic View metadata construction before messages rendered.
+final class Mango9ConversationRenderingTests: XCTestCase {
+	@MainActor
+	func testSMSConversationRepeatedPresentationAndLiveMessageUpdates() async throws {
+#if targetEnvironment(simulator)
+		let shared = SharedMainViewModel.shared
+		let previousSMS = shared.displayedSMS
+		let previousConversation = shared.displayedConversation
+		let previousDraft = shared.pendingSMSComposerText
+		shared.displayedSMS = Mango9SMSTarget(phone: "15555550123", name: "SMS render test")
+		shared.displayedConversation = nil
+		defer {
+			shared.displayedSMS = previousSMS
+			shared.displayedConversation = previousConversation
+			shared.pendingSMSComposerText = previousDraft
+		}
+		let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+		let window = UIWindow(windowScene: scene)
+		window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+		defer { window.isHidden = true; window.rootViewController = nil }
+		let listModel = ConversationsListViewModel()
+		let profile = AccountProfileViewModel()
+		let navigation = NavigationManager()
+		for iteration in 0..<8 {
+			let model = ConversationViewModel(startAutomatically: false)
+			XCTAssertTrue(model.isSMSConversation)
+			// Drain the initial Combine subscriptions before injecting offline rows.
+			try await Task.sleep(nanoseconds: 30_000_000)
+			let view = screen(model: model)
+				.environmentObject(listModel)
+				.environmentObject(profile)
+				.environmentObject(navigation)
+			window.rootViewController = UIHostingController(rootView: view)
+			window.makeKeyAndVisible()
+			try await Task.sleep(nanoseconds: 50_000_000)
+			window.layoutIfNeeded()
+			var rows: [EventLogMessage] = []
+			for index in 0..<12 {
+				let message = Message(id: "render-\(iteration)-\(index)", status: index.isMultiple(of: 3) ? .sent : .received,
+					createdAt: Date(timeIntervalSince1970: 1_789_000_000 + Double(index)),
+					isOutgoing: index.isMultiple(of: 2), isEditable: false, isRetractable: true,
+					isEdited: false, isRetracted: false, dateReceived: 1_789_000_000,
+					address: "15555550123", isFirstMessage: true, text: "Offline SMS render fixture \(index)")
+				rows.insert(EventLogMessage(eventModel: EventModel(carrierMessageId: message.id), message: message), at: 0)
+				model.conversationMessagesSection = [MessagesSection(date: .init(timeIntervalSince1970: 1_789_000_000), chatRoomID: "sms:15555550123", rows: rows)]
+				model.displayedConversationHistorySize = rows.count
+				try await Task.sleep(nanoseconds: 30_000_000)
+				window.layoutIfNeeded()
+			}
+			// Let the existing UITableView insertion animations settle before capture.
+			try await Task.sleep(nanoseconds: 400_000_000)
+			let table = try XCTUnwrap(firstTable(in: window))
+			XCTAssertEqual(table.numberOfRows(inSection: 0), rows.count)
+			if iteration == 0 { capture(window, name: "SMS incoming and outgoing messages") }
+			var selected = try XCTUnwrap(iteration.isMultiple(of: 2) ? rows.first : rows.first(where: { $0.message.isOutgoing }))
+			if selected.message.isOutgoing { selected.message.status = .error }
+			model.selectedMessage = selected
+			try await Task.sleep(nanoseconds: 60_000_000)
+			window.layoutIfNeeded()
+			if iteration == 0 { capture(window, name: "SMS long press actions") }
+			if iteration == 1 { capture(window, name: "SMS failed outgoing message actions") }
+			model.selectedMessage = nil
+			model.messageToReply = rows.last
+			model.mediasToSend = [Attachment(id: "document-fixture", name: "Example.pdf", url: URL(fileURLWithPath: "/nonexistent/example.pdf"), type: .pdf)]
+			try await Task.sleep(nanoseconds: 60_000_000)
+			window.layoutIfNeeded()
+			if iteration == 0 { capture(window, name: "SMS reply and attachment composer") }
+			model.messageToReply = nil
+			model.mediasToSend = []
+			window.rootViewController = nil
+		}
+#else
+		throw XCTSkip("Offline fixture test is simulator-only; never alter a real phone's account state.")
+#endif
+	}
+
+	@MainActor
+	private func firstTable(in view: UIView) -> UITableView? {
+		if let table = view as? UITableView { return table }
+		for child in view.subviews {
+			if let table = firstTable(in: child) { return table }
+		}
+		return nil
+	}
+
+	@MainActor
+	private func screen(model: ConversationViewModel) -> ConversationFragment {
+		ConversationFragment(conversationViewModel: model,
+			isShowConversationFragment: .constant(true), isShowStartCallGroupPopup: .constant(false),
+			isShowDeleteMessagePopup: .constant(false), isShowEditContactFragment: .constant(false),
+			isShowEditContactFragmentAddress: .constant(""), isShowScheduleMeetingFragment: .constant(false),
+			isShowScheduleMeetingFragmentSubject: .constant(""), isShowScheduleMeetingFragmentParticipants: .constant([]),
+			isShowConversationInfoPopup: .constant(false), conversationInfoPopupText: .constant(""),
+			isShowRemoveParticipantPopup: .constant(false), showLeaveConversationPopup: .constant(false),
+			showDeleteConversationPopup: .constant(false), showDeleteConversationHistoryPopup: .constant(false))
+	}
+
+	@MainActor
+	private func capture(_ window: UIWindow, name: String) {
+		let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
+			XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
+		}
+		let attachment = XCTAttachment(image: image)
+		attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
 	}
 }

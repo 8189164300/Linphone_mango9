@@ -36,7 +36,8 @@ struct ConversationFragment: View {
     @EnvironmentObject var conversationsListViewModel: ConversationsListViewModel
 	@EnvironmentObject var accountProfileViewModel: AccountProfileViewModel
     
-    @StateObject private var conversationViewModel = ConversationViewModel()
+    // Injectable for offline screen-rendering regression tests; production owns one model.
+    @StateObject var conversationViewModel = ConversationViewModel()
 	
 	@State var isMenuOpen = false
 	@State private var isMuted: Bool = false
@@ -365,434 +366,11 @@ struct ConversationFragment: View {
 						.foregroundColor(Color.orangeMain500)
 						.edgesIgnoringSafeArea(.top)
 						.frame(height: 0)
-					
-					if !isSearchVisible {
-						HStack {
-							if (!(orientation == .landscapeLeft || orientation == .landscapeRight
-								  || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)) || isShowConversationFragment {
-								Image("caret-left")
-									.renderingMode(.template)
-									.resizable()
-									.foregroundStyle(Color.orangeMain500)
-									.frame(width: 25, height: 25, alignment: .leading)
-									.padding(.all, 10)
-									.padding(.top, 4)
-									.padding(.leading, -10)
-									.onTapGesture {
-										withAnimation {
-											if isShowConversationFragment {
-												isShowConversationFragment = false
-											}
-											conversationViewModel.closeActiveConversation()
-										}
-									}
-							}
-							
-							Avatar(contactAvatarModel: activeConversationAvatar, avatarSize: 50)
-								.padding(.top, 4)
-							
-							VStack(spacing: 1) {
-								Text(activeConversationTitle)
-									.default_text_style(styleSize: 16)
-									.frame(maxWidth: .infinity, alignment: .leading)
-									.padding(.top, 4)
-									.lineLimit(1)
-								
-								if isMuted || conversationViewModel.ephemeralTime != NSLocalizedString("conversation_ephemeral_messages_duration_disabled", comment: "") {
-									HStack {
-										if isMuted {
-											Image("bell-slash")
-												.renderingMode(.template)
-												.resizable()
-												.foregroundStyle(Color.orangeMain500)
-												.frame(width: 16, height: 16, alignment: .trailing)
-										}
-										
-										if conversationViewModel.ephemeralTime != NSLocalizedString("conversation_ephemeral_messages_duration_disabled", comment: "") {
-											Image("clock-countdown")
-												.renderingMode(.template)
-												.resizable()
-												.foregroundStyle(Color.orangeMain500)
-												.frame(width: 16, height: 16, alignment: .trailing)
-											
-											Text(conversationViewModel.ephemeralTime)
-												.default_text_style(styleSize: 12)
-												.padding(.leading, -2)
-												.frame(maxWidth: .infinity, alignment: .leading)
-												.lineLimit(1)
-										}
-										
-										Spacer()
-									}
-								}
-							}
-							.background(Color.white, ignoresSafeAreaEdges: [])
-							.onTapGesture {
-								withAnimation {
-									isShowInfoConversationFragment = true
-								}
-							}
-							.padding(.vertical, 10)
-							
-							Spacer()
-							
-							if !activeConversationIsReadOnly {
-								Button {
-									if activeConversationIsGroup {
-										isShowStartCallGroupPopup.toggle()
-									} else {
-										conversationViewModel.callActiveConversation()
-									}
-								} label: {
-									Image("phone")
-										.renderingMode(.template)
-										.resizable()
-										.foregroundStyle(Color.grayMain2c500)
-										.frame(width: 25, height: 25, alignment: .leading)
-										.padding(.all, 10)
-										.padding(.top, 4)
-								}
-							}
-							
-							Menu {
-								Button {
-									isMenuOpen = false
-									withAnimation {
-										isShowInfoConversationFragment = true
-									}
-								} label: {
-									HStack {
-										Text("conversation_menu_go_to_info")
-										Spacer()
-										Image("info")
-											.renderingMode(.template)
-											.resizable()
-											.foregroundStyle(Color.grayMain2c500)
-											.frame(width: 25, height: 25, alignment: .leading)
-											.padding(.all, 10)
-									}
-								}
-								
-								Button {
-									isMenuOpen = false
-									withAnimation {
-										isSearchVisible = true
-									}
-									isSearchTextFocused = true
-								} label: {
-									HStack {
-										Text("conversation_menu_search_in_messages")
-										Spacer()
-										Image("magnifying-glass")
-											.renderingMode(.template)
-											.resizable()
-											.foregroundStyle(Color.grayMain2c500)
-											.frame(width: 25, height: 25, alignment: .leading)
-											.padding(.all, 10)
-									}
-								}
 
-								if conversationViewModel.isSMSConversation && conversationViewModel.smsSenderIDs.count > 1 {
-									Picker("Send from", selection: $conversationViewModel.smsSelectedSenderID) {
-										ForEach(conversationViewModel.smsSenderIDs) { sender in
-											Text(Mango9CallerIdentity.formattedPhoneNumber(sender.senderID))
-												.tag(sender.senderID)
-										}
-									}
-								}
-								
-								if !activeConversationIsReadOnly {
-									Button {
-										isMenuOpen = false
-										isMuted = conversationViewModel.toggleConversationMute()
-									} label: {
-										HStack {
-											Text(isMuted ? "conversation_action_unmute" : "conversation_action_mute")
-											Spacer()
-											Image(isMuted ? "bell-simple" : "bell-simple-slash")
-												.renderingMode(.template)
-												.resizable()
-												.foregroundStyle(Color.grayMain2c500)
-												.frame(width: 25, height: 25, alignment: .leading)
-												.padding(.all, 10)
-										}
-									}
-									
-									if !conversationViewModel.isSMSConversation {
-										Button {
-											isMenuOpen = false
-											withAnimation { isShowEphemeralFragment = true }
-										} label: {
-											HStack {
-												Text("conversation_menu_configure_ephemeral_messages")
-												Spacer()
-												Image("clock-countdown")
-													.renderingMode(.template)
-													.resizable()
-													.foregroundStyle(Color.grayMain2c500)
-													.frame(width: 25, height: 25, alignment: .leading)
-													.padding(.all, 10)
-											}
-										}
-									}
-								}
-								
-								Button {
-									isMenuOpen = false
-									withAnimation {
-										isShowMediaFilesFragment = true
-									}
-								} label: {
-									HStack {
-										Text("conversation_menu_media_files")
-										Spacer()
-										Image("image")
-											.renderingMode(.template)
-											.resizable()
-											.foregroundStyle(Color.grayMain2c500)
-											.frame(width: 25, height: 25, alignment: .leading)
-											.padding(.all, 10)
-									}
-								}
-								
-								Button {
-									isMenuOpen = false
-									withAnimation {
-										isShowDocumentsFilesFragment = true
-									}
-								} label: {
-									HStack {
-										Text("conversation_menu_documents_files")
-										Spacer()
-										Image("file-pdf")
-											.renderingMode(.template)
-											.resizable()
-											.foregroundStyle(Color.grayMain2c500)
-											.frame(width: 25, height: 25, alignment: .leading)
-											.padding(.all, 10)
-									}
-								}
-							} label: {
-								Image("dots-three-vertical")
-									.renderingMode(.template)
-									.resizable()
-									.foregroundStyle(Color.grayMain2c500)
-									.frame(width: 25, height: 25, alignment: .leading)
-									.padding(.all, 10)
-									.padding(.top, 4)
-									.onChange(of: isMuted) { _ in }
-									.onAppear {
-										isMuted = conversationViewModel.conversationIsMuted
-									}
-							}
-							.onTapGesture {
-								isMenuOpen = true
-							}
-						}
-						.frame(maxWidth: .infinity)
-						.frame(height: 50)
-						.padding(.horizontal)
-						.padding(.bottom, 4)
-						.background(.white)
-					} else {
-						HStack {
-							Image("caret-left")
-								.renderingMode(.template)
-								.resizable()
-								.foregroundStyle(Color.grayMain2c500)
-								.frame(width: 25, height: 25, alignment: .leading)
-								.padding(.all, 10)
-								.padding(.top, 4)
-								.padding(.leading, -10)
-								.onTapGesture {
-									searchText = ""
-									conversationViewModel.searchText = ""
-									conversationViewModel.latestMatch = nil
-									conversationViewModel.canSearchDown = false
-									conversationViewModel.highlightedMessageID = nil
-									withAnimation {
-										isSearchVisible = false
-									}
-								}
-							
-							TextField("conversation_menu_search_in_messages", text: $searchText)
-								.default_text_style(styleSize: 15)
-								.focused($isSearchTextFocused)
-								.padding(.vertical, 5)
-								.submitLabel(.search)
-								.onSubmit {
-									conversationViewModel.searchChatMessage(direction: .Up, textToSearch: searchText)
-								}
-							
-							Button {
-								conversationViewModel.searchChatMessage(direction: .Up, textToSearch: searchText)
-							} label: {
-								Image("caret-up")
-									.renderingMode(.template)
-									.resizable()
-									.foregroundStyle(searchText.isEmpty ? Color.grayMain2c300 : Color.grayMain2c500)
-									.frame(width: 25, height: 25, alignment: .leading)
-									.padding(.all, 10)
-									.padding(.top, 4)
-							}
-							.disabled(searchText.isEmpty)
-							
-							Button {
-								conversationViewModel.searchChatMessage(direction: .Down, textToSearch: searchText)
-							} label: {
-								Image("caret-down")
-									.renderingMode(.template)
-									.resizable()
-									.foregroundStyle((searchText.isEmpty || !conversationViewModel.canSearchDown) ? Color.grayMain2c300 : Color.grayMain2c500)
-									.frame(width: 25, height: 25, alignment: .leading)
-									.padding(.all, 10)
-									.padding(.top, 4)
-							}
-							.disabled(searchText.isEmpty || !conversationViewModel.canSearchDown)
-							
-						}
-						.frame(maxWidth: .infinity)
-						.frame(height: 50)
-						.padding(.horizontal)
-						.padding(.bottom, 4)
-						.background(.white)
-					}
-					
-					if #available(iOS 16.0, *) {
-						ZStack(alignment: .bottomTrailing) {
-								UIList(
-									geometryProxy: geometry,
-									sections: conversationViewModel.conversationMessagesSection,
-                                isMessageTextFocused: Binding(get: {
-                                    isMessageTextFocused
-                                }, set: { newValue in
-                                    isMessageTextFocused = newValue
-								})
-                            )
-								.environmentObject(conversationViewModel)
-								.environmentObject(conversationsListViewModel)
+					conversationHeader()
 
-								if conversationViewModel.isSMSConversation &&
-									conversationViewModel.smsIsLoading &&
-									conversationViewModel.conversationMessagesSection.isEmpty {
-									VStack(spacing: 12) {
-										ProgressView()
-										Text("Loading conversation…")
-											.default_text_style(styleSize: 14)
-											.foregroundStyle(Color.grayMain2c500)
-									}
-									.frame(maxWidth: .infinity, maxHeight: .infinity)
-									.background(Color.gray100)
-								}
-							}
-						.onAppear {
-							if conversationViewModel.displayedConversationUnreadMessagesCount > 0 {
-								conversationViewModel.markAsRead()
-							}
-					  	}
-						.onDisappear {
-							conversationViewModel.compose(stop: true, cachedConversation: cachedConversation)
-							conversationViewModel.resetMessage()
-						}
-					} else {
-						ScrollViewReader { proxy in
-							ZStack(alignment: .bottomTrailing) {
-								List {
-									if conversationViewModel.conversationMessagesSection.first != nil {
-										let counter = conversationViewModel.conversationMessagesSection.first!.rows.count
-										ForEach(0..<counter, id: \.self) { index in
-											ChatBubbleView(eventLogMessage: conversationViewModel.conversationMessagesSection.first!.rows[index], geometryProxy: geometry)
-												.environmentObject(conversationViewModel)
-												.id(conversationViewModel.conversationMessagesSection.first!.rows[index].message.id)
-												.listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
-												.listRowSeparator(.hidden)
-												.scaleEffect(x: 1, y: -1, anchor: .center)
-												.onAppear {
-													if index == counter - 1
-														&& conversationViewModel.displayedConversationHistorySize > conversationViewModel.conversationMessagesSection.first!.rows.count {
-														DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-															conversationViewModel.getOldMessages()
-														}
-													}
-													
-													if index == 0 {
-														displayFloatingButton = false
-														conversationViewModel.markAsRead()
-													}
-												}
-												.onDisappear {
-													if index == 0 {
-														displayFloatingButton = true
-													}
-												}
-										}
-									}
-								}
-								.scaleEffect(x: 1, y: -1, anchor: .center)
-								.listStyle(.plain)
-								.onAppear {
-									conversationViewModel.markAsRead()
-								}
-								
-								if displayFloatingButton {
-									Button {
-										if conversationViewModel.conversationMessagesSection.first != nil && conversationViewModel.conversationMessagesSection.first!.rows.first != nil {
-											withAnimation {
-												proxy.scrollTo(conversationViewModel.conversationMessagesSection.first!.rows.first!.message.id)
-											}
-										}
-									} label: {
-										ZStack {
-											
-											Image("caret-double-down")
-												.renderingMode(.template)
-												.foregroundStyle(.white)
-												.padding()
-												.background(Color.orangeMain500)
-												.clipShape(Circle())
-												.shadow(color: .black.opacity(0.2), radius: 4)
-											
-											if conversationViewModel.displayedConversationUnreadMessagesCount > 0 {
-												VStack {
-													HStack {
-														Spacer()
-														
-														HStack {
-															Text(
-																conversationViewModel.displayedConversationUnreadMessagesCount < 99
-																? String(conversationViewModel.displayedConversationUnreadMessagesCount)
-																: "99+"
-															)
-															.foregroundStyle(.white)
-															.default_text_style(styleSize: 10)
-															.lineLimit(1)
-															
-														}
-														.frame(width: 18, height: 18)
-														.background(Color.redDanger500)
-														.cornerRadius(50)
-													}
-													
-													Spacer()
-												}
-											}
-										}
-										
-									}
-									.frame(width: 50, height: 50)
-									.padding()
-								}
-							}
-							.onAppear {
-								conversationViewModel.getMessages()
-							}
-							.onDisappear {
-								conversationViewModel.compose(stop: true, cachedConversation: cachedConversation)
-								conversationViewModel.resetMessage()
-							}
-						}
-					}
-					
+					conversationHistory(geometry: geometry)
+
 					if !conversationViewModel.composingLabel.isEmpty {
 						HStack {
 							Text(conversationViewModel.composingLabel)
@@ -806,516 +384,1076 @@ struct ConversationFragment: View {
 						}
 						.transition(.move(edge: .bottom))
 					}
-					
+
 					if !activeConversationIsReadOnly && !isSearchVisible {
-						if conversationViewModel.messageToReply != nil {
-							ZStack(alignment: .top) {
-								HStack {
-									VStack {
-										(
-											Text("conversation_reply_to_message_title")
-											+ Text("**\(conversationViewModel.participantConversationModel.first(where: {$0.address == conversationViewModel.messageToReply!.message.address})?.name ?? "")**"))
-										.default_text_style_300(styleSize: 15)
-										.frame(maxWidth: .infinity, alignment: .leading)
-										.padding(.bottom, 1)
-										.lineLimit(1)
-										
-										if conversationViewModel.messageToReply!.message.text.isEmpty {
-											Text(conversationViewModel.messageToReply!.message.attachmentsNames)
-												.default_text_style_300(styleSize: 15)
-												.frame(maxWidth: .infinity, alignment: .leading)
-												.lineLimit(1)
-										} else {
-											Text("\(conversationViewModel.messageToReply!.message.text)")
-												.default_text_style_300(styleSize: 15)
-												.frame(maxWidth: .infinity, alignment: .leading)
-												.lineLimit(1)
-										}
-									}
-								}
-								.frame(maxWidth: .infinity)
-								.padding(.all, 20)
-								.background(Color.gray100)
-								
-								HStack {
-									Spacer()
-									
-									Button(action: {
-										withAnimation {
-											conversationViewModel.messageToReply = nil
-										}
-									}, label: {
-										Image("x")
-											.resizable()
-											.frame(width: 30, height: 30, alignment: .leading)
-											.padding(.all, 10)
-									})
-								}
-							}
-							.transition(.move(edge: .bottom))
-						} else if conversationViewModel.messageToEdit != nil {
-							ZStack(alignment: .top) {
-								HStack {
-									VStack {
-										Text("conversation_editing_message_title")
-											.default_text_style_300(styleSize: 15)
-											.frame(maxWidth: .infinity, alignment: .leading)
-											.padding(.bottom, 1)
-											.lineLimit(1)
-										
-										Text("\(conversationViewModel.messageToEdit!.message.text)")
-											.default_text_style_300(styleSize: 15)
-											.frame(maxWidth: .infinity, alignment: .leading)
-											.lineLimit(1)
-									}
-								}
-								.frame(maxWidth: .infinity)
-								.padding(.all, 20)
-								.background(Color.gray100)
-								
-								HStack {
-									Spacer()
-									
-									Button(action: {
-										messageText = ""
-										withAnimation {
-											conversationViewModel.messageToEdit = nil
-										}
-									}, label: {
-										Image("x")
-											.resizable()
-											.frame(width: 30, height: 30, alignment: .leading)
-											.padding(.all, 10)
-									})
-								}
-							}
-							.transition(.move(edge: .bottom))
-						}
-						
-						if !conversationViewModel.mediasToSend.isEmpty || mediasIsLoading {
-							ZStack(alignment: .top) {
-								HStack {
-									if mediasIsLoading {
-										HStack {
-											Spacer()
-											
-											ProgressView()
-											
-											Spacer()
-										}
-										.frame(height: 120)
-									}
-									
-									if !mediasIsLoading {
-										LazyVGrid(columns: [
-											GridItem(.adaptive(minimum: 100), spacing: 1)
-										], spacing: 3) {
-											ForEach(conversationViewModel.mediasToSend, id: \.id) { attachment in
-												ZStack {
-													Rectangle()
-														.fill(Color(.white))
-														.frame(width: 100, height: 100)
-													
-													VStack {
-														ZStack {
-															if attachment.type == .image || attachment.type == .gif || attachment.type == .video {
-																AsyncImage(url: attachment.thumbnail) { image in
-																	ZStack {
-																		image
-																			.resizable()
-																			.interpolation(.medium)
-																			.aspectRatio(contentMode: .fill)
-																		
-																		if attachment.type == .video {
-																			Image("play-fill")
-																				.renderingMode(.template)
-																				.resizable()
-																				.foregroundStyle(.white)
-																				.frame(width: 40, height: 40, alignment: .leading)
-																		}
-																	}
-																} placeholder: {
-																	ProgressView()
-																}
-															} else {
-																VStack {
-																	Spacer()
-																	Text(attachment.name)
-																		.foregroundStyle(Color.grayMain2c700)
-																		.default_text_style_800(styleSize: 14)
-																		.truncationMode(.middle)
-																		.frame(maxWidth: .infinity, alignment: .center)
-																		.multilineTextAlignment(.center)
-																		.lineLimit(2)
-																	Spacer()
-																}
-																.background(Color.grayMain2c200)
-															}
-															
-															VStack {
-																HStack {
-																	Spacer()
-																	
-																	Image("x")
-																		.renderingMode(.template)
-																		.resizable()
-																		.foregroundStyle(Color.orangeMain500)
-																		.padding(4)
-																		.background(.white)
-																		.cornerRadius(12.5)
-																		.frame(width: 20, height: 20)
-																		.padding(4)
-																}
-																
-																Spacer()
-															}
-															.frame(width: 100, height: 100)
-														}
-													}
-													.layoutPriority(-1)
-													.onTapGesture {
-														if conversationViewModel.mediasToSend.count == 1 {
-															withAnimation {
-																conversationViewModel.mediasToSend.removeAll()
-															}
-														} else {
-															guard let index = self.conversationViewModel.mediasToSend.firstIndex(of: attachment) else { return }
-															self.conversationViewModel.mediasToSend.remove(at: index)
-														}
-													}
-												}
-												.clipShape(RoundedRectangle(cornerRadius: 4))
-												.contentShape(Rectangle())
-											}
-										}
-										.frame(
-											width: geometry.size.width > 0 && CGFloat(102 * conversationViewModel.mediasToSend.count) > geometry.size.width - 20
-											? 102 * floor(CGFloat(geometry.size.width - 20) / 102)
-											: CGFloat(102 * conversationViewModel.mediasToSend.count)
-										)
-									}
-								}
-								.frame(maxWidth: .infinity)
-								.padding(.all, conversationViewModel.mediasToSend.isEmpty ? 0 : 10)
-								.background(Color.gray100)
-								
-								if !mediasIsLoading {
-									HStack {
-										Spacer()
-										
-										Button(action: {
-											withAnimation {
-												conversationViewModel.mediasToSend.removeAll()
-											}
-										}, label: {
-											Image("x")
-												.resizable()
-												.frame(width: 30, height: 30, alignment: .leading)
-												.padding(.all, 10)
-										})
-									}
-								}
-							}
-							.transition(.move(edge: .bottom))
-						}
-						
-						if areFilePickersOpen {
-							ZStack(alignment: .top) {
-								HStack {
-									Button {
-										self.areFilePickersOpen.toggle()
-										self.isShowCamera = true
-									} label: {
-										VStack {
-											Image("camera")
-												.renderingMode(.template)
-												.resizable()
-												.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
-												.frame(width: 25, height: 25, alignment: .leading)
-											
-											Text("conversation_take_picture_label")
-												.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
-												.default_text_style_300(styleSize: 15)
-												.frame(maxWidth: .infinity, alignment: .center)
-												.lineLimit(1)
-										}
-									}
-									.disabled(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading)
-									
-									Button {
-										self.areFilePickersOpen.toggle()
-										self.isShowPhotoLibrary = true
-										self.mediasIsLoading = true
-									} label: {
-										VStack {
-											Image("image")
-												.renderingMode(.template)
-												.resizable()
-												.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
-												.frame(width: 25, height: 25, alignment: .leading)
-											
-											Text("conversation_pick_file_from_gallery_label")
-												.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
-												.default_text_style_300(styleSize: 15)
-												.frame(maxWidth: .infinity, alignment: .center)
-												.lineLimit(1)
-										}
-									}
-									.disabled(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading)
-									
-									Button {
-										self.areFilePickersOpen.toggle()
-										self.isShowFilePicker = true
-										self.mediasIsLoading = true
-									} label: {
-										VStack {
-											Image("file")
-												.renderingMode(.template)
-												.resizable()
-												.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
-												.frame(width: 25, height: 25, alignment: .leading)
-											
-											Text("conversation_pick_any_file_label")
-												.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
-												.default_text_style_300(styleSize: 15)
-												.frame(maxWidth: .infinity, alignment: .center)
-												.lineLimit(1)
-										}
-									}
-									.disabled(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading)
-								}
-								.frame(maxWidth: .infinity)
-								.padding(.all, 20)
-								.background(Color.gray100)
-							}
-							.transition(.move(edge: .bottom))
-						}
-						
-						if mentionIsOpen && activeConversationIsGroup {
-							ZStack(alignment: .top) {
-								ScrollView {
-									LazyVStack(alignment: .leading, spacing: 0) {
-										Text("conversation_participants_list_header")
-											.default_text_style_300(styleSize: 12)
-											.lineLimit(1)
-											.frame(height: 14)
-											.padding(.vertical, 8)
-											.padding(.horizontal, 10)
-										
-											if filteredParticipants.isEmpty {
-												VStack {
-													Text("conversation_participants_list_empty")
-														.default_text_style_800(styleSize: 16)
-														.frame(maxWidth: .infinity, alignment: .center)
-												}
-												.frame(height: rowHeight)
-											}
-										ForEach(filteredParticipants, id: \.id) { participant in
-											Button {
-												messageText = String(messageText.dropLast(mentionQuery.count))
-												messageText.append((participant.address.dropFirst(4).split(separator: "@").first ?? "") + " ")
-											} label: {
-												HStack {
-													Avatar(contactAvatarModel: participant, avatarSize: 40)
+						replyOrEditBanner()
 
-													Text(participant.name)
-														.default_text_style(styleSize: 16)
-														.lineLimit(1)
+						pendingAttachments(geometry: geometry)
 
-													Spacer()
-												}
-												.frame(maxWidth: .infinity)
-												.background(Color.gray100)
-												.padding(.horizontal)
-											}
-											.frame(height: rowHeight)
-											.buttonStyle(.plain)
-										}
-									}
-								}
-								.frame(
-									height: filteredParticipants.isEmpty ? rowHeight + 30 : min(
-										(CGFloat(filteredParticipants.count) * rowHeight) + 30,
-										(rowHeight * maxVisibleRows) + 30
-									)
-								)
-								.clipped()
-								.background(Color.gray100)
+						attachmentPickerActions()
 
-								HStack {
-									Spacer()
-									Button {
-										withAnimation { mentionIsOpen = false }
-									} label: {
-										Image("x")
-											.resizable()
-											.frame(width: 24, height: 24)
-											.padding(10)
-									}
-								}
-							}
-							.transition(.move(edge: .bottom))
-						}
-						
-						HStack(spacing: 0) {
-							if !voiceRecordingInProgress {
-								Button {
-									withAnimation {
-										areFilePickersOpen.toggle()
-									}
-								} label: {
-									Image(areFilePickersOpen ? "x" : "paperclip")
-										.renderingMode(.template)
-										.resizable()
-										.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
-										.frame(width: 28, height: 28, alignment: .leading)
-										.padding(.all, 6)
-										.padding(.top, 4)
-										.disabled(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading)
-										.animation(.none, value: areFilePickersOpen)
-								}
-								.padding(.horizontal, isMessageTextFocused ? 0 : 2)
-								
-								HStack {
-									if #available(iOS 16.0, *) {
-										TextField("conversation_text_field_hint", text: $messageText, axis: .vertical)
-											.default_text_style(styleSize: 15)
-											.focused($isMessageTextFocused)
-											.padding(.vertical, 5)
-											.onChange(of: messageText) { text in
-												self.updateMentionState(from: text)
-												conversationViewModel.compose(stop: text.isEmpty)
-											}
-									} else {
-										ZStack(alignment: .leading) {
-											TextEditor(text: $messageText)
-												.multilineTextAlignment(.leading)
-												.frame(maxHeight: 160)
-												.fixedSize(horizontal: false, vertical: true)
-												.default_text_style(styleSize: 15)
-												.focused($isMessageTextFocused)
-												.onChange(of: messageText) { text in
-													conversationViewModel.compose(stop: text.isEmpty)
-												}
-											
-											if messageText.isEmpty {
-												Text("conversation_text_field_hint")
-													.padding(.leading, 4)
-													.lineLimit(1)
-													.opacity(messageText.isEmpty ? 1 : 0)
-													.foregroundStyle(Color.gray300)
-													.default_text_style(styleSize: 15)
-											}
-										}
-										.onTapGesture {
-											isMessageTextFocused = true
-										}
-									}
-									
-									if conversationViewModel.messageToEdit == nil {
-										if messageText.isEmpty && conversationViewModel.mediasToSend.isEmpty {
-											Button {
-												voiceRecordingInProgress = true
-											} label: {
-												Image("microphone")
-													.renderingMode(.template)
-													.resizable()
-													.foregroundStyle(Color.grayMain2c500)
-													.frame(width: 28, height: 28, alignment: .leading)
-													.padding(.all, 6)
-													.padding(.top, 4)
-											}
-										} else {
-											Button {
-												if conversationViewModel.displayedConversationHistorySize > 1 {
-													NotificationCenter.default.post(name: .onScrollToBottom, object: nil)
-												}
-												
-												let messageTextTmp = self.messageText
-												messageText = " "
-												DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
-													messageText = ""
-													isMessageTextFocused = true
-													
-													conversationViewModel.sendMessage(messageText: messageTextTmp)
-												}
-											} label: {
-												Image("paper-plane-tilt")
-													.renderingMode(.template)
-													.resizable()
-													.foregroundStyle(Color.orangeMain500)
-													.frame(width: 28, height: 28, alignment: .leading)
-													.padding(.all, 6)
-													.padding(.top, 4)
-													.rotationEffect(.degrees(45))
-											}
-											.padding(.trailing, 4)
-										}
-									} else {
-										Button {
-											let messageTextTmp = self.messageText
-											messageText = " "
-											DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
-												messageText = ""
-												isMessageTextFocused = true
-												
-												conversationViewModel.sendMessage(messageText: messageTextTmp)
-											}
-										} label: {
-											Image("pencil-simple")
-												.renderingMode(.template)
-												.resizable()
-												.foregroundStyle(messageText.isEmpty ? Color.gray300 : Color.orangeMain500)
-												.frame(width: 28, height: 28, alignment: .leading)
-												.padding(.all, 6)
-												.padding(.top, 4)
-										}
-										.padding(.trailing, 4)
-										.disabled(messageText.isEmpty)
-									}
-								}
-								.padding(.leading, 15)
-								.padding(.trailing, 5)
-								.padding(.vertical, 6)
-								.frame(maxWidth: .infinity, minHeight: 55)
-								.background(.white)
-								.cornerRadius(30)
-								.overlay(
-									RoundedRectangle(cornerRadius: 30)
-										.inset(by: 0.5)
-										.stroke(Color.gray200, lineWidth: 1.5)
-								)
-								.padding(.horizontal, 4)
-							} else {
-								VoiceRecorderPlayer(voiceRecordingInProgress: $voiceRecordingInProgress)
-									.environmentObject(conversationViewModel)
-									.frame(maxHeight: 60)
-							}
-						}
-						.frame(maxWidth: .infinity, minHeight: 60)
-						.padding(.top, 12)
-						.padding(.bottom, geometry.safeAreaInsets.bottom > 0 ? (isMessageTextFocused ? 12 : 0) : 12)
-						.padding(.horizontal, 10)
-						.background(Color.gray100)
+						mentionSuggestions()
+
+						messageComposer(geometry: geometry)
+
 					}
 				}
 			}
 			.blur(radius: conversationViewModel.selectedMessage != nil ? 8 : 0)
-			
+
+			selectedMessageOverlay(geometry: geometry)
+
+			if isShowConversationForwardMessageFragment {
+				ConversationForwardMessageFragment(
+					conversationsList: conversationsListViewModel.conversationsList,
+					selectedMessage: conversationViewModel.selectedMessage,
+					isShowConversationForwardMessageFragment: $isShowConversationForwardMessageFragment
+				)
+				.environmentObject(conversationViewModel)
+				.environmentObject(conversationsListViewModel)
+				.zIndex(5)
+				.transition(.move(edge: .trailing))
+				.onAppear {
+					conversationViewModel.selectedMessage = nil
+				}
+			}
+
+			if isShowInfoConversationFragment {
+				ConversationInfoFragment(
+					smsTarget: conversationViewModel.smsTarget,
+					isMuted: $isMuted,
+					isShowEphemeralFragment: $isShowEphemeralFragment,
+					isShowMediaFilesFragment: $isShowMediaFilesFragment,
+					isShowDocumentsFilesFragment: $isShowDocumentsFilesFragment,
+					isShowStartCallGroupPopup: $isShowStartCallGroupPopup,
+					isShowInfoConversationFragment: $isShowInfoConversationFragment,
+					isShowEditContactFragment: $isShowEditContactFragment,
+					isShowEditContactFragmentAddress: $isShowEditContactFragmentAddress,
+					isShowRemoveParticipantPopup: $isShowRemoveParticipantPopup,
+					isShowScheduleMeetingFragment: $isShowScheduleMeetingFragment,
+					isShowScheduleMeetingFragmentSubject: $isShowScheduleMeetingFragmentSubject,
+					isShowScheduleMeetingFragmentParticipants: $isShowScheduleMeetingFragmentParticipants,
+					isShowConversationInfoPopup: $isShowConversationInfoPopup,
+					conversationInfoPopupText: $conversationInfoPopupText,
+					showLeaveConversationPopup: $showLeaveConversationPopup,
+					showDeleteConversationPopup: $showDeleteConversationPopup,
+					showDeleteConversationHistoryPopup: $showDeleteConversationHistoryPopup
+				)
+				.environmentObject(conversationViewModel)
+				.zIndex(5)
+				.transition(.move(edge: .trailing))
+			}
+
+			if isShowEphemeralFragment {
+				EphemeralFragment(
+					isShowEphemeralFragment: $isShowEphemeralFragment
+				)
+				.environmentObject(conversationViewModel)
+				.zIndex(5)
+				.transition(.move(edge: .trailing))
+			}
+
+			if isShowMediaFilesFragment {
+				ConversationMediaListFragment(
+					carrierAttachments: conversationViewModel.isSMSConversation ? conversationViewModel.attachments : nil,
+					isShowMediaFilesFragment: $isShowMediaFilesFragment
+				)
+				.zIndex(5)
+				.transition(.move(edge: .trailing))
+			}
+
+			if isShowDocumentsFilesFragment {
+				ConversationDocumentsListFragment(
+					carrierAttachments: conversationViewModel.isSMSConversation ? conversationViewModel.attachments : nil,
+					isShowDocumentsFilesFragment: $isShowDocumentsFilesFragment
+				)
+				.zIndex(5)
+				.transition(.move(edge: .trailing))
+			}
+
+			if conversationViewModel.searchInProgress {
+				PopupLoadingView()
+					.background(.black.opacity(0.65))
+					.onDisappear {
+						if conversationViewModel.targetIndex >= 0 {
+							NotificationCenter.default.post(
+								name: NSNotification.Name("onScrollToIndex"),
+								object: nil,
+								userInfo: ["index": conversationViewModel.targetIndex, "animated": true]
+							)
+
+							conversationViewModel.targetIndex = -1
+						}
+					}
+			}
+		}
+	}
+
+	// Keep type erasure at these fixed screen-section boundaries, not per message.
+	// The former 1,350-line builder exhausted the iPhone main-thread stack while
+	// Swift instantiated its nested generic view metadata. State and actions stay
+	// on this screen; each section now constructs only its own bounded view type.
+	private func conversationHeader() -> AnyView {
+		AnyView(Group {
+			if !isSearchVisible {
+				HStack {
+					if (!(orientation == .landscapeLeft || orientation == .landscapeRight
+						  || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)) || isShowConversationFragment {
+						Image("caret-left")
+							.renderingMode(.template)
+							.resizable()
+							.foregroundStyle(Color.orangeMain500)
+							.frame(width: 25, height: 25, alignment: .leading)
+							.padding(.all, 10)
+							.padding(.top, 4)
+							.padding(.leading, -10)
+							.onTapGesture {
+								withAnimation {
+									if isShowConversationFragment {
+										isShowConversationFragment = false
+									}
+									conversationViewModel.closeActiveConversation()
+								}
+							}
+					}
+
+					Avatar(contactAvatarModel: activeConversationAvatar, avatarSize: 50)
+						.padding(.top, 4)
+
+					VStack(spacing: 1) {
+						Text(activeConversationTitle)
+							.default_text_style(styleSize: 16)
+							.frame(maxWidth: .infinity, alignment: .leading)
+							.padding(.top, 4)
+							.lineLimit(1)
+
+						if isMuted || conversationViewModel.ephemeralTime != NSLocalizedString("conversation_ephemeral_messages_duration_disabled", comment: "") {
+							HStack {
+								if isMuted {
+									Image("bell-slash")
+										.renderingMode(.template)
+										.resizable()
+										.foregroundStyle(Color.orangeMain500)
+										.frame(width: 16, height: 16, alignment: .trailing)
+								}
+
+								if conversationViewModel.ephemeralTime != NSLocalizedString("conversation_ephemeral_messages_duration_disabled", comment: "") {
+									Image("clock-countdown")
+										.renderingMode(.template)
+										.resizable()
+										.foregroundStyle(Color.orangeMain500)
+										.frame(width: 16, height: 16, alignment: .trailing)
+
+									Text(conversationViewModel.ephemeralTime)
+										.default_text_style(styleSize: 12)
+										.padding(.leading, -2)
+										.frame(maxWidth: .infinity, alignment: .leading)
+										.lineLimit(1)
+								}
+
+								Spacer()
+							}
+						}
+					}
+					.background(Color.white, ignoresSafeAreaEdges: [])
+					.onTapGesture {
+						withAnimation {
+							isShowInfoConversationFragment = true
+						}
+					}
+					.padding(.vertical, 10)
+
+					Spacer()
+
+					if !activeConversationIsReadOnly {
+						Button {
+							if activeConversationIsGroup {
+								isShowStartCallGroupPopup.toggle()
+							} else {
+								conversationViewModel.callActiveConversation()
+							}
+						} label: {
+							Image("phone")
+								.renderingMode(.template)
+								.resizable()
+								.foregroundStyle(Color.grayMain2c500)
+								.frame(width: 25, height: 25, alignment: .leading)
+								.padding(.all, 10)
+								.padding(.top, 4)
+						}
+					}
+
+					Menu {
+						Button {
+							isMenuOpen = false
+							withAnimation {
+								isShowInfoConversationFragment = true
+							}
+						} label: {
+							HStack {
+								Text("conversation_menu_go_to_info")
+								Spacer()
+								Image("info")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.grayMain2c500)
+									.frame(width: 25, height: 25, alignment: .leading)
+									.padding(.all, 10)
+							}
+						}
+
+						Button {
+							isMenuOpen = false
+							withAnimation {
+								isSearchVisible = true
+							}
+							isSearchTextFocused = true
+						} label: {
+							HStack {
+								Text("conversation_menu_search_in_messages")
+								Spacer()
+								Image("magnifying-glass")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.grayMain2c500)
+									.frame(width: 25, height: 25, alignment: .leading)
+									.padding(.all, 10)
+							}
+						}
+
+						if conversationViewModel.isSMSConversation && conversationViewModel.smsSenderIDs.count > 1 {
+							Picker("Send from", selection: $conversationViewModel.smsSelectedSenderID) {
+								ForEach(conversationViewModel.smsSenderIDs) { sender in
+									Text(Mango9CallerIdentity.formattedPhoneNumber(sender.senderID))
+										.tag(sender.senderID)
+								}
+							}
+						}
+
+						if !activeConversationIsReadOnly {
+							Button {
+								isMenuOpen = false
+								isMuted = conversationViewModel.toggleConversationMute()
+							} label: {
+								HStack {
+									Text(isMuted ? "conversation_action_unmute" : "conversation_action_mute")
+									Spacer()
+									Image(isMuted ? "bell-simple" : "bell-simple-slash")
+										.renderingMode(.template)
+										.resizable()
+										.foregroundStyle(Color.grayMain2c500)
+										.frame(width: 25, height: 25, alignment: .leading)
+										.padding(.all, 10)
+								}
+							}
+
+							if !conversationViewModel.isSMSConversation {
+								Button {
+									isMenuOpen = false
+									withAnimation { isShowEphemeralFragment = true }
+								} label: {
+									HStack {
+										Text("conversation_menu_configure_ephemeral_messages")
+										Spacer()
+										Image("clock-countdown")
+											.renderingMode(.template)
+											.resizable()
+											.foregroundStyle(Color.grayMain2c500)
+											.frame(width: 25, height: 25, alignment: .leading)
+											.padding(.all, 10)
+									}
+								}
+							}
+						}
+
+						Button {
+							isMenuOpen = false
+							withAnimation {
+								isShowMediaFilesFragment = true
+							}
+						} label: {
+							HStack {
+								Text("conversation_menu_media_files")
+								Spacer()
+								Image("image")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.grayMain2c500)
+									.frame(width: 25, height: 25, alignment: .leading)
+									.padding(.all, 10)
+							}
+						}
+
+						Button {
+							isMenuOpen = false
+							withAnimation {
+								isShowDocumentsFilesFragment = true
+							}
+						} label: {
+							HStack {
+								Text("conversation_menu_documents_files")
+								Spacer()
+								Image("file-pdf")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(Color.grayMain2c500)
+									.frame(width: 25, height: 25, alignment: .leading)
+									.padding(.all, 10)
+							}
+						}
+					} label: {
+						Image("dots-three-vertical")
+							.renderingMode(.template)
+							.resizable()
+							.foregroundStyle(Color.grayMain2c500)
+							.frame(width: 25, height: 25, alignment: .leading)
+							.padding(.all, 10)
+							.padding(.top, 4)
+							.onChange(of: isMuted) { _ in }
+							.onAppear {
+								isMuted = conversationViewModel.conversationIsMuted
+							}
+					}
+					.onTapGesture {
+						isMenuOpen = true
+					}
+				}
+				.frame(maxWidth: .infinity)
+				.frame(height: 50)
+				.padding(.horizontal)
+				.padding(.bottom, 4)
+				.background(.white)
+			} else {
+				HStack {
+					Image("caret-left")
+						.renderingMode(.template)
+						.resizable()
+						.foregroundStyle(Color.grayMain2c500)
+						.frame(width: 25, height: 25, alignment: .leading)
+						.padding(.all, 10)
+						.padding(.top, 4)
+						.padding(.leading, -10)
+						.onTapGesture {
+							searchText = ""
+							conversationViewModel.searchText = ""
+							conversationViewModel.latestMatch = nil
+							conversationViewModel.canSearchDown = false
+							conversationViewModel.highlightedMessageID = nil
+							withAnimation {
+								isSearchVisible = false
+							}
+						}
+
+					TextField("conversation_menu_search_in_messages", text: $searchText)
+						.default_text_style(styleSize: 15)
+						.focused($isSearchTextFocused)
+						.padding(.vertical, 5)
+						.submitLabel(.search)
+						.onSubmit {
+							conversationViewModel.searchChatMessage(direction: .Up, textToSearch: searchText)
+						}
+
+					Button {
+						conversationViewModel.searchChatMessage(direction: .Up, textToSearch: searchText)
+					} label: {
+						Image("caret-up")
+							.renderingMode(.template)
+							.resizable()
+							.foregroundStyle(searchText.isEmpty ? Color.grayMain2c300 : Color.grayMain2c500)
+							.frame(width: 25, height: 25, alignment: .leading)
+							.padding(.all, 10)
+							.padding(.top, 4)
+					}
+					.disabled(searchText.isEmpty)
+
+					Button {
+						conversationViewModel.searchChatMessage(direction: .Down, textToSearch: searchText)
+					} label: {
+						Image("caret-down")
+							.renderingMode(.template)
+							.resizable()
+							.foregroundStyle((searchText.isEmpty || !conversationViewModel.canSearchDown) ? Color.grayMain2c300 : Color.grayMain2c500)
+							.frame(width: 25, height: 25, alignment: .leading)
+							.padding(.all, 10)
+							.padding(.top, 4)
+					}
+					.disabled(searchText.isEmpty || !conversationViewModel.canSearchDown)
+
+				}
+				.frame(maxWidth: .infinity)
+				.frame(height: 50)
+				.padding(.horizontal)
+				.padding(.bottom, 4)
+				.background(.white)
+			}
+		})
+	}
+
+	private func conversationHistory(geometry: GeometryProxy) -> AnyView {
+		AnyView(Group {
+			if #available(iOS 16.0, *) {
+				ZStack(alignment: .bottomTrailing) {
+						UIList(
+							geometryProxy: geometry,
+							sections: conversationViewModel.conversationMessagesSection,
+			                           isMessageTextFocused: Binding(get: {
+			                               isMessageTextFocused
+			                           }, set: { newValue in
+			                               isMessageTextFocused = newValue
+						})
+			                       )
+						.environmentObject(conversationViewModel)
+						.environmentObject(conversationsListViewModel)
+
+						if conversationViewModel.isSMSConversation &&
+							conversationViewModel.smsIsLoading &&
+							conversationViewModel.conversationMessagesSection.isEmpty {
+							VStack(spacing: 12) {
+								ProgressView()
+								Text("Loading conversation…")
+									.default_text_style(styleSize: 14)
+									.foregroundStyle(Color.grayMain2c500)
+							}
+							.frame(maxWidth: .infinity, maxHeight: .infinity)
+							.background(Color.gray100)
+						}
+					}
+				.onAppear {
+					if conversationViewModel.displayedConversationUnreadMessagesCount > 0 {
+						conversationViewModel.markAsRead()
+					}
+			}
+				.onDisappear {
+					conversationViewModel.compose(stop: true, cachedConversation: cachedConversation)
+					conversationViewModel.resetMessage()
+				}
+			} else {
+				ScrollViewReader { proxy in
+					ZStack(alignment: .bottomTrailing) {
+						List {
+							if conversationViewModel.conversationMessagesSection.first != nil {
+								let counter = conversationViewModel.conversationMessagesSection.first!.rows.count
+								ForEach(0..<counter, id: \.self) { index in
+									ChatBubbleView(eventLogMessage: conversationViewModel.conversationMessagesSection.first!.rows[index], geometryProxy: geometry)
+										.environmentObject(conversationViewModel)
+										.id(conversationViewModel.conversationMessagesSection.first!.rows[index].message.id)
+										.listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
+										.listRowSeparator(.hidden)
+										.scaleEffect(x: 1, y: -1, anchor: .center)
+										.onAppear {
+											if index == counter - 1
+												&& conversationViewModel.displayedConversationHistorySize > conversationViewModel.conversationMessagesSection.first!.rows.count {
+												DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+													conversationViewModel.getOldMessages()
+												}
+											}
+
+											if index == 0 {
+												displayFloatingButton = false
+												conversationViewModel.markAsRead()
+											}
+										}
+										.onDisappear {
+											if index == 0 {
+												displayFloatingButton = true
+											}
+										}
+								}
+							}
+						}
+						.scaleEffect(x: 1, y: -1, anchor: .center)
+						.listStyle(.plain)
+						.onAppear {
+							conversationViewModel.markAsRead()
+						}
+
+						if displayFloatingButton {
+							Button {
+								if conversationViewModel.conversationMessagesSection.first != nil && conversationViewModel.conversationMessagesSection.first!.rows.first != nil {
+									withAnimation {
+										proxy.scrollTo(conversationViewModel.conversationMessagesSection.first!.rows.first!.message.id)
+									}
+								}
+							} label: {
+								ZStack {
+
+									Image("caret-double-down")
+										.renderingMode(.template)
+										.foregroundStyle(.white)
+										.padding()
+										.background(Color.orangeMain500)
+										.clipShape(Circle())
+										.shadow(color: .black.opacity(0.2), radius: 4)
+
+									if conversationViewModel.displayedConversationUnreadMessagesCount > 0 {
+										VStack {
+											HStack {
+												Spacer()
+
+												HStack {
+													Text(
+														conversationViewModel.displayedConversationUnreadMessagesCount < 99
+														? String(conversationViewModel.displayedConversationUnreadMessagesCount)
+														: "99+"
+													)
+													.foregroundStyle(.white)
+													.default_text_style(styleSize: 10)
+													.lineLimit(1)
+
+												}
+												.frame(width: 18, height: 18)
+												.background(Color.redDanger500)
+												.cornerRadius(50)
+											}
+
+											Spacer()
+										}
+									}
+								}
+
+							}
+							.frame(width: 50, height: 50)
+							.padding()
+						}
+					}
+					.onAppear {
+						conversationViewModel.getMessages()
+					}
+					.onDisappear {
+						conversationViewModel.compose(stop: true, cachedConversation: cachedConversation)
+						conversationViewModel.resetMessage()
+					}
+				}
+			}
+		})
+	}
+
+	private func replyOrEditBanner() -> AnyView {
+		AnyView(Group {
+			if conversationViewModel.messageToReply != nil {
+				ZStack(alignment: .top) {
+					HStack {
+						VStack {
+							(
+								Text("conversation_reply_to_message_title")
+								+ Text("**\(conversationViewModel.participantConversationModel.first(where: {$0.address == conversationViewModel.messageToReply!.message.address})?.name ?? "")**"))
+							.default_text_style_300(styleSize: 15)
+							.frame(maxWidth: .infinity, alignment: .leading)
+							.padding(.bottom, 1)
+							.lineLimit(1)
+
+							if conversationViewModel.messageToReply!.message.text.isEmpty {
+								Text(conversationViewModel.messageToReply!.message.attachmentsNames)
+									.default_text_style_300(styleSize: 15)
+									.frame(maxWidth: .infinity, alignment: .leading)
+									.lineLimit(1)
+							} else {
+								Text("\(conversationViewModel.messageToReply!.message.text)")
+									.default_text_style_300(styleSize: 15)
+									.frame(maxWidth: .infinity, alignment: .leading)
+									.lineLimit(1)
+							}
+						}
+					}
+					.frame(maxWidth: .infinity)
+					.padding(.all, 20)
+					.background(Color.gray100)
+
+					HStack {
+						Spacer()
+
+						Button(action: {
+							withAnimation {
+								conversationViewModel.messageToReply = nil
+							}
+						}, label: {
+							Image("x")
+								.resizable()
+								.frame(width: 30, height: 30, alignment: .leading)
+								.padding(.all, 10)
+						})
+					}
+				}
+				.transition(.move(edge: .bottom))
+			} else if conversationViewModel.messageToEdit != nil {
+				ZStack(alignment: .top) {
+					HStack {
+						VStack {
+							Text("conversation_editing_message_title")
+								.default_text_style_300(styleSize: 15)
+								.frame(maxWidth: .infinity, alignment: .leading)
+								.padding(.bottom, 1)
+								.lineLimit(1)
+
+							Text("\(conversationViewModel.messageToEdit!.message.text)")
+								.default_text_style_300(styleSize: 15)
+								.frame(maxWidth: .infinity, alignment: .leading)
+								.lineLimit(1)
+						}
+					}
+					.frame(maxWidth: .infinity)
+					.padding(.all, 20)
+					.background(Color.gray100)
+
+					HStack {
+						Spacer()
+
+						Button(action: {
+							messageText = ""
+							withAnimation {
+								conversationViewModel.messageToEdit = nil
+							}
+						}, label: {
+							Image("x")
+								.resizable()
+								.frame(width: 30, height: 30, alignment: .leading)
+								.padding(.all, 10)
+						})
+					}
+				}
+				.transition(.move(edge: .bottom))
+			}
+		})
+	}
+
+	private func pendingAttachments(geometry: GeometryProxy) -> AnyView {
+		AnyView(Group {
+			if !conversationViewModel.mediasToSend.isEmpty || mediasIsLoading {
+				ZStack(alignment: .top) {
+					HStack {
+						if mediasIsLoading {
+							HStack {
+								Spacer()
+
+								ProgressView()
+
+								Spacer()
+							}
+							.frame(height: 120)
+						}
+
+						if !mediasIsLoading {
+							LazyVGrid(columns: [
+								GridItem(.adaptive(minimum: 100), spacing: 1)
+							], spacing: 3) {
+								ForEach(conversationViewModel.mediasToSend, id: \.id) { attachment in
+									ZStack {
+										Rectangle()
+											.fill(Color(.white))
+											.frame(width: 100, height: 100)
+
+										VStack {
+											ZStack {
+												if attachment.type == .image || attachment.type == .gif || attachment.type == .video {
+													AsyncImage(url: attachment.thumbnail) { image in
+														ZStack {
+															image
+																.resizable()
+																.interpolation(.medium)
+																.aspectRatio(contentMode: .fill)
+
+															if attachment.type == .video {
+																Image("play-fill")
+																	.renderingMode(.template)
+																	.resizable()
+																	.foregroundStyle(.white)
+																	.frame(width: 40, height: 40, alignment: .leading)
+															}
+														}
+													} placeholder: {
+														ProgressView()
+													}
+												} else {
+													VStack {
+														Spacer()
+														Text(attachment.name)
+															.foregroundStyle(Color.grayMain2c700)
+															.default_text_style_800(styleSize: 14)
+															.truncationMode(.middle)
+															.frame(maxWidth: .infinity, alignment: .center)
+															.multilineTextAlignment(.center)
+															.lineLimit(2)
+														Spacer()
+													}
+													.background(Color.grayMain2c200)
+												}
+
+												VStack {
+													HStack {
+														Spacer()
+
+														Image("x")
+															.renderingMode(.template)
+															.resizable()
+															.foregroundStyle(Color.orangeMain500)
+															.padding(4)
+															.background(.white)
+															.cornerRadius(12.5)
+															.frame(width: 20, height: 20)
+															.padding(4)
+													}
+
+													Spacer()
+												}
+												.frame(width: 100, height: 100)
+											}
+										}
+										.layoutPriority(-1)
+										.onTapGesture {
+											if conversationViewModel.mediasToSend.count == 1 {
+												withAnimation {
+													conversationViewModel.mediasToSend.removeAll()
+												}
+											} else {
+												guard let index = self.conversationViewModel.mediasToSend.firstIndex(of: attachment) else { return }
+												self.conversationViewModel.mediasToSend.remove(at: index)
+											}
+										}
+									}
+									.clipShape(RoundedRectangle(cornerRadius: 4))
+									.contentShape(Rectangle())
+								}
+							}
+							.frame(
+								width: geometry.size.width > 0 && CGFloat(102 * conversationViewModel.mediasToSend.count) > geometry.size.width - 20
+								? 102 * floor(CGFloat(geometry.size.width - 20) / 102)
+								: CGFloat(102 * conversationViewModel.mediasToSend.count)
+							)
+						}
+					}
+					.frame(maxWidth: .infinity)
+					.padding(.all, conversationViewModel.mediasToSend.isEmpty ? 0 : 10)
+					.background(Color.gray100)
+
+					if !mediasIsLoading {
+						HStack {
+							Spacer()
+
+							Button(action: {
+								withAnimation {
+									conversationViewModel.mediasToSend.removeAll()
+								}
+							}, label: {
+								Image("x")
+									.resizable()
+									.frame(width: 30, height: 30, alignment: .leading)
+									.padding(.all, 10)
+							})
+						}
+					}
+				}
+				.transition(.move(edge: .bottom))
+			}
+		})
+	}
+
+	private func attachmentPickerActions() -> AnyView {
+		AnyView(Group {
+			if areFilePickersOpen {
+				ZStack(alignment: .top) {
+					HStack {
+						Button {
+							self.areFilePickersOpen.toggle()
+							self.isShowCamera = true
+						} label: {
+							VStack {
+								Image("camera")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
+									.frame(width: 25, height: 25, alignment: .leading)
+
+								Text("conversation_take_picture_label")
+									.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
+									.default_text_style_300(styleSize: 15)
+									.frame(maxWidth: .infinity, alignment: .center)
+									.lineLimit(1)
+							}
+						}
+						.disabled(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading)
+
+						Button {
+							self.areFilePickersOpen.toggle()
+							self.isShowPhotoLibrary = true
+							self.mediasIsLoading = true
+						} label: {
+							VStack {
+								Image("image")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
+									.frame(width: 25, height: 25, alignment: .leading)
+
+								Text("conversation_pick_file_from_gallery_label")
+									.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
+									.default_text_style_300(styleSize: 15)
+									.frame(maxWidth: .infinity, alignment: .center)
+									.lineLimit(1)
+							}
+						}
+						.disabled(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading)
+
+						Button {
+							self.areFilePickersOpen.toggle()
+							self.isShowFilePicker = true
+							self.mediasIsLoading = true
+						} label: {
+							VStack {
+								Image("file")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
+									.frame(width: 25, height: 25, alignment: .leading)
+
+								Text("conversation_pick_any_file_label")
+									.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
+									.default_text_style_300(styleSize: 15)
+									.frame(maxWidth: .infinity, alignment: .center)
+									.lineLimit(1)
+							}
+						}
+						.disabled(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading)
+					}
+					.frame(maxWidth: .infinity)
+					.padding(.all, 20)
+					.background(Color.gray100)
+				}
+				.transition(.move(edge: .bottom))
+			}
+		})
+	}
+
+	private func mentionSuggestions() -> AnyView {
+		AnyView(Group {
+			if mentionIsOpen && activeConversationIsGroup {
+				ZStack(alignment: .top) {
+					ScrollView {
+						LazyVStack(alignment: .leading, spacing: 0) {
+							Text("conversation_participants_list_header")
+								.default_text_style_300(styleSize: 12)
+								.lineLimit(1)
+								.frame(height: 14)
+								.padding(.vertical, 8)
+								.padding(.horizontal, 10)
+
+								if filteredParticipants.isEmpty {
+									VStack {
+										Text("conversation_participants_list_empty")
+											.default_text_style_800(styleSize: 16)
+											.frame(maxWidth: .infinity, alignment: .center)
+									}
+									.frame(height: rowHeight)
+								}
+							ForEach(filteredParticipants, id: \.id) { participant in
+								Button {
+									messageText = String(messageText.dropLast(mentionQuery.count))
+									messageText.append((participant.address.dropFirst(4).split(separator: "@").first ?? "") + " ")
+								} label: {
+									HStack {
+										Avatar(contactAvatarModel: participant, avatarSize: 40)
+
+										Text(participant.name)
+											.default_text_style(styleSize: 16)
+											.lineLimit(1)
+
+										Spacer()
+									}
+									.frame(maxWidth: .infinity)
+									.background(Color.gray100)
+									.padding(.horizontal)
+								}
+								.frame(height: rowHeight)
+								.buttonStyle(.plain)
+							}
+						}
+					}
+					.frame(
+						height: filteredParticipants.isEmpty ? rowHeight + 30 : min(
+							(CGFloat(filteredParticipants.count) * rowHeight) + 30,
+							(rowHeight * maxVisibleRows) + 30
+						)
+					)
+					.clipped()
+					.background(Color.gray100)
+
+					HStack {
+						Spacer()
+						Button {
+							withAnimation { mentionIsOpen = false }
+						} label: {
+							Image("x")
+								.resizable()
+								.frame(width: 24, height: 24)
+								.padding(10)
+						}
+					}
+				}
+				.transition(.move(edge: .bottom))
+			}
+		})
+	}
+
+	private func messageComposer(geometry: GeometryProxy) -> AnyView {
+		AnyView(Group {
+			HStack(spacing: 0) {
+				if !voiceRecordingInProgress {
+					Button {
+						withAnimation {
+							areFilePickersOpen.toggle()
+						}
+					} label: {
+						Image(areFilePickersOpen ? "x" : "paperclip")
+							.renderingMode(.template)
+							.resizable()
+							.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
+							.frame(width: 28, height: 28, alignment: .leading)
+							.padding(.all, 6)
+							.padding(.top, 4)
+							.disabled(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading)
+							.animation(.none, value: areFilePickersOpen)
+					}
+					.padding(.horizontal, isMessageTextFocused ? 0 : 2)
+
+					HStack {
+						if #available(iOS 16.0, *) {
+							TextField("conversation_text_field_hint", text: $messageText, axis: .vertical)
+								.default_text_style(styleSize: 15)
+								.focused($isMessageTextFocused)
+								.padding(.vertical, 5)
+								.onChange(of: messageText) { text in
+									self.updateMentionState(from: text)
+									conversationViewModel.compose(stop: text.isEmpty)
+								}
+						} else {
+							ZStack(alignment: .leading) {
+								TextEditor(text: $messageText)
+									.multilineTextAlignment(.leading)
+									.frame(maxHeight: 160)
+									.fixedSize(horizontal: false, vertical: true)
+									.default_text_style(styleSize: 15)
+									.focused($isMessageTextFocused)
+									.onChange(of: messageText) { text in
+										conversationViewModel.compose(stop: text.isEmpty)
+									}
+
+								if messageText.isEmpty {
+									Text("conversation_text_field_hint")
+										.padding(.leading, 4)
+										.lineLimit(1)
+										.opacity(messageText.isEmpty ? 1 : 0)
+										.foregroundStyle(Color.gray300)
+										.default_text_style(styleSize: 15)
+								}
+							}
+							.onTapGesture {
+								isMessageTextFocused = true
+							}
+						}
+
+						if conversationViewModel.messageToEdit == nil {
+							if messageText.isEmpty && conversationViewModel.mediasToSend.isEmpty {
+								Button {
+									voiceRecordingInProgress = true
+								} label: {
+									Image("microphone")
+										.renderingMode(.template)
+										.resizable()
+										.foregroundStyle(Color.grayMain2c500)
+										.frame(width: 28, height: 28, alignment: .leading)
+										.padding(.all, 6)
+										.padding(.top, 4)
+								}
+							} else {
+								Button {
+									if conversationViewModel.displayedConversationHistorySize > 1 {
+										NotificationCenter.default.post(name: .onScrollToBottom, object: nil)
+									}
+
+									let messageTextTmp = self.messageText
+									messageText = " "
+									DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+										messageText = ""
+										isMessageTextFocused = true
+
+										conversationViewModel.sendMessage(messageText: messageTextTmp)
+									}
+								} label: {
+									Image("paper-plane-tilt")
+										.renderingMode(.template)
+										.resizable()
+										.foregroundStyle(Color.orangeMain500)
+										.frame(width: 28, height: 28, alignment: .leading)
+										.padding(.all, 6)
+										.padding(.top, 4)
+										.rotationEffect(.degrees(45))
+								}
+								.padding(.trailing, 4)
+							}
+						} else {
+							Button {
+								let messageTextTmp = self.messageText
+								messageText = " "
+								DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+									messageText = ""
+									isMessageTextFocused = true
+
+									conversationViewModel.sendMessage(messageText: messageTextTmp)
+								}
+							} label: {
+								Image("pencil-simple")
+									.renderingMode(.template)
+									.resizable()
+									.foregroundStyle(messageText.isEmpty ? Color.gray300 : Color.orangeMain500)
+									.frame(width: 28, height: 28, alignment: .leading)
+									.padding(.all, 6)
+									.padding(.top, 4)
+							}
+							.padding(.trailing, 4)
+							.disabled(messageText.isEmpty)
+						}
+					}
+					.padding(.leading, 15)
+					.padding(.trailing, 5)
+					.padding(.vertical, 6)
+					.frame(maxWidth: .infinity, minHeight: 55)
+					.background(.white)
+					.cornerRadius(30)
+					.overlay(
+						RoundedRectangle(cornerRadius: 30)
+							.inset(by: 0.5)
+							.stroke(Color.gray200, lineWidth: 1.5)
+					)
+					.padding(.horizontal, 4)
+				} else {
+					VoiceRecorderPlayer(voiceRecordingInProgress: $voiceRecordingInProgress)
+						.environmentObject(conversationViewModel)
+						.frame(maxHeight: 60)
+				}
+			}
+			.frame(maxWidth: .infinity, minHeight: 60)
+			.padding(.top, 12)
+			.padding(.bottom, geometry.safeAreaInsets.bottom > 0 ? (isMessageTextFocused ? 12 : 0) : 12)
+			.padding(.horizontal, 10)
+			.background(Color.gray100)
+		})
+	}
+
+	private func selectedMessageOverlay(geometry: GeometryProxy) -> AnyView {
+		AnyView(Group {
 			if conversationViewModel.selectedMessage != nil && hasActiveConversation {
 				let iconSize = ((geometry.size.width - (activeConversationIsGroup ? 43 : 10) - 10) / 6) - 30
-				
+
 				ScrollView {
 					VStack {
 						Spacer()
-						
+
 						VStack {
 							if !isSheetVisible && !isImdnOrReactionsSheetVisible {
 								HStack {
 									if conversationViewModel.selectedMessage!.message.isOutgoing {
 										Spacer()
 									}
-									
+
 									HStack {
 										Button {
 											conversationViewModel.sendReaction(emoji: "👍")
@@ -1326,7 +1464,7 @@ struct ConversationFragment: View {
 										.padding(.horizontal, 8)
 										.background(conversationViewModel.selectedMessage?.message.ownReaction == "👍" ? Color.gray200 : .white)
 										.cornerRadius(10)
-										
+
 										Button {
 											conversationViewModel.sendReaction(emoji: "❤️")
 										} label: {
@@ -1336,7 +1474,7 @@ struct ConversationFragment: View {
 										.padding(.horizontal, 8)
 										.background(conversationViewModel.selectedMessage?.message.ownReaction == "❤️" ? Color.gray200 : .white)
 										.cornerRadius(10)
-										
+
 										Button {
 											conversationViewModel.sendReaction(emoji: "😂")
 										} label: {
@@ -1346,7 +1484,7 @@ struct ConversationFragment: View {
 										.padding(.horizontal, 8)
 										.background(conversationViewModel.selectedMessage?.message.ownReaction == "😂" ? Color.gray200 : .white)
 										.cornerRadius(10)
-										
+
 										Button {
 											conversationViewModel.sendReaction(emoji: "😮")
 										} label: {
@@ -1356,7 +1494,7 @@ struct ConversationFragment: View {
 										.padding(.horizontal, 8)
 										.background(conversationViewModel.selectedMessage?.message.ownReaction == "😮" ? Color.gray200 : .white)
 										.cornerRadius(10)
-										
+
 										Button {
 											conversationViewModel.sendReaction(emoji: "😢")
 										} label: {
@@ -1366,7 +1504,7 @@ struct ConversationFragment: View {
 										.padding(.horizontal, 8)
 										.background(conversationViewModel.selectedMessage?.message.ownReaction == "😢" ? Color.gray200 : .white)
 										.cornerRadius(10)
-										
+
 										Button {
 											showPicker = true
 											isSheetVisible = true
@@ -1386,7 +1524,7 @@ struct ConversationFragment: View {
 									.padding(.horizontal, 10)
 									.background(.white)
 									.cornerRadius(20)
-									
+
 									if !conversationViewModel.selectedMessage!.message.isOutgoing {
 										Spacer()
 									}
@@ -1396,20 +1534,20 @@ struct ConversationFragment: View {
 								.padding(.leading, activeConversationIsGroup ? 43 : 0)
 								.shadow(color: .black.opacity(0.1), radius: 10)
 							}
-							
+
 							ChatBubbleView(eventLogMessage: conversationViewModel.selectedMessage!, geometryProxy: geometry)
 								.environmentObject(conversationViewModel)
 								.padding(.horizontal, 10)
 								.padding(.vertical, 1)
 								.shadow(color: .black.opacity(0.1), radius: 10)
 								.offset(y: isSheetVisible || isImdnOrReactionsSheetVisible ? -(UIScreen.main.bounds.height * 0.5) - 10 : 0)
-							
+
 							if !isSheetVisible && !isImdnOrReactionsSheetVisible {
 								HStack {
 									if conversationViewModel.selectedMessage!.message.isOutgoing {
 										Spacer()
 									}
-									
+
 									VStack {
 										if conversationViewModel.selectedMessage!.message.status == .error {
 											Button {
@@ -1420,7 +1558,7 @@ struct ConversationFragment: View {
 													Text("menu_resend_chat_message")
 														.default_text_style(styleSize: 15)
 													Spacer()
-													
+
 													Image("paper-plane-tilt")
 														.resizable()
 														.frame(width: 20, height: 20, alignment: .leading)
@@ -1429,10 +1567,10 @@ struct ConversationFragment: View {
 												.padding(.vertical, 5)
 												.padding(.horizontal, 20)
 											}
-											
+
 											Divider()
 										}
-										
+
 										if !(CoreContext.shared.imdnToEverybodyThreshold && !conversationViewModel.selectedMessage!.message.isOutgoing) {
 											Button {
 												conversationViewModel.selectedMessageToDisplayDetails = conversationViewModel.selectedMessage
@@ -1449,10 +1587,10 @@ struct ConversationFragment: View {
 												.padding(.vertical, 5)
 												.padding(.horizontal, 20)
 											}
-											
+
 											Divider()
 										}
-										
+
 										if conversationViewModel.selectedMessage!.message.isOutgoing
 											&& !activeConversationIsReadOnly
 											&& conversationViewModel.selectedMessage!.message.isEditable {
@@ -1461,7 +1599,7 @@ struct ConversationFragment: View {
 													if voiceRecordingInProgress {
 														voiceRecordingInProgress = false
 													}
-													
+
 													messageText = chatMessage.message.text
 													conversationViewModel.selectedMessage = nil
 													conversationViewModel.editMessage(
@@ -1486,10 +1624,10 @@ struct ConversationFragment: View {
 												.padding(.vertical, 5)
 												.padding(.horizontal, 20)
 											}
-											
+
 											Divider()
 										}
-									
+
 										if !conversationViewModel.selectedMessage!.message.isRetracted {
 											Button {
 												let indexMessage = conversationViewModel.conversationMessagesSection[0].rows.firstIndex(where: {$0.message.id == conversationViewModel.selectedMessage!.message.id})
@@ -1510,19 +1648,19 @@ struct ConversationFragment: View {
 												.padding(.vertical, 5)
 												.padding(.horizontal, 20)
 											}
-											
+
 											Divider()
 										}
-										
+
 										if !conversationViewModel.selectedMessage!.message.text.isEmpty {
 											Button {
 												UIPasteboard.general.setValue(
 													conversationViewModel.selectedMessage?.message.text ?? "Error_message_not_available",
 													forPasteboardType: UTType.plainText.identifier
 												)
-												
+
 												ToastViewModel.shared.show("Success_message_copied_into_clipboard")
-												
+
 												conversationViewModel.selectedMessage = nil
 											} label: {
 												HStack {
@@ -1536,10 +1674,10 @@ struct ConversationFragment: View {
 												.padding(.vertical, 5)
 												.padding(.horizontal, 20)
 											}
-											
+
 											Divider()
 										}
-										
+
 										if !conversationViewModel.selectedMessage!.message.isRetracted {
 											Button {
 												withAnimation { isShowConversationForwardMessageFragment = true }
@@ -1555,10 +1693,10 @@ struct ConversationFragment: View {
 												.padding(.vertical, 5)
 												.padding(.horizontal, 20)
 											}
-											
+
 											Divider()
 										}
-										
+
 										Button {
 											if conversationViewModel.isSMSConversation {
 												conversationViewModel.deleteMessage()
@@ -1588,7 +1726,7 @@ struct ConversationFragment: View {
 									.padding(.vertical, 8)
 									.background(.white)
 									.cornerRadius(20)
-									
+
 									if !conversationViewModel.selectedMessage!.message.isOutgoing {
 										Spacer()
 									}
@@ -1626,93 +1764,9 @@ struct ConversationFragment: View {
 					conversationViewModel.deleteMessageForEveryone()
 				}
 			}
-			
-			if isShowConversationForwardMessageFragment {
-				ConversationForwardMessageFragment(
-					conversationsList: conversationsListViewModel.conversationsList,
-					selectedMessage: conversationViewModel.selectedMessage,
-					isShowConversationForwardMessageFragment: $isShowConversationForwardMessageFragment
-				)
-				.environmentObject(conversationViewModel)
-				.environmentObject(conversationsListViewModel)
-				.zIndex(5)
-				.transition(.move(edge: .trailing))
-				.onAppear {
-					conversationViewModel.selectedMessage = nil
-				}
-			}
-			
-			if isShowInfoConversationFragment {
-				ConversationInfoFragment(
-					smsTarget: conversationViewModel.smsTarget,
-					isMuted: $isMuted,
-					isShowEphemeralFragment: $isShowEphemeralFragment,
-					isShowMediaFilesFragment: $isShowMediaFilesFragment,
-					isShowDocumentsFilesFragment: $isShowDocumentsFilesFragment,
-					isShowStartCallGroupPopup: $isShowStartCallGroupPopup,
-					isShowInfoConversationFragment: $isShowInfoConversationFragment,
-					isShowEditContactFragment: $isShowEditContactFragment,
-					isShowEditContactFragmentAddress: $isShowEditContactFragmentAddress,
-					isShowRemoveParticipantPopup: $isShowRemoveParticipantPopup,
-					isShowScheduleMeetingFragment: $isShowScheduleMeetingFragment,
-					isShowScheduleMeetingFragmentSubject: $isShowScheduleMeetingFragmentSubject,
-					isShowScheduleMeetingFragmentParticipants: $isShowScheduleMeetingFragmentParticipants,
-					isShowConversationInfoPopup: $isShowConversationInfoPopup,
-					conversationInfoPopupText: $conversationInfoPopupText,
-					showLeaveConversationPopup: $showLeaveConversationPopup,
-					showDeleteConversationPopup: $showDeleteConversationPopup,
-					showDeleteConversationHistoryPopup: $showDeleteConversationHistoryPopup
-				)
-				.environmentObject(conversationViewModel)
-				.zIndex(5)
-				.transition(.move(edge: .trailing))
-			}
-            
-			if isShowEphemeralFragment {
-				EphemeralFragment(
-					isShowEphemeralFragment: $isShowEphemeralFragment
-				)
-				.environmentObject(conversationViewModel)
-				.zIndex(5)
-				.transition(.move(edge: .trailing))
-			}
-			
-			if isShowMediaFilesFragment {
-				ConversationMediaListFragment(
-					carrierAttachments: conversationViewModel.isSMSConversation ? conversationViewModel.attachments : nil,
-					isShowMediaFilesFragment: $isShowMediaFilesFragment
-				)
-				.zIndex(5)
-				.transition(.move(edge: .trailing))
-			}
-			
-			if isShowDocumentsFilesFragment {
-				ConversationDocumentsListFragment(
-					carrierAttachments: conversationViewModel.isSMSConversation ? conversationViewModel.attachments : nil,
-					isShowDocumentsFilesFragment: $isShowDocumentsFilesFragment
-				)
-				.zIndex(5)
-				.transition(.move(edge: .trailing))
-			}
-			
-			if conversationViewModel.searchInProgress {
-				PopupLoadingView()
-					.background(.black.opacity(0.65))
-					.onDisappear {
-						if conversationViewModel.targetIndex >= 0 {
-							NotificationCenter.default.post(
-								name: NSNotification.Name("onScrollToIndex"),
-								object: nil,
-								userInfo: ["index": conversationViewModel.targetIndex, "animated": true]
-							)
-							
-							conversationViewModel.targetIndex = -1
-						}
-					}
-			}
-		}
+		})
 	}
-	
+
 	func updateMentionState(from text: String) {
 		guard let atIndex = text.lastIndex(of: "@") else {
 			closeMention()

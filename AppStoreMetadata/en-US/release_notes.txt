@@ -1,4 +1,6 @@
-What’s new in 6.2.11:
-• Team Chat conversations now move to the top of their lists when new messages arrive
-• Recent direct conversations appear ahead of contacts without chat activity
-• Improved conversation ordering when delayed messages arrive
+• Manage appointments in list, Day, Week and Month views, with status updates, sharing and assignment
+• Customize appointment reminders and SMS and Team Chat notifications
+• Faster, more reliable contact loading and a refreshed contact detail page
+• Improved SMS stability, appointment layouts and call-history number formatting
+• Clear microphone permission guidance before calling
+• Compatible with iOS 15 and later

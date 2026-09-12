@@ -1,19 +1,19 @@
 Mango9 is a companion application for existing Mango9 business users. Accounts and telecommunications services are provisioned outside the app under organizational service agreements. There is no consumer signup, purchase, pricing, or subscription link in the app.
 
-Sign in using the review credentials entered in App Store Connect. You may also tap “Use an email code” and enter the code delivered to the reviewer email. Both login methods use the same account-provisioning flow.
+Sign in using the existing review credentials entered in App Store Connect. Password and email-code login use the same account-provisioning flow.
 
-After login:
-1. Confirm the assigned extension shows Connected.
-2. Open CRM to view the seeded lead and client.
-3. Tap a phone number and select Call with Mango9.
-4. Open Conversations, then Team Chat, and use the supplied second reviewer user.
-5. In Team Chat, open the safety menu to report or block a user.
-6. Send and receive a voice message in SMS or Team Chat to verify the inline audio player.
-7. Send and receive a video in SMS or Team Chat. Confirm its thumbnail appears and tap it to open the full-screen player.
-8. Send a Team Chat message from the second user. Confirm its conversation moves to the top of the appropriate Group or People list. Repeat with a different conversation and confirm the most recently active one moves first.
-9. Background the app and tap a Team Chat notification. Confirm the correct conversation opens with its history.
-10. Open About Mango9 > Licensing to view open-source notices and the exact corresponding source for this build: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.11-build-32
+Version 6.2.12 (33) adds CRM appointment management and personal CRM settings, improves contact loading and SMS stability, and checks microphone permission before placing outgoing calls. One binary supports iOS 15 and later, with Day, Week and Month calendar views and the same appointment actions on supported OS versions.
 
-Version 6.2.11 improves Team Chat conversation ordering. Groups and people are ordered by their latest chat activity, recent direct conversations precede unused directory contacts, and delayed older messages do not replace the latest conversation preview. This update preserves the existing calling, SMS, media, authentication, and notification-delivery routes. It does not change server infrastructure.
+To test:
+1. Open CRM > Appointments. Switch between the appointment list and Calendar (Day, Week and Month), and open an appointment to view its status and linked lead or client.
+2. Use + to create a test appointment in the review account. Edit its details or status. Sharing and assignment follow the signed-in user's server permissions. Delete only your test appointment afterward.
+3. Open Settings > CRM Settings (also available from CRM). Review in-app reminder timing, calendar preferences, and separate SMS and Team Chat notification controls. Appointment reminders appear while the app is open; they are not background push reminders.
+4. With microphone permission denied, tap Call. The app explains that the other person cannot hear you and offers Cancel or Open Settings without dialing. If permission has never been requested, iOS asks for access first. Returning from Settings does not automatically place a call.
+5. Open and leave SMS conversations repeatedly, view attachments, and verify the existing composer and message actions. Existing Team Chat ordering and media playback remain available.
+6. Open Contacts and view a contact. Settings > Contacts shows access controls and a manual reload option; changes to iPhone contacts also refresh automatically. Editing an iPhone contact uses Apple's contact editor. Deleting from that editor removes the contact from iPhone Contacts, so use only a disposable test contact.
 
-The review account, review contact details, service endpoints, and safe test number are supplied only in App Store Connect and are not stored in the public source repository.
+Appointments use the selected CRM account and its existing permissions; they do not require access to the iPhone's personal calendar.
+
+Exact corresponding source for this build: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.12-build-33
+
+Review credentials and contact details are supplied only in App Store Connect and are not stored in the public source repository.
