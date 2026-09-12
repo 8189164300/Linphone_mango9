@@ -22,3 +22,8 @@ GoogleService-Info.plist
 firebase-service-account*.json
 service-account*.json
 Config/Secrets.xcconfig
+
+# Internal documentation belongs outside this public checkout.
+MANGO9_WHITELABEL_AUDIT.md
+APP_STORE_SUBMISSION.md
+private-notes/
