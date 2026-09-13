@@ -51,38 +51,38 @@ struct MediaEncryptedSheetBottomSheet: View {
 			}
 			
 			Text("call_stats_media_encryption_title")
-				.default_text_style_white_600(styleSize: 15)
+				.default_text_style_600(styleSize: 15)
 				.padding(.top, 10)
 			
 			Spacer()
 			
 			Text(callViewModel.callMediaEncryptionModel.mediaEncryption)
-				.default_text_style_white(styleSize: 15)
+				.default_text_style(styleSize: 15)
 			
 			Spacer()
 			
 			Text(callViewModel.callMediaEncryptionModel.zrtpCipher)
-				.default_text_style_white(styleSize: 15)
+				.default_text_style(styleSize: 15)
 			
 			Spacer()
 			
 			Text(callViewModel.callMediaEncryptionModel.zrtpKeyAgreement)
-				.default_text_style_white(styleSize: 15)
+				.default_text_style(styleSize: 15)
 			
 			Spacer()
 			
 			Text(callViewModel.callMediaEncryptionModel.zrtpHash)
-				.default_text_style_white(styleSize: 15)
+				.default_text_style(styleSize: 15)
 			
 			Spacer()
 			
 			Text(callViewModel.callMediaEncryptionModel.zrtpAuthTag)
-				.default_text_style_white(styleSize: 15)
+				.default_text_style(styleSize: 15)
 			
 			Spacer()
 			
 			Text(callViewModel.callMediaEncryptionModel.zrtpAuthSas)
-				.default_text_style_white(styleSize: 15)
+				.default_text_style(styleSize: 15)
 				.padding(.bottom, 10)
 			
 			Spacer()
@@ -104,6 +104,6 @@ struct MediaEncryptedSheetBottomSheet: View {
 			.padding(.bottom)
 			.padding(.horizontal, 10)
 		}
-		.background(Color.gray600)
+		.background(Mango9CallStyle.tray)
 	}
 }

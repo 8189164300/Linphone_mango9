@@ -64,7 +64,7 @@ struct DialerBottomSheet: View {
 					.padding(.trailing)
 				} else {
 					Capsule()
-						.fill(currentCall != nil ? .white : Color.grayMain2c300)
+						.fill(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c300)
 						.frame(width: 75, height: 5)
 						.padding(15)
 				}
@@ -72,7 +72,7 @@ struct DialerBottomSheet: View {
 				if currentCall != nil {
 					HStack {
 						Text(dialerField)
-							.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+							.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 							.default_text_style(styleSize: 25)
 							.frame(maxWidth: .infinity)
 							.padding(.horizontal, 10)
@@ -85,7 +85,7 @@ struct DialerBottomSheet: View {
 							Image("backspace-fill")
 								.renderingMode(.template)
 								.resizable()
-								.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c500)
+								.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c500)
 								.frame(width: 32, height: 32)
 							
 						}
@@ -111,11 +111,11 @@ struct DialerBottomSheet: View {
 						}
 					} label: {
 						Text("1")
-							.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+							.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 							.default_text_style(styleSize: 32)
 							.multilineTextAlignment(.center)
 							.frame(width: 100, height: 60)
-							.background(currentCall != nil ? Color.gray500 : .white)
+							.background(currentCall != nil ? Mango9CallStyle.control : .white)
 							.cornerRadius(40)
 							.shadow(color: .black.opacity(0.2), radius: 4)
 					}
@@ -132,11 +132,11 @@ struct DialerBottomSheet: View {
 						}
 					} label: {
 						Text("2")
-							.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+							.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 							.default_text_style(styleSize: 32)
 							.multilineTextAlignment(.center)
 							.frame(width: 100, height: 60)
-							.background(currentCall != nil ? Color.gray500 : .white)
+							.background(currentCall != nil ? Mango9CallStyle.control : .white)
 							.cornerRadius(40)
 							.shadow(color: .black.opacity(0.2), radius: 4)
 					}
@@ -153,11 +153,11 @@ struct DialerBottomSheet: View {
 						}
 					} label: {
 						Text("3")
-							.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+							.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 							.default_text_style(styleSize: 32)
 							.multilineTextAlignment(.center)
 							.frame(width: 100, height: 60)
-							.background(currentCall != nil ? Color.gray500 : .white)
+							.background(currentCall != nil ? Mango9CallStyle.control : .white)
 							.cornerRadius(40)
 							.shadow(color: .black.opacity(0.2), radius: 4)
 					}
@@ -176,11 +176,11 @@ struct DialerBottomSheet: View {
 						}
 					} label: {
 						Text("4")
-							.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+							.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 							.default_text_style(styleSize: 32)
 							.multilineTextAlignment(.center)
 							.frame(width: 100, height: 60)
-							.background(currentCall != nil ? Color.gray500 : .white)
+							.background(currentCall != nil ? Mango9CallStyle.control : .white)
 							.cornerRadius(40)
 							.shadow(color: .black.opacity(0.2), radius: 4)
 					}
@@ -197,11 +197,11 @@ struct DialerBottomSheet: View {
 						}
 					} label: {
 						Text("5")
-							.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+							.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 							.default_text_style(styleSize: 32)
 							.multilineTextAlignment(.center)
 							.frame(width: 100, height: 60)
-							.background(currentCall != nil ? Color.gray500 : .white)
+							.background(currentCall != nil ? Mango9CallStyle.control : .white)
 							.cornerRadius(40)
 							.shadow(color: .black.opacity(0.2), radius: 4)
 					}
@@ -218,11 +218,11 @@ struct DialerBottomSheet: View {
 						}
 					} label: {
 						Text("6")
-							.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+							.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 							.default_text_style(styleSize: 32)
 							.multilineTextAlignment(.center)
 							.frame(width: 100, height: 60)
-							.background(currentCall != nil ? Color.gray500 : .white)
+							.background(currentCall != nil ? Mango9CallStyle.control : .white)
 							.cornerRadius(40)
 							.shadow(color: .black.opacity(0.2), radius: 4)
 					}
@@ -242,11 +242,11 @@ struct DialerBottomSheet: View {
 						}
 					} label: {
 						Text("7")
-							.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+							.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 							.default_text_style(styleSize: 32)
 							.multilineTextAlignment(.center)
 							.frame(width: 100, height: 60)
-							.background(currentCall != nil ? Color.gray500 : .white)
+							.background(currentCall != nil ? Mango9CallStyle.control : .white)
 							.cornerRadius(40)
 							.shadow(color: .black.opacity(0.2), radius: 4)
 					}
@@ -263,11 +263,11 @@ struct DialerBottomSheet: View {
 						}
 					} label: {
 						Text("8")
-							.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+							.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 							.default_text_style(styleSize: 32)
 							.multilineTextAlignment(.center)
 							.frame(width: 100, height: 60)
-							.background(currentCall != nil ? Color.gray500 : .white)
+							.background(currentCall != nil ? Mango9CallStyle.control : .white)
 							.cornerRadius(40)
 							.shadow(color: .black.opacity(0.2), radius: 4)
 					}
@@ -284,11 +284,11 @@ struct DialerBottomSheet: View {
 						}
 					} label: {
 						Text("9")
-							.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+							.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 							.default_text_style(styleSize: 32)
 							.multilineTextAlignment(.center)
 							.frame(width: 100, height: 60)
-							.background(currentCall != nil ? Color.gray500 : .white)
+							.background(currentCall != nil ? Mango9CallStyle.control : .white)
 							.cornerRadius(40)
 							.shadow(color: .black.opacity(0.2), radius: 4)
 					}
@@ -308,11 +308,11 @@ struct DialerBottomSheet: View {
 						}
 					} label: {
 						Text("*")
-							.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+							.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 							.default_text_style(styleSize: 32)
 							.multilineTextAlignment(.center)
 							.frame(width: 100, height: 60)
-							.background(currentCall != nil ? Color.gray500 : .white)
+							.background(currentCall != nil ? Mango9CallStyle.control : .white)
 							.cornerRadius(40)
 							.shadow(color: .black.opacity(0.2), radius: 4)
 					}
@@ -324,16 +324,16 @@ struct DialerBottomSheet: View {
 						} label: {
 							ZStack {
 								Text("0")
-									.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+									.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 									.default_text_style(styleSize: 32)
 									.multilineTextAlignment(.center)
 									.frame(width: 100, height: 75)
 									.padding(.top, -15)
-									.background(currentCall != nil ? Color.gray500 : .white)
+									.background(currentCall != nil ? Mango9CallStyle.control : .white)
 									.cornerRadius(40)
 									.shadow(color: .black.opacity(0.2), radius: 4)
 								Text("+")
-									.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+									.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 									.default_text_style(styleSize: 20)
 									.multilineTextAlignment(.center)
 									.frame(width: 100, height: 85)
@@ -361,11 +361,11 @@ struct DialerBottomSheet: View {
 							dialerField += "0"
 						} label: {
 							Text("0")
-								.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+								.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 								.default_text_style(styleSize: 32)
 								.multilineTextAlignment(.center)
 								.frame(width: 100, height: 60)
-								.background(currentCall != nil ? Color.gray500 : .white)
+								.background(currentCall != nil ? Mango9CallStyle.control : .white)
 								.cornerRadius(40)
 								.shadow(color: .black.opacity(0.2), radius: 4)
 						}
@@ -383,11 +383,11 @@ struct DialerBottomSheet: View {
 						}
 					} label: {
 						Text("#")
-							.foregroundStyle(currentCall != nil ? .white : Color.grayMain2c600)
+							.foregroundStyle(currentCall != nil ? Mango9CallStyle.ink : Color.grayMain2c600)
 							.default_text_style(styleSize: 32)
 							.multilineTextAlignment(.center)
 							.frame(width: 100, height: 60)
-							.background(currentCall != nil ? Color.gray500 : .white)
+							.background(currentCall != nil ? Mango9CallStyle.control : .white)
 							.cornerRadius(40)
 							.shadow(color: .black.opacity(0.2), radius: 4)
 					}
@@ -473,7 +473,7 @@ struct DialerBottomSheet: View {
 			.frame(maxWidth: .infinity)
 			.frame(maxHeight: .infinity)
 		}
-		.background(currentCall != nil ? Color.gray600.opacity(0.9) : Color.gray100.opacity(0.5))
+		.background(currentCall != nil ? Mango9CallStyle.tray : Color.gray100.opacity(0.5))
 		.frame(maxWidth: .infinity)
 		.frame(maxHeight: .infinity)
 		.onRotate { newOrientation in

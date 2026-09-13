@@ -264,7 +264,7 @@ struct CallView: View {
 						}
 				}
 			}
-			.background(Color.gray900)
+			.background(Mango9CallStyle.canvas.ignoresSafeArea())
 			.onAppear {
 				UIApplication.shared.endEditing()
 				fullscreenVideo = false
@@ -282,6 +282,7 @@ struct CallView: View {
 			}
 		}
 		.id("\(telecomManager.callInProgress)-\(telecomManager.callDisplayed)-\(callViewModel.callsCounter)-\(isShowConversationFragment)")
+		.preferredColorScheme(fullscreenVideo && !telecomManager.isPausedByRemote ? .dark : .light)
 	}
 	
 	@ViewBuilder
@@ -299,36 +300,36 @@ struct CallView: View {
 								Image("caret-left")
 									.renderingMode(.template)
 									.resizable()
-									.foregroundStyle(.white)
+									.foregroundStyle(Mango9CallStyle.ink)
 									.frame(width: 25, height: 25, alignment: .leading)
 									.padding(.all, 10)
 							}
 							
 							Text(callViewModel.displayName)
-								.default_text_style_white_800(styleSize: 16)
+								.default_text_style_800(styleSize: 16)
                                 .lineLimit(1)
 							
 							if !telecomManager.outgoingCallStarted && telecomManager.callInProgress {
 								Text("|")
-									.default_text_style_white_800(styleSize: 16)
+									.default_text_style_800(styleSize: 16)
 								
 								ZStack {
 									Text(callViewModel.timeElapsed.convertDurationToString())
 										.onReceive(callViewModel.timer) { _ in
 											callViewModel.timeElapsed = callViewModel.currentCall?.duration ?? 0
 										}
-										.default_text_style_white_800(styleSize: 16)
+										.default_text_style_800(styleSize: 16)
 										.if(callViewModel.isPaused || telecomManager.isPausedByRemote) { view in
 											view.hidden()
 										}
 									
 									if callViewModel.isPaused {
 										Text("call_state_paused")
-											.default_text_style_white_800(styleSize: 16)
+											.default_text_style_800(styleSize: 16)
 											.lineLimit(1)
 									} else if telecomManager.isPausedByRemote {
 										Text("call_state_paused_by_remote")
-											.default_text_style_white_800(styleSize: 16)
+											.default_text_style_800(styleSize: 16)
 											.lineLimit(1)
 									}
 								}
@@ -354,7 +355,7 @@ struct CallView: View {
 										Image("camera-rotate")
 											.renderingMode(.template)
 											.resizable()
-											.foregroundStyle(.white)
+											.foregroundStyle(Mango9CallStyle.ink)
 											.frame(width: 30, height: 30)
 											.padding(.horizontal)
 									}
@@ -366,7 +367,7 @@ struct CallView: View {
 									Image(callViewModel.qualityIcon)
 										.renderingMode(.template)
 										.resizable()
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.ink)
 										.frame(width: 30, height: 30)
 										.padding(.all, 10)
 								}
@@ -434,7 +435,7 @@ struct CallView: View {
 								
 								Text(encryptionInfo.textKey)
 									.foregroundStyle(encryptionInfo.color)
-									.default_text_style_white(styleSize: 12)
+									.default_text_style(styleSize: 12)
 									.padding(.top, 35)
 								
 								Spacer()
@@ -447,11 +448,11 @@ struct CallView: View {
 						}
 					}
                     .frame(height: topBarHeight)
-					.background(Color.gray900)
+					.background(Mango9CallStyle.canvas)
 				}
 				
 				simpleCallView(geometry: geometry, minBottomSheetHeight: minBottomSheetHeight, isLandscape: isLandscape, topBarCallCounter: topBarCallCounter)
-					.background(Color.gray900)
+					.background(Mango9CallStyle.canvas)
 					.safeAreaInset(edge: .bottom) {
 						if !fullscreenVideo || (fullscreenVideo && telecomManager.isPausedByRemote) {
 							Color.clear.frame(height: minHeight)
@@ -459,7 +460,7 @@ struct CallView: View {
 					}
 				
 				if !fullscreenVideo || (fullscreenVideo && telecomManager.isPausedByRemote) {
-					Color.gray600
+					Mango9CallStyle.divider
 						.frame(height: 1)
 				}
 			}
@@ -500,7 +501,7 @@ struct CallView: View {
 				}
 			}
 		}
-		.background(!fullscreenVideo || (fullscreenVideo && telecomManager.isPausedByRemote) ? Color.gray600 : Color.gray900)
+		.background(!fullscreenVideo || (fullscreenVideo && telecomManager.isPausedByRemote) ? Mango9CallStyle.tray : Color.black)
 	}
 	
 	// swiftlint:disable:next cyclomatic_complexity
@@ -547,11 +548,11 @@ struct CallView: View {
 
 						Text(callViewModel.displayName)
 							.padding(.top)
-							.default_text_style_white(styleSize: 22)
+							.default_text_style(styleSize: 22)
 
 						if !AppServices.corePreferences.hideSipAddresses {
 							Text(callViewModel.remoteAddressCleanedString)
-								.default_text_style_white_300(styleSize: 16)
+								.default_text_style_300(styleSize: 16)
 						}
 
 						Spacer()
@@ -652,7 +653,7 @@ struct CallView: View {
 				
 				if telecomManager.outgoingCallStarted {
 					VStack {
-						ActivityIndicator(color: .white)
+						ActivityIndicator(color: Mango9CallStyle.accent)
 							.frame(width: 20, height: 20)
 							.padding(.top, 60)
 						
@@ -668,7 +669,7 @@ struct CallView: View {
 								callViewModel.timeElapsed = 0
 							}
 							.padding(.top)
-							.foregroundStyle(.white)
+							.foregroundStyle(Mango9CallStyle.ink)
 						
 						Spacer()
 					}
@@ -696,7 +697,7 @@ struct CallView: View {
 					
 					Text("conference_call_empty")
 						.frame(maxWidth: .infinity, alignment: .center)
-						.foregroundStyle(Color.white)
+						.foregroundStyle(Mango9CallStyle.ink)
 						.default_text_style_300(styleSize: 25)
 						.lineLimit(1)
 						.padding(.bottom, 4)
@@ -789,7 +790,7 @@ struct CallView: View {
 					Spacer()
 					
 					ProgressView()
-						.progressViewStyle(CircularProgressViewStyle(tint: .white))
+						.progressViewStyle(CircularProgressViewStyle(tint: Mango9CallStyle.accent))
 						.frame(width: 60, height: 60, alignment: .center)
 						.onDisappear {
 							callViewModel.resetCallView()
@@ -802,7 +803,7 @@ struct CallView: View {
 					Spacer()
 					
 					ProgressView()
-						.progressViewStyle(CircularProgressViewStyle(tint: .white))
+						.progressViewStyle(CircularProgressViewStyle(tint: Mango9CallStyle.accent))
 						.frame(width: 60, height: 60, alignment: .center)
 					
 					Spacer()
@@ -828,7 +829,7 @@ struct CallView: View {
 			}
 		}
 		.frame(maxWidth: .infinity)
-		.background(Color.gray900)
+		.background(Mango9CallStyle.canvas)
 		.padding(.top, fullscreenVideo ? 0 : 6)
 		.padding(.bottom, fullscreenVideo ? 0 : 2)
 		.onRotate { newOrientation in
@@ -1877,7 +1878,7 @@ struct CallView: View {
 								
 								Text(callViewModel.myParticipantModel!.name)
 									.frame(maxWidth: .infinity, alignment: .leading)
-									.foregroundStyle(Color.white)
+									.foregroundStyle(Mango9CallStyle.ink)
 									.default_text_style_500(styleSize: 14)
 									.lineLimit(1)
 									.padding(.horizontal, 10)
@@ -1899,16 +1900,16 @@ struct CallView: View {
 									Image("pause")
 										.renderingMode(.template)
 										.resizable()
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.accent)
 										.frame(width: 25, height: 25)
 								}
 							}
 							.frame(height: 80)
 							.padding(.all, 10)
-							.background(Color.gray600)
+							.background(Mango9CallStyle.tray)
 							.overlay(
 								RoundedRectangle(cornerRadius: 20)
-									.stroke(callViewModel.myParticipantModel!.isSpeaking ? .white : .clear, lineWidth: 4)
+									.stroke(callViewModel.myParticipantModel!.isSpeaking ? Mango9CallStyle.accent : .clear, lineWidth: 4)
 							)
 							.cornerRadius(20)
 						}
@@ -1919,7 +1920,7 @@ struct CallView: View {
 								
 								Text(callViewModel.participantList[index].name)
 									.frame(maxWidth: .infinity, alignment: .leading)
-									.foregroundStyle(Color.white)
+									.foregroundStyle(Mango9CallStyle.ink)
 									.default_text_style_500(styleSize: 14)
 									.lineLimit(1)
 									.padding(.horizontal, 10)
@@ -1941,16 +1942,16 @@ struct CallView: View {
 									Image("pause")
 										.renderingMode(.template)
 										.resizable()
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.accent)
 										.frame(width: 25, height: 25)
 								}
 							}
 							.frame(height: 80)
 							.padding(.all, 10)
-							.background(Color.gray600)
+							.background(Mango9CallStyle.tray)
 							.overlay(
 								RoundedRectangle(cornerRadius: 20)
-									.stroke(callViewModel.participantList[index].isSpeaking ? .white : .clear, lineWidth: 4)
+									.stroke(callViewModel.participantList[index].isSpeaking ? Mango9CallStyle.accent : .clear, lineWidth: 4)
 							)
 							.cornerRadius(20)
 						}
@@ -1958,7 +1959,7 @@ struct CallView: View {
 				}
 				.frame(maxWidth: .infinity, maxHeight: .infinity)
 			}
-			.background(Color.gray900)
+			.background(Mango9CallStyle.canvas)
 			.onTapGesture {
 				if fullscreenVideo {
 					fullscreenVideo.toggle()

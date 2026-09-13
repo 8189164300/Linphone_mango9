@@ -25,6 +25,14 @@ extension CalendarView {
         return copy
     }
 
+    /// Optional readable label height at low zoom. Visual collisions use this
+    /// height too; the event's dates and start position are never modified.
+    public func minimumTimedEventHeight(_ height: CGFloat) -> CalendarView {
+        var copy = self
+        copy.customizationParams.minimumTimedEventHeight = height.isFinite ? max(0, height) : 0
+        return copy
+    }
+
     /// default is "h a"
     public func hourLabelFormat(_ hourLabelFormat: String) -> CalendarView {
         var copy = self
@@ -55,6 +63,28 @@ extension CalendarView {
     public func eventDetailsClosure(_ closure: @escaping (any CalendarEntity)->()) -> CalendarView {
         var copy = self
         copy.customizationParams.eventDetailsClosure = closure
+        return copy
+    }
+
+    /// Optional host-owned creation action for month dates and day/week headings.
+    /// No event is created or local editor presented by the calendar library.
+    public func dateLongPressClosure(_ closure: ((Date) -> Void)?) -> CalendarView {
+        var copy = self
+        copy.customizationParams.dateLongPressClosure = closure
+        return copy
+    }
+
+    /// Long-press an empty quarter-hour slot, using the displayed calendar time.
+    public func timeSlotLongPressClosure(_ closure: ((Date) -> Void)?) -> CalendarView {
+        var copy = self
+        copy.customizationParams.timeSlotLongPressClosure = closure
+        return copy
+    }
+
+    /// Host-owned availability shading. Does not alter or consume event gestures.
+    public func timedDayBackground<Background: View>(@ViewBuilder _ background: @escaping (Date, CGFloat) -> Background) -> CalendarView {
+        var copy = self
+        copy.customizationParams.timedDayBackground = { AnyView(background($0, $1)) }
         return copy
     }
 

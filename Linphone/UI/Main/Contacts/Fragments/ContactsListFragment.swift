@@ -29,28 +29,45 @@ struct ContactsListFragment: View {
 	@Binding var showingSheet: Bool
 	
     var startCallFunc: (_ addr: Address) -> Void
+	var selectContact: ((ContactAvatarModel) -> Void)? = nil
+	var rowLimit: Int = .max
+	var onRowAppear: ((Int) -> Void)? = nil
 	
 	var body: some View {
-		let rows = Self.rows(contactsManager.avatarListModel)
+		let rows = Self.rows(contactsManager.avatarListModel, limit: rowLimit)
 		ForEach(rows) { row in
-			ContactRow(contactAvatarModel: row.contact, heading: row.heading, showingSheet: $showingSheet, startCallFunc: startCallFunc)
+			ContactRow(contactAvatarModel: row.contact, heading: row.heading, showingSheet: $showingSheet,
+				startCallFunc: startCallFunc, selectContact: selectContact)
+				.onAppear { onRowAppear?(row.index) }
 		}
 	}
 
 	struct Row: Identifiable {
 		var id: UUID { contact.id }
+		let index: Int
 		let contact: ContactAvatarModel
-		let heading: String
-	}
-	static func rows(_ contacts: [ContactAvatarModel]) -> [Row] {
-		var previous: String?
-		return contacts.map { contact in
-			let initial = String(contact.name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current).uppercased().first ?? "#")
-			let heading = initial == previous ? "" : initial
-			previous = initial
-			return Row(contact: contact, heading: heading)
+		let previous: ContactAvatarModel?
+		var heading: String {
+			let initial = Self.initial(contact.name)
+			return previous.map { Self.initial($0.name) == initial } == true ? "" : initial
+		}
+		private static func initial(_ name: String) -> String {
+			String(name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current).uppercased().first ?? "#")
 		}
 	}
+	/// Constant-time snapshot: List can read stable IDs without folding every
+	/// contact's name on each keystroke, focus change or presentation animation.
+	/// Values retain the old snapshot safely if a search replaces the live array.
+	struct Rows: RandomAccessCollection {
+		let contacts: [ContactAvatarModel]
+		let limit: Int
+		var startIndex: Int { contacts.startIndex }
+		var endIndex: Int { Swift.min(contacts.endIndex, Swift.max(0, limit)) }
+		subscript(index: Int) -> Row {
+			Row(index: index, contact: contacts[index], previous: index > startIndex ? contacts[index - 1] : nil)
+		}
+	}
+	static func rows(_ contacts: [ContactAvatarModel], limit: Int = .max) -> Rows { Rows(contacts: contacts, limit: limit) }
 }
 
 struct ContactRow: View {
@@ -63,6 +80,7 @@ struct ContactRow: View {
 	@Binding var showingSheet: Bool
 	
 	var startCallFunc: (_ addr: Address) -> Void
+	var selectContact: ((ContactAvatarModel) -> Void)? = nil
 	
 	var body: some View {
 		HStack {
@@ -97,6 +115,7 @@ struct ContactRow: View {
 		.listRowSeparator(.hidden)
 		.background(.white)
 		.onTapGesture {
+			if let selectContact { selectContact(contactAvatarModel); return }
             if SharedMainViewModel.shared.indexView == 0 {
                 withAnimation {
                     SharedMainViewModel.shared.displayedFriend = contactAvatarModel

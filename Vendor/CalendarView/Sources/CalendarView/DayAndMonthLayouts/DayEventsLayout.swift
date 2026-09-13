@@ -17,6 +17,7 @@ struct DayEventsLayout<Content: View>: View {
     var horSpacing: CGFloat
     var verSpacing: CGFloat
     var trailingPadding: CGFloat
+    var minimumTimedEventHeight: CGFloat = 0
     @ViewBuilder var dayEventBuilder: (any CalendarEntity) -> Content
 
     private var sortedEvents: [CalendarEvent] {
@@ -35,7 +36,8 @@ struct DayEventsLayout<Content: View>: View {
             oneHourHeight: oneHourHeight,
             horSpacing: horSpacing,
             verSpacing: verSpacing,
-            trailingPadding: trailingPadding
+            trailingPadding: trailingPadding,
+            minimumTimedEventHeight: minimumTimedEventHeight
         ) {
             ForEach(sorted, id: \.id) { event in
                 dayEventBuilder(event)
@@ -64,6 +66,7 @@ struct EventsPlacement: Layout {
     var horSpacing: CGFloat
     var verSpacing: CGFloat
     var trailingPadding: CGFloat
+    var minimumTimedEventHeight: CGFloat = 0
 
     struct Cache {
         var width: CGFloat = -1
@@ -79,17 +82,20 @@ struct EventsPlacement: Layout {
         let horizontalSpacing: CGFloat
         let verticalSpacing: CGFloat
         let trailingPadding: CGFloat
+        let minimumTimedEventHeight: CGFloat
     }
 
     func frameKey(width: CGFloat) -> FrameKey {
         FrameKey(events: events, reminders: reminders, width: width, hourHeight: oneHourHeight,
-                 horizontalSpacing: horSpacing, verticalSpacing: verSpacing, trailingPadding: trailingPadding)
+                 horizontalSpacing: horSpacing, verticalSpacing: verSpacing, trailingPadding: trailingPadding,
+                 minimumTimedEventHeight: minimumTimedEventHeight)
     }
 
     private struct Pending {
         var type: EntityType
         var originalIndex: Int
         var range: NSRange
+        var visualEnd: CGFloat
     }
 
     func makeCache(subviews: Subviews) -> Cache { Cache() }
@@ -101,7 +107,7 @@ struct EventsPlacement: Layout {
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let width = proposal.replacingUnspecifiedDimensions().width
-        return CGSize(width: max(0, width), height: oneHourHeight * 25)
+        return CGSize(width: max(0, width), height: max(oneHourHeight * 25, oneHourHeight * 24 + minimumTimedEventHeight + verSpacing))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
@@ -123,15 +129,24 @@ struct EventsPlacement: Layout {
     }
 
     func computeFrames(width: CGFloat) -> [CGRect] {
+        guard width.isFinite, oneHourHeight.isFinite, oneHourHeight > 0 else {
+            return Array(repeating: .zero, count: events.count + reminders.count)
+        }
         let usableWidth = max(0, width - trailingPadding)
+        let minimumHeight = minimumTimedEventHeight.isFinite ? max(0, minimumTimedEventHeight) : 0
+        func visualEnd(_ range: NSRange, minimum: CGFloat) -> CGFloat {
+            minimum > 0 ? max(CGFloat(range.end), CGFloat(range.location) + (minimum + verSpacing) * 60 / oneHourHeight) : CGFloat(range.end)
+        }
 
         var pending: [Pending] = []
         pending.reserveCapacity(events.count + reminders.count)
         for (i, e) in events.enumerated() {
-            pending.append(Pending(type: .event, originalIndex: i, range: NSRange(e)))
+            let range = NSRange(e)
+            pending.append(Pending(type: .event, originalIndex: i, range: range, visualEnd: visualEnd(range, minimum: minimumHeight)))
         }
         for (i, r) in reminders.enumerated() {
-            pending.append(Pending(type: .reminder, originalIndex: i, range: NSRange(r)))
+            let range = NSRange(r)
+            pending.append(Pending(type: .reminder, originalIndex: i, range: range, visualEnd: CGFloat(range.end)))
         }
         pending.sort {
             if $0.range.location != $1.range.location {
@@ -145,25 +160,25 @@ struct EventsPlacement: Layout {
 
         var i = 0
         while i < pending.count {
-            var columnEndTime: [Int] = []
+            var columnEndTime: [CGFloat] = []
             var assignedColumns: [Int] = []
-            var groupEnd = pending[i].range.end
+            var groupEnd = pending[i].visualEnd
 
             var j = i
-            while j < pending.count && (j == i || pending[j].range.location < groupEnd) {
+            while j < pending.count && (j == i || CGFloat(pending[j].range.location) < groupEnd - 0.000001) {
                 let p = pending[j]
                 var col = -1
-                for c in 0..<columnEndTime.count where columnEndTime[c] <= p.range.location {
+                for c in 0..<columnEndTime.count where columnEndTime[c] <= CGFloat(p.range.location) + 0.000001 {
                     col = c
-                    columnEndTime[c] = p.range.end
+                    columnEndTime[c] = p.visualEnd
                     break
                 }
                 if col == -1 {
                     col = columnEndTime.count
-                    columnEndTime.append(p.range.end)
+                    columnEndTime.append(p.visualEnd)
                 }
                 assignedColumns.append(col)
-                groupEnd = max(groupEnd, p.range.end)
+                groupEnd = max(groupEnd, p.visualEnd)
                 j += 1
             }
 
@@ -181,7 +196,7 @@ struct EventsPlacement: Layout {
                 switch p.type {
                 case .event:
                     let durationCoeff = CGFloat(p.range.length) / 60.0
-                    height = max(0, oneHourHeight * durationCoeff - verSpacing)
+                    height = max(minimumHeight, oneHourHeight * durationCoeff - verSpacing)
                 case .reminder:
                     height = max(0, oneHourHeight - verSpacing)
                 }

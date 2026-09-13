@@ -71,7 +71,7 @@ struct BottomSheetContent: View {
                     ChevronShape(pointingUp: pointingUp)
                         .stroke(style: StrokeStyle(lineWidth: 4, lineCap: .round))
                         .frame(width: 40, height: 6)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Mango9CallStyle.secondary)
                         .contentShape(Rectangle())
                         .padding(.top, 15)
                 }
@@ -91,8 +91,9 @@ struct BottomSheetContent: View {
                         
                     }
                     .frame(width: buttonSize == 60 ? 90 : 70, height: buttonSize)
-                    .background(Color.redDanger500)
+                    .background(Mango9CallStyle.destructive)
                     .cornerRadius(40)
+                    .accessibilityLabel("End call")
                     
                     Spacer()
                     
@@ -110,18 +111,19 @@ struct BottomSheetContent: View {
                                     Image(callViewModel.videoDisplayed ? "video-camera" : "video-camera-slash")
                                         .renderingMode(.template)
                                         .resizable()
-                                        .foregroundStyle(.white)
+                                        .foregroundStyle(Mango9CallStyle.controlForeground(active: callViewModel.videoDisplayed))
                                         .frame(width: 32, height: 32)
                                 }
                             }
-                            .buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+                            .buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
                             .frame(width: buttonSize, height: buttonSize)
-                            .background(Color.gray500)
+                            .background(Mango9CallStyle.controlBackground(active: callViewModel.videoDisplayed))
                             .cornerRadius(40)
+                            .accessibilityLabel(callViewModel.videoDisplayed ? "Turn camera off" : "Turn camera on")
                             .disabled(callViewModel.isPaused || telecomManager.isPausedByRemote || telecomManager.outgoingCallStarted || optionsChangeLayout == 3)
                             
                             if callViewModel.isPaused || telecomManager.isPausedByRemote || telecomManager.outgoingCallStarted || optionsChangeLayout == 3 {
-                                Color.gray600.opacity(0.8)
+                                Mango9CallStyle.tray.opacity(0.8)
                                     .cornerRadius(40)
                                     .allowsHitTesting(false)
                             }
@@ -136,14 +138,15 @@ struct BottomSheetContent: View {
                             Image(callViewModel.micMutted ? "microphone-slash" : "microphone")
                                 .renderingMode(.template)
                                 .resizable()
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Mango9CallStyle.controlForeground(active: callViewModel.micMutted))
                                 .frame(width: 32, height: 32)
                         }
                     }
-                    .buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+                    .buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
                     .frame(width: buttonSize, height: buttonSize)
-                    .background(callViewModel.micMutted ? Color.redDanger500 : Color.gray500)
+                    .background(Mango9CallStyle.controlBackground(active: callViewModel.micMutted))
                     .cornerRadius(40)
+                    .accessibilityLabel(callViewModel.micMutted ? "Unmute microphone" : "Mute microphone")
                     
                     if !callViewModel.hasAudioRouteRestriction {
                         Button {
@@ -166,14 +169,15 @@ struct BottomSheetContent: View {
                                 Image(imageAudioRoute)
                                     .renderingMode(.template)
                                     .resizable()
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(Mango9CallStyle.controlForeground(active: optionsAudioRoute != 1))
                                     .frame(width: 32, height: 32)
                             }
                         }
-                        .buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+                        .buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
                         .frame(width: buttonSize, height: buttonSize)
-                        .background(Color.gray500)
+                        .background(Mango9CallStyle.controlBackground(active: optionsAudioRoute != 1))
                         .cornerRadius(40)
+                        .accessibilityLabel("Audio output")
                     }
                     Color.clear
                         .frame(width: 0, height: 0)
@@ -216,17 +220,17 @@ struct BottomSheetContent: View {
 											Image("phone-transfer")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									Text("call_action_blind_transfer")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: basePortraitSize, height: buttonPortraitDimension)
@@ -248,17 +252,17 @@ struct BottomSheetContent: View {
 											Image("phone-plus")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									Text("call_action_start_new_call")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: basePortraitSize, height: buttonPortraitDimension)
@@ -271,24 +275,24 @@ struct BottomSheetContent: View {
 												Image("screencast")
 													.renderingMode(.template)
 													.resizable()
-													.foregroundStyle(.white)
+													.foregroundStyle(Mango9CallStyle.secondary)
 													.frame(width: 32, height: 32)
 											}
 										}
-										.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+										.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 										.frame(width: buttonSize, height: buttonSize)
-										.background(Color.gray500)
+										.background(Mango9CallStyle.control)
 										.cornerRadius(40)
 										.disabled(true)
 										
 										Text("conference_action_screen_sharing")
-											.foregroundStyle(.white)
+											.foregroundStyle(Mango9CallStyle.secondary)
 											.default_text_style(styleSize: 15)
 									}
 									.frame(width: basePortraitSize, height: buttonPortraitDimension)
 									
 									if true {
-										Color.gray600.opacity(0.8)
+										Mango9CallStyle.tray.opacity(0.8)
 											.allowsHitTesting(false)
 									}
 								}
@@ -304,17 +308,17 @@ struct BottomSheetContent: View {
 											Image("users")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									Text("conference_action_show_participants")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: basePortraitSize, height: buttonPortraitDimension)
@@ -338,13 +342,13 @@ struct BottomSheetContent: View {
 											Image("phone-list")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									if callViewModel.callsCounter > 1 {
@@ -354,7 +358,7 @@ struct BottomSheetContent: View {
 												
 												VStack {
 													Text("\(callViewModel.callsCounter)")
-														.foregroundStyle(.white)
+														.foregroundStyle(Color.white)
 														.default_text_style(styleSize: 15)
 												}
 												.frame(width: 20, height: 20)
@@ -369,7 +373,7 @@ struct BottomSheetContent: View {
 								}
 								
 								Text("call_action_go_to_calls_list")
-									.foregroundStyle(.white)
+									.foregroundStyle(Mango9CallStyle.secondary)
 									.default_text_style(styleSize: 15)
 							}
 							.frame(width: basePortraitSize, height: buttonPortraitDimension)
@@ -389,17 +393,17 @@ struct BottomSheetContent: View {
 											Image("dialer")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									Text("call_action_show_dialer")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: basePortraitSize, height: buttonPortraitDimension)
@@ -413,24 +417,24 @@ struct BottomSheetContent: View {
 												Image("layout")
 													.renderingMode(.template)
 													.resizable()
-													.foregroundStyle(.white)
+													.foregroundStyle(Mango9CallStyle.secondary)
 													.frame(width: 32, height: 32)
 											}
 										}
-										.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+										.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 										.frame(width: buttonSize, height: buttonSize)
-										.background(Color.gray500)
+										.background(Mango9CallStyle.control)
 										.cornerRadius(40)
 										.disabled(callViewModel.activeSpeakerParticipant?.isScreenSharing == true)
 										
 										Text("call_action_change_layout")
-											.foregroundStyle(.white)
+											.foregroundStyle(Mango9CallStyle.secondary)
 											.default_text_style(styleSize: 15)
 									}
 									.frame(width: basePortraitSize, height: buttonPortraitDimension)
 									
 									if callViewModel.activeSpeakerParticipant?.isScreenSharing == true {
-										Color.gray600.opacity(0.8)
+										Mango9CallStyle.tray.opacity(0.8)
 											.allowsHitTesting(false)
 									}
 								}
@@ -449,12 +453,12 @@ struct BottomSheetContent: View {
 												Image("chat-teardrop-text")
 													.renderingMode(.template)
 													.resizable()
-													.foregroundStyle(.white)
+													.foregroundStyle(Mango9CallStyle.secondary)
 													.frame(width: 32, height: 32)
 											} else {
 												ProgressView()
 													.controlSize(.mini)
-													.progressViewStyle(CircularProgressViewStyle(tint: .white))
+													.progressViewStyle(CircularProgressViewStyle(tint: Mango9CallStyle.accent))
 													.frame(width: 32, height: 32, alignment: .center)
 													.onDisappear {
 														if SharedMainViewModel.shared.displayedConversation != nil {
@@ -469,13 +473,13 @@ struct BottomSheetContent: View {
 											}
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									Text("call_action_show_messages")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: basePortraitSize, height: buttonPortraitDimension)
@@ -490,24 +494,24 @@ struct BottomSheetContent: View {
 											Image(callViewModel.isPaused ? "play" : "pause")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.controlForeground(active: callViewModel.isPaused))
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(callViewModel.isPaused ? Color.greenSuccess500 : Color.gray500)
+									.background(Mango9CallStyle.controlBackground(active: callViewModel.isPaused))
 									.cornerRadius(40)
 									.disabled(telecomManager.isPausedByRemote)
 									
 									Text("call_action_pause_call")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: basePortraitSize, height: buttonPortraitDimension)
 								
 								if telecomManager.isPausedByRemote {
-									Color.gray600.opacity(0.8)
+									Mango9CallStyle.tray.opacity(0.8)
 										.allowsHitTesting(false)
 								}
 							}
@@ -523,24 +527,24 @@ struct BottomSheetContent: View {
 												Image("record-fill")
 													.renderingMode(.template)
 													.resizable()
-													.foregroundStyle(.white)
+													.foregroundStyle(Mango9CallStyle.controlForeground(active: callViewModel.isRecording))
 													.frame(width: 32, height: 32)
 											}
 										}
-										.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+										.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 										.frame(width: buttonSize, height: buttonSize)
-										.background(callViewModel.isRecording ? Color.redDanger500 : Color.gray500)
+										.background(callViewModel.isRecording ? Color.redDanger500 : Mango9CallStyle.control)
 										.cornerRadius(40)
 										.disabled(AppServices.corePreferences.disableCallRecordings || callViewModel.isPaused || telecomManager.isPausedByRemote)
 										
 										Text("call_action_record_call")
-											.foregroundStyle(.white)
+											.foregroundStyle(Mango9CallStyle.secondary)
 											.default_text_style(styleSize: 15)
 									}
 									.frame(width: basePortraitSize, height: buttonPortraitDimension)
 									
 									if AppServices.corePreferences.disableCallRecordings || callViewModel.isPaused || telecomManager.isPausedByRemote {
-										Color.gray600.opacity(0.8)
+										Mango9CallStyle.tray.opacity(0.8)
 											.allowsHitTesting(false)
 									}
 								}
@@ -554,23 +558,23 @@ struct BottomSheetContent: View {
 												Image("record-fill")
 													.renderingMode(.template)
 													.resizable()
-													.foregroundStyle(.white)
+													.foregroundStyle(Mango9CallStyle.controlForeground(active: callViewModel.isRecording))
 													.frame(width: 32, height: 32)
 											}
 										}
-										.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+										.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 										.frame(width: buttonSize, height: buttonSize)
-										.background(Color.gray500)
+										.background(Mango9CallStyle.control)
 										.cornerRadius(40)
 										.disabled(true)
 										
 										Text("call_action_record_call")
-											.foregroundStyle(.white)
+											.foregroundStyle(Mango9CallStyle.secondary)
 											.default_text_style(styleSize: 15)
 									}
 									.frame(width: basePortraitSize, height: buttonPortraitDimension)
 									
-									Color.gray600.opacity(0.8)
+									Mango9CallStyle.tray.opacity(0.8)
 										.allowsHitTesting(false)
 								}
 								.frame(width: basePortraitSize, height: buttonPortraitDimension)
@@ -583,17 +587,17 @@ struct BottomSheetContent: View {
 										Image("video-camera")
 											.renderingMode(.template)
 											.resizable()
-											.foregroundStyle(.white)
+											.foregroundStyle(Mango9CallStyle.secondary)
 											.frame(width: 32, height: 32)
 									}
 								}
-								.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+								.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 								.frame(width: buttonSize, height: buttonSize)
-								.background(Color.gray500)
+								.background(Mango9CallStyle.control)
 								.cornerRadius(40)
 								
 								Text("call_action_change_layout")
-									.foregroundStyle(.white)
+									.foregroundStyle(Mango9CallStyle.secondary)
 									.default_text_style(styleSize: 15)
 							}
 							.frame(width: basePortraitSize, height: buttonPortraitDimension)
@@ -607,17 +611,17 @@ struct BottomSheetContent: View {
 											Image("video-camera")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									Text("call_action_change_layout")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: basePortraitSize, height: buttonPortraitDimension)
@@ -645,17 +649,17 @@ struct BottomSheetContent: View {
 											Image("phone-transfer")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									Text("call_action_blind_transfer")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: baseLandscapeSize, height: buttonLandscapeDimension)
@@ -677,17 +681,17 @@ struct BottomSheetContent: View {
 											Image("phone-plus")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									Text("call_action_start_new_call")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: baseLandscapeSize, height: buttonLandscapeDimension)
@@ -701,25 +705,25 @@ struct BottomSheetContent: View {
 													Image("screencast")
 														.renderingMode(.template)
 														.resizable()
-														.foregroundStyle(Color.gray500)
+														.foregroundStyle(Mango9CallStyle.secondary)
 														.frame(width: 32, height: 32)
 												}
 											}
-											.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+											.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 											.frame(width: buttonSize, height: buttonSize)
-											.background(.white)
+											.background(Mango9CallStyle.control)
 											.cornerRadius(40)
 											.disabled(true)
 											
 											Text("conference_action_screen_sharing")
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.default_text_style(styleSize: 15)
 										}
 									}
 									.frame(width: baseLandscapeSize, height: buttonLandscapeDimension)
 									
 									if true {
-										Color.gray600.opacity(0.8)
+										Mango9CallStyle.tray.opacity(0.8)
 											.allowsHitTesting(false)
 									}
 								}
@@ -735,17 +739,17 @@ struct BottomSheetContent: View {
 											Image("users")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									Text("conference_action_show_participants")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: baseLandscapeSize, height: buttonLandscapeDimension)
@@ -770,13 +774,13 @@ struct BottomSheetContent: View {
 											Image("phone-list")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									if callViewModel.callsCounter > 1 {
@@ -786,7 +790,7 @@ struct BottomSheetContent: View {
 												
 												VStack {
 													Text("\(callViewModel.callsCounter)")
-														.foregroundStyle(.white)
+														.foregroundStyle(Color.white)
 														.default_text_style(styleSize: 15)
 												}
 												.frame(width: 20, height: 20)
@@ -801,7 +805,7 @@ struct BottomSheetContent: View {
 								}
 								
 								Text("call_action_go_to_calls_list")
-									.foregroundStyle(.white)
+									.foregroundStyle(Mango9CallStyle.secondary)
 									.default_text_style(styleSize: 15)
 							}
 							.frame(width: baseLandscapeSize, height: buttonLandscapeDimension)
@@ -821,17 +825,17 @@ struct BottomSheetContent: View {
 											Image("dialer")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									Text("call_action_show_dialer")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: baseLandscapeSize, height: buttonLandscapeDimension)
@@ -844,17 +848,17 @@ struct BottomSheetContent: View {
 											Image("layout")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.secondary)
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									Text("call_action_change_layout")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: baseLandscapeSize, height: buttonLandscapeDimension)
@@ -870,12 +874,12 @@ struct BottomSheetContent: View {
 												Image("chat-teardrop-text")
 													.renderingMode(.template)
 													.resizable()
-													.foregroundStyle(.white)
+													.foregroundStyle(Mango9CallStyle.secondary)
 													.frame(width: 32, height: 32)
 											} else {
 												ProgressView()
 													.controlSize(.mini)
-													.progressViewStyle(CircularProgressViewStyle(tint: .white))
+													.progressViewStyle(CircularProgressViewStyle(tint: Mango9CallStyle.accent))
 													.frame(width: 32, height: 32, alignment: .center)
 													.onDisappear {
 														if SharedMainViewModel.shared.displayedConversation != nil {
@@ -890,13 +894,13 @@ struct BottomSheetContent: View {
 											}
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(Color.gray500)
+									.background(Mango9CallStyle.control)
 									.cornerRadius(40)
 									
 									Text("call_action_show_messages")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: baseLandscapeSize, height: buttonLandscapeDimension)
@@ -911,24 +915,24 @@ struct BottomSheetContent: View {
 											Image(callViewModel.isPaused ? "play" : "pause")
 												.renderingMode(.template)
 												.resizable()
-												.foregroundStyle(.white)
+												.foregroundStyle(Mango9CallStyle.controlForeground(active: callViewModel.isPaused))
 												.frame(width: 32, height: 32)
 										}
 									}
-									.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+									.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 									.frame(width: buttonSize, height: buttonSize)
-									.background(callViewModel.isPaused ? Color.greenSuccess500 : Color.gray500)
+									.background(Mango9CallStyle.controlBackground(active: callViewModel.isPaused))
 									.cornerRadius(40)
 									.disabled(telecomManager.isPausedByRemote)
 									
 									Text("call_action_pause_call")
-										.foregroundStyle(.white)
+										.foregroundStyle(Mango9CallStyle.secondary)
 										.default_text_style(styleSize: 15)
 								}
 								.frame(width: baseLandscapeSize, height: buttonLandscapeDimension)
 								
 								if telecomManager.isPausedByRemote {
-									Color.gray600.opacity(0.8)
+									Mango9CallStyle.tray.opacity(0.8)
 										.allowsHitTesting(false)
 								}
 							}
@@ -944,24 +948,24 @@ struct BottomSheetContent: View {
 												Image("record-fill")
 													.renderingMode(.template)
 													.resizable()
-													.foregroundStyle(.white)
+													.foregroundStyle(Mango9CallStyle.controlForeground(active: callViewModel.isRecording))
 													.frame(width: 32, height: 32)
 											}
 										}
-										.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+										.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 										.frame(width: buttonSize, height: buttonSize)
-										.background(callViewModel.isRecording ? Color.redDanger500 : Color.gray500)
+										.background(callViewModel.isRecording ? Color.redDanger500 : Mango9CallStyle.control)
 										.cornerRadius(40)
 										.disabled(AppServices.corePreferences.disableCallRecordings || callViewModel.isPaused || telecomManager.isPausedByRemote)
 										
 										Text("call_action_record_call")
-											.foregroundStyle(.white)
+											.foregroundStyle(Mango9CallStyle.secondary)
 											.default_text_style(styleSize: 15)
 									}
 									.frame(width: baseLandscapeSize, height: buttonLandscapeDimension)
 									
 									if AppServices.corePreferences.disableCallRecordings || callViewModel.isPaused || telecomManager.isPausedByRemote {
-										Color.gray600.opacity(0.8)
+										Mango9CallStyle.tray.opacity(0.8)
 											.allowsHitTesting(false)
 									}
 								}
@@ -975,24 +979,24 @@ struct BottomSheetContent: View {
 												Image("record-fill")
 													.renderingMode(.template)
 													.resizable()
-													.foregroundStyle(Color.gray500)
+													.foregroundStyle(Mango9CallStyle.controlForeground(active: callViewModel.isRecording))
 													.frame(width: 32, height: 32)
 											}
 										}
-										.buttonStyle(PressedButtonStyle(buttonSize: buttonSize))
+										.buttonStyle(Mango9CallPressedButtonStyle(buttonSize: buttonSize))
 										.frame(width: buttonSize, height: buttonSize)
-										.background(.white)
+										.background(Mango9CallStyle.control)
 										.cornerRadius(40)
 										.disabled(true)
 										
 										Text("call_action_record_call")
-											.foregroundStyle(.white)
+											.foregroundStyle(Mango9CallStyle.secondary)
 											.default_text_style(styleSize: 15)
 									}
 									.frame(width: baseLandscapeSize, height: buttonLandscapeDimension)
 									
 									if true {
-										Color.gray600.opacity(0.8)
+										Mango9CallStyle.tray.opacity(0.8)
 											.allowsHitTesting(false)
 									}
 								}
@@ -1006,14 +1010,15 @@ struct BottomSheetContent: View {
 				}
 				
 				if currentOffset <= minHeight {
-					Color.gray600
+					Mango9CallStyle.tray
 				}
 			}
 			.frame(height: maxHeight - minHeight)
 			
 		}
 		.frame(height: maxHeight)
-		.background(Color.gray600)
+		.background(Mango9CallStyle.tray)
+		.overlay(alignment: .top) { Mango9CallStyle.divider.frame(height: 1) }
 	}
 	
 	func getAudioRouteImage() {

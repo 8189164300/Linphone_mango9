@@ -1,4 +1,78 @@
 import SwiftUI
+import UIKit
+
+/// Text follows the available height as the timeline zooms. Both renderers reserve
+/// a one-line minimum and separate visually overlapping labels into columns.
+/// This affects presentation only, never the appointment's actual start/end.
+struct Mango9TimelineAppointment: View {
+	let title: String
+	let tint: Color
+	let isRecurring: Bool
+	var status: String?
+	@ScaledMetric(relativeTo: .caption2) private var preferredFontSize: CGFloat = 11
+	static let minimumFontSize: CGFloat = 9
+	static var minimumHeight: CGFloat { ceil(UIFont.systemFont(ofSize: minimumFontSize, weight: .semibold).lineHeight) + 4 }
+
+	struct TextLayout {
+		let fontSize: CGFloat
+		let lineHeight: CGFloat
+		let titleLines: Int
+		let showsStatus: Bool
+		let showsRecurrence: Bool
+		var contentHeight: CGFloat { CGFloat(titleLines) * lineHeight + (showsStatus ? lineHeight + 2 : 0) }
+	}
+
+	static func textLayout(size: CGSize, preferredFontSize: CGFloat, hasStatus: Bool, isRecurring: Bool) -> TextLayout {
+		let empty = TextLayout(fontSize: 0, lineHeight: 0, titleLines: 0, showsStatus: false, showsRecurrence: false)
+		guard size.width.isFinite, size.height.isFinite, preferredFontSize.isFinite,
+			size.width > 12, size.height > 2, preferredFontSize > 0 else { return empty }
+		// Reserve a pixel-safe inset, using font metrics rather than fixed height
+		// thresholds that stop working with Dynamic Type or a compressed timeline.
+		// Layout/zoom supplies fractional point heights. Round the budget down
+		// before fitting a whole line, otherwise ceil(lineHeight) can exceed a
+		// fractional budget by less than one point and incorrectly hide the title.
+		let available = floor(max(0, size.height - 2))
+		let preferredLine = ceil(UIFont.systemFont(ofSize: preferredFontSize, weight: .semibold).lineHeight)
+		let fontSize = min(preferredFontSize, preferredFontSize * available / preferredLine)
+		guard fontSize >= minimumFontSize else { return empty } // A transient, unmeasured layout is not a visible slot.
+		let lineHeight = ceil(UIFont.systemFont(ofSize: fontSize, weight: .semibold).lineHeight)
+		guard lineHeight <= available else { return empty }
+		let titleLines = available >= lineHeight * 2 + 4 ? 2 : 1
+		let showsStatus = hasStatus && size.width > 80 && available >= CGFloat(titleLines + 1) * lineHeight + 6
+		return TextLayout(fontSize: fontSize, lineHeight: lineHeight, titleLines: titleLines,
+			showsStatus: showsStatus, showsRecurrence: isRecurring && size.width >= fontSize * 4 + 12)
+	}
+
+	var body: some View {
+		GeometryReader { geometry in
+			let layout = Self.textLayout(size: geometry.size, preferredFontSize: preferredFontSize,
+				hasStatus: status != nil, isRecurring: isRecurring)
+			if layout.titleLines > 0 {
+				VStack(alignment: .leading, spacing: 2) {
+					HStack(alignment: .top, spacing: 3) {
+						if layout.showsRecurrence {
+							Image(systemName: "repeat").frame(height: layout.lineHeight).accessibilityHidden(true)
+						}
+						Text(title).lineLimit(layout.titleLines).truncationMode(.tail)
+							.frame(maxWidth: .infinity, alignment: .leading)
+					}.frame(height: CGFloat(layout.titleLines) * layout.lineHeight, alignment: .topLeading)
+					if layout.showsStatus, let status {
+						Text(status).lineLimit(1).frame(height: layout.lineHeight, alignment: .leading)
+					}
+				}.font(.system(size: layout.fontSize, weight: .semibold)).foregroundColor(.primary)
+					.padding(.leading, 6).padding(.trailing, 3)
+					.frame(width: geometry.size.width, height: geometry.size.height,
+						alignment: layout.titleLines == 1 ? .leading : .topLeading)
+			}
+		}
+		.background(tint.opacity(0.18))
+		.overlay(alignment: .leading) { tint.frame(width: 3) }
+		.clipShape(RoundedRectangle(cornerRadius: 5))
+		.contentShape(Rectangle())
+		.accessibilityElement(children: .ignore)
+		.accessibilityLabel(title + (isRecurring ? ", recurring" : "") + (status.map { ", " + $0 } ?? ""))
+	}
+}
 
 /// The iOS 15–17 calendar uses the same authenticated API and detail/editor flow.
 /// It does not import the iOS 18-only Exyte module or store a second appointment database.
@@ -12,7 +86,10 @@ struct Mango9LegacyCalendar: View {
 	let onSelect: (Mango9Appointment) -> Void
 	let onError: (String?) -> Void
 	var onVisibleMonth: (Date) -> Void = { _ in }
+	var onCreate: ((Date) -> Void)?
+	var onCreateAtTime: ((Date) -> Void)?
 	var transport: URLSession = .shared
+	var businessHours: Mango9BusinessHours?
 	@State private var mode = Mango9LegacyCalendarMode.month
 	@State private var events: [Mango9Appointment] = []
 	@State private var busy = false
@@ -22,10 +99,14 @@ struct Mango9LegacyCalendar: View {
 	init(session: Mango9Session?, contactID: Int?, date: Binding<Date>, revision: UUID,
 		firstWeekday: Int, onSelect: @escaping (Mango9Appointment) -> Void,
 		onError: @escaping (String?) -> Void, onVisibleMonth: @escaping (Date) -> Void = { _ in },
-		transport: URLSession = .shared, initialMode: Mango9LegacyCalendarMode = .month) {
+		onCreate: ((Date) -> Void)? = nil, onCreateAtTime: ((Date) -> Void)? = nil,
+		transport: URLSession = .shared, businessHours: Mango9BusinessHours? = nil, initialMode: Mango9LegacyCalendarMode = .month) {
 		self.session = session; self.contactID = contactID; self._date = date; self.revision = revision
 		self.firstWeekday = firstWeekday; self.onSelect = onSelect; self.onError = onError
 		self.onVisibleMonth = onVisibleMonth; self.transport = transport
+		self.onCreate = onCreate
+		self.onCreateAtTime = onCreateAtTime
+		self.businessHours = businessHours
 		self._mode = State(initialValue: initialMode)
 	}
 	private var calendar: Calendar {
@@ -33,7 +114,15 @@ struct Mango9LegacyCalendar: View {
 		result.firstWeekday = (1...7).contains(firstWeekday) ? firstWeekday : result.firstWeekday
 		return result
 	}
-	private var range: DateInterval { mode.range(containing: date, calendar: calendar) }
+	private var range: DateInterval {
+		if mode == .month {
+			let days = Mango9LegacyCalendarMode.monthGridDays(containing: date, calendar: calendar)
+			if let first = days.first, let last = days.last, let end = calendar.date(byAdding: .day, value: 1, to: last) {
+				return DateInterval(start: first, end: end)
+			}
+		}
+		return mode.range(containing: date, calendar: calendar)
+	}
 	private var requestID: String {
 		"\(requestScope)|\(revision)"
 	}
@@ -48,12 +137,9 @@ struct Mango9LegacyCalendar: View {
 				ScrollView { monthGrid }.refreshable { await load() }
 			} else {
 				Mango9LegacyTimeline(days: mode.days(containing: date, calendar: calendar), events: events,
-					onDay: { date = $0; mode = .day }, onSelect: { event in Task { await select(event) } })
+					onDay: { date = $0; mode = .day }, onSelect: { event in Task { await select(event) } },
+					onCreate: onCreate, onCreateAtTime: onCreateAtTime, businessHours: businessHours)
 			}
-				if events.contains(where: \.isRecurring) {
-					Text("Recurring schedules are listed under Appointments; manage them on the web.")
-						.font(.caption).foregroundColor(.secondary).padding()
-				}
 		}.background(Color(.systemBackground))
 		.overlay(alignment: .top) { if busy { ProgressView().accessibilityLabel("Loading appointments").allowsHitTesting(false) } }
 		.task(id: requestID) { await load() }
@@ -69,9 +155,7 @@ struct Mango9LegacyCalendar: View {
 	}
 
 	private var monthGrid: some View {
-		let days = Mango9LegacyCalendarMode.monthDays(containing: date, calendar: calendar)
-		let first = days.first ?? date
-		let padding = (calendar.component(.weekday, from: first) - calendar.firstWeekday + 7) % 7
+		let days = Mango9LegacyCalendarMode.monthGridDays(containing: date, calendar: calendar)
 		return VStack(spacing: 6) {
 			HStack(spacing: 0) {
 				ForEach(0..<7, id: \.self) { offset in
@@ -80,9 +164,8 @@ struct Mango9LegacyCalendar: View {
 				}
 			}
 			LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 4) {
-				ForEach(0..<(padding + days.count), id: \.self) { index in
-					if index < padding { Color.clear.frame(minHeight: 96) }
-					else { dayCell(days[index - padding]) }
+				ForEach(days, id: \.self) { day in
+					dayCell(day).opacity(calendar.isDate(day, equalTo: date, toGranularity: .month) ? 1 : 0.45)
 				}
 			}
 		}.padding(.horizontal, 8)
@@ -90,23 +173,27 @@ struct Mango9LegacyCalendar: View {
 
 	private func dayCell(_ day: Date) -> some View {
 		let values = eventsOn(day)
-		return Button {
+		return Mango9CalendarDateButton(date: day, onHold: onCreate, onTap: {
 			date = day; mode = .day
-		} label: {
+		}) {
 			VStack(spacing: 5) {
 				Divider()
 				Text(day, format: .dateTime.day()).font(.subheadline.weight(.semibold))
 					.foregroundColor(calendar.isDateInToday(day) ? .white : .primary)
 					.padding(4).background(calendar.isDateInToday(day) ? Color.mango9Primary : .clear).clipShape(Circle())
-				ForEach(values.prefix(2)) { event in
-					Text(event.title).font(.caption2).lineLimit(1).foregroundColor(.primary)
+				ForEach(values.prefix(2), id: \.displayID) { event in
+					HStack(spacing: 2) {
+						if event.isRecurring { Image(systemName: "repeat").accessibilityLabel("Recurring appointment") }
+						Text(event.title).lineLimit(1)
+					}.font(.caption2).foregroundColor(.primary)
 						.frame(maxWidth: .infinity, alignment: .leading).padding(2)
 						.background(event.tint.opacity(0.2)).cornerRadius(3)
 				}
 				if values.count > 2 { Text("+\(values.count - 2)").font(.caption2).foregroundColor(.secondary) }
 				Spacer(minLength: 0)
 			}.frame(minHeight: 96, alignment: .top).contentShape(Rectangle())
-		}.buttonStyle(.plain)
+				.background(businessHours?.configured == true && businessHours?.openIntervals(on: day).isEmpty == true ? Color.secondary.opacity(0.10) : Color.clear)
+		}
 			.accessibilityLabel("\(day.formatted(date: .complete, time: .omitted)), \(values.count) appointments")
 	}
 
@@ -137,8 +224,55 @@ struct Mango9LegacyCalendar: View {
 		do {
 			let current = try await Mango9CalendarAPI.send(Mango9Appointment.self, session: session, path: "events/\(event.id)", transport: transport)
 			guard !Task.isCancelled, Mango9SessionStore.isActive(session) else { return }
-			onSelect(current)
+			onSelect(current.retainingOccurrence(from: event))
 		} catch { if Mango9SessionStore.isActive(session) { onError(error.localizedDescription) } }
+	}
+}
+
+/// Exclusive gestures prevent a successful hold from also navigating on release.
+/// Movement cancels the hold so the surrounding calendar can still scroll.
+struct Mango9CalendarDateButton<Content: View>: View {
+	let date: Date
+	let onHold: ((Date) -> Void)?
+	let onTap: () -> Void
+	@ViewBuilder var content: () -> Content
+
+	var body: some View {
+		if let onHold {
+			content().contentShape(Rectangle())
+				.gesture(LongPressGesture(minimumDuration: 0.5, maximumDistance: 10)
+					.exclusively(before: TapGesture()).onEnded { value in
+						switch value { case .first(true): onHold(date); case .second: onTap(); default: break }
+					})
+				.accessibilityElement(children: .combine).accessibilityAddTraits(.isButton)
+				.accessibilityAction { onTap() }
+				.accessibilityAction(named: Text("New appointment")) { onHold(date) }
+				.accessibilityHint("Touch and hold to add an appointment")
+		} else {
+			Button(action: onTap, label: content).buttonStyle(.plain)
+		}
+	}
+}
+
+/// Quarter-hour hit targets sit behind events, so event taps and scrolling keep
+/// their existing behavior. Calendar arithmetic preserves wall-clock slots at DST.
+struct Mango9CalendarTimeSlots: View {
+	let day: Date
+	let hourHeight: CGFloat
+	let onCreate: (Date) -> Void
+	static func date(on day: Date, slot: Int, calendar: Calendar = .current) -> Date? {
+		guard (0..<96).contains(slot) else { return nil }
+		return calendar.date(bySettingHour: slot / 4, minute: slot % 4 * 15, second: 0, of: day)
+	}
+	var body: some View {
+		VStack(spacing: 0) {
+			ForEach(0..<96, id: \.self) { slot in
+				Color.clear.frame(height: hourHeight / 4).contentShape(Rectangle())
+					.onLongPressGesture(minimumDuration: 0.5, maximumDistance: 10) {
+						if let time = Self.date(on: day, slot: slot) { onCreate(time) }
+					}
+			}
+		}.accessibilityHidden(true)
 	}
 }
 
@@ -179,9 +313,17 @@ enum Mango9LegacyCalendarMode: String, CaseIterable {
 		guard let range = calendar.dateInterval(of: .month, for: date), let days = calendar.range(of: .day, in: .month, for: date) else { return [] }
 		return days.compactMap { calendar.date(byAdding: .day, value: $0 - 1, to: range.start) }
 	}
+	static func monthGridDays(containing date: Date, calendar: Calendar) -> [Date] {
+		let days = monthDays(containing: date, calendar: calendar)
+		guard let first = days.first else { return [] }
+		let padding = (calendar.component(.weekday, from: first) - calendar.firstWeekday + 7) % 7
+		return (0..<((padding + days.count + 6) / 7) * 7).compactMap {
+			calendar.date(byAdding: .day, value: $0 - padding, to: first)
+		}
+	}
 	static func events(_ events: [Mango9Appointment], on day: Date, calendar: Calendar) -> [Mango9Appointment] {
 		let range = Self.day.range(containing: day, calendar: calendar)
-		return events.filter { !$0.isRecurring && $0.startAt < range.end && $0.endAt > range.start }
+		return events.filter { (!$0.isRecurring || $0.occurrenceKey != nil) && $0.startAt < range.end && $0.endAt > range.start }
 			.sorted { $0.startAt == $1.startAt ? $0.id < $1.id : $0.startAt < $1.startAt }
 	}
 }
@@ -238,6 +380,9 @@ struct Mango9LegacyTimeline: View {
 	let events: [Mango9Appointment]
 	let onDay: (Date) -> Void
 	let onSelect: (Mango9Appointment) -> Void
+	var onCreate: ((Date) -> Void)? = nil
+	var onCreateAtTime: ((Date) -> Void)? = nil
+	var businessHours: Mango9BusinessHours? = nil
 	private let hourHeight: CGFloat = 60
 	@ScaledMetric(relativeTo: .caption2) private var gutter: CGFloat = 54
 	var body: some View {
@@ -248,13 +393,13 @@ struct Mango9LegacyTimeline: View {
 					HStack(spacing: 0) {
 						Color.clear.frame(width: gutter, height: 1)
 						ForEach(days, id: \.self) { day in
-							Button { onDay(day) } label: {
+							Mango9CalendarDateButton(date: day, onHold: onCreate, onTap: { onDay(day) }) {
 								VStack(spacing: 4) {
 									Text(day, format: days.count == 7 ? .dateTime.weekday(.narrow) : .dateTime.weekday(.abbreviated)).font(.caption2).foregroundColor(.secondary)
 									Text(day, format: .dateTime.day()).font(.subheadline.weight(.semibold)).foregroundColor(Calendar.current.isDateInToday(day) ? .mango9Primary : .primary)
 									Rectangle().fill(Calendar.current.isDateInToday(day) ? Color.mango9Primary : Color(.separator).opacity(0.5)).frame(height: 2)
 								}.frame(maxWidth: .infinity, minHeight: 54)
-							}.buttonStyle(.plain).accessibilityLabel(day.formatted(date: .complete, time: .omitted))
+							}.accessibilityLabel(day.formatted(date: .complete, time: .omitted))
 						}
 					}.padding(.trailing, 8)
 					ScrollViewReader { proxy in
@@ -278,37 +423,43 @@ struct Mango9LegacyTimeline: View {
 		}
 	}
 	private var initialHour: Int {
-		if let first = events.filter({ event in !event.isRecurring && days.contains { day in event.startAt >= day && event.startAt < Calendar.current.date(byAdding: .day, value: 1, to: day)! } }).map(\.startAt).min() {
+		if let first = events.filter({ event in (!event.isRecurring || event.occurrenceKey != nil) && days.contains { day in event.startAt >= day && event.startAt < Calendar.current.date(byAdding: .day, value: 1, to: day)! } }).map(\.startAt).min() {
 			return max(0, Calendar.current.component(.hour, from: first) - 1)
 		}
 		return 8
 	}
 	private func dayColumn(_ day: Date, width: CGFloat) -> some View {
 		ZStack(alignment: .topLeading) {
+			Mango9ClosedHoursBackground(day: day, hourHeight: hourHeight, hours: businessHours)
 			VStack(spacing: 0) { ForEach(0..<24, id: \.self) { _ in
 				Color.clear.frame(height: hourHeight).overlay(alignment: .top) { Color(.separator).opacity(0.3).frame(height: 1) }
-			} }
-			ForEach(Self.placements(events, on: day, width: width, hourHeight: hourHeight)) { placement in
+			} }.allowsHitTesting(false)
+			if let onCreateAtTime {
+				Mango9CalendarTimeSlots(day: day, hourHeight: hourHeight, onCreate: onCreateAtTime)
+			}
+			ForEach(Self.placements(events, on: day, width: width, hourHeight: hourHeight,
+				minimumEventHeight: Mango9TimelineAppointment.minimumHeight)) { placement in
 				Button { onSelect(placement.event) } label: {
-					Text(placement.event.title).font(.caption2.weight(.semibold)).foregroundColor(.primary)
-						.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(3)
-						.background(placement.event.tint.opacity(0.18))
-						.overlay(alignment: .leading) { placement.event.tint.frame(width: 2) }.cornerRadius(4).clipped()
+					Mango9TimelineAppointment(title: placement.event.title, tint: placement.event.tint,
+						isRecurring: placement.event.isRecurring, status: placement.event.status?.name)
 				}.buttonStyle(.plain).frame(width: placement.frame.width, height: placement.frame.height)
 					.offset(x: placement.frame.minX, y: placement.frame.minY)
-					.accessibilityLabel("\(placement.event.title), \(placement.event.startAt.formatted(date: .abbreviated, time: .shortened))")
+					.accessibilityLabel("\(placement.event.title), \(placement.event.startAt.formatted(date: .abbreviated, time: .shortened))\(placement.event.isRecurring ? ", recurring" : "")")
 			}
 			TimelineView(.periodic(from: .now, by: 60)) { context in
 				if Calendar.current.isDate(day, inSameDayAs: context.date) {
 					Color.mango9Primary.frame(height: 1).offset(y: CGFloat(Self.minute(context.date, calendar: .current)) * hourHeight / 60)
 				}
 			}.allowsHitTesting(false)
-		}.frame(width: width, height: 24 * hourHeight).clipped()
+		}.frame(width: width, height: 24 * hourHeight + Mango9TimelineAppointment.minimumHeight, alignment: .topLeading).clipped()
 			.overlay(alignment: .leading) { Color(.separator).opacity(0.3).frame(width: 1) }
 	}
-	struct Placement: Identifiable { let event: Mango9Appointment; let frame: CGRect; var id: Int { event.id } }
+	struct Placement: Identifiable { let event: Mango9Appointment; let frame: CGRect; var id: String { event.displayID } }
 	private static func minute(_ date: Date, calendar: Calendar) -> Int { calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date) }
-	static func placements(_ events: [Mango9Appointment], on day: Date, width: CGFloat, hourHeight: CGFloat, calendar: Calendar = .current) -> [Placement] {
+	static func placements(_ events: [Mango9Appointment], on day: Date, width: CGFloat, hourHeight: CGFloat,
+		minimumEventHeight: CGFloat = 0, calendar: Calendar = .current) -> [Placement] {
+		guard width.isFinite, hourHeight.isFinite, hourHeight > 0 else { return [] }
+		let minimumHeight = minimumEventHeight.isFinite ? max(0, minimumEventHeight) : 0
 		let start = calendar.startOfDay(for: day); let end = calendar.date(byAdding: .day, value: 1, to: start)!
 		let values = Mango9LegacyCalendarMode.events(events, on: day, calendar: calendar)
 		let ranges = values.map { event -> (Int, Int) in
@@ -317,18 +468,21 @@ struct Mango9LegacyTimeline: View {
 			let length = last > first ? last - first : max(1, Int(event.endAt.timeIntervalSince(max(start, event.startAt)) / 60))
 			return (first, min(1440, first + length))
 		}
+		let visualEnds = ranges.map { range in
+			minimumHeight > 0 ? max(CGFloat(range.1), CGFloat(range.0) + (minimumHeight + 2) * 60 / hourHeight) : CGFloat(range.1)
+		}
 		var result: [Placement] = []; var index = 0
 		while index < values.count {
-			var groupEnd = ranges[index].1; var last = index; var laneEnds: [Int] = []; var lanes: [Int] = []
-			while last < values.count && (last == index || ranges[last].0 < groupEnd) {
-				let lane = laneEnds.firstIndex { $0 <= ranges[last].0 } ?? laneEnds.count
-				if lane == laneEnds.count { laneEnds.append(ranges[last].1) } else { laneEnds[lane] = ranges[last].1 }
-				lanes.append(lane); groupEnd = max(groupEnd, ranges[last].1); last += 1
+			var groupEnd = visualEnds[index]; var last = index; var laneEnds: [CGFloat] = []; var lanes: [Int] = []
+			while last < values.count && (last == index || CGFloat(ranges[last].0) < groupEnd - 0.000001) {
+				let lane = laneEnds.firstIndex { $0 <= CGFloat(ranges[last].0) + 0.000001 } ?? laneEnds.count
+				if lane == laneEnds.count { laneEnds.append(visualEnds[last]) } else { laneEnds[lane] = visualEnds[last] }
+				lanes.append(lane); groupEnd = max(groupEnd, visualEnds[last]); last += 1
 			}
 			let laneWidth = max(0, (width - 4) / CGFloat(max(1, laneEnds.count)))
 			for i in index..<last {
 				result.append(Placement(event: values[i], frame: CGRect(x: 2 + CGFloat(lanes[i - index]) * laneWidth,
-					y: CGFloat(ranges[i].0) * hourHeight / 60, width: max(0, laneWidth - 2), height: max(2, CGFloat(ranges[i].1 - ranges[i].0) * hourHeight / 60 - 2))))
+					y: CGFloat(ranges[i].0) * hourHeight / 60, width: max(0, laneWidth - 2), height: max(max(2, minimumHeight), CGFloat(ranges[i].1 - ranges[i].0) * hourHeight / 60 - 2))))
 			}
 			index = last
 		}

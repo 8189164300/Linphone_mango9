@@ -4046,7 +4046,8 @@ extension Mango9CRMAPI {
 	static func updateClient(
 		session: Mango9Session,
 		id: Int,
-		values: [String: String]
+		values: [String: String],
+		transport: URLSession = .shared
 	) async throws -> Mango9LeadDetailPayload {
 		var request = try authorizedRequest(
 			session: session,
@@ -4056,7 +4057,7 @@ extension Mango9CRMAPI {
 		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 		request.httpBody = try JSONSerialization.data(withJSONObject: ["values": values])
 
-		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request)
+		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request, transport: transport)
 		guard envelope.success, let payload = envelope.data else {
 			throw Mango9CRMAPIError.server
 		}
@@ -4192,7 +4193,8 @@ extension Mango9CRMAPI {
 	static func updateLead(
 		session: Mango9Session,
 		id: Int,
-		values: [String: String]
+		values: [String: String],
+		transport: URLSession = .shared
 	) async throws -> Mango9LeadDetailPayload {
 		var request = try authorizedRequest(
 			session: session,
@@ -4202,7 +4204,7 @@ extension Mango9CRMAPI {
 		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 		request.httpBody = try JSONSerialization.data(withJSONObject: ["values": values])
 
-		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request)
+		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request, transport: transport)
 		guard envelope.success, let payload = envelope.data else {
 			throw Mango9CRMAPIError.server
 		}
@@ -5838,11 +5840,16 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 	@Published private(set) var isLoading = false
 	@Published private(set) var isSaving = false
 	@Published private(set) var isDeleting = false
+	@Published private(set) var isSavingStatus = false
+	@Published var statusError: String?
 	@Published var isEditing = false
 	@Published private(set) var errorMessage: String?
 	@Published private(set) var savedMessage: String?
 
 	private var originalValues: [String: String] = [:]
+	private let statusTransport: URLSession
+	private var recordContext: [String]?
+	var layoutValues: [String: String] { isEditing ? originalValues : values }
 
 	init(
 		leadId: Int,
@@ -5850,10 +5857,13 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 		initialLead: Mango9Lead? = nil,
 		initialSchema: Mango9LeadSchema? = nil,
 		initialValues: [String: String] = [:],
-		startsInEditMode: Bool = false
+		startsInEditMode: Bool = false,
+		statusTransport: URLSession = .shared
 	) {
 		self.leadId = leadId
 		self.recordKind = recordKind
+		self.statusTransport = statusTransport
+		recordContext = Mango9SessionStore.load().map(Self.context)
 		lead = initialLead
 		schema = initialSchema
 		values = initialValues
@@ -5862,13 +5872,14 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 	}
 
 	func load() async {
-		guard !isLoading else { return }
+		guard !isLoading, !isSavingStatus else { return }
 		guard var session = Mango9SessionStore.load() else {
 			errorMessage = "Connect your Mango9 account to open this \(recordKind.singular.lowercased())."
 			return
 		}
 
 		isLoading = true
+		if recordContext == nil { recordContext = Self.context(session) }
 		errorMessage = nil
 		defer { isLoading = false }
 		do {
@@ -5909,7 +5920,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 	}
 
 	func save() async {
-		guard !isSaving, !isDeleting, let schema else { return }
+		guard !isSaving, !isDeleting, !isSavingStatus, let schema else { return }
 		for field in schema.fields where field.required && field.editable && field.isVisible {
 			if (values[field.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
 				errorMessage = "\(field.label) is required."
@@ -5967,7 +5978,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 	}
 
 	func delete() async -> Bool {
-		guard !isSaving, !isDeleting else { return false }
+		guard !isSaving, !isDeleting, !isSavingStatus else { return false }
 		guard var session = Mango9SessionStore.load() else {
 			errorMessage = "Connect your Mango9 account to delete this \(recordKind.singular.lowercased())."
 			return false
@@ -5995,6 +6006,91 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 			errorMessage = "The \(recordKind.singular.lowercased()) could not be deleted. Try again."
 		}
 		return false
+	}
+
+	private var standardStatusField: Mango9LeadSchema.Field? {
+		// The record summary uses `status`, but the CRM schema and PATCH values
+		// use `lead_status` for both leads and clients. Preserve the schema key.
+		for key in ["lead_status", "status"] {
+			if let field = schema?.fields.first(where: { $0.key == key && !$0.custom }) {
+				return field
+			}
+		}
+		return nil
+	}
+
+	var editableStatusField: Mango9LeadSchema.Field? {
+		guard let field = standardStatusField, field.isVisible, field.editable, field.type == "select" else { return nil }
+		return field
+	}
+
+	var currentStatus: String {
+		if let key = standardStatusField?.key, let value = values[key] { return value }
+		return lead?.status ?? ""
+	}
+
+	var statusOptions: [String] {
+		guard let field = editableStatusField else { return [] }
+		let options = field.options.flatMap { $0.isEmpty ? nil : $0 } ?? schema?.statuses ?? []
+		var seen = Set<String>()
+		return options.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && seen.insert($0).inserted }
+	}
+
+	/// A status shortcut must not submit unrelated fields or apply a response to
+	/// a different signed-in account. Keep the displayed value until confirmed.
+	func changeStatus(_ status: String) async {
+		guard !isEditing, !isLoading, !isSaving, !isDeleting, !isSavingStatus,
+		      let field = editableStatusField, statusOptions.contains(status),
+		      status != currentStatus else { return }
+		guard var session = Mango9SessionStore.load(), Self.context(session) == recordContext else {
+			statusError = "Reopen this record from the correct CRM account before changing its status."
+			return
+		}
+		let context = Self.context(session)
+		func isCurrent() -> Bool {
+			!Task.isCancelled && Mango9SessionStore.load().map(Self.context) == context
+		}
+		isSavingStatus = true
+		statusError = nil
+		savedMessage = nil
+		defer { isSavingStatus = false }
+		do {
+			let payload: Mango9LeadDetailPayload
+			do {
+				payload = try await updateStatus(session: session, key: field.key, status: status)
+			} catch Mango9CRMAPIError.unauthorized {
+				guard isCurrent() else { return }
+				session = try await Mango9CRMAPI.refresh(session: session, transport: statusTransport)
+				guard isCurrent() else { return }
+				try Mango9SessionStore.save(session, for: session.sipIdentity)
+				payload = try await updateStatus(session: session, key: field.key, status: status)
+			}
+			guard isCurrent() else { return }
+			guard payload.lead.id == leadId else { throw Mango9CRMAPIError.server }
+			let confirmed = payload.values[field.key] ?? payload.lead.status
+			lead = payload.lead
+			values[field.key] = confirmed
+			originalValues[field.key] = confirmed
+			NotificationCenter.default.post(name: recordKind.changeNotification, object: nil)
+		} catch {
+			guard isCurrent() else { return }
+			if case Mango9CRMAPIError.unauthorized = error {
+				statusError = "Your CRM session expired. Sign in again to change the status."
+			} else {
+				statusError = "We couldn’t confirm the status change. Pull down to refresh this record before trying again."
+			}
+		}
+	}
+
+	private func updateStatus(session: Mango9Session, key: String, status: String) async throws -> Mango9LeadDetailPayload {
+		if recordKind == .client {
+			return try await Mango9CRMAPI.updateClient(session: session, id: leadId, values: [key: status], transport: statusTransport)
+		}
+		return try await Mango9CRMAPI.updateLead(session: session, id: leadId, values: [key: status], transport: statusTransport)
+	}
+
+	private static func context(_ session: Mango9Session) -> [String] {
+		[session.sipIdentity ?? "", session.crmId, session.crmApiBaseUrl, session.userId, session.parentClientId]
 	}
 
 	private func load(session: Mango9Session) async throws {
@@ -6044,6 +6140,113 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 	}
 }
 
+/// Presentation only: compact fields share a row without changing schema
+/// sections, field keys, visibility, permissions, or the save payload.
+enum Mango9LeadFieldLayout {
+	struct Row: Identifiable {
+		let fields: [Mango9LeadSchema.Field]
+		var id: String { fields[0].id }
+	}
+
+	static func rows(_ fields: [Mango9LeadSchema.Field], values: [String: String] = [:]) -> [Row] {
+		let pairs = [["first_name", "last_name"], ["city", "state", "zip_code"], ["status", "priority"]]
+		let compactTypes: Set<String> = ["text", "string", "select", "number", "integer", "decimal", "date", "boolean", "phone", "email"]
+		let fullWidthKeys: Set<String> = ["address", "address2", "street_address", "notes", "description"]
+		func compact(_ field: Mango9LeadSchema.Field) -> Bool {
+			compactTypes.contains(field.type) && !fullWidthKeys.contains(field.key)
+				&& field.label.count <= 32 && (values[field.key] ?? "").count <= 40
+				&& (field.type != "email" || (values[field.key] ?? "").count <= 22)
+		}
+		var consumed = Set<String>()
+		var rows: [Row] = []
+		for (index, field) in fields.enumerated() where !consumed.contains(field.key) {
+			if !field.custom, compact(field),
+			   let pair = pairs.first(where: { $0.contains(field.key) }) {
+				let members = pair.compactMap { key in
+					fields.first { $0.key == key && $0.section == field.section && !$0.custom
+						&& compact($0) && !consumed.contains($0.key) }
+				}
+				if members.count >= 2 {
+					rows.append(Row(fields: members))
+					consumed.formUnion(members.map(\.key))
+					continue
+				}
+			}
+			if compact(field), let next = fields.dropFirst(index + 1).first(where: { !consumed.contains($0.key) }),
+			   next.section == field.section, compact(next),
+			   !pairs.contains(where: { $0.contains(next.key) && !next.custom }) {
+				rows.append(Row(fields: [field, next]))
+				consumed.formUnion([field.key, next.key])
+				continue
+			}
+			rows.append(Row(fields: [field]))
+			consumed.insert(field.key)
+		}
+		return rows
+	}
+
+	static func columnCount(width: CGFloat, textSize: DynamicTypeSize, fieldCount: Int) -> Int {
+		// Standard larger text still fits short names side by side. Only
+		// accessibility sizes (or genuinely narrow containers) need stacking.
+		guard !textSize.isAccessibilitySize, width >= 240 else { return 1 }
+		return min(fieldCount, width >= 320 ? 3 : 2)
+	}
+}
+
+struct Mango9LeadFieldRows<Content: View>: View {
+	@Environment(\.dynamicTypeSize) private var textSize
+	let fields: [Mango9LeadSchema.Field]
+	var values: [String: String] = [:]
+	let width: CGFloat
+	@ViewBuilder let content: (Mango9LeadSchema.Field) -> Content
+
+	var body: some View {
+		let rows = Mango9LeadFieldLayout.rows(fields, values: values)
+		VStack(spacing: 0) {
+			ForEach(rows) { row in
+				let count = Mango9LeadFieldLayout.columnCount(width: width, textSize: textSize, fieldCount: row.fields.count)
+				// Each row has at most three fields. Measure them together rather
+				// than deferring off-screen cells and changing row heights on scroll.
+				VStack(alignment: .leading, spacing: 12) {
+					ForEach(Array(stride(from: 0, to: row.fields.count, by: count)), id: \.self) { offset in
+						HStack(alignment: .top, spacing: 16) {
+							ForEach(Array(row.fields.dropFirst(offset).prefix(count))) { field in
+								content(field)
+									.frame(width: max(0, (width - CGFloat(count - 1) * 16) / CGFloat(count)), alignment: .leading)
+							}
+						}
+					}
+				}
+				.padding(.vertical, 10)
+				if row.id != rows.last?.id { Divider() }
+			}
+		}
+		.padding(.horizontal, 16)
+	}
+}
+
+struct Mango9LeadSectionCard<Content: View>: View {
+	let section: Mango9LeadSchema.Section
+	@ViewBuilder let content: () -> Content
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 0) {
+			Label(section.label, systemImage: section.id == "personal" ? "person.text.rectangle" : section.id == "location" ? "mappin.and.ellipse" : "list.bullet.rectangle")
+				.font(.headline)
+				.foregroundStyle(Color.orangeMain500)
+				.padding(.horizontal, 16)
+				.padding(.vertical, 12)
+			Divider()
+			content()
+		}
+		.background(Color.white)
+		.cornerRadius(16)
+		.overlay {
+			RoundedRectangle(cornerRadius: 16).stroke(Color.gray200, lineWidth: 1)
+		}
+	}
+}
+
 struct Mango9LeadDetailFragment: View {
 	@Environment(\.presentationMode) private var presentationMode
 	@StateObject private var viewModel: Mango9LeadDetailViewModel
@@ -6072,53 +6275,55 @@ struct Mango9LeadDetailFragment: View {
 	}
 
 	var body: some View {
-		ZStack {
-			Color.gray100.ignoresSafeArea()
+		GeometryReader { geometry in
+			ZStack {
+				Color.gray100.ignoresSafeArea()
 
-			VStack(spacing: 0) {
-				header
+				VStack(spacing: 0) {
+					header
 
-				if viewModel.isLoading && viewModel.lead == nil {
-					Spacer()
-					ProgressView().tint(Color.orangeMain500)
-					Spacer()
-				} else {
-					ScrollView {
-						VStack(spacing: 14) {
-							if let lead = viewModel.lead {
-								leadHeader(lead)
-								if !viewModel.isEditing {
-									Mango9LinkedAppointmentsSection(contact: Mango9AppointmentContact(
-										id: lead.id, name: lead.name,
-										kind: viewModel.recordKind == .client ? "client" : "lead"))
+					if viewModel.isLoading && viewModel.lead == nil {
+						Spacer()
+						ProgressView().tint(Color.orangeMain500)
+						Spacer()
+					} else {
+						ScrollView {
+							VStack(spacing: 14) {
+								if let lead = viewModel.lead {
+									leadHeader(lead)
+									if !viewModel.isEditing {
+										Mango9LinkedAppointmentsSection(contact: Mango9AppointmentContact(
+											id: lead.id, name: lead.name,
+											kind: viewModel.recordKind == .client ? "client" : "lead"))
+									}
 								}
-							}
 
-							if let error = viewModel.errorMessage {
-								messageCard(error, isError: true)
-							}
-							if let saved = viewModel.savedMessage {
-								messageCard(saved, isError: false)
-							}
+								if let error = viewModel.errorMessage {
+									messageCard(error, isError: true)
+								}
+								if let saved = viewModel.savedMessage {
+									messageCard(saved, isError: false)
+								}
 
-							if let schema = viewModel.schema {
-								ForEach(schema.sections) { section in
-									let fields = visibleFields(
-										for: section,
-										schemaFields: schema.fields
-									)
-									if !fields.isEmpty {
-										fieldSection(section: section, fields: fields)
+								if let schema = viewModel.schema {
+									ForEach(schema.sections) { section in
+										let fields = visibleFields(
+											for: section,
+											schemaFields: schema.fields
+										)
+										if !fields.isEmpty {
+											fieldSection(section: section, fields: fields, width: geometry.size.width - 64)
+										}
 									}
 								}
 							}
+							.padding(16)
+							.padding(.bottom, 30)
 						}
-						.padding(16)
-						.padding(.bottom, 30)
-					}
-					.refreshable {
-						if !viewModel.isEditing {
-							await viewModel.load()
+						.refreshable {
+							if !viewModel.isEditing {
+								await viewModel.load()
+							}
 						}
 					}
 				}
@@ -6128,6 +6333,14 @@ struct Mango9LeadDetailFragment: View {
 		.navigationBarHidden(true)
 		.task {
 			await viewModel.load()
+		}
+		.alert("Status not updated", isPresented: Binding(
+			get: { viewModel.statusError != nil },
+			set: { if !$0 { viewModel.statusError = nil } }
+		)) {
+			Button("OK", role: .cancel) { viewModel.statusError = nil }
+		} message: {
+			Text(viewModel.statusError ?? "")
 		}
 		.confirmationDialog(
 			communicationTarget?.displayName ?? "Contact options",
@@ -6250,6 +6463,8 @@ struct Mango9LeadDetailFragment: View {
 							.frame(width: 21, height: 21)
 							.padding(10)
 					}
+					.disabled(viewModel.isSavingStatus || viewModel.isLoading)
+					.accessibilityLabel("Edit \(viewModel.recordKind.singular.lowercased())")
 				}
 			}
 		}
@@ -6262,7 +6477,7 @@ struct Mango9LeadDetailFragment: View {
 	}
 
 	private func leadHeader(_ lead: Mango9Lead) -> some View {
-		HStack(spacing: 14) {
+		HStack(alignment: .top, spacing: 14) {
 			ZStack {
 				Circle().fill(Color.orangeMain500)
 				Image("user-circle")
@@ -6276,7 +6491,12 @@ struct Mango9LeadDetailFragment: View {
 			VStack(alignment: .leading, spacing: 4) {
 				Text(lead.name.isEmpty ? viewModel.recordKind.emptyName : lead.name)
 					.default_text_style_800(styleSize: 16)
-					.lineLimit(1)
+					.fixedSize(horizontal: false, vertical: true)
+				if !viewModel.isEditing && !viewModel.statusOptions.isEmpty {
+					statusMenu
+				} else if !lead.status.isEmpty {
+					Text(lead.status).font(.subheadline.weight(.semibold)).foregroundStyle(Color.orangeMain500)
+				}
 				if !lead.phone.isEmpty {
 					Button {
 						presentCommunicationActions(
@@ -6316,15 +6536,6 @@ struct Mango9LeadDetailFragment: View {
 
 			Spacer()
 
-			if !lead.status.isEmpty {
-				Text(lead.status)
-					.font(.system(size: 9, weight: .bold))
-					.foregroundStyle(Color.orangeMain500)
-					.padding(.horizontal, 8)
-					.padding(.vertical, 5)
-					.background(Color.orangeMain100)
-					.cornerRadius(20)
-			}
 		}
 		.padding(16)
 		.background(Color.white)
@@ -6337,28 +6548,15 @@ struct Mango9LeadDetailFragment: View {
 
 	private func fieldSection(
 		section: Mango9LeadSchema.Section,
-		fields: [Mango9LeadSchema.Field]
+		fields: [Mango9LeadSchema.Field],
+		width: CGFloat
 	) -> some View {
-		VStack(alignment: .leading, spacing: 0) {
-			Text(section.label)
-				.default_text_style_800(styleSize: 15)
-				.padding(.horizontal, 14)
-				.padding(.vertical, 12)
-
-			Divider()
-
-			ForEach(Array(fields.enumerated()), id: \.element.id) { index, field in
+		Mango9LeadSectionCard(section: section) {
+			Mango9LeadFieldRows(fields: fields, values: viewModel.layoutValues, width: width) { field in
 				if viewModel.isEditing && field.editable {
 					editor(field)
-						.padding(.horizontal, 14)
-						.padding(.vertical, 10)
 				} else {
 					valueRow(field)
-						.padding(.horizontal, 14)
-						.padding(.vertical, 11)
-				}
-				if index < fields.count - 1 {
-					Divider().padding(.leading, 14)
 				}
 			}
 
@@ -6389,12 +6587,6 @@ struct Mango9LeadDetailFragment: View {
 				.clipShape(RoundedRectangle(cornerRadius: 12))
 				.padding(14)
 			}
-		}
-		.background(Color.white)
-		.cornerRadius(15)
-		.overlay {
-			RoundedRectangle(cornerRadius: 15)
-				.stroke(Color.gray200, lineWidth: 1)
 		}
 	}
 
@@ -6448,6 +6640,41 @@ struct Mango9LeadDetailFragment: View {
 		UIApplication.shared.open(mapsURL)
 	}
 
+	private var statusMenu: some View {
+		Menu {
+			ForEach(viewModel.statusOptions, id: \.self) { status in
+				Button {
+					Task { await viewModel.changeStatus(status) }
+				} label: {
+					if status == viewModel.currentStatus {
+						Label(status, systemImage: "checkmark")
+					} else { Text(status) }
+				}
+			}
+		} label: {
+			HStack(spacing: 6) {
+				Text(statusTitle)
+					.fixedSize(horizontal: false, vertical: true)
+				if viewModel.isSavingStatus { ProgressView().tint(Color.orangeMain500) }
+				else { Image(systemName: "chevron.down").font(.caption.weight(.semibold)) }
+			}
+			.font(.subheadline.weight(.semibold))
+			.foregroundStyle(Color.orangeMain500)
+			.padding(.horizontal, 9).padding(.vertical, 6)
+			.frame(minHeight: 44, alignment: .leading)
+			.background(Color.orangeMain100).cornerRadius(8)
+		}
+		.disabled(viewModel.isSavingStatus || viewModel.isLoading || viewModel.isSaving || viewModel.isDeleting)
+		.accessibilityLabel("Change \(viewModel.recordKind.singular.lowercased()) status")
+		.accessibilityValue(statusTitle)
+		.accessibilityHint("Choose a status to save it immediately")
+	}
+
+	private var statusTitle: String {
+		let status = viewModel.currentStatus
+		return status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Select status" : status
+	}
+
 	@ViewBuilder
 	private func valueRow(_ field: Mango9LeadSchema.Field) -> some View {
 		let rawValue = viewModel.values[field.key] ?? ""
@@ -6455,7 +6682,9 @@ struct Mango9LeadDetailFragment: View {
 			Text(field.label)
 				.default_text_style_700(styleSize: 11)
 				.foregroundStyle(Color.grayMain2c500)
-			if !rawValue.isEmpty && (field.type == "phone" || field.type == "email") {
+			if !viewModel.isEditing && field.key == viewModel.editableStatusField?.key && !viewModel.statusOptions.isEmpty {
+				statusMenu
+			} else if !rawValue.isEmpty && (field.type == "phone" || field.type == "email") {
 				Button {
 					presentCommunicationActions(
 						phone: field.type == "phone" ? rawValue : nil,

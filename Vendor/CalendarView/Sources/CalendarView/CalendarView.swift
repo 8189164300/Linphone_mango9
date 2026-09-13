@@ -12,6 +12,8 @@ import AnchoredPopup
 @available(iOS 18.0, *)
 public struct CalendarView<DayEvent: View, MonthDay: View, WeekSwitcherDay: View, Header: View>: View {
     @State var viewModel: CalendarViewModel
+    @State private var refreshTask: Task<Void, Never>?
+    @State private var requiresFreshRead = false
 
     @ViewBuilder var dayEventBuilder: (any CalendarEntity) -> DayEvent
     @ViewBuilder var monthDayBuilder: (MonthDayBuilderParams) -> MonthDay
@@ -128,8 +130,12 @@ public struct CalendarView<DayEvent: View, MonthDay: View, WeekSwitcherDay: View
             }
         }
         .onChange(of: idForUpdate) {
-            updateData()
+            updateData(force: true)
         }
+        .onChange(of: anchorDate) {
+            if displayMode == .month { updateData() }
+        }
+        .onDisappear { refreshTask?.cancel() }
         .onAppear {
             currentZoom = hoursFittingCurrentZoom ?? customizationParams.hoursToFit
             if displayMode == .week {
@@ -230,15 +236,20 @@ public struct CalendarView<DayEvent: View, MonthDay: View, WeekSwitcherDay: View
             }
     }
 
-    func updateData() {
-        Task {
-            // Mango9: refresh around the month actually being viewed, retaining
-            // the month scroller's neighboring snapshots after edits.
+    func updateData(force: Bool = false) {
+        requiresFreshRead = requiresFreshRead || force
+        refreshTask?.cancel()
+        refreshTask = Task { @MainActor in
+            // Coalesce navigation/metadata/layout callbacks into one read. Load
+            // only the visible month (+ boundary days in the model), not a quarter.
+            do { try await Task.sleep(nanoseconds: 75_000_000) } catch { return }
             let interval = displayMode == .month
-                ? DateInterval(start: anchorDate.startOfMonth.adding(.month, value: -1),
-                               end: anchorDate.startOfMonth.adding(.month, value: 2))
+                ? DateInterval(start: anchorDate.startOfMonth,
+                               end: anchorDate.startOfMonth.adding(.month, value: 1))
                 : displayMode.interval(fullscreenDate)
-            await viewModel.fetch(interval)
+            let forceRead = requiresFreshRead
+            requiresFreshRead = false
+            await viewModel.fetch(interval, force: forceRead)
         }
     }
 

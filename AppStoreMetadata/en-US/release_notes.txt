@@ -1,6 +1,8 @@
-• Manage appointments in list, Day, Week and Month views, with status updates, sharing and assignment
-• Customize appointment reminders and SMS and Team Chat notifications
-• Faster, more reliable contact loading and a refreshed contact detail page
-• Improved SMS stability, appointment layouts and call-history number formatting
-• Clear microphone permission guidance before calling
-• Compatible with iOS 15 and later
+• Open and search New Chat more smoothly, even with large contact lists
+• A more organized CRM record layout, with compact fields, clear section cards and quick status changes
+• A refreshed light calling screen with clearer active controls
+• Set business hours and default schedules, with closed hours shaded in your calendar
+• Keep your CRM time zone in sync with the web
+• Press and hold a calendar date or time to start an appointment with the details filled in
+• Improved calendar loading, recurring appointment indicators, status colors and zoomed text
+• Continued support for iOS 15 and later

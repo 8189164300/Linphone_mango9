@@ -245,19 +245,31 @@ struct Mango9CRMSettings: View {
 	}
 }
 
-private struct Mango9AppointmentTimezonePicker: View {
+struct Mango9AppointmentTimezonePicker: View {
 	@Binding var selection: String
-	let accountTimezone: String
+	var accountTimezone: String? = nil
+	@Environment(\.dismiss) private var dismiss
 	@State private var search = ""
 	var body: some View {
 		List {
-			Button { selection = "account" } label: { row("CRM default · \(accountTimezone)", id: "account") }
-			Button { selection = "device" } label: { row("Device · \(TimeZone.current.identifier)", id: "device") }
-			ForEach(TimeZone.knownTimeZoneIdentifiers.filter { search.isEmpty || $0.localizedCaseInsensitiveContains(search) }, id: \.self) { zone in
-				Button { selection = zone } label: { row(zone.replacingOccurrences(of: "_", with: " "), id: zone) }
+			if let accountTimezone {
+				Button { choose("account") } label: { row("CRM default · \(accountTimezone)", id: "account") }
+				Button { choose("device") } label: { row("Device · \(TimeZone.current.identifier)", id: "device") }
+			} else {
+				Button { choose(TimeZone.current.identifier) } label: { row("Use phone time zone · \(TimeZone.current.identifier)", id: TimeZone.current.identifier) }
+			}
+			ForEach(Self.matchingZones(search), id: \.self) { zone in
+				Button { choose(zone) } label: { row(zone.replacingOccurrences(of: "_", with: " "), id: zone) }
 			}
 		}.navigationTitle("Time zone").navigationBarTitleDisplayMode(.inline)
 			.navigationBarHidden(false).searchable(text: $search)
 	}
+	static func matchingZones(_ query: String) -> [String] {
+		let search = query.replacingOccurrences(of: "_", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+		return Set(TimeZone.knownTimeZoneIdentifiers + ["UTC"]).sorted().filter {
+			search.isEmpty || $0.replacingOccurrences(of: "_", with: " ").localizedCaseInsensitiveContains(search)
+		}
+	}
+	private func choose(_ zone: String) { selection = zone; dismiss() }
 	private func row(_ title: String, id: String) -> some View { HStack { Text(title).foregroundColor(.primary); Spacer(); if selection == id { Image(systemName: "checkmark").foregroundColor(.mango9Primary) } } }
 }

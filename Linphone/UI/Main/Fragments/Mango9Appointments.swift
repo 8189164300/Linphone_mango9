@@ -5,8 +5,60 @@ extension Notification.Name {
 }
 
 extension Mango9Appointment {
-	// Source is deliberately represented only by color, not a campaign/shared badge.
-	var tint: Color { origin == "campaign" ? .purple : .mango9Primary }
+	// Match the web calendar: CRM status color takes precedence over priority.
+	var tint: Color { Mango9AppointmentAppearance.color(Mango9AppointmentAppearance.rgb(for: self)) }
+}
+
+enum Mango9AppointmentAppearance {
+	static func statusRGB(_ value: String?) -> UInt32? {
+		guard var hex = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !hex.isEmpty else { return nil }
+		let named: [String: UInt32] = ["red": 0xff0000, "orange": 0xffa500, "green": 0x008000,
+			"blue": 0x0000ff, "purple": 0x800080, "gray": 0x808080, "grey": 0x808080,
+			"black": 0x000000, "white": 0xffffff, "yellow": 0xffff00]
+		if let value = named[hex] { return value }
+		if hex.hasPrefix("#") { hex.removeFirst() }
+		if hex.count == 3 { hex = hex.map { "\($0)\($0)" }.joined() }
+		guard hex.count == 6, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return nil }
+		return UInt32(hex, radix: 16)
+	}
+	static func priorityRGB(_ priority: String) -> UInt32 {
+		switch priority.lowercased() { case "high": return 0xff0000; case "medium": return 0xffa500; default: return 0x008000 }
+	}
+	static func rgb(for event: Mango9Appointment) -> UInt32 {
+		statusRGB(event.status?.color) ?? priorityRGB(event.priority)
+	}
+	static func color(_ rgb: UInt32) -> Color {
+		Color(red: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
+	}
+}
+
+struct Mango9CalendarLegend: View {
+	let statuses: [Mango9AppointmentStatus]
+	var body: some View {
+		VStack(alignment: .leading, spacing: 5) {
+			Divider()
+			Text("Status colors · priority when no color is set").font(.caption2).foregroundColor(.secondary)
+			ScrollView(.horizontal, showsIndicators: true) {
+				HStack(spacing: 12) {
+					Label("Recurring", systemImage: "repeat").foregroundColor(.secondary)
+					ForEach(statuses) { status in
+						if let rgb = Mango9AppointmentAppearance.statusRGB(status.color) { item(status.name, rgb: rgb) }
+					}
+					ForEach(["high", "medium", "low"], id: \.self) { priority in
+						item("\(priority.capitalized) priority", rgb: Mango9AppointmentAppearance.priorityRGB(priority))
+					}
+				}.font(.caption2).fixedSize(horizontal: true, vertical: false).padding(.bottom, 3)
+			}
+		}.padding(.horizontal, 16).padding(.bottom, 6).background(Color(.systemBackground))
+			.fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("appointments.legend")
+	}
+	private func item(_ label: String, rgb: UInt32) -> some View {
+		HStack(spacing: 4) {
+			Circle().fill(Mango9AppointmentAppearance.color(rgb)).frame(width: 7, height: 7)
+				.overlay(Circle().stroke(Color.primary.opacity(0.15), lineWidth: 0.5))
+			Text(label).foregroundColor(.secondary)
+		}.accessibilityElement(children: .combine)
+	}
 }
 
 /// Presentation only. Dates remain authoritative and priority never overrides
@@ -67,27 +119,63 @@ enum Mango9AppointmentAgenda {
 	}
 }
 
+/// Capture the form context before presentation, without changing calendar navigation.
+struct Mango9AppointmentCreation: Identifiable {
+	let id = UUID()
+	let session: Mango9Session
+	let metadata: Mango9CalendarMetadata
+	let contact: Mango9AppointmentContact?
+	let date: Date
+	let timezone: TimeZone?
+
+	static func start(on day: Date, timezone: TimeZone, calendar: Calendar = .current) -> Date {
+		var components = calendar.dateComponents([.era, .year, .month, .day], from: day)
+		var target = calendar; target.timeZone = timezone
+		components.hour = 9; components.minute = 0; components.second = 0
+		return target.date(from: components) ?? day
+	}
+}
+
 @MainActor final class Mango9AppointmentsStore: ObservableObject {
 	@Published var events: [Mango9Appointment] = []
 	@Published var metadata: Mango9CalendarMetadata?
+	@Published var businessHours: Mango9BusinessHours?
 	@Published var error: String?
 	@Published var calendarError: String?
+	private(set) var listCapacityExceeded = false
 	@Published var loading = false
 	@Published var calendarRevision = UUID()
 	private(set) var session: Mango9Session?
 	private var generation = UUID()
+	private var hoursGeneration = UUID()
 	let contact: Mango9AppointmentContact?
 	let transport: URLSession
 
 	init(contact: Mango9AppointmentContact? = nil, transport: URLSession = .shared) { self.contact = contact; self.transport = transport }
 
+	var canCreate: Bool {
+		guard let session else { return false }
+		return Mango9SessionStore.isActive(session) && metadata?.capabilities.create == true && !loading && (error == nil || listCapacityExceeded)
+	}
+
+	func creation(on date: Date, calendarSelection: Bool = false) -> Mango9AppointmentCreation? {
+		guard canCreate, let session, let metadata else { return nil }
+		// The calendar is drawn in device time. Keep the editor in that same zone
+		// for a selected slot; the + button still uses the user's CRM default.
+		return Mango9AppointmentCreation(session: session, metadata: metadata, contact: contact,
+			date: date, timezone: calendarSelection ? .current : nil)
+	}
+
 	func reset() {
 		generation = UUID()
+		hoursGeneration = UUID()
 		session = nil
 		events = []
 		metadata = nil
+		businessHours = nil
 		error = nil
 		calendarError = nil
+		listCapacityExceeded = false
 		loading = false
 		calendarRevision = UUID()
 	}
@@ -99,24 +187,34 @@ enum Mango9AppointmentAgenda {
 		if session.map(Mango9CalendarAPI.accountKey) != Mango9CalendarAPI.accountKey(current) { reset() }
 		session = current
 		let requestID = UUID()
+		let requestedHoursGeneration = hoursGeneration
 		generation = requestID
 		loading = true
 		error = nil
+		listCapacityExceeded = false
 		// Keep the same-account sheet's context mounted during a background read.
 		// Clearing it here destroys the detail/editor and loses local UI state.
 		defer { if generation == requestID { loading = false } }
+		var confirmedMetadata: Mango9CalendarMetadata?
 		do {
 			let context = try await Mango9CalendarAPI.send(Mango9CalendarMetadata.self, session: current, path: "metadata", transport: transport)
+			confirmedMetadata = context
 			let range = Self.monthRange(month)
-			let values = try await Mango9CalendarAPI.events(session: current, start: range.start, end: range.end, contactID: contact?.id, transport: transport)
+			let values = try await Mango9CalendarAPI.displayEvents(session: current, start: range.start, end: range.end, contactID: contact?.id, transport: transport)
 			guard generation == requestID, Mango9SessionStore.isActive(current), !Task.isCancelled else { return }
 			metadata = context
+			if hoursGeneration == requestedHoursGeneration { businessHours = context.businessHoursSettings }
+			else { metadata?.businessHoursSettings = businessHours; if let businessHours { metadata?.timezone = businessHours.timezone } }
 			events = values
 			calendarRevision = UUID()
 		} catch {
 			guard generation == requestID, !Task.isCancelled else { return }
+			listCapacityExceeded = (error as? Mango9CalendarFailure)?.code == "too_many_occurrences"
 			// Do not leave revoked/shared appointments visible after a failed refresh.
-			metadata = nil
+			// A local display-capacity limit is not an authentication failure. Keep
+			// freshly confirmed permissions so Day/Week details remain usable.
+			metadata = listCapacityExceeded ? confirmedMetadata : nil
+			businessHours = metadata?.businessHoursSettings
 			events = []
 			self.error = error.localizedDescription
 			calendarRevision = UUID()
@@ -125,6 +223,12 @@ enum Mango9AppointmentAgenda {
 
 	static func monthRange(_ date: Date) -> DateInterval {
 		Calendar.current.dateInterval(of: .month, for: date)!
+	}
+	func acceptSavedHours(_ hours: Mango9BusinessHours) {
+		hoursGeneration = UUID()
+		businessHours = hours
+		metadata?.businessHoursSettings = hours
+		metadata?.timezone = hours.timezone
 	}
 }
 
@@ -137,7 +241,9 @@ struct Mango9AppointmentsFragment: View {
 	@State private var calendarMode = false
 	@State private var visibleCalendarDate = Date()
 	@State private var selected: Mango9Appointment?
-	@State private var creating = false
+	@State private var creation: Mango9AppointmentCreation?
+	@State private var showingHours = false
+	@State private var closedHoursMessage: String?
 	@State private var statusID = -1
 	@State private var search = ""
 	@State private var wasBackgrounded = false
@@ -154,7 +260,7 @@ struct Mango9AppointmentsFragment: View {
 		_date = State(initialValue: date)
 		_visibleCalendarDate = State(initialValue: date)
 		_calendarMode = State(initialValue: calendarMode)
-		_creating = State(initialValue: creating)
+		_creation = State(initialValue: creating ? store.creation(on: date) : nil)
 	}
 
 	private var filtered: [Mango9Appointment] {
@@ -194,7 +300,7 @@ struct Mango9AppointmentsFragment: View {
 					}.padding(8).background(Color(.secondarySystemGroupedBackground)).cornerRadius(12)
 				}
 			}.padding(16)
-			if let error = store.error ?? (calendarMode ? store.calendarError : nil) {
+			if let error = (calendarMode && store.listCapacityExceeded ? store.calendarError : store.error ?? (calendarMode ? store.calendarError : nil)) {
 				HStack(alignment: .top, spacing: 8) {
 					Image(systemName: "exclamationmark.triangle").foregroundColor(.orange)
 					Text(error).font(.caption).foregroundColor(.secondary).frame(maxWidth: .infinity, alignment: .leading)
@@ -205,7 +311,9 @@ struct Mango9AppointmentsFragment: View {
 				if #available(iOS 18, *) {
 					Mango9ExyteCalendar(session: store.session, contactID: store.contact?.id,
 						date: $date, revision: store.calendarRevision, onSelect: { selected = $0 },
-						onError: { store.calendarError = $0 }, onVisibleMonth: { visibleCalendarDate = $0 }, transport: store.transport)
+						onError: { store.calendarError = $0 }, onVisibleMonth: { visibleCalendarDate = $0 },
+						onCreate: store.canCreate ? createOnCalendarDate : nil,
+						onCreateAtTime: store.canCreate ? createAtCalendarTime : nil, transport: store.transport, businessHours: store.businessHours)
 						.id(store.session.map(Mango9CalendarAPI.accountKey) ?? "calendar-no-account")
 						.accessibilityIdentifier("appointments.calendar")
 				} else {
@@ -213,8 +321,13 @@ struct Mango9AppointmentsFragment: View {
 						date: $date, revision: store.calendarRevision,
 						firstWeekday: preferencesStore.value(for: store.session)?.calendarFirstWeekday ?? Calendar.current.firstWeekday,
 						onSelect: { selected = $0 }, onError: { store.calendarError = $0 },
-						onVisibleMonth: { visibleCalendarDate = $0 }, transport: store.transport)
+						onVisibleMonth: { visibleCalendarDate = $0 }, onCreate: store.canCreate ? createOnCalendarDate : nil,
+						onCreateAtTime: store.canCreate ? createAtCalendarTime : nil, transport: store.transport, businessHours: store.businessHours)
 						.id(store.session.map(Mango9CalendarAPI.accountKey) ?? "calendar-no-account")
+				}
+				Mango9CalendarLegend(statuses: store.metadata?.statuses ?? [])
+				if store.businessHours?.configured == true {
+					Label("Shaded time is outside business hours", systemImage: "clock").font(.caption2).foregroundColor(.secondary).padding(.bottom, 4)
 				}
 			} else {
 				// Update countdown/order locally, without another API request, changing
@@ -246,7 +359,7 @@ struct Mango9AppointmentsFragment: View {
 			refreshID = UUID()
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in
-			selected = nil; creating = false; statusID = -1; search = ""; store.reset()
+			selected = nil; creation = nil; showingHours = false; statusID = -1; search = ""; store.reset()
 			refreshID = UUID()
 		}
 		.sheet(item: $selected) { event in
@@ -254,29 +367,61 @@ struct Mango9AppointmentsFragment: View {
 				Mango9AppointmentDetail(event: event, session: session, metadata: metadata)
 			}
 		}
-		.sheet(isPresented: $creating) {
-			if let session = store.session, let metadata = store.metadata {
-				Mango9AppointmentEditor(session: session, metadata: metadata, contact: store.contact, date: date)
+		.sheet(isPresented: $showingHours) {
+			if let session = store.session {
+				Mango9BusinessHoursEditor(session: session, transport: store.transport) { saved in
+					guard Mango9SessionStore.isActive(session) else { return }
+					store.acceptSavedHours(saved)
+				}
+			}
+		}
+		.alert("Outside business hours", isPresented: Binding(get: { closedHoursMessage != nil }, set: { if !$0 { closedHoursMessage = nil } })) {
+			Button("OK", role: .cancel) {}
+		} message: { Text(closedHoursMessage ?? "") }
+		.sheet(item: $creation) { request in
+			if Mango9SessionStore.isActive(request.session) {
+				Mango9AppointmentEditor(session: request.session, metadata: request.metadata, contact: request.contact,
+					date: request.date, initialTimezone: request.timezone)
 			}
 		}
 	}
 
+	private func createOnCalendarDate(_ day: Date) {
+		var start = Mango9AppointmentCreation.start(on: day, timezone: .current)
+		if let hours = store.businessHours, hours.configured, !hours.allows(start: start, end: start.addingTimeInterval(1800)) {
+			guard let opening = hours.firstStart(on: day) else { explainClosedHours(); return }
+			start = opening
+		}
+		createAtCalendarTime(start)
+	}
+	private func createAtCalendarTime(_ time: Date) {
+		guard selected == nil, creation == nil, !showingHours else { return }
+		if let hours = store.businessHours, !hours.allows(start: time, end: time.addingTimeInterval(1800)) { explainClosedHours(); return }
+		creation = store.creation(on: time, calendarSelection: true)
+	}
+	private func explainClosedHours() {
+		closedHoursMessage = "Choose an open time for a 30-minute appointment, or use + to enter a different duration. You can change your schedule using the business hours button. Hours follow your CRM account’s time zone."
+	}
+
 	private var header: some View {
-		HStack(spacing: 10) {
+		HStack(spacing: 4) {
 			Button { presentationMode.wrappedValue.dismiss() } label: {
 				Image(systemName: "chevron.left").font(.title3).frame(width: 44, height: 44)
 			}.accessibilityLabel("Back")
 			VStack(alignment: .leading, spacing: 2) {
-				Text("Appointments").font(.title2.bold()).foregroundColor(.primary)
+				Text("Appointments").font(.title2.bold()).foregroundColor(.primary).lineLimit(1).minimumScaleFactor(0.7)
 				Text(store.contact?.displayName ?? "Your CRM calendar").font(.caption).foregroundColor(.secondary).lineLimit(1)
 			}
 			Spacer()
+			Button { showingHours = true } label: {
+				Image(systemName: "clock.badge.checkmark").frame(width: 36, height: 44)
+			}.disabled(store.session == nil).accessibilityLabel("Business hours").accessibilityIdentifier("appointments.businessHours")
 			Button { date = Date() } label: {
 				Image(systemName: "calendar").opacity(store.loading ? 0 : 1)
 					.overlay { if store.loading { ProgressView() } }.frame(width: 36, height: 44)
 			}.disabled(store.loading).accessibilityLabel(store.loading ? "Loading appointments" : "Today")
-			Button { creating = true } label: { Image(systemName: "plus").font(.title3.bold()).frame(width: 44, height: 44) }
-				.disabled(store.metadata?.capabilities.create != true || store.loading)
+			Button { creation = store.creation(on: date) } label: { Image(systemName: "plus").font(.title3.bold()).frame(width: 44, height: 44) }
+				.disabled(!store.canCreate)
 				.accessibilityLabel("Create appointment").accessibilityIdentifier("appointments.create")
 		}.padding(.horizontal, 8).padding(.vertical, 8).background(Color(.systemBackground))
 	}
@@ -299,7 +444,7 @@ struct Mango9AppointmentsFragment: View {
 					else if section.bucket == .closed { Text("Completed or closed") }
 					Text(section.day, format: .dateTime.weekday(.wide).month(.abbreviated).day())
 				}.textCase(nil)) {
-					ForEach(section.events) { event in
+					ForEach(section.events, id: \.displayID) { event in
 						Button { selected = event } label: { Mango9AppointmentRow(event: event, now: now) }.buttonStyle(.plain)
 					}
 				}
@@ -338,13 +483,10 @@ struct Mango9AppointmentRow: View {
 		let name = event.status?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 		return name.isEmpty ? "Status not set" : name
 	}
-	private var statusColor: Color {
-		let hex = event.status?.color?.trimmingCharacters(in: CharacterSet(charactersIn: "#")) ?? ""
-		guard hex.count == 6, let rgb = UInt32(hex, radix: 16) else { return .mango9Primary }
-		return Color(red: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
-	}
+	private var statusColor: Color { event.tint }
 	private var indicators: some View {
 		HStack(spacing: 6) {
+			if event.isRecurring { Image(systemName: "repeat").foregroundColor(event.tint).accessibilityLabel("Recurring appointment") }
 			Image(systemName: activityIcon).foregroundColor(.purple)
 				.accessibilityLabel(event.activity.replacingOccurrences(of: "_", with: " "))
 			if !event.priority.isEmpty {
@@ -377,7 +519,6 @@ struct Mango9AppointmentRow: View {
 					Label(timing, systemImage: dueNow ? "clock.badge.exclamationmark" : "clock")
 						.font(.caption.weight(.semibold)).foregroundColor(dueNow ? .orange : .mango9Primary)
 				}
-				if event.isRecurring { Label("Recurring · manage on web", systemImage: "repeat").font(.caption).foregroundColor(.secondary) }
 			}
 		}.padding(.leading, 14).padding(.vertical, 10)
 			.overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 3).fill(event.tint).frame(width: 4) }
@@ -486,7 +627,7 @@ struct Mango9AppointmentDetail: View {
 		busy = true
 		defer { busy = false }
 		do {
-			event = try await Mango9CalendarAPI.send(Mango9Appointment.self, session: session, path: "events/\(event.id)", transport: transport)
+			event = try await Mango9CalendarAPI.send(Mango9Appointment.self, session: session, path: "events/\(event.id)", transport: transport).retainingOccurrence(from: event)
 			error = nil
 			reminderError = nil
 			if metadata.capabilities.inAppReminders == true && !event.isRecurring {
@@ -574,6 +715,7 @@ struct Mango9AppointmentEditor: View {
 	let session: Mango9Session
 	let metadata: Mango9CalendarMetadata
 	let event: Mango9Appointment?
+	let initialTimezone: TimeZone?
 	@State private var title: String
 	@State private var notes: String
 	@State private var start: Date
@@ -594,8 +736,9 @@ struct Mango9AppointmentEditor: View {
 	@State private var confirmAssignment = false
 
 	init(session: Mango9Session, metadata: Mango9CalendarMetadata, event: Mango9Appointment? = nil,
-		contact: Mango9AppointmentContact? = nil, date: Date = Date()) {
+		contact: Mango9AppointmentContact? = nil, date: Date = Date(), initialTimezone: TimeZone? = nil) {
 		self.session = session; self.metadata = metadata; self.event = event
+		self.initialTimezone = initialTimezone
 		_title = State(initialValue: event?.title ?? "")
 		_notes = State(initialValue: event?.description ?? "")
 		let start = event?.startAt ?? date
@@ -612,7 +755,13 @@ struct Mango9AppointmentEditor: View {
 	}
 
 	private var canEdit: Bool { event?.permissions.canEdit ?? true }
-	private var editingTimezone: TimeZone { event == nil ? (preferencesStore.value(for: session)?.appointmentTimezone ?? TimeZone(identifier: metadata.timezone) ?? .current) : .current }
+	private var editingTimezone: TimeZone {
+		guard event == nil else { return .current }
+		if let initialTimezone { return initialTimezone }
+		let preferences = preferencesStore.value(for: session)
+		if preferences == nil || preferences?.newAppointmentTimezone == "account" { return TimeZone(identifier: metadata.timezone) ?? .current }
+		return preferences?.appointmentTimezone ?? .current
+	}
 	private var isOwner: Bool { event == nil || String(event!.ownerId) == session.userId }
 	private var valid: Bool { !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && end > start && (reminder < 0 || emailReminder || smsReminder) }
 
@@ -621,8 +770,8 @@ struct Mango9AppointmentEditor: View {
 			Form {
 				Section("Appointment") {
 					TextField("Title", text: $title).accessibilityIdentifier("appointment.title")
-					DatePicker("Starts", selection: $start)
-					DatePicker("Ends", selection: $end)
+					DatePicker("Starts", selection: $start).accessibilityIdentifier("appointment.starts")
+					DatePicker("Ends", selection: $end).accessibilityIdentifier("appointment.ends")
 					Text("Times shown in \(editingTimezone.identifier)").font(.caption).foregroundColor(.secondary)
 					Picker("Status", selection: $status) {
 						Text("No status").tag(0)

@@ -20,6 +20,9 @@ public struct CalendarEvent: CalendarEntity, Hashable {
     public var endDate: Date
     public var isAllDay: Bool
     public var isDetached: Bool
+    /// Presentation only: the provider has already expanded this occurrence.
+    /// Keep repeatType = .never so the calendar does not expand it again.
+    public var isRecurringOccurrence: Bool
 
     public var repeatType: RepeatType
     public var alertType: AlertType
@@ -43,6 +46,7 @@ public struct CalendarEvent: CalendarEntity, Hashable {
         endDate: Date? = nil,
         isAllDay: Bool = false,
         isDetached: Bool = false,
+        isRecurringOccurrence: Bool = false,
         repeatType: RepeatType = .never,
         alertType: AlertType = .none,
         priorityType: PriorityType = .none,
@@ -59,6 +63,7 @@ public struct CalendarEvent: CalendarEntity, Hashable {
         self.endDate = endDate ?? startDate.adding(.hour, value: 1)
         self.isAllDay = isAllDay
         self.isDetached = isDetached
+        self.isRecurringOccurrence = isRecurringOccurrence
         self.repeatType = repeatType
         self.alertType = alertType
         self.priorityType = priorityType

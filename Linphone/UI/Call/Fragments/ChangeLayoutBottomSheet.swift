@@ -42,20 +42,20 @@ struct ChangeLayoutBottomSheet: View {
 					Image(optionsChangeLayout == 1 ? "radio-button-fill" : "radio-button")
 						.renderingMode(.template)
 						.resizable()
-						.foregroundStyle(callViewModel.participantList.count > 5 ? Color.gray500 : .white)
+						.foregroundStyle(callViewModel.participantList.count > 5 ? Color.gray500 : Mango9CallStyle.accent)
 						.frame(width: 25, height: 25, alignment: .leading)
 						.padding(.all, 10)
 					
 					Text("conference_layout_grid")
-						.foregroundStyle(callViewModel.participantList.count > 5 ? Color.gray500 : .white)
-						.default_text_style_white(styleSize: 15)
+						.foregroundStyle(callViewModel.participantList.count > 5 ? Color.gray500 : Mango9CallStyle.accent)
+						.default_text_style(styleSize: 15)
 					
 					Spacer()
 					
 					Image("squares-four")
 						.renderingMode(.template)
 						.resizable()
-						.foregroundStyle(callViewModel.participantList.count > 5 ? Color.gray500 : .white)
+						.foregroundStyle(callViewModel.participantList.count > 5 ? Color.gray500 : Mango9CallStyle.accent)
 						.frame(width: 25, height: 25, alignment: .leading)
 						.padding(.all, 10)
 				}
@@ -73,19 +73,19 @@ struct ChangeLayoutBottomSheet: View {
 					Image(optionsChangeLayout == 2 ? "radio-button-fill" : "radio-button")
 						.renderingMode(.template)
 						.resizable()
-						.foregroundStyle(.white)
+						.foregroundStyle(Mango9CallStyle.accent)
 						.frame(width: 25, height: 25, alignment: .leading)
 						.padding(.all, 10)
 					
 					Text("conference_layout_active_speaker")
-						.default_text_style_white(styleSize: 15)
+						.default_text_style(styleSize: 15)
 					
 					Spacer()
 					
 					Image("picture-in-picture")
 						.renderingMode(.template)
 						.resizable()
-						.foregroundStyle(.white)
+						.foregroundStyle(Mango9CallStyle.accent)
 						.frame(width: 25, height: 25, alignment: .leading)
 						.padding(.all, 10)
 				}
@@ -105,19 +105,19 @@ struct ChangeLayoutBottomSheet: View {
 					Image(optionsChangeLayout == 3 ? "radio-button-fill" : "radio-button")
 						.renderingMode(.template)
 						.resizable()
-						.foregroundStyle(.white)
+						.foregroundStyle(Mango9CallStyle.accent)
 						.frame(width: 25, height: 25, alignment: .leading)
 						.padding(.all, 10)
 					
 					Text("conference_layout_audio_only")
-						.default_text_style_white(styleSize: 15)
+						.default_text_style(styleSize: 15)
 					
 					Spacer()
 					
 					Image("waveform")
 						.renderingMode(.template)
 						.resizable()
-						.foregroundStyle(.white)
+						.foregroundStyle(Mango9CallStyle.accent)
 						.frame(width: 25, height: 25, alignment: .leading)
 						.padding(.all, 10)
 				}
@@ -125,7 +125,7 @@ struct ChangeLayoutBottomSheet: View {
 			.frame(maxHeight: .infinity)
 		}
 		.padding(.horizontal, 20)
-		.background(Color.gray600)
+		.background(Mango9CallStyle.tray)
 		.frame(maxHeight: .infinity)
 	}
 }

@@ -18,8 +18,10 @@ class CalendarViewModel {
 
     private var eventProviders: [CalendarsProvider] = []
     private var calendarSelectionStore = FilterCalendarsStore()
-    private let preloadSize: Int = 4
+    private let preloadSize: Int = 6
     private var currentFetchTask: Task<Void, Never>?
+    private var fetchingInterval: DateInterval?
+    private var fetchGeneration = UUID()
 
     init(providers: [CalendarsProvider]) {
         eventProviders = providers
@@ -49,13 +51,20 @@ class CalendarViewModel {
 
     // MARK: - entities fetching
 
-    func fetch(_ interval: DateInterval) async {
+    func fetch(_ interval: DateInterval, force: Bool = false) async {
+        if !force, fetchingInterval == interval, let currentFetchTask {
+            await currentFetchTask.value
+            return
+        }
         currentFetchTask?.cancel()
+        let generation = UUID(); fetchGeneration = generation
+        fetchingInterval = interval
         let task = Task { @MainActor in
             await performFetch(interval)
         }
         currentFetchTask = task
         await task.value
+        if generation == fetchGeneration { currentFetchTask = nil; fetchingInterval = nil }
     }
 
     private func performFetch(_ interval: DateInterval) async {

@@ -27,6 +27,9 @@ struct StartConversationFragment: View {
 	@ObservedObject var magicSearch = MagicSearchSingleton.shared
 	
 	@StateObject private var startConversationViewModel = StartConversationViewModel()
+	@StateObject private var contactSearch = Mango9ConversationContactSearch()
+	@State private var contactPage = Mango9ConversationContactPage()
+	@State private var suggestionPage = Mango9ConversationContactPage()
 	
 	@EnvironmentObject var conversationsListViewModel: ConversationsListViewModel
 	
@@ -61,9 +64,7 @@ struct StartConversationFragment: View {
 							.padding(.top, 2)
 							.padding(.leading, -10)
 							.onTapGesture {
-								startConversationViewModel.searchField = ""
-								magicSearch.currentFilter = ""
-								magicSearch.searchForContacts()
+								contactSearch.cancel()
 								delayColorDismiss()
 								withAnimation {
 									isShowStartConversationFragment = false
@@ -91,8 +92,7 @@ struct StartConversationFragment: View {
 								.focused($isSearchFieldFocused)
 								.padding(.horizontal, 30)
 								.onChange(of: startConversationViewModel.searchField) { newValue in
-									magicSearch.currentFilter = newValue
-									magicSearch.searchForContacts()
+									contactSearch.update(newValue)
 								}
 							
 							HStack {
@@ -110,8 +110,6 @@ struct StartConversationFragment: View {
 								if !startConversationViewModel.searchField.isEmpty {
 									Button(action: {
 										startConversationViewModel.searchField = ""
-										magicSearch.currentFilter = ""
-										magicSearch.searchForContacts()
 									}, label: {
 										Image("x")
 											.renderingMode(.template)
@@ -174,8 +172,10 @@ struct StartConversationFragment: View {
 						}
 						
 						ZStack {
-							ScrollView {
-								if !ContactsManager.shared.lastSearch.isEmpty {
+							// List recycles off-screen rows. A plain ScrollView eagerly
+							// mounted every avatar and queued thousands of photo reads.
+							List {
+								if !contactsManager.avatarListModel.isEmpty {
 									HStack(alignment: .center) {
 										Text("contacts_list_all_contacts_title")
 											.default_text_style_800(styleSize: 16)
@@ -186,27 +186,10 @@ struct StartConversationFragment: View {
 									.padding(.horizontal, 16)
 								}
 								
-								ContactsListFragment(showingSheet: .constant(false), startCallFunc: { addr in
-									CoreContext.shared.doOnCoreQueue { core in
-										ContactAvatarModel.getAvatarModelFromAddress(address: addr) { contactAvatarModel in
-											self.contactAvatarModel = contactAvatarModel
-											DispatchQueue.main.async {
-												if contactAvatarModel.addresses.count == 1 && contactAvatarModel.phoneNumbersWithLabel.isEmpty {
-													startConversationViewModel.createOneToOneChatRoomWith(remote: addr)
-												} else if contactAvatarModel.addresses.isEmpty && contactAvatarModel.phoneNumbersWithLabel.count == 1 {
-													if let firstPhoneNumbersWithLabel = contactAvatarModel.phoneNumbersWithLabel.first, let phoneAddr = core.interpretUrl(url: firstPhoneNumbersWithLabel.phoneNumber, applyInternationalPrefix: LinphoneUtils.applyInternationalPrefix(core: core)) {
-														startConversationViewModel.createOneToOneChatRoomWith(remote: phoneAddr)
-													}
-												} else {
-													DispatchQueue.main.async {
-														isShowSipAddressesPopup = true
-													}
-												}
-											}
-										}
-									}
-								})
-								.padding(.horizontal, 16)
+								ContactsListFragment(showingSheet: .constant(false), startCallFunc: { _ in },
+									selectContact: selectRecipient, rowLimit: contactPage.limit, onRowAppear: { index in
+										contactPage.reveal(near: index, total: contactsManager.avatarListModel.count)
+									})
 								
 								if !contactsManager.lastSearchSuggestions.isEmpty {
 									HStack(alignment: .center) {
@@ -221,6 +204,8 @@ struct StartConversationFragment: View {
 									suggestionsList
 								}
 							}
+							.listStyle(.plain)
+							.accessibilityIdentifier("new-conversation-contacts")
 							
 							if magicSearch.isLoading {
 								ProgressView()
@@ -251,14 +236,14 @@ struct StartConversationFragment: View {
 						}
 						.frame(maxWidth: .infinity)
 						
-						ForEach(0..<contactAvatarModel!.addresses.count, id: \.self) { index in
+						ForEach(contactAvatarModel!.addresses, id: \.self) { destination in
 							HStack {
 								HStack {
 									VStack {
 										Text(String(localized: "sip_address") + ":")
 											.default_text_style_700(styleSize: 14)
 											.frame(maxWidth: .infinity, alignment: .leading)
-										Text(contactAvatarModel!.addresses[index].dropFirst(4))
+										Text(destination.hasPrefix("sip:") ? String(destination.dropFirst(4)) : destination)
 											.default_text_style(styleSize: 14)
 											.frame(maxWidth: .infinity, alignment: .leading)
 											.lineLimit(1)
@@ -271,23 +256,18 @@ struct StartConversationFragment: View {
 							}
 							.background(.white)
 							.onTapGesture {
-								do {
-									let addr = try Factory.Instance.createAddress(addr: contactAvatarModel!.addresses[index])
-									startConversationViewModel.createOneToOneChatRoomWith(remote: addr)
-								} catch {
-									Log.error("[StartConversationFragment] unable to create address for a new outgoing call : \(contactAvatarModel!.addresses[index]) \(error) ")
-								}
+								createConversation(to: destination)
 							}
 						}
 						
-						ForEach(0..<contactAvatarModel!.phoneNumbersWithLabel.count, id: \.self) { index in
+						ForEach(Array(contactAvatarModel!.phoneNumbersWithLabel.enumerated()), id: \.offset) { _, entry in
 							HStack {
 								HStack {
 									VStack {
 										Text(String(localized: "phone_number") + ":")
 											.default_text_style_700(styleSize: 14)
 											.frame(maxWidth: .infinity, alignment: .leading)
-										Text(contactAvatarModel!.phoneNumbersWithLabel[index].phoneNumber)
+										Text(entry.phoneNumber)
 											.default_text_style(styleSize: 14)
 											.frame(maxWidth: .infinity, alignment: .leading)
 											.lineLimit(1)
@@ -300,15 +280,7 @@ struct StartConversationFragment: View {
 							}
 							.background(.white)
 							.onTapGesture {
-								CoreContext.shared.doOnCoreQueue { core in
-									if let phoneAddr = core.interpretUrl(url: contactAvatarModel!.phoneNumbersWithLabel[index].phoneNumber, applyInternationalPrefix: LinphoneUtils.applyInternationalPrefix(core: core)) {
-										DispatchQueue.main.async {
-											startConversationViewModel.createOneToOneChatRoomWith(remote: phoneAddr)
-										}
-									} else {
-										Log.error("[StartConversationFragment] unable to create address (interpret Url for phone number) for a new outgoing call : \(contactAvatarModel!.addresses[index])")
-									}
-								}
+								createConversation(to: entry.phoneNumber)
 							}
 						}
 					}
@@ -331,9 +303,7 @@ struct StartConversationFragment: View {
 					PopupLoadingView()
 						.background(.black.opacity(0.65))
 						.onDisappear {
-							startConversationViewModel.searchField = ""
-							MagicSearchSingleton.shared.currentFilter = ""
-							MagicSearchSingleton.shared.searchForContacts()
+							contactSearch.cancel()
 							delayColorDismiss()
 							
 							isShowStartConversationFragment = false
@@ -346,15 +316,47 @@ struct StartConversationFragment: View {
 				}
 			}
 			.onAppear {
-				if !magicSearch.currentFilter.isEmpty || (self.contactsManager.lastSearch.isEmpty && self.contactsManager.lastSearchSuggestions.isEmpty) {
-					magicSearch.currentFilter = ""
-					magicSearch.searchForContacts()
+				if magicSearch.currentFilter != startConversationViewModel.searchField || (contactsManager.avatarListModel.isEmpty && contactsManager.lastSearchSuggestions.isEmpty) {
+					contactSearch.update(startConversationViewModel.searchField, immediately: true)
 				}
 			}
+			.onDisappear { contactSearch.cancel() }
+			.onReceive(contactsManager.$avatarListModel) { _ in contactPage.reset() }
+			.onReceive(contactsManager.$lastSearchSuggestions) { _ in suggestionPage.reset() }
 			.navigationTitle("")
 			.navigationBarHidden(true)
 		}
 		.navigationViewStyle(StackNavigationViewStyle())
+	}
+
+	static func recipientDestinations(_ contact: ContactAvatarModel) -> [String] {
+		contact.addresses + contact.phoneNumbersWithLabel.map(\.phoneNumber)
+	}
+
+	private func selectRecipient(_ contact: ContactAvatarModel) {
+		// The tapped row already owns the contact. Don't scan the whole SDK
+		// address book again to rediscover it (or match a namesake by accident).
+		let destinations = Self.recipientDestinations(contact)
+		if destinations.count == 1, let destination = destinations.first {
+			createConversation(to: destination)
+		} else if !destinations.isEmpty {
+			contactAvatarModel = contact
+			isShowSipAddressesPopup = true
+		}
+	}
+
+	private func createConversation(to destination: String) {
+		CoreContext.shared.doOnCoreQueue { core in
+			let address = core.interpretUrl(url: destination, applyInternationalPrefix: LinphoneUtils.applyInternationalPrefix(core: core))
+			DispatchQueue.main.async {
+				guard let address else {
+					ToastViewModel.shared.show("Failed_to_create_conversation_error")
+					return
+				}
+				isShowSipAddressesPopup = false
+				startConversationViewModel.createOneToOneChatRoomWith(remote: address)
+			}
+		}
 	}
 	
 	@Sendable private func delayColor() async {
@@ -370,24 +372,22 @@ struct StartConversationFragment: View {
 	}
 	
 	var suggestionsList: some View {
-		ForEach(0..<contactsManager.lastSearchSuggestions.count, id: \.self) { index in
+		// Capture each result, not an index into a list that may shrink while
+		// SwiftUI is still displaying the previous search results.
+		let results = contactsManager.lastSearchSuggestions
+		let limit = min(results.count, suggestionPage.limit)
+		return ForEach(results.prefix(limit), id: \.getCobject) { suggestion in
 			Button {
-				if let address = contactsManager.lastSearchSuggestions[index].address {
-					startConversationViewModel.createOneToOneChatRoomWith(remote: address)
+				CoreContext.shared.doOnCoreQueue { _ in
+					if let address = suggestion.address {
+						DispatchQueue.main.async { startConversationViewModel.createOneToOneChatRoomWith(remote: address) }
+					}
 				}
 			} label: {
 				HStack {
-					if index < contactsManager.lastSearchSuggestions.count
-						&& contactsManager.lastSearchSuggestions[index].address != nil {
-						let name = contactsManager.suggestionDisplayName(
-							for: contactsManager.lastSearchSuggestions[index]
-						)
-						Image(uiImage: contactsManager.textToImage(
-							firstName: name,
-							lastName: ""))
-						.resizable()
-						.frame(width: 45, height: 45)
-						.clipShape(Circle())
+					if suggestion.address != nil {
+						let name = contactsManager.suggestionDisplayName(for: suggestion)
+						Mango9ContactInitials(name: name, size: 45)
 						
 						Text(name)
 							.default_text_style(styleSize: 16)
@@ -410,6 +410,10 @@ struct StartConversationFragment: View {
 			}
 			.buttonStyle(.borderless)
 			.listRowSeparator(.hidden)
+			.onAppear {
+				guard limit > 0, suggestion.getCobject == results[max(0, limit - 10)].getCobject else { return }
+				suggestionPage.reveal(near: limit - 1, total: results.count)
+			}
 		}
 	}
 }

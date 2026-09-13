@@ -490,7 +490,7 @@ enum Mango9CRMAPI {
 		return dashboard
 	}
 
-	static func refresh(session: Mango9Session) async throws -> Mango9Session {
+	static func refresh(session: Mango9Session, transport: URLSession = .shared) async throws -> Mango9Session {
 		guard let baseURL = URL(string: session.crmApiBaseUrl) else {
 			throw Mango9CRMAPIError.invalidConfiguration
 		}
@@ -506,7 +506,7 @@ enum Mango9CRMAPI {
 			withJSONObject: ["refresh_token": session.refreshToken]
 		)
 
-		let envelope: Envelope<RefreshPayload> = try await send(request)
+		let envelope: Envelope<RefreshPayload> = try await send(request, transport: transport)
 		guard envelope.success, let tokens = envelope.data?.tokens else {
 			throw Mango9CRMAPIError.unauthorized
 		}
@@ -530,9 +530,10 @@ enum Mango9CRMAPI {
 	}
 
 	static func send<Payload: Decodable>(
-		_ request: URLRequest
+		_ request: URLRequest,
+		transport: URLSession = .shared
 	) async throws -> Envelope<Payload> {
-		let (data, response) = try await URLSession.shared.data(for: request)
+		let (data, response) = try await transport.data(for: request)
 		guard let httpResponse = response as? HTTPURLResponse else {
 			throw Mango9CRMAPIError.server
 		}

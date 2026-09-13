@@ -98,9 +98,9 @@ public struct DayLayout<Content: View>: View {
                 Color.clear.frame(width: gutterWidth, height: 1)
                 ForEach(0..<daysCount, id: \.self) { index in
                     let day = anchorDate.adding(.day, value: index).startOfDay
-                    Button { onSelectDay(day) } label: {
+                    CalendarDateButton(date: day, onHold: customizationParams.dateLongPressClosure, onTap: { onSelectDay(day) }) {
                         DayColumnHeading(date: day, daysCount: daysCount)
-                    }.buttonStyle(.plain).frame(maxWidth: .infinity)
+                    }.frame(maxWidth: .infinity)
                 }
             }.padding(.trailing, horizontalPadding)
             // all day events
@@ -249,10 +249,21 @@ public struct DayLayout<Content: View>: View {
                     horSpacing: customizationParams.horSpacing,
                     verSpacing: customizationParams.verSpacing,
                     trailingPadding: customizationParams.horSpacing,
+                    minimumTimedEventHeight: customizationParams.minimumTimedEventHeight,
                     dayEventBuilder: dayEventBuilder
                 )
                 .padding(.leading, 2)
                 .frame(width: cellWidth)
+                .background(alignment: .top) {
+                    if let onCreate = customizationParams.timeSlotLongPressClosure {
+                        CalendarTimeSlots(day: date, hourHeight: oneHourHeight, onCreate: onCreate)
+                    }
+                }
+                .background(alignment: .top) {
+                    if let background = customizationParams.timedDayBackground {
+                        background(date, oneHourHeight).allowsHitTesting(false)
+                    }
+                }
                 .overlay(alignment: .leading) { theme.day.separators.frame(width: 1) }
                 .overlay(alignment: .topLeading) {
                     TimelineView(.periodic(from: .now, by: 60)) { context in

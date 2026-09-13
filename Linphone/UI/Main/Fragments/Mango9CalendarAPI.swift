@@ -1,12 +1,12 @@
 import Foundation
 
-struct Mango9AppointmentStatus: Decodable, Identifiable, Equatable {
+struct Mango9AppointmentStatus: Decodable, Identifiable, Equatable, Sendable {
 	let id: Int
 	let name: String
 	let color: String?
 }
 
-struct Mango9AppointmentContact: Decodable, Identifiable, Equatable {
+struct Mango9AppointmentContact: Decodable, Identifiable, Equatable, Sendable {
 	let id: Int
 	let name: String?
 	let kind: String
@@ -16,7 +16,7 @@ struct Mango9AppointmentContact: Decodable, Identifiable, Equatable {
 struct Mango9CalendarMetadata: Decodable {
 	struct Person: Decodable, Identifiable { let id: Int; let name: String }
 	struct Capabilities: Decodable { let create: Bool; let assign: Bool; let push: Bool; let inAppReminders: Bool? }
-	let timezone: String
+	var timezone: String
 	let statuses: [Mango9AppointmentStatus]
 	let activities: [String]
 	let priorities: [String]
@@ -25,10 +25,11 @@ struct Mango9CalendarMetadata: Decodable {
 	let shareRecipients: [Person]
 	let assignees: [Person]
 	let capabilities: Capabilities
+	var businessHoursSettings: Mango9BusinessHours? = nil
 }
 
-struct Mango9Appointment: Decodable, Identifiable {
-	struct Permissions: Decodable {
+struct Mango9Appointment: Decodable, Identifiable, Sendable {
+	struct Permissions: Decodable, Sendable {
 		let canEdit: Bool
 		let canDelete: Bool
 		let canAssign: Bool
@@ -36,14 +37,14 @@ struct Mango9Appointment: Decodable, Identifiable {
 		let canChangeContact: Bool
 		let readOnlyReason: String?
 	}
-	struct Recurrence: Decodable { let frequency: String; let weekdays: [Int] }
-	struct Reminder: Decodable { let minutesBefore: Int?; let channels: [String] }
+	struct Recurrence: Decodable, Sendable { let frequency: String; let weekdays: [Int] }
+	struct Reminder: Decodable, Sendable { let minutesBefore: Int?; let channels: [String] }
 	let id: Int
 	let ownerId: Int
 	let title: String
 	let description: String
-	let startAt: Date
-	let endAt: Date
+	var startAt: Date
+	var endAt: Date
 	let timezone: String
 	let activity: String
 	let priority: String
@@ -55,7 +56,16 @@ struct Mango9Appointment: Decodable, Identifiable {
 	let sharedByMeUserIds: [Int]
 	let permissions: Permissions
 	let revision: String
+	// Presentation identity is separate from the authoritative server event ID.
+	var occurrenceKey: String? = nil
+	var displayID: String { occurrenceKey ?? String(id) }
 	var isRecurring: Bool { recurrence.frequency != "none" }
+	func retainingOccurrence(from displayed: Self) -> Self {
+		guard isRecurring, id == displayed.id, revision == displayed.revision, displayed.occurrenceKey != nil else { return self }
+		var value = self
+		value.startAt = displayed.startAt; value.endAt = displayed.endAt; value.occurrenceKey = displayed.occurrenceKey
+		return value
+	}
 }
 
 struct Mango9AppointmentPage: Decodable {
@@ -120,6 +130,8 @@ struct Mango9CalendarFailure: LocalizedError {
 		case "account_changed": return "The active account changed. Reopen Appointments for the selected account."
 		case "overlap": return "That time overlaps another appointment. Nothing was changed. Choose a different time."
 		case "out_of_calendar": return "That time is outside the appointment owner's working hours. Nothing was changed."
+		case "hours_changed": return "Business hours changed on the web or another device. Reload them before saving."
+		case "timezone_legacy_events": return "Some older appointments have no saved time zone. Please correct those appointments on the web before changing the CRM time zone. Nothing was changed."
 		case "reminder_changed": return "Your reminder changed on another device. Refresh before trying again."
 		default:
 			if status == 401 { return "Your session expired. Please sign in again." }
@@ -148,12 +160,14 @@ enum Mango9CalendarAPI {
 	static func decoder() -> JSONDecoder {
 		let decoder = JSONDecoder()
 		decoder.keyDecodingStrategy = .convertFromSnakeCase
+		// One formatter pair per response, not two new formatters per event date.
+		let standard = ISO8601DateFormatter()
+		let fractional = ISO8601DateFormatter()
+		fractional.formatOptions.insert(.withFractionalSeconds)
 		decoder.dateDecodingStrategy = .custom { decoder in
 			let value = try decoder.singleValueContainer().decode(String.self)
-			let formatter = ISO8601DateFormatter()
-			if let date = formatter.date(from: value) { return date }
-			formatter.formatOptions.insert(.withFractionalSeconds)
-			guard let date = formatter.date(from: value) else {
+			if let date = standard.date(from: value) { return date }
+			guard let date = fractional.date(from: value) else {
 				throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid appointment date"))
 			}
 			return date
@@ -245,6 +259,10 @@ enum Mango9CalendarAPI {
 					if let contactID { query.append(.init(name: "contact_id", value: String(contactID))) }
 					if let snapshot { query.append(.init(name: "snapshot", value: snapshot)) }
 					let result = try await fetch(query)
+					guard result.pagination.page == page, result.events.count <= 100,
+						events.count + result.events.count <= 10_000 else {
+						throw Mango9CalendarFailure(status: 0, code: "invalid_pagination", message: "The calendar response could not be read safely. Please try again.")
+					}
 					if let snapshot, snapshot != result.snapshot {
 						throw Mango9CalendarFailure(status: 409, code: "snapshot_changed", message: "The calendar changed. Refresh to load the latest appointments.")
 					}
@@ -267,8 +285,8 @@ enum Mango9CalendarAPI {
 		}
 	}
 
-	/// Exyte preloads three months plus padding. Keep every API request within
-	/// its 93-day limit; collect all windows before replacing the displayed data.
+	/// Keep any requested display range within each API request's
+	/// 93-day limit; collect all windows before replacing the displayed data.
 	static func displayWindows(start: Date, end: Date) -> [DateInterval] {
 		guard end > start, end.timeIntervalSince(start) <= 366 * 86400 else { return [] }
 		var cursor = start
@@ -288,6 +306,17 @@ enum Mango9CalendarAPI {
 			let values = try await events(session: session, start: window.start, end: window.end, contactID: contactID, transport: transport)
 			for value in values { result[value.id] = value }
 		}
-		return result.values.sorted { $0.startAt < $1.startAt }
+		let masters = Array(result.values)
+		// Expansion is bounded and stays off the main actor. Never publish a partial
+		// range, including if navigation/account changes while this work is running.
+		let expansion = Task.detached(priority: .userInitiated) {
+			try Mango9CalendarOccurrences.expand(masters, start: start, end: end)
+		}
+		return try await withTaskCancellationHandler {
+			let values = try await expansion.value
+			try Task.checkCancellation()
+			guard Mango9SessionStore.isActive(session) else { throw Mango9CalendarFailure.accountChanged }
+			return values
+		} onCancel: { expansion.cancel() }
 	}
 }

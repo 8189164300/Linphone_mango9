@@ -16,9 +16,13 @@ public struct CalendarViewCustomizationParams {
 
     public var horSpacing: CGFloat = 4
     public var verSpacing: CGFloat = 4
+    public var minimumTimedEventHeight: CGFloat = 0
 
     public var headerBackground: HeaderBackground = .color(Color(.appAccentLight), 10)
     public var eventDetailsClosure: ((any CalendarEntity)->())?
+    public var dateLongPressClosure: ((Date) -> Void)?
+    public var timeSlotLongPressClosure: ((Date) -> Void)?
+    public var timedDayBackground: ((Date, CGFloat) -> AnyView)?
 
     public var customFontName: String? = nil
     public var useDynamicType: Bool = false

@@ -25,7 +25,7 @@ public struct MonthLayout<MonthDay: View>: View {
 
     // number of empty spaces for days of week before 1st of the month
     var inset: Int {
-        let startOfWeek = startOfMonth.startOfWeek(customizationParams.firstDayOfWeek)
+        let startOfWeek = startOfMonth.startOfWeek(viewModel.firstDayOfWeek ?? customizationParams.firstDayOfWeek)
         var count = startOfMonth.getWeekday() - startOfWeek.getWeekday()
         if count < 0 {
             count += 7
@@ -35,19 +35,14 @@ public struct MonthLayout<MonthDay: View>: View {
 
     public var body: some View {
         GeometryReader { g in
-            let maxMonthDay = startOfMonth.daysInMonth
-            let totalCount = inset + maxMonthDay
+            let days = Self.gridDates(containing: date, firstWeekday: viewModel.firstDayOfWeek ?? customizationParams.firstDayOfWeek)
             let rowHeight = g.size.height / CGFloat(numberOfCalendarRows())
 
             LazyVGrid(columns: columns, spacing: 0) {
-                ForEach(0..<totalCount, id: \.self) { index in
-                    if index < inset {
-                        Color.clear
-                    } else {
-                        let date = startOfMonth.adding(.day, value: index - inset)
-                        Button {
+                ForEach(days, id: \.self) { date in
+                        CalendarDateButton(date: date, onHold: viewModel.dateLongPressClosure, onTap: {
                             didSelectDay(date)
-                        } label: {
+                        }) {
                             monthDayBuilder(
                                 MonthDayBuilderParams(
                                     date: date,
@@ -55,13 +50,25 @@ public struct MonthLayout<MonthDay: View>: View {
                                     viewHeight: rowHeight
                                 )
                             )
+                            .opacity(Calendar.current.isDate(date, equalTo: startOfMonth, toGranularity: .month) ? 1 : 0.45)
                             .frame(height: rowHeight)
                         }
-                    }
+                        .accessibilityLabel(date.formatted(date: .complete, time: .omitted))
                 }
             }
             .frame(height: g.size.height)
         }
+    }
+
+    // Full weeks keep adjacent-month dates in their correct weekday column.
+    // Explicit calendar injection makes timezone/locale boundary tests deterministic.
+    static func gridDates(containing date: Date, firstWeekday: Int?, calendar: Calendar = .current) -> [Date] {
+        guard let month = calendar.dateInterval(of: .month, for: date),
+              let count = calendar.range(of: .day, in: .month, for: date)?.count else { return [] }
+        let first = firstWeekday.flatMap { (1...7).contains($0) ? $0 : nil } ?? calendar.firstWeekday
+        let padding = (calendar.component(.weekday, from: month.start) - first + 7) % 7
+        let cells = ((padding + count + 6) / 7) * 7
+        return (0..<cells).compactMap { calendar.date(byAdding: .day, value: $0 - padding, to: month.start) }
     }
 
     func numberOfCalendarRows() -> Int {

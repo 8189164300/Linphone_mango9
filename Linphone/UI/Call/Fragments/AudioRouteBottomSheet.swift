@@ -51,19 +51,19 @@ struct AudioRouteBottomSheet: View {
 					Image(optionsAudioRoute == 1 ? "radio-button-fill" : "radio-button")
 						.renderingMode(.template)
 						.resizable()
-						.foregroundStyle(.white)
+						.foregroundStyle(Mango9CallStyle.accent)
 						.frame(width: 25, height: 25, alignment: .leading)
 						.padding(.all, 10)
 					
 					Text(!callViewModel.isHeadPhoneAvailable() ? "call_audio_device_type_earpiece" : "call_audio_device_type_headphones")
-						.default_text_style_white(styleSize: 15)
+						.default_text_style(styleSize: 15)
 					
 					Spacer()
 					
 					Image(!callViewModel.isHeadPhoneAvailable() ? "ear" : "headset")
 						.renderingMode(.template)
 						.resizable()
-						.foregroundStyle(.white)
+						.foregroundStyle(Mango9CallStyle.accent)
 						.frame(width: 25, height: 25, alignment: .leading)
 						.padding(.all, 10)
 				}
@@ -84,19 +84,19 @@ struct AudioRouteBottomSheet: View {
 						Image(optionsAudioRoute == 2 ? "radio-button-fill" : "radio-button")
 							.renderingMode(.template)
 							.resizable()
-							.foregroundStyle(.white)
+							.foregroundStyle(Mango9CallStyle.accent)
 							.frame(width: 25, height: 25, alignment: .leading)
 							.padding(.all, 10)
 
 						Text("call_audio_device_type_speaker")
-							.default_text_style_white(styleSize: 15)
+							.default_text_style(styleSize: 15)
 
 						Spacer()
 
 						Image("speaker-high")
 							.renderingMode(.template)
 							.resizable()
-							.foregroundStyle(.white)
+							.foregroundStyle(Mango9CallStyle.accent)
 							.frame(width: 25, height: 25, alignment: .leading)
 							.padding(.all, 10)
 					}
@@ -118,20 +118,20 @@ struct AudioRouteBottomSheet: View {
 						Image(optionsAudioRoute == 3 ? "radio-button-fill" : "radio-button")
 							.renderingMode(.template)
 							.resizable()
-							.foregroundStyle(.white)
+							.foregroundStyle(Mango9CallStyle.accent)
 							.frame(width: 25, height: 25, alignment: .leading)
 							.padding(.all, 10)
 
 						Text(String(format: String(localized: "call_audio_device_type_bluetooth"),
 									AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? ""))
-							.default_text_style_white(styleSize: 15)
+							.default_text_style(styleSize: 15)
 
 						Spacer()
 
 						Image("bluetooth")
 							.renderingMode(.template)
 							.resizable()
-							.foregroundStyle(.white)
+							.foregroundStyle(Mango9CallStyle.accent)
 							.frame(width: 25, height: 25, alignment: .leading)
 							.padding(.all, 10)
 					}
@@ -140,7 +140,7 @@ struct AudioRouteBottomSheet: View {
 			}
 		}
 		.padding(.horizontal, 20)
-		.background(Color.gray600)
+		.background(Mango9CallStyle.tray)
 		.frame(maxHeight: .infinity)
 	}
 }

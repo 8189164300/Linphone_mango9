@@ -19,6 +19,7 @@ final class MonthScrollCoordinator {
 @available(iOS 18.0, *)
 struct DayInMonthSwitcher<MonthDay: View>: View {
     @Environment(\.calendarTheme) var theme
+    @Environment(\.calendarCustomizationParams) var customizationParams
     @Environment(CalendarViewModel.self) var viewModel
     @Environment(MonthScrollCoordinator.self) var monthCoordinator
 
@@ -29,7 +30,6 @@ struct DayInMonthSwitcher<MonthDay: View>: View {
 
     @State private var items: [Int] = []
     @State private var models: [Int: MonthCellModel] = [:]
-    @State private var dateInterval = DateInterval(start: Date(), end: Date())
     @State private var tableUpdateID = UUID()
 
     @State private var containerHeight: CGFloat = 0
@@ -48,14 +48,14 @@ struct DayInMonthSwitcher<MonthDay: View>: View {
                     for offset in 1...pageSize {
                         let item = first - offset
                         items.insert(item, at: 0)
-                        models[item] = MonthCellModel(id: item)
+                        models[item] = makeModel(item)
                     }
                 case .forward:
                     guard let last = items.last else { return }
                     for offset in 1...pageSize {
                         let item = last + offset
                         items.append(item)
-                        models[item] = MonthCellModel(id: item)
+                        models[item] = makeModel(item)
                     }
                 }
             } content: { item, model in
@@ -71,20 +71,11 @@ struct DayInMonthSwitcher<MonthDay: View>: View {
                 .background(theme.month.background)
             }
             .reloadTrigger(updateID: tableUpdateID)
-            .scrollMode(scrollMode: .free(g.size.height > 0 ? g.size.height : nil))
-            .willDisplayItem { item in
-                Task { @MainActor in
-                    let monthDate = fullscreenDate.startOfMonth.adding(.month, value: item)
-                    let interval = DateInterval(start: monthDate.adding(.month, value: -1), end: monthDate.adding(.month, value: 2))
-                    if dateInterval == interval { return }
-                    await viewModel.fetch(interval)
-                    // viewModel.events is now up to date — distribute to the three visible models
-                    models[item-1]?.events = eventsFor(monthDate.adding(.month, value: -1))
-                    models[item]?.events = eventsFor(monthDate)
-                    models[item+1]?.events = eventsFor(monthDate.adding(.month, value: 1))
-                    dateInterval = interval
-                }
-            }
+            // Settle on a whole month, not a fragment of the previous month's
+            // last week. Fetching belongs to the visible anchor, not every
+            // neighboring UITableView cell that UIKit happens to preload.
+            .scrollMode(scrollMode: .paged(max(1, g.size.height)))
+            .isPagingEnabled(true)
             .onScrollChange { scrollView in
                 let cellHeight = g.size.height
                 guard cellHeight > 0 else { return }
@@ -117,13 +108,11 @@ struct DayInMonthSwitcher<MonthDay: View>: View {
                 items = Array(-3...3)
                 models.removeAll()
                 for item in items {
-                    models[item] = MonthCellModel(id: item)
+                    models[item] = makeModel(item)
                 }
                 if containerHeight > 0 {
                     tableUpdateID = UUID()
                 }
-                await viewModel.fetch(DateInterval(start: fullscreenDate.startOfMonth, end: fullscreenDate.startOfMonth.adding(.month, value: 1)))
-                models[0]?.events = viewModel.events
             }
         }
         .onChange(of: monthCoordinator.scrollToTodayToken) {
@@ -132,14 +121,12 @@ struct DayInMonthSwitcher<MonthDay: View>: View {
                 items = Array(-3...3)
                 models.removeAll()
                 for item in items {
-                    models[item] = MonthCellModel(id: item)
+                    models[item] = makeModel(item)
                 }
                 if containerHeight > 0 {
                     tableUpdateID = UUID()
                 }
                 anchorDate = fullscreenDate.startOfMonth
-                await viewModel.fetch(DateInterval(start: fullscreenDate.startOfMonth, end: fullscreenDate.startOfMonth.adding(.month, value: 1)))
-                models[0]?.events = viewModel.events
             }
         }
         .onChange(of: containerHeight) { _, h in
@@ -154,14 +141,33 @@ struct DayInMonthSwitcher<MonthDay: View>: View {
                 model.events = eventsFor(monthDate)
             }
         }
+        .onChange(of: customizationParams.dateLongPressClosure != nil) {
+            // UIHostingConfiguration cells do not inherit changing host closures.
+            // Update their observable models in place, without resetting scrolling.
+            for model in models.values { model.dateLongPressClosure = customizationParams.dateLongPressClosure }
+        }
+        .onChange(of: customizationParams.firstDayOfWeek) {
+            for model in models.values { model.firstDayOfWeek = customizationParams.firstDayOfWeek }
+        }
         .onDisappear {
             items.removeAll()
             models.removeAll()
         }
     }
 
+    private func makeModel(_ id: Int) -> MonthCellModel {
+        let model = MonthCellModel(id: id)
+        model.dateLongPressClosure = customizationParams.dateLongPressClosure
+        model.firstDayOfWeek = customizationParams.firstDayOfWeek
+        model.events = eventsFor(fullscreenDate.startOfMonth.adding(.month, value: id))
+        return model
+    }
+
     func eventsFor(_ date: Date) -> [CalendarEvent] {
-        viewModel.events.filter { $0.startDate < date.startOfMonth.adding(.month, value: 1) && $0.endDate > date.startOfMonth }
+        let days = MonthLayout<MonthDay>.gridDates(containing: date, firstWeekday: customizationParams.firstDayOfWeek)
+        guard let start = days.first, let last = days.last else { return [] }
+        let end = last.adding(.day, value: 1)
+        return viewModel.events.filter { $0.startDate < end && $0.endDate > start }
     }
 
     func remindersFor(_ date: Date) -> [CalendarReminder] {
@@ -175,6 +181,8 @@ class MonthCellModel: Identifiable {
     let id: Int
 
     var events: [CalendarEvent] = []
+    var dateLongPressClosure: ((Date) -> Void)?
+    var firstDayOfWeek: Int?
 
     init(id: Int) {
         self.id = id

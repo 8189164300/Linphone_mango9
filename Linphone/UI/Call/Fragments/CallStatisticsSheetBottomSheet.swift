@@ -51,65 +51,65 @@ struct CallStatisticsSheetBottomSheet: View {
 			}
 			
 			Text("call_stats_audio_title")
-				.default_text_style_white_600(styleSize: 15)
+				.default_text_style_600(styleSize: 15)
 				.padding(.top, 10)
 			
 			Spacer()
 			
 			Text(callViewModel.callStatsModel.audioCodec)
-				.default_text_style_white(styleSize: 15)
+				.default_text_style(styleSize: 15)
 			
 			Spacer()
 			
 			Text(callViewModel.callStatsModel.audioBandwidth)
-				.default_text_style_white(styleSize: 15)
+				.default_text_style(styleSize: 15)
 			
 			Spacer()
 			
 			Text(callViewModel.callStatsModel.audioLossRate)
-				   .default_text_style_white(styleSize: 15)
+				   .default_text_style(styleSize: 15)
 			   
 			Spacer()
 			
 			Text(callViewModel.callStatsModel.audioJitterBufferSize)
-				   .default_text_style_white(styleSize: 15)
+				   .default_text_style(styleSize: 15)
 			   
 			Spacer()
 			
 			if callViewModel.callStatsModel.isVideoEnabled {
 				Text("call_stats_video_title")
-					.default_text_style_white_600(styleSize: 15)
+					.default_text_style_600(styleSize: 15)
 					.padding(.top, 10)
 				
 				Spacer()
 				
 				Text(callViewModel.callStatsModel.videoCodec)
-					.default_text_style_white(styleSize: 15)
+					.default_text_style(styleSize: 15)
 				
 				Spacer()
 				
 				Text(callViewModel.callStatsModel.videoBandwidth)
-					.default_text_style_white(styleSize: 15)
+					.default_text_style(styleSize: 15)
 				
 				Spacer()
 				
 				Text(callViewModel.callStatsModel.videoLossRate)
-					.default_text_style_white(styleSize: 15)
+					.default_text_style(styleSize: 15)
 				
 				Spacer()
 				
 				Text(callViewModel.callStatsModel.videoResolution)
-					.default_text_style_white(styleSize: 15)
+					.default_text_style(styleSize: 15)
 				
 				Spacer()
 				
 				Text(callViewModel.callStatsModel.videoFps)
-					.default_text_style_white(styleSize: 15)
+					.default_text_style(styleSize: 15)
 				
 				Spacer()
 			}
 		}
 		.frame(maxWidth: .infinity)
-		.background(Color.gray600)
+		.background(Mango9CallStyle.tray)
 	}
 }

@@ -21,6 +21,46 @@ import linphonesw
 import Combine
 import SwiftUI
 
+/// Bound the initial List identity/layout work too, not just visible cells.
+/// Searching still runs against the complete SDK directory. Scrolling reveals
+/// every result in order, without copying or reloading the address book.
+struct Mango9ConversationContactPage {
+	static let size = 100
+	private(set) var limit = Self.size
+	mutating func reset() { limit = Self.size }
+	mutating func reveal(near index: Int, total: Int) {
+		guard limit < total, index >= limit - 10 else { return }
+		limit = min(total, limit + Self.size)
+	}
+}
+
+/// A picker-scoped debounce. Dismissing the picker must not leave a delayed
+/// query that overwrites the Contacts tab (both still share the SDK search).
+@MainActor final class Mango9ConversationContactSearch: ObservableObject {
+	private let delay: UInt64
+	private let search: (String) -> Void
+	private var pending: Task<Void, Never>?
+	init(delay: UInt64 = 250_000_000, search: @escaping (String) -> Void = { query in
+		MagicSearchSingleton.shared.currentFilter = query
+		MagicSearchSingleton.shared.searchForContacts()
+	}) {
+		self.delay = delay
+		self.search = search
+	}
+	func update(_ query: String, immediately: Bool = false) {
+		cancel()
+		if immediately { search(query); return }
+		let delay = delay, search = search
+		pending = Task {
+			do { try await Task.sleep(nanoseconds: delay) } catch { return }
+			guard !Task.isCancelled else { return }
+			search(query)
+		}
+	}
+	func cancel() { pending?.cancel(); pending = nil }
+	deinit { pending?.cancel() }
+}
+
 // swiftlint:disable line_length
 class StartConversationViewModel: ObservableObject {
 	
