@@ -122,12 +122,23 @@ class CallViewModel: ObservableObject {
 	private static let earpieceNotificationIdentifier = "linphone-earpiece-enforcement"
 	private var isEnforcingEarpiece: Bool = false
 	private var routeChangeObserver: Any?
+	private var callerPresentationObserver: Any?
+	private var presentationRequest = UUID()
+	private var callerIdentityRequest = UUID()
+	private var displayedCallToken: String?
 
 	init() {
 		hasAudioRouteRestriction = AppServices.corePreferences.onlyAllowEarpieceDuringCall
 
 		NotificationCenter.default.addObserver(forName: Notification.Name("CallViewModelReset"), object: nil, queue: nil) { notification in
 			self.resetCallView()
+		}
+		callerPresentationObserver = NotificationCenter.default.addObserver(
+			forName: Notification.Name("Mango9CallerPresentationChanged"), object: nil, queue: .main
+		) { [weak self] notification in
+			guard let self, let token = notification.object as? String,
+				self.displayedCallToken == token else { return }
+			self.refreshIncomingCallerPresentation(token: token)
 		}
 
 		if hasAudioRouteRestriction {
@@ -142,6 +153,7 @@ class CallViewModel: ObservableObject {
 	}
 
 	deinit {
+		if let observer = callerPresentationObserver { NotificationCenter.default.removeObserver(observer) }
 		if let observer = routeChangeObserver {
 			NotificationCenter.default.removeObserver(observer)
 		}
@@ -247,19 +259,57 @@ class CallViewModel: ObservableObject {
 			withIdentifiers: [CallViewModel.earpieceNotificationIdentifier]
 		)
 	}
+
+	/// Identity updates must not reset audio, encryption delegates, or call controls.
+	private func refreshIncomingCallerPresentation(token: String) {
+		let request = UUID()
+		callerIdentityRequest = request
+		coreContext.doOnCoreQueue { core in
+			guard let call = core.calls.first(where: { TelecomManager.callerPresentationToken($0) == token }),
+				call.dir == .Incoming, ![.End, .Error, .Released].contains(call.state) else {
+				DispatchQueue.main.async {
+					guard self.callerIdentityRequest == request, self.displayedCallToken == token else { return }
+					self.displayName = ""
+					self.remoteAddressCleanedString = ""
+					self.avatarModel = nil
+				}
+				return
+			}
+			let isConference = call.conference != nil || call.callLog?.wasConference() == true
+			let presentation = self.telecomManager.incomingCallerPresentation(call: call)
+			DispatchQueue.main.async {
+				guard self.callerIdentityRequest == request, self.displayedCallToken == token else { return }
+				self.displayName = presentation.displayName
+				self.remoteAddressCleanedString = presentation.subtitle
+				self.avatarModel = nil
+			}
+			if !isConference, presentation.source == .sip, let address = call.remoteAddress {
+				ContactAvatarModel.getAvatarModelFromAddress(address: address) { avatar in
+					DispatchQueue.main.async {
+						guard self.callerIdentityRequest == request, self.displayedCallToken == token else { return }
+						self.avatarModel = avatar
+					}
+				}
+			}
+		}
+	}
 	
 	func resetCallView() {
+		guard Thread.isMainThread else {
+			DispatchQueue.main.async { [weak self] in self?.resetCallView() }
+			return
+		}
+		let request = UUID()
+		presentationRequest = request
+		let identityRequest = UUID()
+		callerIdentityRequest = identityRequest
 		cancelEarpieceNotification()
 		audioMutedByEarpieceEnforcement = false
-
-		DispatchQueue.main.async {
-			self.displayName = ""
-			self.avatarModel = nil
-		}
 		
 		coreContext.doOnCoreQueue { core in
-            if (core.currentCall != nil && core.currentCall!.remoteAddress != nil) || (core.calls.first != nil && core.calls.first!.state == .Paused) {
-                let currentCallTmp = core.currentCall ?? core.calls.first
+            let candidate = core.currentCall ?? core.calls.first(where: { $0.state == .Paused })
+            if let candidate, candidate.remoteAddress != nil, ![.End, .Error, .Released].contains(candidate.state) {
+                let currentCallTmp: Call? = candidate
                 
 				if self.callDelegate != nil {
 					self.currentCall?.removeDelegate(delegate: self.callDelegate!)
@@ -274,6 +324,12 @@ class CallViewModel: ObservableObject {
 					self.waitingForConferenceDelegate = nil
 				}
 				self.currentCall = currentCallTmp
+				let callToken = TelecomManager.callerPresentationToken(currentCallTmp!)
+				DispatchQueue.main.async {
+					guard self.presentationRequest == request else { return }
+					if self.displayedCallToken != callToken { self.avatarModel = nil }
+					self.displayedCallToken = callToken
+				}
 				let callsCounterTmp = core.calls.count
 				
 				var videoDisplayedTmp = false
@@ -319,7 +375,7 @@ class CallViewModel: ObservableObject {
 				
 				remoteAddressTmp!.clean()
 				
-				let remoteAddressCleanedStringTmp = Self.friendlyRemoteAddress(remoteAddressTmp)
+				var remoteAddressCleanedStringTmp = Self.friendlyRemoteAddress(remoteAddressTmp)
 				
 				if self.currentCall?.conference != nil {
 					displayNameTmp = self.currentCall?.conference?.subject ?? ""
@@ -327,18 +383,23 @@ class CallViewModel: ObservableObject {
 					let friend = ContactsManager.shared.getFriendWithAddress(address: remoteAddress)
 					let contactName = Mango9CallerIdentity.normalizedLabel(friend?.name)
 						?? Mango9CallerIdentity.normalizedLabel(friend?.address?.displayName)
-					displayNameTmp = Mango9CallerIdentity.displayName(
-						for: remoteAddress,
-						contactName: contactName
-					)
+					let incomingPresentation = directionTmp == .Incoming
+						? self.telecomManager.incomingCallerPresentation(call: currentCallTmp!, contactName: contactName) : nil
+					displayNameTmp = incomingPresentation?.displayName
+						?? Mango9CallerIdentity.displayName(for: remoteAddress, contactName: contactName)
+					if let incomingPresentation { remoteAddressCleanedStringTmp = incomingPresentation.subtitle }
 					
-					DispatchQueue.main.async {
-						self.displayName = displayNameTmp
-					}
-					
-					ContactAvatarModel.getAvatarModelFromAddress(address: remoteAddress) { avatarResult in
+					if incomingPresentation == nil || incomingPresentation?.source == .sip {
+						ContactAvatarModel.getAvatarModelFromAddress(address: remoteAddress) { avatarResult in
+							DispatchQueue.main.async {
+								guard self.presentationRequest == request, self.callerIdentityRequest == identityRequest else { return }
+								self.avatarModel = avatarResult
+							}
+						}
+					} else {
 						DispatchQueue.main.async {
-							self.avatarModel = avatarResult
+							guard self.presentationRequest == request, self.callerIdentityRequest == identityRequest else { return }
+							self.avatarModel = nil
 						}
 					}
 				}
@@ -368,11 +429,14 @@ class CallViewModel: ObservableObject {
 				}
 				
 				DispatchQueue.main.async {
+					guard self.presentationRequest == request else { return }
 					self.direction = directionTmp
 					self.remoteAddressString = remoteAddressStringTmp
-					self.remoteAddressCleanedString = remoteAddressCleanedStringTmp
 					self.remoteAddress = remoteAddressTmp
-					self.displayName = displayNameTmp
+					if self.callerIdentityRequest == identityRequest {
+						self.remoteAddressCleanedString = remoteAddressCleanedStringTmp
+						self.displayName = displayNameTmp
+					}
 					
 					self.micMutted = micMuttedTmp
 					self.isRecording = isRecordingTmp
@@ -446,6 +510,14 @@ class CallViewModel: ObservableObject {
 				})
 				self.currentCall!.addDelegate(delegate: self.callDelegate!)
 				self.updateCallQualityIcon()
+			} else {
+				DispatchQueue.main.async {
+					guard self.presentationRequest == request else { return }
+					self.displayedCallToken = nil
+					self.displayName = ""
+					self.remoteAddressCleanedString = ""
+					self.avatarModel = nil
+				}
 			}
 		}
 	}

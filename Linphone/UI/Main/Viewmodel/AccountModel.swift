@@ -51,6 +51,7 @@ class AccountModel: ObservableObject {
 	private var accountDelegate: AccountDelegate?
 	private var coreDelegate: CoreDelegate?
 	private var logoutCleanupPending = false
+	private var logoutPreparationPending = false
 	
 	init(account: Account, core: Core) {
 		self.account = account
@@ -210,47 +211,44 @@ class AccountModel: ObservableObject {
 	
 	func logout() {
 		CoreContext.shared.doOnCoreQueue { core in
-			guard !self.logoutCleanupPending else { return }
-			self.logoutCleanupPending = true
-			Log.info("Account \(self.account.displayName()) has been removed")
-			let sipIdentity = self.account.params?
-				.identityAddress?.asStringUriOnly()
-			let session = sipIdentity.flatMap {
-				Mango9SessionStore.load(for: $0)
-			}
-			if let sipIdentity, let session {
-				Task { @MainActor in
-					Mango9ChatStore.shared.disconnectIfConnected(
-						to: sipIdentity
-					)
-					let removed = await Mango9ChatStore.shared.unregisterRemotePushToken(
-						for: sipIdentity,
-						session: session
-					)
-					if !removed {
-						Log.warn(
-							"Mango9 message push cleanup did not complete " +
-							"during account removal"
-						)
+			guard !self.logoutCleanupPending, !self.logoutPreparationPending,
+				  let identity = self.account.params?.identityAddress?.asStringUriOnly() else { return }
+			self.logoutPreparationPending = true
+			let session = Mango9SessionStore.load(for: identity)
+			let token = self.account.params?.pushNotificationConfig?.voipToken
+			let usesMango9Cleanup = session != nil || self.account.params?.identityAddress?.domain?.hasSuffix(".mango9.com") == true
+			Task { @MainActor in
+				do {
+					if usesMango9Cleanup {
+						try await Mango9LogoutCoordinator.shared.prepareLogout(identity: identity, token: token, session: session)
+					}
+				} catch {
+					CoreContext.shared.doOnCoreQueue { _ in self.logoutPreparationPending = false }
+					ToastViewModel.shared.show(error.localizedDescription, duration: 6)
+					return
+				}
+				Mango9ChatStore.shared.disconnectIfConnected(to: identity)
+				if let session {
+					Task { @MainActor in
+						if !(await Mango9ChatStore.shared.unregisterRemotePushToken(for: identity, session: session)) {
+							Log.warn("[Logout] Message push cleanup did not complete")
+						}
 					}
 				}
-			}
-			if let sipIdentity {
-				Mango9SessionStore.remove(for: sipIdentity)
-			}
-
-			if let params = self.account.params?.clone() {
-				params.registerEnabled = false
-				self.account.params = params
-			} else {
-				self.completePendingLogout()
-			}
-
-			// Keep the credential long enough for the SIP REGISTER Expires: 0
-			// transaction. If the network is unavailable, finish local cleanup
-			// without leaving the account stuck in the UI.
-			DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-				self.completePendingLogout()
+				CoreContext.shared.doOnCoreQueue { core in
+					self.logoutPreparationPending = false
+					self.logoutCleanupPending = true
+					Mango9SessionStore.remove(for: identity)
+					for account in core.accountList where account.params?.identityAddress?.asStringUriOnly() == identity {
+						if let params = account.params?.clone() {
+							params.registerEnabled = false
+							account.params = params
+						}
+					}
+					// Keep normal SIP unregister, but its timeout is now only a UI
+					// grace period. Durable server cleanup survives this process.
+					DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.completePendingLogout() }
+				}
 			}
 		}
 	}
@@ -259,10 +257,21 @@ class AccountModel: ObservableObject {
 		CoreContext.shared.doOnCoreQueue { core in
 			guard self.logoutCleanupPending else { return }
 			self.logoutCleanupPending = false
-			let authInfo = self.account.findAuthInfo()
-			core.removeAccount(account: self.account)
-			if let authInfo {
+			let identity = self.account.params?.identityAddress?.asStringUriOnly()
+			let targets = core.accountList.filter {
+				$0 === self.account || (identity != nil && $0.params?.identityAddress?.asStringUriOnly() == identity)
+			}
+			let authInfos = targets.compactMap { $0.findAuthInfo() }
+			for target in targets { core.removeAccount(account: target) }
+			for authInfo in authInfos where core.authInfoList.contains(where: { $0 === authInfo })
+				&& !core.accountList.contains(where: { $0.findAuthInfo() === authInfo }) {
 				core.removeAuthInfo(info: authInfo)
+			}
+			Task { @MainActor in
+				await Mango9LogoutCoordinator.shared.retryPending()
+				if let identity, Mango9LogoutCoordinator.shared.hasPendingLogout(identity: identity) {
+					ToastViewModel.shared.show("Signed out on this iPhone. Call notification cleanup will finish when the connection is restored.", duration: 6)
+				}
 			}
 		}
 	}

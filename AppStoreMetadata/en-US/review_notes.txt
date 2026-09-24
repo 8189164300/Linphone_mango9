@@ -2,7 +2,7 @@ Mango9 is a companion application for existing Mango9 business users. Accounts a
 
 Sign in using the existing review credentials entered in App Store Connect. Password and email-code login use the same account-provisioning flow.
 
-Version 6.2.13 (43) improves New Chat performance for large contact lists, calendar loading and layout, and adds business-hours controls and CRM time-zone synchronization. One binary supports iOS 15 and later, with Day, Week and Month calendar views and the same appointment actions on supported OS versions.
+Version 6.2.14 (47) improves account sign-out reliability, preserves independent multi-account sessions, fixes returning to the login screen after adding an account, and improves incoming caller information. One binary continues to support iOS 15 and later.
 
 To test:
 1. Open CRM > Appointments. Switch between the appointment list and Calendar (Day, Week and Month), and open an appointment to view its status and linked lead or client.
@@ -15,9 +15,11 @@ To test:
 8. In Calendar, press and hold a date or empty time slot to start an appointment with that date/time. Use the hours icon to view or edit the review account's business hours and default schedule, subject to account permissions. Closed hours are shaded. CRM time-zone changes sync with the web; personal display-zone preferences remain separate.
 9. Open a CRM lead or client. First and last names share a row; City, State and ZIP share a row where space permits. Short fields use compact columns inside section cards; long content stays full-width and accessibility text stacks vertically. The status menu saves just the selected status without entering Edit, subject to the account's field permissions. Edit and Cancel retain existing field permissions and values.
 10. The in-app call screen uses a light background, soft gray inactive controls, blue selected controls and red hang-up. Expanded controls, audio output and the in-call keypad use the same palette. Call actions and audio-routing behavior are unchanged.
+11. Sign out of a test account and verify it is removed while any other account remains available. If the device is offline after cleanup has been securely set up, local sign-out can complete and call-notification cleanup retries after connectivity returns. First-time cleanup setup requires an online authenticated session.
+12. Sign back in, or add a second authorized test account. Successful login returns to the account rather than reopening the login screen. Incoming caller information follows the active call and respects withheld caller identity.
 
 Appointments use the selected CRM account and its existing permissions; they do not require access to the iPhone's personal calendar.
 
-Exact corresponding source for this build: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.13-build-43
+Exact corresponding source for this build: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.14-build-47
 
 Review credentials and contact details are supplied only in App Store Connect and are not stored in the public source repository.

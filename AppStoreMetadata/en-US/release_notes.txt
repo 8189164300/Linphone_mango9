@@ -1,8 +1,4 @@
-• Open and search New Chat more smoothly, even with large contact lists
-• A more organized CRM record layout, with compact fields, clear section cards and quick status changes
-• A refreshed light calling screen with clearer active controls
-• Set business hours and default schedules, with closed hours shaded in your calendar
-• Keep your CRM time zone in sync with the web
-• Press and hold a calendar date or time to start an appointment with the details filled in
-• Improved calendar loading, recurring appointment indicators, status colors and zoomed text
+• More reliable sign-out: call notification cleanup retries when your connection returns
+• Improved handling of multiple accounts when signing in and signing out
+• More consistent caller information when opening an incoming call
 • Continued support for iOS 15 and later

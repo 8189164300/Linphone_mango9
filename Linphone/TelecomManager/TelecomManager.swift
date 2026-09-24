@@ -33,6 +33,8 @@ enum Mango9CallerIdentity {
 		"anonymous",
 		"anonymous@anonymous.invalid",
 		"anonymous caller",
+		"anonimous",
+		"incoming call",
 		"call from mango9",
 		"calling",
 		"mango 9",
@@ -50,13 +52,14 @@ enum Mango9CallerIdentity {
 			return nil
 		}
 		let lowercased = value.lowercased()
-		let uri = lowercased.hasPrefix("sip:")
-			? String(lowercased.dropFirst(4))
-			: lowercased
-		let uriUser = uri.split(separator: "@", maxSplits: 1).first.map(String.init)
+		var uri = lowercased
+		if let start = uri.firstIndex(of: "<"), let end = uri.lastIndex(of: ">"), start < end {
+			uri = String(uri[uri.index(after: start)..<end])
+		}
+		for scheme in ["sips:", "sip:", "tel:"] where uri.hasPrefix(scheme) { uri.removeFirst(scheme.count) }
+		let uriUser = uri.split(whereSeparator: { "@;>".contains($0) }).first.map(String.init) ?? ""
 		guard !unusableLabels.contains(lowercased),
-			  uriUser != "anonymous",
-			  uriUser != "anonimous" else {
+			  !unusableLabels.contains(uriUser) else {
 			return nil
 		}
 		return value
@@ -153,6 +156,7 @@ struct Mango9PushCallerIdentity: Equatable {
 	let callId: String
 	let handle: String
 	let displayName: String
+	var recipient: String? = nil
 
 	static func parse(payload: String) -> Mango9PushCallerIdentity? {
 		guard let data = payload.data(using: .utf8),
@@ -182,6 +186,8 @@ struct Mango9PushCallerIdentity: Equatable {
 			in: dictionaries,
 			keys: ["display-name", "display_name", "caller-name", "caller_name"]
 		)
+		// A withheld From must not be undone by a display-name field.
+		if let fromValue, Mango9CallerIdentity.normalizedLabel(fromValue) == nil { return nil }
 
 		guard let identityValue = Mango9CallerIdentity.normalizedLabel(fromValue)
 				?? Mango9CallerIdentity.normalizedLabel(pushedDisplayName) else {
@@ -195,9 +201,10 @@ struct Mango9PushCallerIdentity: Equatable {
 			?? identityValue
 
 		return Mango9PushCallerIdentity(
-			callId: callId,
+			callId: callId.trimmingCharacters(in: .whitespacesAndNewlines),
 			handle: handle,
-			displayName: displayName
+			displayName: displayName,
+			recipient: firstString(in: dictionaries, keys: ["to-uri", "to_uri"])
 		)
 	}
 
@@ -214,6 +221,148 @@ struct Mango9PushCallerIdentity: Equatable {
 			}
 		}
 		return nil
+	}
+}
+
+/// Display-only identity. Never substitute this handle into SIP routing or redial.
+struct Mango9IncomingCallerPresentation: Equatable {
+	enum Source { case unknown, push, sip, withheld }
+	let handle: String
+	let displayName: String
+	let source: Source
+
+	static let unknown = Self(handle: "Incoming call", displayName: "Incoming call", source: .unknown)
+	static let withheld = Self(handle: "Anonymous", displayName: "Private caller", source: .withheld)
+	var subtitle: String {
+		guard source == .push || source == .sip else { return "" }
+		return Mango9CallerIdentity.externalPhoneNumber(handle)
+			.map(Mango9CallerIdentity.formattedPhoneNumber) ?? handle
+	}
+}
+
+/// Call-lifetime identity handoff, independent of the selected CRM/default SIP account.
+/// Pending pushes expire; identities bound to a live native call do not. A real
+/// INVITE is authoritative, including an anonymous From without a Privacy header.
+final class Mango9IncomingCallerStore {
+	private struct Entry {
+		let token: String
+		var account: String?
+		var authoritative: Bool
+		var presentation: Mango9IncomingCallerPresentation
+	}
+	private let lock = NSLock()
+	private var pending: [String: (identity: Mango9PushCallerIdentity, date: Date)] = [:]
+	private var active: [String: Entry] = [:]
+	private var ended: [String: Date] = [:]
+	private let pendingLifetime: TimeInterval = 120
+	private let endedLifetime: TimeInterval = 300
+
+	static func accountKey(_ value: String?) -> String? {
+		guard var value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+		if let start = value.firstIndex(of: "<"), let end = value.lastIndex(of: ">"), start < end {
+			value = String(value[value.index(after: start)..<end])
+		}
+		for scheme in ["sips:", "sip:"] where value.lowercased().hasPrefix(scheme) {
+			value.removeFirst(scheme.count)
+		}
+		value = String(value.split(separator: ";", maxSplits: 1).first ?? Substring(value))
+		guard let at = value.lastIndex(of: "@") else { return nil }
+		// SIP users can be case-sensitive; domain names are not.
+		return String(value[..<at]) + "@" + value[value.index(after: at)...].lowercased()
+	}
+
+	static func hasCallerPrivacy(mask: UInt, header: String, user: String?, name: String?) -> Bool {
+		let tokens = header.lowercased().split { ";, \t".contains($0) }.map(String.init)
+		if mask & UInt(Privacy.User.rawValue | Privacy.Id.rawValue) != 0
+			|| tokens.contains("user") || tokens.contains("id") { return true }
+		let privateLabels: Set<String> = ["anonymous", "anonimous", "anonymous caller", "private", "restricted", "no caller id"]
+		return [user, name].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+			.contains { privateLabels.contains($0) }
+	}
+
+	@discardableResult
+	func cache(_ identity: Mango9PushCallerIdentity, now: Date = Date()) -> Bool {
+		lock.lock()
+		defer { lock.unlock() }
+		prune(now: now)
+		guard !identity.callId.isEmpty, ended[identity.callId] == nil else { return false }
+		if var entry = active[identity.callId] {
+			guard !entry.authoritative, entry.presentation.source != .push,
+				matches(identity: identity, account: entry.account) else { return false }
+			entry.presentation = presentation(identity)
+			active[identity.callId] = entry
+		} else {
+			// The first push wins. Duplicate pushes must not rewrite an identity.
+			guard pending[identity.callId] == nil else { return false }
+			pending[identity.callId] = (identity, now)
+			if pending.count > 64, let oldest = pending.min(by: { $0.value.date < $1.value.date })?.key {
+				pending.removeValue(forKey: oldest)
+			}
+		}
+		return true
+	}
+
+	func resolve(callId: String, token: String, account: String?, placeholder: Bool,
+				 sip: Mango9IncomingCallerPresentation, withheld: Bool, now: Date = Date()) -> Mango9IncomingCallerPresentation {
+		lock.lock()
+		defer { lock.unlock() }
+		prune(now: now)
+		let authoritative = withheld ? Mango9IncomingCallerPresentation.withheld : sip
+		guard !callId.isEmpty, ended[callId] == nil else { return placeholder ? .unknown : authoritative }
+		let owner = Self.accountKey(account)
+		var entry = active[callId] ?? Entry(token: token, account: owner, authoritative: false, presentation: .unknown)
+		// A Call-ID alone must never transfer cached identity to another native call/account.
+		guard entry.token == token,
+			entry.account == nil || owner == nil || entry.account == owner else {
+			return placeholder ? .unknown : authoritative
+		}
+		if entry.account == nil { entry.account = owner }
+		if !placeholder {
+			entry.authoritative = true
+			entry.presentation = authoritative
+			pending.removeValue(forKey: callId)
+		} else if !entry.authoritative {
+			if let pushed = pending.removeValue(forKey: callId)?.identity,
+				matches(identity: pushed, account: owner) {
+				entry.presentation = presentation(pushed)
+			}
+			if entry.presentation.source != .push { entry.presentation = sip }
+		}
+		active[callId] = entry
+		return entry.presentation
+	}
+
+	func finish(callId: String, token: String, now: Date = Date()) {
+		lock.lock()
+		defer { lock.unlock() }
+		guard !callId.isEmpty, active[callId] == nil || active[callId]?.token == token else { return }
+		active.removeValue(forKey: callId)
+		pending.removeValue(forKey: callId)
+		ended[callId] = now
+		prune(now: now)
+		if ended.count > 128, let oldest = ended.min(by: { $0.value < $1.value })?.key { ended.removeValue(forKey: oldest) }
+	}
+
+	func finalPresentation(callId: String, token: String, account: String? = nil) -> Mango9IncomingCallerPresentation? {
+		lock.lock()
+		defer { lock.unlock() }
+		let owner = Self.accountKey(account)
+		guard let entry = active[callId], entry.token == token,
+			entry.account == nil || owner == nil || entry.account == owner else { return nil }
+		return entry.presentation
+	}
+
+	private func matches(identity: Mango9PushCallerIdentity, account: String?) -> Bool {
+		guard let recipient = identity.recipient else { return true } // Legacy payload: bind only to this native call.
+		guard let target = Self.accountKey(recipient), let account else { return false }
+		return target == account
+	}
+	private func presentation(_ identity: Mango9PushCallerIdentity) -> Mango9IncomingCallerPresentation {
+		.init(handle: identity.handle, displayName: identity.displayName, source: .push)
+	}
+	private func prune(now: Date) {
+		pending = pending.filter { now.timeIntervalSince($0.value.date) < pendingLifetime }
+		ended = ended.filter { now.timeIntervalSince($0.value) < endedLifetime }
 	}
 }
 
@@ -259,8 +408,7 @@ class TelecomManager: ObservableObject {
 	var referedFromCall: String?
 	var referedToCall: String?
 	var actionsToPerformOnceWhenCoreIsOn: [(() -> Void)] = []
-	private let pushCallerIdentityLock = NSLock()
-	private var pushCallerIdentities: [String: (identity: Mango9PushCallerIdentity, receivedAt: Date)] = [:]
+	private let incomingCallerStore = Mango9IncomingCallerStore()
 	
 	private init() {
 		providerDelegate = ProviderDelegate()
@@ -273,39 +421,56 @@ class TelecomManager: ObservableObject {
 			return
 		}
 
-		pushCallerIdentityLock.lock()
-		prunePushCallerIdentities(now: Date())
-		pushCallerIdentities[identity.callId] = (identity, Date())
-		pushCallerIdentityLock.unlock()
-
-		Log.info("[CallKit] Cached caller identity from push for call-id \(identity.callId)")
-		if let uuid = providerDelegate.uuids[identity.callId] {
-			providerDelegate.updateCall(
-				uuid: uuid,
-				handle: identity.handle,
-				displayName: identity.displayName
-			)
-			Log.info("[CallKit] Updated the push placeholder with caller identity")
+		guard incomingCallerStore.cache(identity) else { return }
+		CoreContext.shared.doOnCoreQueue { core in
+			let matching = core.calls.filter { $0.callLog?.callId == identity.callId }
+			guard matching.count == 1, let call = matching.first,
+				call.dir == .Incoming, call.state == .PushIncomingReceived else { return }
+			let presentation = self.incomingCallerPresentation(call: call)
+			if let uuid = self.providerDelegate.uuids[identity.callId],
+				self.providerDelegate.callInfos[uuid]?.isOutgoing == false {
+				self.providerDelegate.updateCall(uuid: uuid, handle: presentation.handle, displayName: presentation.displayName)
+			}
+			self.notifyCallerPresentationChanged(call: call)
 		}
 	}
 
-	private func pushedCallerIdentity(for callId: String) -> Mango9PushCallerIdentity? {
-		pushCallerIdentityLock.lock()
-		defer { pushCallerIdentityLock.unlock() }
-		prunePushCallerIdentities(now: Date())
-		return pushCallerIdentities[callId]?.identity
+	static func callerPresentationToken(_ call: Call) -> String {
+		String(describing: call.getCobject)
 	}
 
-	private func removePushedCallerIdentity(for callId: String) {
-		pushCallerIdentityLock.lock()
-		defer { pushCallerIdentityLock.unlock() }
-		pushCallerIdentities.removeValue(forKey: callId)
-	}
-
-	private func prunePushCallerIdentities(now: Date) {
-		pushCallerIdentities = pushCallerIdentities.filter {
-			now.timeIntervalSince($0.value.receivedAt) < 120
+	/// Call only on the core queue. The default/selected account is deliberately not used.
+	func incomingCallerPresentation(call: Call, contactName: String? = nil) -> Mango9IncomingCallerPresentation {
+		let address = call.remoteAddress
+		let placeholder = call.state == .PushIncomingReceived
+		let account = placeholder ? nil : call.params?.account?.params?.identityAddress?.asStringUriOnly()
+		let cached = incomingCallerStore.finalPresentation(callId: call.callLog?.callId ?? "", token: Self.callerPresentationToken(call), account: account)
+		if call.dir == .Incoming, [.End, .Error, .Released].contains(call.state) {
+			return cached ?? .unknown
 		}
+		let withheld = !placeholder && Mango9IncomingCallerStore.hasCallerPrivacy(
+			mask: call.remoteParams?.privacy ?? 0,
+			header: call.remoteParams?.getCustomHeader(headerName: "Privacy") ?? "",
+			user: address?.username, name: address?.displayName
+		)
+		let handle = Mango9CallerIdentity.callKitHandle(for: address)
+		// A state-only refresh has no new contact lookup. Preserve a resolved name
+		// only for this native call and the same authoritative SIP handle.
+		let knownName = cached?.source == .sip && cached?.handle == handle ? cached?.displayName : nil
+		let conferenceName = call.callLog?.wasConference() == true
+			? (call.conference?.subject ?? call.callLog?.conferenceInfo?.subject ?? "Conference") : nil
+		let sip: Mango9IncomingCallerPresentation = Mango9CallerIdentity.normalizedLabel(address?.username) == nil
+			? .unknown : .init(handle: handle,
+							displayName: conferenceName ?? Mango9CallerIdentity.displayName(for: address, contactName: contactName ?? knownName), source: .sip)
+		guard call.dir == .Incoming else { return sip }
+		return incomingCallerStore.resolve(callId: call.callLog?.callId ?? "", token: Self.callerPresentationToken(call),
+			account: account,
+			placeholder: placeholder, sip: sip, withheld: withheld)
+	}
+
+	private func notifyCallerPresentationChanged(call: Call) {
+		NotificationCenter.default.post(name: Notification.Name("Mango9CallerPresentationChanged"),
+			object: Self.callerPresentationToken(call))
 	}
 	
 	func addAllToLocalConference(core: Core) {
@@ -667,21 +832,16 @@ class TelecomManager: ObservableObject {
 	}
 	
 	func incomingDisplayName(call: Call, completion: @escaping (String) -> Void) {
-		CoreContext.shared.doOnCoreQueue { _ in
-			guard let remoteAddress = call.remoteAddress else {
-				completion("Unknown")
-				return
-			}
-			ContactsManager.shared.getFriendWithAddressInCoreQueue(address: remoteAddress) { friendResult in
-				if call.callLog?.wasConference() == true {
-					completion(call.callLog?.conferenceInfo?.subject ?? "Conference")
-					return
-				}
-				let contactName = Mango9CallerIdentity.normalizedLabel(friendResult?.name)
-					?? Mango9CallerIdentity.normalizedLabel(friendResult?.address?.displayName)
-				completion(Mango9CallerIdentity.displayName(for: remoteAddress, contactName: contactName))
-			}
+		// Both callers are core state callbacks. Resolve synchronously so an ended
+		// call cannot publish a delayed contact result over a newer call.
+		if call.callLog?.wasConference() == true {
+			completion(call.callLog?.conferenceInfo?.subject ?? "Conference")
+			return
 		}
+		let friend = ContactsManager.shared.getFriendWithAddress(address: call.remoteAddress)
+		let contactName = Mango9CallerIdentity.normalizedLabel(friend?.name)
+			?? Mango9CallerIdentity.normalizedLabel(friend?.address?.displayName)
+		completion(incomingCallerPresentation(call: call, contactName: contactName).displayName)
 	}
 	
 	static func isAudioRouteAllowedForCall() -> Bool {
@@ -745,6 +905,21 @@ class TelecomManager: ObservableObject {
 	func onCallStateChanged(core: Core, call: Call, state cstate: Call.State, message: String) {
 		let callLog = call.callLog
 		let callId = callLog?.callId ?? ""
+		if call.dir == .Incoming, ![.End, .Error, .Released].contains(cstate) {
+			let previous = incomingCallerStore.finalPresentation(callId: callId, token: Self.callerPresentationToken(call))
+			let presentation = incomingCallerPresentation(call: call)
+			// Diagnostic classification only: do not log phone numbers, names or push tokens.
+			Log.info("[CallerIdentity] call=\(callId.suffix(8)) state=\(cstate) source=\(presentation.source)")
+			if previous != presentation {
+				if let uuid = providerDelegate.uuids[callId], providerDelegate.callInfos[uuid]?.isOutgoing == false {
+					let hasVideo = call.remoteParams?.videoEnabled == true
+						&& call.remoteParams?.videoDirection != .Inactive && callLog?.wasConference() != true
+					providerDelegate.updateCall(uuid: uuid, handle: presentation.handle,
+						hasVideo: hasVideo, displayName: presentation.displayName)
+				}
+				notifyCallerPresentationChanged(call: call)
+			}
+		}
 		
 		if !callInProgress && participantsInvited {
 			if let remoteAddress = call.remoteAddress {
@@ -771,15 +946,16 @@ class TelecomManager: ObservableObject {
 		
 		if cstate == .PushIncomingReceived {
 			Log.info("PushIncomingReceived in core delegate, display callkit call")
-			let address = call.remoteAddress
-			let pushedIdentity = pushedCallerIdentity(for: callId)
-			TelecomManager.shared.displayIncomingCall(
-				call: call,
-				handle: pushedIdentity?.handle ?? Mango9CallerIdentity.callKitHandle(for: address),
-				hasVideo: false,
-				callId: callId,
-				displayName: pushedIdentity?.displayName ?? Mango9CallerIdentity.displayName(for: address)
-			)
+			let presentation = incomingCallerPresentation(call: call)
+			if providerDelegate.uuids[callId] == nil {
+				displayIncomingCall(
+					call: call,
+					handle: presentation.handle,
+					hasVideo: false,
+					callId: callId,
+					displayName: presentation.displayName
+				)
+			}
 		} else {
 			// let oldRemoteConfVideo = self.remoteConfVideo
 			
@@ -816,7 +992,9 @@ class TelecomManager: ObservableObject {
 			let displayName: String
 			let friend = ContactsManager.shared.getFriendWithAddress(address: call.remoteAddress)
 			
-			if let name = friend?.address?.displayName {
+			if call.dir == .Incoming {
+				displayName = incomingCallerPresentation(call: call).displayName
+			} else if let name = friend?.address?.displayName {
 				displayName = name
 			} else if let name = call.remoteAddress?.displayName {
 				displayName = name
@@ -870,9 +1048,9 @@ class TelecomManager: ObservableObject {
 			
 			switch cstate {
 			case .IncomingReceived:
-				let addr = call.remoteAddress
 				incomingDisplayName(call: call) { displayNameResult in
 					let displayName = displayNameResult
+					let presentation = self.incomingCallerPresentation(call: call, contactName: displayNameResult)
 	#if targetEnvironment(simulator)
 					DispatchQueue.main.async {
 						self.outgoingCallStarted = false
@@ -891,12 +1069,12 @@ class TelecomManager: ObservableObject {
 						
 						if uuid != nil {
 							// Tha app is now registered, updated the call already existed.
-							self.providerDelegate.updateCall(uuid: uuid!, handle: Mango9CallerIdentity.callKitHandle(for: addr), hasVideo: self.remoteConfVideo, displayName: displayName)
+							self.providerDelegate.updateCall(uuid: uuid!, handle: presentation.handle, hasVideo: self.remoteConfVideo, displayName: displayName)
 						} else {
 							let videoEnabled = call.remoteParams?.videoEnabled ?? false
 							let isConference = call.callLog?.wasConference() ?? false
 							let videoDir = call.remoteParams?.videoDirection != MediaDirection.Inactive
-							self.displayIncomingCall(call: call, handle: Mango9CallerIdentity.callKitHandle(for: addr), hasVideo: videoEnabled && videoDir && !isConference, callId: callId, displayName: displayName)
+							self.displayIncomingCall(call: call, handle: presentation.handle, hasVideo: videoEnabled && videoDir && !isConference, callId: callId, displayName: displayName)
 						}
 					}
 				}
@@ -951,7 +1129,6 @@ class TelecomManager: ObservableObject {
 				}
 			case .End,
 					.Error:
-				removePushedCallerIdentity(for: callId)
 				
 				UIDevice.current.isProximityMonitoringEnabled = false
 				if core.callsNb == 0 {
@@ -1015,6 +1192,8 @@ class TelecomManager: ObservableObject {
 					}
 				}
 				// }
+				incomingCallerStore.finish(callId: callId, token: Self.callerPresentationToken(call))
+				notifyCallerPresentationChanged(call: call)
 				
 				if TelecomManager.callKitEnabled(core: core) {
 					var uuid = providerDelegate.uuids["\(callId)"]
@@ -1050,7 +1229,7 @@ class TelecomManager: ObservableObject {
 					}
 				}
 			case .Released:
-				removePushedCallerIdentity(for: callId)
+				incomingCallerStore.finish(callId: callId, token: Self.callerPresentationToken(call))
 				TelecomManager.setAppData(sCall: call, appData: nil)
 				if core.callsNb == 0 {
 					UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["linphone-earpiece-enforcement"])

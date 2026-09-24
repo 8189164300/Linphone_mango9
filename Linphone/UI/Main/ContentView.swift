@@ -1350,7 +1350,7 @@ struct ContentView: View {
 							isShowBack: true,
 							onBackPressed: {
 								withAnimation {
-									isShowLoginFragment.toggle()
+									isShowLoginFragment = false
 								}
 							})
 						.zIndex(3)

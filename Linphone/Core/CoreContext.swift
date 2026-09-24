@@ -300,7 +300,12 @@ class CoreContext: ObservableObject {
 			
 			self.mCoreDelegate = CoreDelegateStub(onGlobalStateChanged: { (core: Core, state: GlobalState, _: String) in
 				if state == GlobalState.On {
+					Mango9LogoutCoordinator.recoverLocalRemovals(core: core)
 					self.enforceMango9AccountRouting(core: core)
+					Task { @MainActor in
+						Mango9LogoutCoordinator.shared.start()
+						await Mango9LogoutCoordinator.shared.refresh()
+					}
 					Mango9SessionStore.activate(
 						sipIdentity: core.defaultAccount?.params?
 							.identityAddress?.asStringUriOnly()
@@ -412,6 +417,7 @@ class CoreContext: ObservableObject {
 				
 				switch state {
 				case .Ok:
+					Task { @MainActor in await Mango9LogoutCoordinator.shared.refresh() }
 					DispatchQueue.main.async {
 						NotificationCenter.default.post(name: NSNotification.Name("CoreStarted"), object: nil)
 					}
@@ -551,6 +557,7 @@ class CoreContext: ObservableObject {
 	}
 	
 	func onEnterForeground() {
+		Task { @MainActor in await Mango9LogoutCoordinator.shared.refresh() }
 		coreQueue.async {
 			Log.info("[onEnterForegroundOrBackground] Entering foreground")
 			
@@ -613,6 +620,7 @@ class CoreContext: ObservableObject {
 				Mango9Configuration.configurePush(on: params)
 				account.params = params
 			}
+			Task { @MainActor in await Mango9LogoutCoordinator.shared.refresh() }
 		}
 	}
 
@@ -653,6 +661,8 @@ class CoreContext: ObservableObject {
 	}
 
 	private func enforceMango9AccountRouting(core: Core) {
+		let logoutRecords = try? Mango9LogoutKeychain.load()
+		let pendingLogouts = Set((logoutRecords ?? []).filter(\.pendingLogout).map(\.identity))
 		for account in core.accountList {
 			guard let params = account.params?.clone() else { continue }
 
@@ -662,7 +672,11 @@ class CoreContext: ObservableObject {
 				try params.setServeraddress(newValue: serverAddress)
 				try params.setRoutesaddresses(newValue: [routeAddress])
 				params.expires = Mango9Configuration.mobileRegistrationExpires
-				params.registerEnabled = true
+				if let identity = params.identityAddress?.asStringUriOnly(), pendingLogouts.contains(identity) {
+					params.registerEnabled = false
+				} else if logoutRecords != nil {
+					params.registerEnabled = true
+				}
 				Mango9Configuration.configurePush(on: params)
 				account.params = params
 			} catch {

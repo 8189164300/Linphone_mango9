@@ -172,17 +172,6 @@ class AccountLoginViewModel: ObservableObject {
 	}
 	
 	func delete() {
-		coreContext.doOnCoreQueue { core in
-			// To completely remove an Account
-			if let account = core.defaultAccount {
-				core.removeAccountWithData(account: account)
-				
-				// To remove all accounts use
-				core.clearAccounts()
-				
-				// Same for auth info
-				core.clearAllAuthInfo()
-			}
-		}
+		HelpView.logout()
 	}
 }

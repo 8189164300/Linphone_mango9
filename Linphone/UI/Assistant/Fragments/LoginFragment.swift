@@ -917,6 +917,7 @@ private enum Mango9LoginService {
 			enrollmentExpiresAt: Date().addingTimeInterval(TimeInterval(login.expiresIn)),
 			sipIdentity: enrollment.identity
 		)
+		try await Mango9LogoutCoordinator.shared.prepareLogin(identity: enrollment.identity, session: session)
 		try Mango9SessionStore.save(
 			session,
 			for: enrollment.identity,
@@ -1001,6 +1002,7 @@ private enum Mango9LoginService {
 		)
 
 		let associatedSession = currentSession.associated(with: identity)
+		try await Mango9LogoutCoordinator.shared.prepareLogin(identity: identity, session: associatedSession)
 		try Mango9SessionStore.save(
 			associatedSession,
 			for: identity,
