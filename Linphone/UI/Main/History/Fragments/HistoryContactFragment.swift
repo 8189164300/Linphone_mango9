@@ -74,7 +74,8 @@ struct HistoryContactFragment: View {
 						let hideContactEdition = AppServices.corePreferences.hideContactEdition
 						let isFriend = historyModel.isFriend == true
 
-						if !historyModel.isConf && (!disableAddContact || (disableAddContact && isFriend)) && !hideContactEdition {
+						if !historyModel.isConf && historyModel.canStartCommunication
+							&& (!disableAddContact || (disableAddContact && isFriend)) && !hideContactEdition {
 							Button {
 								isMenuOpen = false
 								
@@ -214,7 +215,7 @@ struct HistoryContactFragment: View {
 							HStack {
 								Spacer()
 								
-								if !historyModel.isConf {
+								if !historyModel.isConf && historyModel.canStartCommunication {
 									Button(action: {
 										telecomManager.doCallOrJoinConf(
 											address: historyModel.addressLinphone,
@@ -294,7 +295,7 @@ struct HistoryContactFragment: View {
 											}
 										})
 									}
-								} else {
+								} else if historyModel.isConf {
 									Button(action: {
 										withAnimation {
 											if historyModel.address.hasPrefix("sip:conference-focus@sip.linphone.org") {

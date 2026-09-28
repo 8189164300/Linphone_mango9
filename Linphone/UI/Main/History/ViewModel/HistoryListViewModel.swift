@@ -30,6 +30,7 @@ class HistoryListViewModel: ObservableObject {
 	
 	var callLogsAddressToDelete = ""
 	var callLogCoreDelegate: CoreDelegate?
+	private var callerPresentationObserver: NSObjectProtocol?
 	
 	@Published var callLogsFilter = ""
 	
@@ -40,8 +41,22 @@ class HistoryListViewModel: ObservableObject {
 	private var historyChatRoomDelegate: ChatRoomDelegate?
 	
 	init() {
+		callerPresentationObserver = NotificationCenter.default.addObserver(
+			forName: Notification.Name("Mango9CallerPresentationChanged"),
+			object: nil,
+			queue: .main
+		) { [weak self] notification in
+			guard let callId = notification.userInfo?["callId"] as? String, !callId.isEmpty else { return }
+			self?.callLogsTmp.filter { $0.callLogId == callId }.forEach { $0.initValue(callLog: $0.callLog) }
+		}
 		computeCallLogsList()
         SharedMainViewModel.shared.updateMissedCallsCount()
+	}
+
+	deinit {
+		if let callerPresentationObserver {
+			NotificationCenter.default.removeObserver(callerPresentationObserver)
+		}
 	}
 	
 	func computeCallLogsList() {

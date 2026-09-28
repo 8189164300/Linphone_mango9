@@ -1,4 +1,4 @@
-• More reliable sign-out: call notification cleanup retries when your connection returns
-• Improved handling of multiple accounts when signing in and signing out
-• More consistent caller information when opening an incoming call
+• Caller information now stays consistent from the incoming-call screen into Call History
+• Private callers are clearly labeled without exposing or reusing hidden identity
+• Incomplete call notifications no longer appear as callable “anonymous” contacts
 • Continued support for iOS 15 and later
