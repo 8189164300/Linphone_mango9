@@ -2,18 +2,18 @@ Mango9 is a companion application for existing Mango9 business users. Accounts a
 
 Sign in using the existing review credentials entered in App Store Connect. Password and email-code login use the same account-provisioning flow.
 
-Version 6.2.15 (48) keeps verified incoming caller information consistent in Call History, clearly labels withheld callers, and prevents incomplete notification-only call records from exposing an unusable anonymous address as a contact action. One binary continues to support iOS 15 and later.
+Version 6.2.16 (49) improves event interactions and date-save confirmation, and adds permission-aware Team Chat group renaming. It preserves the caller-history and durable sign-out fixes from previous releases. One binary supports iOS 15 and later.
 
 To test:
-1. Open CRM > Appointments. Switch between the appointment list and Calendar (Day, Week and Month), and open an appointment to view its status and linked lead or client.
-2. Use + to create a test appointment in the review account. Edit its details or status. Sharing and assignment follow the signed-in user's server permissions. Delete only your test appointment afterward.
-3. Open Settings > CRM Settings (also available from CRM). Review in-app reminder timing, calendar preferences, and separate SMS and Team Chat notification controls. Appointment reminders appear while the app is open; they are not background push reminders.
-4. With microphone permission denied, tap Call. The app explains that the other person cannot hear you and offers Cancel or Open Settings without dialing. If permission has never been requested, iOS asks for access first. Returning from Settings does not automatically place a call.
-5. Sign out of a test account and verify it is removed while any other account remains available. If the device is offline after cleanup has been securely set up, local sign-out can complete and call-notification cleanup retries after connectivity returns. First-time cleanup setup requires an online authenticated session.
-6. Sign back in, or add a second authorized test account. Successful login returns to the account rather than reopening the login screen. For an incoming test call, verify that the caller shown during the call remains consistent in Call History. A withheld caller is labeled Private caller; an incomplete notification-only record is not offered as a call, message, video, or add-contact destination.
+1. Open CRM > Events. Switch between the event list and Calendar (Day, Week and Month). Month cells show total event counts, not event titles. Tap anywhere on a day to open Day view, then tap an event to see its details. Touch and hold a day or time slot to start a new event with that date or time.
+2. Use + to create a test event in the review account, then create another. Change the first event's start date, save, close and reopen it. Moving the start preserves duration; the end is independently editable. Date changes are read back from the server before being confirmed. Conflicts or unconfirmed saves appear visibly. Delete only your test events afterward. Recurring schedule editing remains on the web.
+3. Open Team Chat and an existing group. The pencil opens Rename group. Save is available only when the server confirms that the current user may rename it. Direct conversations do not have a rename control. Per-chat mute controls appear only on servers that support the notification-preference API; this release does not change server deployment.
+4. Open Settings > CRM Settings for in-app reminders, calendar preferences, and separate SMS and Team Chat notification controls. Event reminders appear while the app is open; they are not background push reminders.
+5. With microphone permission denied, tap Call. The app offers Cancel or Open Settings without dialing. If permission has never been requested, iOS asks first. Returning from Settings does not automatically place a call.
+6. Sign out of a test account while keeping any other account available. After secure cleanup setup, offline sign-out retries call-notification cleanup when connectivity returns. Initial setup requires an online authenticated session. Adding a second authorized account returns to the signed-in app.
 
-Appointments use the selected CRM account and its existing permissions; they do not require access to the iPhone's personal calendar.
+Events use the selected CRM account and its existing permissions; they do not require access to the iPhone's personal calendar. Incoming caller information remains consistent in Call History, with privacy protections for withheld callers and incomplete call records.
 
-Exact corresponding source for this build: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.15-build-48
+Exact corresponding source: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.16-build-49
 
-Review credentials and contact details are supplied only in App Store Connect and are not stored in the public source repository.
+Review credentials and contact details are supplied only in App Store Connect, never in public source.

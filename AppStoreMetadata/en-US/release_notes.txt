@@ -1,4 +1,5 @@
-• Caller information now stays consistent from the incoming-call screen into Call History
-• Private callers are clearly labeled without exposing or reusing hidden identity
-• Incomplete call notifications no longer appear as callable “anonymous” contacts
-• Continued support for iOS 15 and later
+• Calendar Month view now shows event counts. Tap a day to see all its events.
+• Larger tap areas make events easier to open in list, Day, and Week views.
+• Improved event creation, date editing, and save confirmation.
+• Rename eligible Team Chat groups from the conversation and see their group names consistently.
+• Continued support for iOS 15 and later, including the simplified Month view on older iPhones.
