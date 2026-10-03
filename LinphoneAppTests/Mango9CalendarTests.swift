@@ -686,6 +686,59 @@ final class Mango9CalendarTests: XCTestCase {
 		XCTAssertEqual(overlap.count, 2); XCTAssertLessThanOrEqual(overlap[0].frame.maxX, overlap[1].frame.minX)
 	}
 
+	func testCrowdedLegacyDayUsesAgendaWithoutDroppingOccurrences() throws {
+		let first = try event()
+		var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: first.timezone)!
+		let start = calendar.startOfDay(for: first.startAt)
+		let values = try (0..<500).map { index -> Mango9Appointment in
+			var value = try event(eventJSON.replacingOccurrences(of: "\"id\":91", with: "\"id\":\(index + 1000)"))
+			value.startAt = start; value.endAt = calendar.date(byAdding: .day, value: 1, to: start)!
+			value.occurrenceKey = "fixture-\(index)"; return value
+		}
+		for width: CGFloat in [200, 310, 700] {
+			XCTAssertTrue(Mango9LegacyTimeline.requiresAgenda(values, on: start, width: width, hourHeight: 60, calendar: calendar))
+		}
+		let day = Mango9LegacyCalendarMode.events(values, on: start, calendar: calendar)
+		XCTAssertEqual(day.count, 500)
+		XCTAssertEqual(Set(day.map(\.displayID)).count, 500)
+		XCTAssertFalse(Mango9LegacyTimeline.requiresAgenda(values, on: calendar.date(byAdding: .day, value: 1, to: start)!, width: 310, hourHeight: 60, calendar: calendar))
+	}
+
+	func testAgendaOnlyReplacesUnreadableOverlapNotBusySequentialDays() throws {
+		let first = try event()
+		var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: first.timezone)!
+		let sequential = (0..<20).map { index -> Mango9Appointment in
+			var value = first; value.startAt = first.startAt.addingTimeInterval(Double(index) * 1800)
+			value.endAt = value.startAt.addingTimeInterval(1800); value.occurrenceKey = "sequence-\(index)"; return value
+		}
+		XCTAssertFalse(Mango9LegacyTimeline.requiresAgenda(sequential, on: first.startAt, width: 310, hourHeight: 60,
+			minimumEventHeight: Mango9TimelineAppointment.minimumHeight, calendar: calendar))
+		XCTAssertFalse(Mango9LegacyTimeline.requiresAgenda(Array(repeating: first, count: 4), on: first.startAt, width: 310, hourHeight: 60, calendar: calendar))
+		XCTAssertTrue(Mango9LegacyTimeline.requiresAgenda(Array(repeating: first, count: 5), on: first.startAt, width: 310, hourHeight: 60, calendar: calendar))
+		XCTAssertTrue(Mango9LegacyTimeline.requiresAgenda(Array(repeating: first, count: 4), on: first.startAt, width: 310, hourHeight: 60, minimumColumnWidth: 110, calendar: calendar))
+		XCTAssertFalse(Mango9LegacyTimeline.requiresAgenda([first], on: first.startAt, width: 50, hourHeight: 60, calendar: calendar))
+		for invalidWidth: CGFloat in [0, .nan, .infinity] {
+			XCTAssertFalse(Mango9LegacyTimeline.requiresAgenda([first, first], on: first.startAt, width: invalidWidth, hourHeight: 60, calendar: calendar))
+		}
+	}
+
+	func testAgendaDetectsOvernightAndVisualOverlapAndShowsActualDates() throws {
+		var value = try event()
+		var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: value.timezone)!
+		let day = calendar.startOfDay(for: value.startAt)
+		value.startAt = day.addingTimeInterval(-3600); value.endAt = day.addingTimeInterval(3600)
+		XCTAssertTrue(Mango9LegacyTimeline.requiresAgenda(Array(repeating: value, count: 6), on: day, width: 310, hourHeight: 60, calendar: calendar))
+		let formatter = DateFormatter(); formatter.calendar = calendar; formatter.timeZone = calendar.timeZone; formatter.dateStyle = .medium; formatter.timeStyle = .short
+		XCTAssertEqual(Mango9CalendarDayAgenda.timeLabel(value, on: day, calendar: calendar),
+			"\(formatter.string(from: value.startAt)) – \(formatter.string(from: value.endAt))")
+		let short = (0..<5).map { index -> Mango9Appointment in
+			var item = value; item.startAt = day.addingTimeInterval(Double(index) * 60); item.endAt = item.startAt.addingTimeInterval(30); return item
+		}
+		XCTAssertFalse(Mango9LegacyTimeline.requiresAgenda(short, on: day, width: 310, hourHeight: 60, calendar: calendar))
+		XCTAssertTrue(Mango9LegacyTimeline.requiresAgenda(short, on: day, width: 310, hourHeight: 60,
+			minimumEventHeight: Mango9TimelineAppointment.minimumHeight, calendar: calendar))
+	}
+
 	@MainActor func testModernDayWeekMonthRenderWithClearDatesAndPreserveVisibleDateOnRefresh() async throws {
 		guard #available(iOS 18.0, *) else { throw XCTSkip("Modern calendar requires iOS 18") }
 		try await withRefreshFixture { store, date, window in

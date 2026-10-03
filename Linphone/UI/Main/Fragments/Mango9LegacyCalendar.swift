@@ -248,7 +248,7 @@ struct Mango9LegacyCalendar: View {
 	}
 }
 
-/// Exclusive gestures prevent a successful hold from also navigating on release.
+/// UIKit's failure relationship keeps taps and holds exclusive on older iOS too.
 /// Movement cancels the hold so the surrounding calendar can still scroll.
 struct Mango9CalendarDateButton<Content: View>: View {
 	let date: Date
@@ -258,11 +258,19 @@ struct Mango9CalendarDateButton<Content: View>: View {
 
 	var body: some View {
 		if let onHold {
-			content().contentShape(Rectangle())
-				.gesture(LongPressGesture(minimumDuration: 0.5, maximumDistance: 10)
-					.exclusively(before: TapGesture()).onEnded { value in
-						switch value { case .first(true): onHold(date); case .second: onTap(); default: break }
-					})
+			Group {
+				if #available(iOS 18.0, *) {
+					// Keep the recognizers inside SwiftUI for the newer calendar's scroll hierarchy.
+					content().contentShape(Rectangle())
+						.gesture(LongPressGesture(minimumDuration: 0.5, maximumDistance: 10)
+							.exclusively(before: TapGesture()).onEnded { value in
+								switch value { case .first(true): onHold(date); case .second: onTap(); default: break }
+							})
+				} else {
+					content().contentShape(Rectangle())
+						.overlay { Mango9CalendarDateGestures(onTap: onTap, onHold: { onHold(date) }).accessibilityHidden(true) }
+				}
+			}
 				.accessibilityElement(children: .ignore).accessibilityAddTraits(.isButton)
 				.accessibilityAction { onTap() }
 				.accessibilityAction(named: Text("New event")) { onHold(date) }
@@ -270,6 +278,31 @@ struct Mango9CalendarDateButton<Content: View>: View {
 		} else {
 			Button(action: onTap) { content().contentShape(Rectangle()) }.buttonStyle(.plain)
 		}
+	}
+}
+
+private struct Mango9CalendarDateGestures: UIViewRepresentable {
+	let onTap: () -> Void
+	let onHold: () -> Void
+	func makeCoordinator() -> Coordinator { Coordinator(onTap: onTap, onHold: onHold) }
+	func makeUIView(context: Context) -> UIView {
+		let view = UIView(); view.backgroundColor = .clear
+		let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tap))
+		let hold = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.hold(_:)))
+		hold.minimumPressDuration = 0.5; hold.allowableMovement = 10
+		tap.require(toFail: hold)
+		view.addGestureRecognizer(tap); view.addGestureRecognizer(hold)
+		return view
+	}
+	func updateUIView(_ view: UIView, context: Context) {
+		context.coordinator.onTap = onTap; context.coordinator.onHold = onHold
+	}
+	final class Coordinator: NSObject {
+		var onTap: () -> Void
+		var onHold: () -> Void
+		init(onTap: @escaping () -> Void, onHold: @escaping () -> Void) { self.onTap = onTap; self.onHold = onHold }
+		@objc func tap() { onTap() }
+		@objc func hold(_ recognizer: UILongPressGestureRecognizer) { if recognizer.state == .began { onHold() } }
 	}
 }
 
@@ -404,40 +437,47 @@ struct Mango9LegacyTimeline: View {
 	var businessHours: Mango9BusinessHours? = nil
 	private let hourHeight: CGFloat = 60
 	@ScaledMetric(relativeTo: .caption2) private var gutter: CGFloat = 54
+	@ScaledMetric(relativeTo: .body) private var minimumColumnWidth: CGFloat = 72
 	var body: some View {
 		GeometryReader { geometry in
 			let width = dynamicTypeSize.isAccessibilitySize ? max(geometry.size.width, gutter + CGFloat(days.count) * 110) : geometry.size.width
-			ScrollView(.horizontal, showsIndicators: width > geometry.size.width) {
-				VStack(spacing: 0) {
-					HStack(spacing: 0) {
-						Color.clear.frame(width: gutter, height: 1)
-						ForEach(days, id: \.self) { day in
-							Mango9CalendarDateButton(date: day, onHold: onCreate, onTap: { onDay(day) }) {
-								VStack(spacing: 4) {
-									Text(day, format: days.count == 7 ? .dateTime.weekday(.narrow) : .dateTime.weekday(.abbreviated)).font(.caption2).foregroundColor(.secondary)
-									Text(day, format: .dateTime.day()).font(.subheadline.weight(.semibold)).foregroundColor(Calendar.current.isDateInToday(day) ? .mango9Primary : .primary)
-									Rectangle().fill(Calendar.current.isDateInToday(day) ? Color.mango9Primary : Color(.separator).opacity(0.5)).frame(height: 2)
-								}.frame(maxWidth: .infinity, minHeight: 54)
-							}.accessibilityLabel(day.formatted(date: .complete, time: .omitted))
-						}
-					}.padding(.trailing, 8)
-					ScrollViewReader { proxy in
-						ScrollView {
-							HStack(alignment: .top, spacing: 0) {
-								VStack(alignment: .trailing, spacing: 0) {
-									ForEach(0..<24, id: \.self) { hour in
-										Text(hour == 0 ? "12 AM" : hour < 12 ? "\(hour) AM" : hour == 12 ? "12 PM" : "\(hour - 12) PM")
-											.font(.caption2).foregroundColor(.secondary).frame(height: hourHeight, alignment: .top).id(hour)
+			if days.count == 1, let day = days.first,
+				Self.requiresAgenda(events, on: day, width: width - gutter - 8, hourHeight: hourHeight,
+					minimumColumnWidth: minimumColumnWidth, minimumEventHeight: Mango9TimelineAppointment.minimumHeight) {
+				Mango9CalendarDayAgenda(day: day, events: Mango9LegacyCalendarMode.events(events, on: day, calendar: .current), onSelect: onSelect)
+			} else {
+				ScrollView(.horizontal, showsIndicators: width > geometry.size.width) {
+					VStack(spacing: 0) {
+						HStack(spacing: 0) {
+							Color.clear.frame(width: gutter, height: 1)
+							ForEach(days, id: \.self) { day in
+								Mango9CalendarDateButton(date: day, onHold: onCreate, onTap: { onDay(day) }) {
+									VStack(spacing: 4) {
+										Text(day, format: days.count == 7 ? .dateTime.weekday(.narrow) : .dateTime.weekday(.abbreviated)).font(.caption2).foregroundColor(.secondary)
+										Text(day, format: .dateTime.day()).font(.subheadline.weight(.semibold)).foregroundColor(Calendar.current.isDateInToday(day) ? .mango9Primary : .primary)
+										Rectangle().fill(Calendar.current.isDateInToday(day) ? Color.mango9Primary : Color(.separator).opacity(0.5)).frame(height: 2)
+									}.frame(maxWidth: .infinity, minHeight: 54)
+								}.accessibilityLabel(day.formatted(date: .complete, time: .omitted))
+							}
+						}.padding(.trailing, 8)
+						ScrollViewReader { proxy in
+							ScrollView {
+								HStack(alignment: .top, spacing: 0) {
+									VStack(alignment: .trailing, spacing: 0) {
+										ForEach(0..<24, id: \.self) { hour in
+											Text(hour == 0 ? "12 AM" : hour < 12 ? "\(hour) AM" : hour == 12 ? "12 PM" : "\(hour - 12) PM")
+												.font(.caption2).foregroundColor(.secondary).frame(height: hourHeight, alignment: .top).id(hour)
+										}
+									}.padding(.trailing, 7).frame(width: gutter)
+									ForEach(days, id: \.self) { day in
+										dayColumn(day, width: max(0, (width - gutter - 8) / CGFloat(max(1, days.count))))
 									}
-								}.padding(.trailing, 7).frame(width: gutter)
-								ForEach(days, id: \.self) { day in
-									dayColumn(day, width: max(0, (width - gutter - 8) / CGFloat(max(1, days.count))))
-								}
-							}.padding(.trailing, 8)
-						}.onChange(of: days) { _ in proxy.scrollTo(initialHour, anchor: .top) }
-						.onAppear { proxy.scrollTo(initialHour, anchor: .top) }
-					}
-				}.frame(width: width)
+								}.padding(.trailing, 8)
+							}.onChange(of: days) { _ in proxy.scrollTo(initialHour, anchor: .top) }
+							.onAppear { proxy.scrollTo(initialHour, anchor: .top) }
+						}
+					}.frame(width: width)
+				}
 			}
 		}
 	}
@@ -478,18 +518,41 @@ struct Mango9LegacyTimeline: View {
 	}
 	struct Placement: Identifiable { let event: Mango9Appointment; let frame: CGRect; var id: String { event.displayID } }
 	private static func minute(_ date: Date, calendar: Calendar) -> Int { calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date) }
-	static func placements(_ events: [Mango9Appointment], on day: Date, width: CGFloat, hourHeight: CGFloat,
-		minimumEventHeight: CGFloat = 0, calendar: Calendar = .current) -> [Placement] {
-		guard width.isFinite, hourHeight.isFinite, hourHeight > 0 else { return [] }
-		let minimumHeight = minimumEventHeight.isFinite ? max(0, minimumEventHeight) : 0
-		let start = calendar.startOfDay(for: day); let end = calendar.date(byAdding: .day, value: 1, to: start)!
+	/// Use the same clipped/visual intervals as the timeline, but stop as soon as
+	/// columns would become unreadable. Dense calendars never build thousands of lanes.
+	static func requiresAgenda(_ events: [Mango9Appointment], on day: Date, width: CGFloat, hourHeight: CGFloat,
+		minimumColumnWidth: CGFloat = 72, minimumEventHeight: CGFloat = 0, calendar: Calendar = .current) -> Bool {
+		guard width.isFinite, width > 0, hourHeight.isFinite, hourHeight > 0,
+			minimumColumnWidth.isFinite, minimumColumnWidth > 0 else { return false }
 		let values = Mango9LegacyCalendarMode.events(events, on: day, calendar: calendar)
-		let ranges = values.map { event -> (Int, Int) in
+		guard values.count > 1 else { return false }
+		let capacity = max(1, floor(max(0, width - 4) / (minimumColumnWidth + 2)))
+		let minimumHeight = minimumEventHeight.isFinite ? max(0, minimumEventHeight) : 0
+		var activeEnds: [CGFloat] = []
+		for range in ranges(values, on: day, calendar: calendar).sorted(by: { $0.0 < $1.0 }) {
+			let start = CGFloat(range.0)
+			activeEnds.removeAll { $0 <= start + 0.000001 }
+			let end = minimumHeight > 0 ? max(CGFloat(range.1), start + (minimumHeight + 2) * 60 / hourHeight) : CGFloat(range.1)
+			activeEnds.append(end)
+			if CGFloat(activeEnds.count) > capacity { return true }
+		}
+		return false
+	}
+	private static func ranges(_ values: [Mango9Appointment], on day: Date, calendar: Calendar) -> [(Int, Int)] {
+		let start = calendar.startOfDay(for: day); let end = calendar.date(byAdding: .day, value: 1, to: start)!
+		return values.map { event in
 			let first = minute(max(start, event.startAt), calendar: calendar)
 			let last = event.endAt >= end ? 1440 : minute(event.endAt, calendar: calendar)
 			let length = last > first ? last - first : max(1, Int(event.endAt.timeIntervalSince(max(start, event.startAt)) / 60))
 			return (first, min(1440, first + length))
 		}
+	}
+	static func placements(_ events: [Mango9Appointment], on day: Date, width: CGFloat, hourHeight: CGFloat,
+		minimumEventHeight: CGFloat = 0, calendar: Calendar = .current) -> [Placement] {
+		guard width.isFinite, hourHeight.isFinite, hourHeight > 0 else { return [] }
+		let minimumHeight = minimumEventHeight.isFinite ? max(0, minimumEventHeight) : 0
+		let values = Mango9LegacyCalendarMode.events(events, on: day, calendar: calendar)
+		let ranges = ranges(values, on: day, calendar: calendar)
 		let visualEnds = ranges.map { range in
 			minimumHeight > 0 ? max(CGFloat(range.1), CGFloat(range.0) + (minimumHeight + 2) * 60 / hourHeight) : CGFloat(range.1)
 		}
@@ -509,5 +572,49 @@ struct Mango9LegacyTimeline: View {
 			index = last
 		}
 		return result
+	}
+}
+
+/// Crowded days keep every occurrence readable and independently tappable. This
+/// is presentation only: selections still fetch the original event from the API.
+struct Mango9CalendarDayAgenda: View {
+	let day: Date
+	let events: [Mango9Appointment]
+	let onSelect: (Mango9Appointment) -> Void
+	var body: some View {
+		ScrollView {
+			LazyVStack(alignment: .leading, spacing: 10) {
+				VStack(alignment: .leading, spacing: 4) {
+					Label("\(events.count) events", systemImage: "list.bullet").font(.subheadline.weight(.semibold)).foregroundColor(.mango9Primary)
+					Text("Overlapping events shown as a list").font(.caption).foregroundColor(.secondary)
+				}.padding(.bottom, 4).accessibilityIdentifier("calendar.day.agenda.summary")
+				ForEach(events, id: \.displayID) { event in
+					Button { onSelect(event) } label: {
+						HStack(spacing: 12) {
+							VStack(alignment: .leading, spacing: 6) {
+								Text(event.title).font(.headline).foregroundColor(.primary).fixedSize(horizontal: false, vertical: true)
+								Text(Self.timeLabel(event, on: day)).font(.subheadline).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+								HStack(alignment: .top, spacing: 6) {
+									if event.isRecurring { Image(systemName: "repeat").foregroundColor(event.tint).accessibilityLabel("Recurring") }
+									if let status = event.status?.name, !status.isEmpty { Text(status).foregroundColor(.secondary) }
+								}.font(.caption)
+							}.frame(maxWidth: .infinity, alignment: .leading)
+							Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundColor(.secondary)
+						}.padding(14).frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+							.background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+							.overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 2).fill(event.tint).frame(width: 3).padding(.vertical, 10) }
+							.contentShape(Rectangle())
+					}.buttonStyle(.plain)
+						.accessibilityIdentifier("calendar.event.\(event.displayID)")
+				}
+			}.padding(.horizontal, 16).padding(.vertical, 8)
+		}.accessibilityIdentifier("calendar.day.agenda")
+			.id(day) // Reset only when navigating to a different day, not after viewing details.
+	}
+	static func timeLabel(_ event: Mango9Appointment, on day: Date, calendar: Calendar = .current) -> String {
+		let sameDay = calendar.isDate(event.startAt, inSameDayAs: day) && calendar.isDate(event.endAt, inSameDayAs: day)
+		let formatter = DateFormatter(); formatter.calendar = calendar; formatter.timeZone = calendar.timeZone
+		formatter.dateStyle = sameDay ? .none : .medium; formatter.timeStyle = .short
+		return "\(formatter.string(from: event.startAt)) – \(formatter.string(from: event.endAt))"
 	}
 }

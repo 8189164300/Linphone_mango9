@@ -2,7 +2,7 @@ Mango9 is a companion application for existing Mango9 business users. Accounts a
 
 Sign in using the existing review credentials entered in App Store Connect. Password and email-code login use the same account-provisioning flow.
 
-Version 6.2.16 (49) improves event interactions and date-save confirmation, and adds permission-aware Team Chat group renaming. It preserves the caller-history and durable sign-out fixes from previous releases. One binary supports iOS 15 and later.
+Version 6.2.16 (50) improves event interactions and date-save confirmation, and adds permission-aware Team Chat group renaming. Crowded days on iOS 15–17 use a readable, scrollable event list instead of narrow overlapping columns. It preserves the caller-history and durable sign-out fixes from previous releases. One binary supports iOS 15 and later.
 
 To test:
 1. Open CRM > Events. Switch between the event list and Calendar (Day, Week and Month). Month cells show total event counts, not event titles. Tap anywhere on a day to open Day view, then tap an event to see its details. Touch and hold a day or time slot to start a new event with that date or time.
@@ -14,6 +14,6 @@ To test:
 
 Events use the selected CRM account and its existing permissions; they do not require access to the iPhone's personal calendar. Incoming caller information remains consistent in Call History, with privacy protections for withheld callers and incomplete call records.
 
-Exact corresponding source: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.16-build-49
+Exact corresponding source: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.16-build-50
 
 Review credentials and contact details are supplied only in App Store Connect, never in public source.

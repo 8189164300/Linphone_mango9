@@ -54,6 +54,39 @@ final class CalendarInteractionUITests: XCTestCase {
 	}
 	func testMonthCountOpensDayWithAllEvents() { checkMonthCountOpensAllEvents("month") }
 	func testLegacyMonthCountOpensDayWithAllEvents() { checkMonthCountOpensAllEvents("legacy") }
+	func testLegacyCrowdedMonthOpensReadableDayAndFirstAndLastEvents() {
+		launch("legacy-dense")
+		let day = visibleToday()
+		let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '30 events'"), object: day)
+		XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 20), .completed)
+		day.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.85)).tap()
+		let agenda = app.scrollViews["calendar.day.agenda"]
+		XCTAssertTrue(agenda.waitForExistence(timeout: 20))
+		let screenshot = XCTAttachment(screenshot: app.screenshot()); screenshot.lifetime = .keepAlways; add(screenshot)
+		let first = visibleEvent(prefix: "calendar.event.200|")
+		XCTAssertGreaterThan(first.frame.width, 250)
+		XCTAssertGreaterThanOrEqual(first.frame.height, 44)
+		first.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.8)).tap()
+		XCTAssertTrue(app.staticTexts["Dense event 01"].waitForExistence(timeout: 10))
+		closeDetails()
+		let last = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'calendar.event.229|'")).firstMatch
+		for _ in 0..<20 {
+			if last.exists && last.isHittable { break }
+			agenda.swipeUp()
+		}
+		XCTAssertTrue(last.exists && last.isHittable, "The full day must remain reachable, not truncated to a preview")
+		last.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.8)).tap()
+		XCTAssertTrue(app.staticTexts["Dense event 30"].waitForExistence(timeout: 10))
+		closeDetails()
+		// Returning from details retains this day's scroll position.
+		XCTAssertTrue(last.isHittable)
+		app.buttons["Next day"].tap()
+		XCTAssertTrue(agenda.waitForExistence(timeout: 15))
+		XCTAssertTrue(visibleEvent(prefix: "calendar.event.200|").isHittable)
+		app.buttons["appointments.create"].tap()
+		XCTAssertTrue(app.textFields["appointment.title"].waitForExistence(timeout: 10))
+		app.buttons["Cancel"].tap()
+	}
 	func testMonthLongPressStillCreatesOnSelectedDay() {
 		for renderer in ["month", "legacy"] {
 			launch(renderer)
@@ -63,6 +96,16 @@ final class CalendarInteractionUITests: XCTestCase {
 			XCTAssertTrue(app.navigationBars["New event"].exists)
 			app.buttons["Cancel"].tap()
 			XCTAssertTrue(day.waitForExistence(timeout: 10), "Holding a day must not also trigger tap navigation")
+		}
+	}
+	func testMonthScrollingDoesNotOpenDayOrCreateEvent() {
+		for renderer in ["month", "legacy"] {
+			launch(renderer)
+			visibleToday().swipeUp()
+			XCTAssertEqual(app.buttons["calendar.viewMode"].label, "Calendar view, Month")
+			XCTAssertFalse(app.textFields["appointment.title"].exists)
+			app.scrollViews.firstMatch.swipeDown()
+			XCTAssertEqual(app.buttons["calendar.viewMode"].label, "Calendar view, Month")
 		}
 	}
 	func testRecurringMonthCountOpensDayAndItsServerAppointment() {

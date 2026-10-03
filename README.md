@@ -5,8 +5,8 @@ provides Mango9 account provisioning, SIP calling, CRM access, contacts, and
 Mango9 messaging.
 
 This repository is the corresponding-source location displayed by the Mango9
-app. Release tag `ios-6.2.16-build-49` corresponds to Mango9 iOS version 6.2.16,
-build 49.
+app. Release tag `ios-6.2.16-build-50` corresponds to Mango9 iOS version 6.2.16,
+build 50.
 
 Mango9 modified the upstream Linphone iOS application in 2026. Mango9 is not
 affiliated with or endorsed by Belledonne Communications SARL.

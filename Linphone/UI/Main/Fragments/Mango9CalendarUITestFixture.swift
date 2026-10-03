@@ -11,7 +11,7 @@ struct Mango9CalendarUITestFixture: View {
 			if let store {
 				Mango9AppointmentsFragment(store: store, date: CalendarFixtureProtocol.day,
 					calendarMode: ProcessInfo.processInfo.environment["UITEST_CALENDAR"] != "list",
-					usesLegacyCalendar: ProcessInfo.processInfo.environment["UITEST_CALENDAR"] == "legacy")
+					usesLegacyCalendar: ProcessInfo.processInfo.environment["UITEST_CALENDAR"]?.hasPrefix("legacy") == true)
 			} else { ProgressView() }
 		}.task {
 			guard store == nil else { return }
@@ -38,6 +38,14 @@ private final class CalendarFixtureProtocol: URLProtocol {
 		events = [record(id: 91, title: "Tap", hour: 9), record(id: 92, title: "Next", hour: 10)]
 		if ProcessInfo.processInfo.environment["UITEST_CALENDAR"] == "recurring" {
 			events[0]["recurrence"] = ["frequency": "daily", "weekdays": []]
+		}
+		if ProcessInfo.processInfo.environment["UITEST_CALENDAR"] == "legacy-dense" {
+			events = (0..<30).map { index in
+				var value = record(id: 200 + index, title: String(format: "Dense event %02d", index + 1), hour: 0)
+				value["end_at"] = Mango9CalendarAPI.timestamp(Calendar.current.date(byAdding: .day, value: 1, to: day)!)
+				value["recurrence"] = ["frequency": "daily", "weekdays": []]
+				return value
+			}
 		}
 	}
 	private static func record(id: Int, title: String, hour: Int) -> [String: Any] {

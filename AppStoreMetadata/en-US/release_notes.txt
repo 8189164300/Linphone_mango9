@@ -1,5 +1,6 @@
 • Calendar Month view now shows event counts. Tap a day to see all its events.
 • Larger tap areas make events easier to open in list, Day, and Week views.
+• Crowded days on older iPhones show a readable event list instead of narrow overlapping columns.
 • Improved event creation, date editing, and save confirmation.
 • Rename eligible Team Chat groups from the conversation and see their group names consistently.
 • Continued support for iOS 15 and later, including the simplified Month view on older iPhones.
