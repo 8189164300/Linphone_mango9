@@ -225,8 +225,8 @@ struct Mango9PushCallerIdentity: Equatable {
 }
 
 /// Display-only identity. Never substitute this handle into SIP routing or redial.
-struct Mango9IncomingCallerPresentation: Equatable {
-	enum Source { case unknown, push, sip, withheld }
+struct Mango9IncomingCallerPresentation: Codable, Equatable {
+	enum Source: String, Codable { case unknown, push, sip, withheld }
 	let handle: String
 	let displayName: String
 	let source: Source
@@ -237,6 +237,75 @@ struct Mango9IncomingCallerPresentation: Equatable {
 		guard source == .push || source == .sip else { return "" }
 		return Mango9CallerIdentity.externalPhoneNumber(handle)
 			.map(Mango9CallerIdentity.formattedPhoneNumber) ?? handle
+	}
+}
+
+/// Stores the final display-only caller presentation with Linphone's own call log.
+/// The namespaced refKey survives app restarts without creating a second history database.
+/// It must never be used as a SIP route or a redial address.
+enum Mango9CallHistoryPresentation {
+	private static let prefix = "mango9-caller-v1:"
+	private static let maximumFieldLength = 512
+
+	static func encode(_ presentation: Mango9IncomingCallerPresentation) -> String? {
+		guard let presentation = sanitized(presentation),
+			let data = try? JSONEncoder().encode(presentation) else { return nil }
+		return prefix + data.base64EncodedString()
+	}
+
+	static func decode(_ refKey: String?) -> Mango9IncomingCallerPresentation? {
+		guard let refKey, refKey.hasPrefix(prefix),
+			let data = Data(base64Encoded: String(refKey.dropFirst(prefix.count))),
+			let presentation = try? JSONDecoder().decode(Mango9IncomingCallerPresentation.self, from: data) else {
+			return nil
+		}
+		return sanitized(presentation)
+	}
+
+	static func canReplace(refKey: String?) -> Bool {
+		guard let refKey else { return true }
+		return refKey.isEmpty || refKey.hasPrefix(prefix)
+	}
+
+	static func persist(_ presentation: Mango9IncomingCallerPresentation, to callLog: CallLog?) {
+		guard let callLog, canReplace(refKey: callLog.refKey),
+			let encoded = encode(presentation) else { return }
+		callLog.refKey = encoded
+	}
+
+	static func displayAddress(
+		username: String?,
+		presentation: Mango9IncomingCallerPresentation?,
+		isIncoming: Bool
+	) -> String {
+		if let presentation {
+			return presentation.subtitle.isEmpty ? presentation.displayName : presentation.subtitle
+		}
+		guard let username = Mango9CallerIdentity.normalizedLabel(username) else {
+			return isIncoming ? "Incoming call" : "Unknown"
+		}
+		return Mango9CallerIdentity.externalPhoneNumber(username)
+			.map(Mango9CallerIdentity.formattedPhoneNumber) ?? username
+	}
+
+	private static func sanitized(
+		_ presentation: Mango9IncomingCallerPresentation
+	) -> Mango9IncomingCallerPresentation? {
+		guard presentation.handle.count <= maximumFieldLength,
+			presentation.displayName.count <= maximumFieldLength else { return nil }
+		switch presentation.source {
+		case .unknown:
+			return nil
+		case .withheld:
+			return .withheld
+		case .push, .sip:
+			guard let handle = Mango9CallerIdentity.normalizedLabel(presentation.handle) else { return nil }
+			let phoneNumber = Mango9CallerIdentity.externalPhoneNumber(handle)
+			let displayName = Mango9CallerIdentity.normalizedLabel(presentation.displayName)
+				?? phoneNumber.map(Mango9CallerIdentity.formattedPhoneNumber)
+				?? handle
+			return .init(handle: phoneNumber ?? handle, displayName: displayName, source: presentation.source)
+		}
 	}
 }
 
@@ -470,7 +539,20 @@ class TelecomManager: ObservableObject {
 
 	private func notifyCallerPresentationChanged(call: Call) {
 		NotificationCenter.default.post(name: Notification.Name("Mango9CallerPresentationChanged"),
-			object: Self.callerPresentationToken(call))
+			object: Self.callerPresentationToken(call),
+			userInfo: ["callId": call.callLog?.callId ?? ""])
+	}
+
+	/// Persist before removing the call-lifetime cache so HistoryModel sees the same
+	/// privacy/identity decision as CallKit and the live call UI.
+	private func finishIncomingCallerPresentation(call: Call, callId: String, callLog: CallLog?) {
+		let token = Self.callerPresentationToken(call)
+		if call.dir == .Incoming,
+			let presentation = incomingCallerStore.finalPresentation(callId: callId, token: token) {
+			Mango9CallHistoryPresentation.persist(presentation, to: callLog)
+		}
+		incomingCallerStore.finish(callId: callId, token: token)
+		notifyCallerPresentationChanged(call: call)
 	}
 	
 	func addAllToLocalConference(core: Core) {
@@ -1192,8 +1274,7 @@ class TelecomManager: ObservableObject {
 					}
 				}
 				// }
-				incomingCallerStore.finish(callId: callId, token: Self.callerPresentationToken(call))
-				notifyCallerPresentationChanged(call: call)
+				finishIncomingCallerPresentation(call: call, callId: callId, callLog: callLog)
 				
 				if TelecomManager.callKitEnabled(core: core) {
 					var uuid = providerDelegate.uuids["\(callId)"]
@@ -1229,7 +1310,7 @@ class TelecomManager: ObservableObject {
 					}
 				}
 			case .Released:
-				incomingCallerStore.finish(callId: callId, token: Self.callerPresentationToken(call))
+				finishIncomingCallerPresentation(call: call, callId: callId, callLog: callLog)
 				TelecomManager.setAppData(sCall: call, appData: nil)
 				if core.callsNb == 0 {
 					UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["linphone-earpiece-enforcement"])

@@ -25,46 +25,34 @@ class HistoryModel: ObservableObject, Identifiable {
 	private var coreContext = CoreContext.shared
 
 	private static func isPresentable(_ address: Address) -> Bool {
+		// Display names are not routes. Requiring a usable SIP user prevents a
+		// generic name such as "IC" from making sip:anonymous callable.
 		Mango9CallerIdentity.normalizedLabel(address.username) != nil
-			|| Mango9CallerIdentity.normalizedLabel(address.displayName) != nil
 	}
 
-	private static func historyAddress(_ callLog: CallLog) -> Address {
-		let directionalAddress = callLog.dir == .Outgoing
-			? callLog.toAddress
-			: callLog.fromAddress
-		let candidates = [
-			callLog.remoteAddress,
-			directionalAddress,
-			callLog.toAddress,
-			callLog.fromAddress,
-			callLog.localAddress
-		].compactMap { $0 }
+	private static func remoteCandidates(_ callLog: CallLog) -> [Address] {
+		[callLog.remoteAddress, callLog.dir == .Outgoing ? callLog.toAddress : callLog.fromAddress]
+			.compactMap { $0 }
+	}
 
+	private static func usableRemoteAddress(_ callLog: CallLog) -> Address? {
+		let candidates = remoteCandidates(callLog)
 		// remoteAddress is the identity Linphone presented for the live call and can
 		// contain the asserted caller ID even when the stored From address is anonymous.
 		return candidates.first { Mango9CallerIdentity.externalPhoneNumber(for: $0) != nil }
 			?? candidates.first(where: isPresentable)
-			?? candidates[0]
 	}
 
-	private static func friendlyAddress(_ address: Address) -> String {
-		let username = address.username?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		guard !username.isEmpty else { return "" }
-
-		var digits = username.filter(\.isNumber)
-		let phoneCharacters = CharacterSet(charactersIn: "+0123456789-(). ")
-		let isPhoneNumber = username.unicodeScalars.allSatisfy { phoneCharacters.contains($0) }
-		guard isPhoneNumber else { return username }
-
-		if digits.count == 11, digits.first == "1" {
-			digits.removeFirst()
-		}
-		guard digits.count == 10 else { return username }
-
-		let areaEnd = digits.index(digits.startIndex, offsetBy: 3)
-		let prefixEnd = digits.index(areaEnd, offsetBy: 3)
-		return "\(digits[..<areaEnd])-\(digits[areaEnd..<prefixEnd])-\(digits[prefixEnd...])"
+	private static func historyAddress(_ callLog: CallLog) -> Address {
+		if let address = usableRemoteAddress(callLog) { return address }
+		// Keep Linphone's original address only as a stable history/delete key. The UI
+		// will not display or dial it when it is anonymous or otherwise unusable.
+		let fallback = remoteCandidates(callLog) + [
+			callLog.toAddress,
+			callLog.fromAddress,
+			callLog.localAddress
+		].compactMap { $0 }
+		return fallback[0]
 	}
 	
 	static let TAG = "[History Model]"
@@ -87,7 +75,15 @@ class HistoryModel: ObservableObject, Identifiable {
 	@Published var avatarModel: ContactAvatarModel?
 
 	var displayAddress: String {
-		Self.friendlyAddress(addressLinphone)
+		Mango9CallHistoryPresentation.displayAddress(
+			username: addressLinphone.username,
+			presentation: Mango9CallHistoryPresentation.decode(callLog.refKey),
+			isIncoming: callLog.dir == .Incoming
+		)
+	}
+
+	var canStartCommunication: Bool {
+		Self.usableRemoteAddress(callLog) != nil
 	}
 
 	init(callLog: CallLog) {
@@ -121,12 +117,18 @@ class HistoryModel: ObservableObject, Identifiable {
 			let isConfTmp = confInfoTmp != nil
 			
 			let addressLinphoneTmp = Self.historyAddress(callLog)
-			let addressFriend = ContactsManager.shared.getFriendWithAddress(address: addressLinphoneTmp)
+			let presentation = Mango9CallHistoryPresentation.decode(callLog.refKey)
+			let addressFriend = Self.usableRemoteAddress(callLog)
+				.flatMap { ContactsManager.shared.getFriendWithAddress(address: $0) }
 			let contactName = Mango9CallerIdentity.normalizedLabel(addressFriend?.name)
 				?? Mango9CallerIdentity.normalizedLabel(addressFriend?.address?.displayName)
+			let fallbackName = Self.usableRemoteAddress(callLog) == nil
+				? (callLog.dir == .Incoming ? "Incoming call" : "Unknown")
+				: Mango9CallerIdentity.displayName(for: addressLinphoneTmp, contactName: contactName)
 			let addressNameTmp = confInfoTmp != nil && confInfoTmp!.subject != nil
 				? confInfoTmp!.subject!
-				: Mango9CallerIdentity.displayName(for: addressLinphoneTmp, contactName: contactName)
+				: presentation?.displayName
+					?? fallbackName
 			
 			let addressTmp = addressLinphoneTmp.asStringUriOnly()
 			
@@ -163,6 +165,14 @@ class HistoryModel: ObservableObject, Identifiable {
 	}
 	
 	func refreshAvatarModel() {
+		guard canStartCommunication else {
+			DispatchQueue.main.async {
+				self.isFriend = false
+				self.avatarModel = ContactAvatarModel(
+					friend: nil, name: self.addressName, address: self.address, withPresence: false)
+			}
+			return
+		}
 		let address = Self.historyAddress(self.callLog)
 		
 		let addressFriendTmp = ContactsManager.shared.getFriendWithAddress(address: address)

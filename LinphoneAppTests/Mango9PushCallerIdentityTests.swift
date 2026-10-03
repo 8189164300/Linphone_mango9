@@ -10,6 +10,7 @@
  */
 
 import XCTest
+import linphonesw
 @testable import LinphoneApp
 
 final class Mango9PushCallerIdentityTests: XCTestCase {
@@ -128,6 +129,68 @@ final class Mango9PushCallerIdentityTests: XCTestCase {
 		XCTAssertNil(store.finalPresentation(callId: pushed.callId, token: "native-a"))
 		XCTAssertFalse(store.cache(pushed, now: now.addingTimeInterval(10)))
 		XCTAssertEqual(resolve(store, token: "new-native-call"), .unknown)
+	}
+
+	func testFinalPresentationCanBePersistedBeforeCallLifetimeCacheIsRemoved() {
+		let store = Mango9IncomingCallerStore()
+		store.cache(pushed, now: now)
+		_ = resolve(store)
+		let final = store.finalPresentation(callId: pushed.callId, token: "native-a")
+		let encoded = final.flatMap(Mango9CallHistoryPresentation.encode)
+
+		store.finish(callId: pushed.callId, token: "native-a", now: now)
+
+		XCTAssertEqual(Mango9CallHistoryPresentation.decode(encoded), final)
+		XCTAssertNil(store.finalPresentation(callId: pushed.callId, token: "native-a"))
+	}
+
+	func testHistoryPresentationRoundTripsSipPushAndWithheldIdentity() {
+		for presentation in [
+			sip,
+			Mango9IncomingCallerPresentation(handle: "+12025550123", displayName: "Caller A", source: .push),
+			Mango9IncomingCallerPresentation.withheld
+		] {
+			let encoded = Mango9CallHistoryPresentation.encode(presentation)
+			XCTAssertEqual(Mango9CallHistoryPresentation.decode(encoded), presentation)
+		}
+	}
+
+	func testHistoryPresentationRejectsUnknownMalformedAndAnonymousValues() {
+		XCTAssertNil(Mango9CallHistoryPresentation.encode(.unknown))
+		XCTAssertNil(Mango9CallHistoryPresentation.decode("another-feature:unchanged"))
+		XCTAssertNil(Mango9CallHistoryPresentation.decode("mango9-caller-v1:not-base64"))
+		XCTAssertNil(Mango9CallHistoryPresentation.encode(.init(
+			handle: "anonymous", displayName: "Spoofed name", source: .sip)))
+	}
+
+	func testHistoryPresentationDoesNotOverwriteAnotherRefKeyOwner() {
+		XCTAssertTrue(Mango9CallHistoryPresentation.canReplace(refKey: nil))
+		XCTAssertTrue(Mango9CallHistoryPresentation.canReplace(refKey: ""))
+		XCTAssertTrue(Mango9CallHistoryPresentation.canReplace(
+			refKey: Mango9CallHistoryPresentation.encode(sip)))
+		XCTAssertFalse(Mango9CallHistoryPresentation.canReplace(refKey: "another-feature:keep-me"))
+	}
+
+	func testHistoryPresentationUsesLinphonePersistentCallLogRefKey() throws {
+		let core = try Factory.Instance.createCore(configPath: nil, factoryConfigPath: nil, systemContext: nil)
+		let caller = try Factory.Instance.createAddress(addr: "sip:anonymous@anonymous.invalid")
+		let recipient = try Factory.Instance.createAddress(addr: "sip:109@tenant.example.test")
+		let callLog = try core.createCallLog(from: caller, to: recipient, dir: .Incoming,
+			duration: 0, startTime: 1_000, connectedTime: 0, status: .Missed,
+			videoEnabled: false, quality: 0)
+
+		Mango9CallHistoryPresentation.persist(sip, to: callLog)
+
+		XCTAssertEqual(Mango9CallHistoryPresentation.decode(callLog.refKey), sip)
+	}
+
+	func testHistoryNeverDisplaysRawAnonymousAddress() {
+		XCTAssertEqual(Mango9CallHistoryPresentation.displayAddress(
+			username: "anonymous", presentation: nil, isIncoming: true), "Incoming call")
+		XCTAssertEqual(Mango9CallHistoryPresentation.displayAddress(
+			username: "109", presentation: .withheld, isIncoming: true), "Private caller")
+		XCTAssertEqual(Mango9CallHistoryPresentation.displayAddress(
+			username: "anonymous", presentation: sip, isIncoming: true), "202-555-0124")
 	}
 
 	func testConflictingDuplicatePushCannotChangeFirstIdentity() {
