@@ -15,12 +15,12 @@ struct CalendarDateButton<Content: View>: View {
                     .exclusively(before: TapGesture()).onEnded { value in
                         switch value { case .first(true): onHold(date); case .second: onTap(); default: break }
                     })
-                .accessibilityElement(children: .combine).accessibilityAddTraits(.isButton)
+                .accessibilityElement(children: .ignore).accessibilityAddTraits(.isButton)
                 .accessibilityAction { onTap() }
-                .accessibilityAction(named: Text("New appointment")) { onHold(date) }
-                .accessibilityHint("Touch and hold to add an appointment")
+                .accessibilityAction(named: Text("New event")) { onHold(date) }
+                .accessibilityHint("Tap to view the day. Touch and hold to add an event")
         } else {
-            Button(action: onTap, label: content).buttonStyle(.plain)
+            Button(action: onTap) { content().contentShape(Rectangle()) }.buttonStyle(.plain)
         }
     }
 }

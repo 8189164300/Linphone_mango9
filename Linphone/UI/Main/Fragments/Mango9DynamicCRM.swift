@@ -48,6 +48,24 @@ struct Mango9LeadSchema: Decodable {
 	let statuses: [String]
 }
 
+struct Mango9ChatGroupDetails: Decodable {
+	let id: Int
+	let name: String
+	let canRename: Bool
+
+	static func validatedName(_ value: String) throws -> String {
+		let name = value.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !name.isEmpty, name.unicodeScalars.count <= 120,
+			!value.unicodeScalars.contains(where: {
+				$0.value <= 0x1f || (0x7f...0x9f).contains($0.value) ||
+				(0x202a...0x202e).contains($0.value) || (0x2066...0x2069).contains($0.value)
+			}) else {
+			throw Mango9ChatError.server("Use 1–120 characters without line breaks or control characters.")
+		}
+		return name
+	}
+}
+
 private enum Mango9ChatError: LocalizedError {
 	case noSession
 	case invalidEndpoint
@@ -664,6 +682,57 @@ final class Mango9ChatStore: ObservableObject {
 		}
 	}
 
+	func chatNotificationPreference(roomID: String, muted: Bool? = nil, expectedSession: Mango9Session? = nil) async throws -> Bool {
+		guard let session = Mango9SessionStore.load() else { throw Mango9ChatError.noSession }
+		if let expectedSession, Mango9CalendarAPI.accountKey(expectedSession) != Mango9CalendarAPI.accountKey(session) { throw Mango9ChatError.noSession }
+		await connectIfNeeded()
+		guard Mango9SessionStore.isActive(session), isConnected,
+			connectedIdentity == Mango9SessionStore.normalizedIdentity(session.sipIdentity), let token = chatToken else {
+			throw Mango9ChatError.disconnected
+		}
+		let generation = connectionGeneration
+		let request = try Mango9ChatNotificationSettings.request(session: session, token: token, roomID: roomID, muted: muted)
+		let (data, response) = try await URLSession.shared.data(for: request)
+		guard generation == connectionGeneration, Mango9SessionStore.isActive(session), !Task.isCancelled else { throw Mango9ChatError.noSession }
+		let state = try Mango9ChatNotificationSettings.decode(data, response: response, roomID: roomID)
+		Mango9ChatNotificationSettings.cache(state, roomID: roomID, identity: session.sipIdentity, crmID: session.crmId)
+		return state
+	}
+
+	func groupDetails(roomID: String, session: Mango9Session) async throws -> Mango9ChatGroupDetails {
+		guard Mango9SessionStore.isActive(session), let id = Int32(roomID), id > 0 else { throw Mango9ChatError.noSession }
+		await connectIfNeeded()
+		guard Mango9SessionStore.isActive(session) else { throw Mango9ChatError.noSession }
+		let generation = connectionGeneration
+		let raw = try await rpcCall("getChatGroupDetails", params: [Int(id)])
+		guard generation == connectionGeneration, Mango9SessionStore.isActive(session), !Task.isCancelled else { throw Mango9ChatError.noSession }
+		let details = try JSONDecoder().decode(Mango9ChatGroupDetails.self, from: JSONSerialization.data(withJSONObject: raw))
+		guard details.id == Int(id) else { throw Mango9ChatError.invalidResponse }
+		return details
+	}
+
+	func renameGroup(_ details: Mango9ChatGroupDetails, name: String, session: Mango9Session) async throws {
+		guard details.canRename, Mango9SessionStore.isActive(session) else { throw Mango9ChatError.noSession }
+		let name = try Mango9ChatGroupDetails.validatedName(name)
+		await connectIfNeeded()
+		guard Mango9SessionStore.isActive(session) else { throw Mango9ChatError.noSession }
+		let generation = connectionGeneration
+		// The previous server name is a compare-and-set guard against overwriting
+		// a concurrent rename by another group member.
+		let raw = try await rpcCall("renameChatGroup", params: [details.id, name, details.name])
+		guard generation == connectionGeneration, Mango9SessionStore.isActive(session), !Task.isCancelled else { throw Mango9ChatError.noSession }
+		guard let result = raw as? [String: Any], let id = result["id"] as? Int,
+			id == details.id, result["name"] as? String == name else { throw Mango9ChatError.invalidResponse }
+		if let rawRoom = result["room"], let room = Self.room(from: rawRoom), room.id == String(id), !room.isDirect {
+			if let index = rooms.firstIndex(where: { $0.id == room.id }) { rooms[index] = room }
+			else { rooms.append(room) }
+		} else {
+			// Older servers may acknowledge the name without returning the room.
+			// Only change the title after an authoritative acknowledgement.
+			if let index = rooms.firstIndex(where: { $0.id == String(id) }) { rooms[index].groupName = name }
+		}
+	}
+
 	func registerRemotePushTokenIfAvailable() async {
 		guard isConnected,
 		      let authToken = chatToken,
@@ -922,6 +991,7 @@ final class Mango9ChatStore: ObservableObject {
 	}
 
 	func groupTitle(_ room: Mango9ChatRoom) -> String {
+		if !room.groupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return room.groupName }
 		let names = room.userIds.compactMap { userId in
 			users.first(where: { $0.id == userId })?.name
 		}
@@ -1165,7 +1235,7 @@ final class Mango9ChatStore: ObservableObject {
 			latest: room.latest,
 			lastMessage: room.lastMessage,
 			unread: 0,
-			isDirect: room.isDirect
+			isDirect: room.isDirect, groupName: room.groupName
 		)
 		synchronizeApplicationBadge()
 	}
@@ -1431,7 +1501,7 @@ final class Mango9ChatStore: ObservableObject {
 				latest: max(existing.latest, message.time),
 				lastMessage: message.time >= existing.latest ? message.text : existing.lastMessage,
 				unread: unread,
-				isDirect: existing.isDirect
+				isDirect: existing.isDirect, groupName: existing.groupName
 			)
 			// Publish one stable, ordered snapshot so SwiftUI moves the existing row instead of
 			// briefly rendering an updated row at its old position.
@@ -1543,7 +1613,7 @@ final class Mango9ChatStore: ObservableObject {
 		)
 	}
 
-	private static func room(from value: Any) -> Mango9ChatRoom? {
+	static func room(from value: Any) -> Mango9ChatRoom? {
 		guard let dictionary = value as? [String: Any],
 			  let id = string(dictionary["id"]) else {
 			return nil
@@ -1555,7 +1625,10 @@ final class Mango9ChatStore: ObservableObject {
 			latest: dictionary["latest"] as? String ?? "",
 			lastMessage: dictionary["lastMsg"] as? String ?? "",
 			unread: integer(dictionary["unread"]) ?? 0,
-			isDirect: integer(dictionary["roomType"]) == 0
+			// The server excludes the current user from this array. Two others
+			// means a three-person group, including older roomType=0 records.
+			isDirect: integer(dictionary["roomType"]) == 0 && users.count <= 1,
+			groupName: dictionary["groupName"] as? String ?? ""
 		)
 	}
 
@@ -1962,6 +2035,7 @@ struct Mango9ChatFragment: View {
 	@State private var isShowingFilePicker = false
 	@State private var isRecordingVoice = false
 	@State private var isManagingMembers = false
+	@State private var isRenamingGroup = false
 	@State private var isConfirmingReport = false
 	@State private var isConfirmingDelete = false
 	@State private var reportedMessage: Mango9ChatMessage?
@@ -1969,6 +2043,9 @@ struct Mango9ChatFragment: View {
 	@State private var conversationOwner = UUID()
 	@State private var reloadAttempt = 0
 	@State private var hasLoadedConversation = false
+	@State private var notificationMuted: Bool?
+	@State private var notificationBusy = false
+	@State private var notificationError: String?
 	@FocusState private var composerFocused: Bool
 
 	init(user: Mango9ChatUser, onClose: (() -> Void)? = nil) {
@@ -2011,6 +2088,11 @@ struct Mango9ChatFragment: View {
 			trailing:
 				HStack(spacing: 14) {
 					if room?.isDirect == false {
+						Button { isRenamingGroup = true } label: {
+							Image(systemName: "pencil").foregroundStyle(Color.orangeMain500)
+								.frame(minWidth: 32, minHeight: 44).contentShape(Rectangle())
+						}.accessibilityLabel("Rename group").accessibilityIdentifier("chat.renameGroup")
+							.disabled(conversationRoomId == nil)
 						Button {
 							isManagingMembers = true
 						} label: {
@@ -2021,6 +2103,17 @@ struct Mango9ChatFragment: View {
 					}
 
 					Menu {
+						// Expose mute only after this server confirms support. Older
+						// deployments still deliver messages without a broken control.
+						if notificationMuted != nil {
+						Button {
+							Task { await changeNotificationPreference() }
+						} label: {
+							Label(notificationMuted == true ? "Unmute notifications" : "Mute notifications",
+								systemImage: notificationMuted == true ? "bell" : "bell.slash")
+						}.disabled(conversationRoomId == nil || notificationBusy)
+						Divider()
+						}
 						Button {
 							reportedMessage = nil
 							isConfirmingReport = true
@@ -2056,10 +2149,10 @@ struct Mango9ChatFragment: View {
 							}
 						}
 					} label: {
-						Image(systemName: "ellipsis.circle")
+						Image(systemName: notificationMuted == true ? "bell.slash.circle" : "ellipsis.circle")
 							.foregroundStyle(Color.orangeMain500)
 					}
-					.accessibilityLabel("Conversation safety options")
+					.accessibilityLabel(notificationMuted == true ? "Conversation options, notifications muted" : "Conversation options")
 				}
 		)
 		.task(id: "\(conversationKey)-\(reloadAttempt)") {
@@ -2072,7 +2165,21 @@ struct Mango9ChatFragment: View {
 			guard !Task.isCancelled else { return }
 			displayedRoomId = store.activeRoomId
 			hasLoadedConversation = true
+			notificationMuted = nil
+			if let roomID = displayedRoomId {
+				notificationBusy = true
+				defer { notificationBusy = false }
+				do {
+					let muted = try await store.chatNotificationPreference(roomID: roomID)
+					guard !Task.isCancelled, displayedRoomId == roomID else { return }
+					notificationMuted = muted
+				}
+				catch { /* Messages remain usable on servers without the preference API. */ }
+			}
 		}
+		.alert("Notification settings", isPresented: Binding(get: { notificationError != nil }, set: { if !$0 { notificationError = nil } })) {
+			Button("OK", role: .cancel) {}
+		} message: { Text(notificationError ?? "") }
 		.onDisappear {
 			store.closeConversation(owner: conversationOwner)
 			displayedRoomId = nil
@@ -2111,6 +2218,11 @@ struct Mango9ChatFragment: View {
 					}
 				}
 				isShowingFilePicker = false
+			}
+		}
+		.sheet(isPresented: $isRenamingGroup) {
+			if let roomID = conversationRoomId, let session = Mango9SessionStore.load() {
+				Mango9RenameGroupSheet(roomID: roomID, session: session)
 			}
 		}
 		.sheet(isPresented: $isManagingMembers) {
@@ -2159,6 +2271,21 @@ struct Mango9ChatFragment: View {
 				"The conversation history will be removed from this app. "
 					+ "A new incoming message can start the conversation again."
 			)
+		}
+	}
+
+	private func changeNotificationPreference() async {
+		guard let roomID = displayedRoomId ?? room?.id, let session = Mango9SessionStore.load(), !notificationBusy else { return }
+		notificationBusy = true
+		defer { notificationBusy = false }
+		do {
+			// Re-read first: do not overwrite a change made from another device.
+			let current = try await store.chatNotificationPreference(roomID: roomID, expectedSession: session)
+			guard !Task.isCancelled, (displayedRoomId ?? room?.id) == roomID, Mango9SessionStore.isActive(session) else { return }
+			notificationMuted = try await store.chatNotificationPreference(roomID: roomID, muted: !current, expectedSession: session)
+		} catch {
+			notificationMuted = nil
+			notificationError = "We couldn’t confirm the notification setting. Reopen this conversation to check it before trying again. Messages will still arrive."
 		}
 	}
 
@@ -2374,7 +2501,7 @@ struct Mango9ChatFragment: View {
 			return user.name
 		}
 		if let room {
-			return store.groupTitle(room)
+			return store.roomTitle(store.rooms.first(where: { $0.id == room.id }) ?? room)
 		}
 		return "Team Chat"
 	}
@@ -2936,6 +3063,66 @@ private struct Mango9VoiceRecorderComposer: View {
 	private static func duration(_ value: TimeInterval) -> String {
 		let seconds = max(0, Int(value))
 		return String(format: "%d:%02d", seconds / 60, seconds % 60)
+	}
+}
+
+private struct Mango9RenameGroupSheet: View {
+	@Environment(\.dismiss) private var dismiss
+	let roomID: String
+	let session: Mango9Session
+	@State private var details: Mango9ChatGroupDetails?
+	@State private var name = ""
+	@State private var busy = false
+	@State private var error: String?
+	@State private var needsReload = false
+	private var cleanName: String? { try? Mango9ChatGroupDetails.validatedName(name) }
+
+	var body: some View {
+		NavigationView {
+			Form {
+				Section("Group name") {
+					TextField("Group name", text: $name).accessibilityIdentifier("chat.groupName")
+						.disabled(busy || details?.canRename != true || needsReload)
+					if busy { ProgressView() }
+					if details?.canRename == false { Text("You do not have permission to rename this group.").foregroundColor(.secondary) }
+					if !name.isEmpty && cleanName == nil { Text("Use 1–120 characters without line breaks or control characters.").font(.footnote).foregroundColor(.red) }
+				}
+				if let error {
+					Section { Text(error).foregroundColor(.red); Button("Reload group") { Task { await load() } }.disabled(busy) }
+				}
+			}.navigationTitle("Rename group").navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
+				ToolbarItem(placement: .confirmationAction) {
+					Button("Save") { Task { await save() } }
+						.disabled(busy || needsReload || details?.canRename != true || cleanName == nil || cleanName == details?.name)
+						.accessibilityIdentifier("chat.saveGroupName")
+				}
+			}
+		}.navigationViewStyle(.stack).tint(.mango9Primary).interactiveDismissDisabled(busy)
+		.task { await load() }
+		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in dismiss() }
+	}
+
+	private func load() async {
+		guard !busy else { return }; busy = true; error = nil
+		defer { busy = false }
+		do {
+			let value = try await Mango9ChatStore.shared.groupDetails(roomID: roomID, session: session)
+			details = value; name = value.name; needsReload = false
+		} catch { self.error = error.localizedDescription; needsReload = true }
+	}
+	private func save() async {
+		guard !busy, !needsReload, let details, let cleanName else { return }
+		busy = true; error = nil; defer { busy = false }
+		do {
+			try await Mango9ChatStore.shared.renameGroup(details, name: cleanName, session: session)
+			dismiss()
+		} catch {
+			// A timeout can mean the rename committed. Re-read before another write.
+			needsReload = true
+			self.error = error.localizedDescription + " Reload the group to check its current name before trying again."
+		}
 	}
 }
 
@@ -3544,6 +3731,48 @@ struct Mango9ChatUser: Identifiable, Equatable {
 	let category: String
 }
 
+enum Mango9ChatNotificationSettings {
+	struct State: Decodable { let room_id: String; let muted: Bool }
+	static func request(session: Mango9Session, token: String, roomID: String, muted: Bool?) throws -> URLRequest {
+		guard let number = Int(roomID), number > 0, number <= Int(Int32.max), String(number) == roomID,
+			let base = URL(string: session.smsChatApi), base.scheme == "https", base.host != nil else { throw Mango9ChatError.invalidEndpoint }
+		var request = URLRequest(url: base.appendingPathComponent("push/rooms").appendingPathComponent(roomID))
+		request.timeoutInterval = 15
+		request.httpMethod = muted == nil ? "GET" : "PUT"
+		request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+		if let muted {
+			request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+			request.httpBody = try JSONSerialization.data(withJSONObject: ["muted": muted])
+		}
+		return request
+	}
+	static func decode(_ data: Data, response: URLResponse, roomID: String) throws -> Bool {
+		guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
+			throw Mango9ChatError.server("Notification settings are not available. Please try again later.")
+		}
+		let state = try JSONDecoder().decode(State.self, from: data)
+		guard state.room_id == roomID else { throw Mango9ChatError.invalidResponse }
+		return state.muted
+	}
+	private static func key(roomID: String, identity: String?, crmID: String?) -> String? {
+		guard let identity = Mango9SessionStore.normalizedIdentity(identity), let crmID, !crmID.isEmpty, !roomID.isEmpty else { return nil }
+		// Length-prefixes keep user-controlled identifiers from aliasing another scope.
+		return "mango9_chat_notification_" + [identity, crmID, roomID].map { "\($0.utf8.count):\($0)" }.joined()
+	}
+	static func cache(_ muted: Bool, roomID: String, identity: String?, crmID: String?, defaults: UserDefaults = .standard) {
+		guard let key = key(roomID: roomID, identity: identity, crmID: crmID) else { return }
+		defaults.set(muted, forKey: key)
+		defaults.set(Date().timeIntervalSince1970, forKey: key + "_confirmed")
+	}
+	static func isMuted(roomID: String?, identity: String?, crmID: String?, defaults: UserDefaults = .standard) -> Bool {
+		guard let roomID, let key = key(roomID: roomID, identity: identity, crmID: crmID) else { return false }
+		// The server is authoritative across devices. This short-lived guard only
+		// silences in-flight pushes immediately after a confirmed local change.
+		let age = Date().timeIntervalSince1970 - defaults.double(forKey: key + "_confirmed")
+		return age >= 0 && age < 30 && defaults.bool(forKey: key)
+	}
+}
+
 struct Mango9ChatRoom: Identifiable, Equatable {
 	let id: String
 	let userIds: [Int]
@@ -3551,6 +3780,7 @@ struct Mango9ChatRoom: Identifiable, Equatable {
 	let lastMessage: String
 	let unread: Int
 	let isDirect: Bool
+	var groupName: String = ""
 }
 
 enum Mango9TeamChatOrdering {

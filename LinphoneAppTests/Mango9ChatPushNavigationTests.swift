@@ -5,6 +5,56 @@ import SwiftUI
 final class Mango9ChatPushNavigationTests: XCTestCase {
 	private let identity = "sip:700@tenant.example.com"
 
+	func testGroupRenameMatchesServerNameValidation() throws {
+		XCTAssertEqual(try Mango9ChatGroupDetails.validatedName("  Customer service  "), "Customer service")
+		XCTAssertEqual(try Mango9ChatGroupDetails.validatedName(String(repeating: "🎉", count: 120)).unicodeScalars.count, 120)
+		for invalid in ["", "  ", "A\n", "A\nB", "A\u{202e}B", "A\u{2066}B", String(repeating: "🎉", count: 121)] {
+			XCTAssertThrowsError(try Mango9ChatGroupDetails.validatedName(invalid))
+		}
+		let details = try JSONDecoder().decode(Mango9ChatGroupDetails.self,
+			from: Data(#"{"id":91,"name":"Service","canRename":false,"members":[]}"#.utf8))
+		XCTAssertEqual(details.id, 91); XCTAssertFalse(details.canRename)
+	}
+
+	@MainActor func testThreePersonLegacyRoomIsAGroupAndNamedTwoPersonGroupStaysAGroup() throws {
+		let legacy = try XCTUnwrap(Mango9ChatStore.room(from: ["id": 91, "roomType": 0, "users": [42, 43]]))
+		XCTAssertFalse(legacy.isDirect)
+		let named = try XCTUnwrap(Mango9ChatStore.room(from: ["id": 92, "roomType": 1, "users": [42], "groupName": "Service"]))
+		XCTAssertFalse(named.isDirect); XCTAssertEqual(named.groupName, "Service")
+		XCTAssertTrue(try XCTUnwrap(Mango9ChatStore.room(from: ["id": 93, "roomType": 0, "users": [42]])).isDirect)
+	}
+
+	@MainActor func testGroupUsesServerNameInsteadOfParticipantList() {
+		var group = room("91", direct: false)
+		group.groupName = "Customer service"
+		XCTAssertEqual(Mango9ChatStore.shared.groupTitle(group), "Customer service")
+	}
+
+	func testNotificationMuteCacheIsScopedToExactAccountAndRoom() {
+		let suite = "mango9-notification-test-" + UUID().uuidString
+		let defaults = UserDefaults(suiteName: suite)!
+		defer { defaults.removePersistentDomain(forName: suite) }
+		Mango9ChatNotificationSettings.cache(true, roomID: "91", identity: identity, crmID: "test", defaults: defaults)
+		XCTAssertTrue(Mango9ChatNotificationSettings.isMuted(roomID: "91", identity: identity, crmID: "test", defaults: defaults))
+		XCTAssertFalse(Mango9ChatNotificationSettings.isMuted(roomID: "92", identity: identity, crmID: "test", defaults: defaults))
+		XCTAssertFalse(Mango9ChatNotificationSettings.isMuted(roomID: "91", identity: identity, crmID: "another", defaults: defaults))
+		XCTAssertFalse(Mango9ChatNotificationSettings.isMuted(roomID: "91", identity: "sip:100@tenant.example.com", crmID: "test", defaults: defaults))
+		XCTAssertFalse(Mango9ChatNotificationSettings.isMuted(roomID: "91", identity: nil, crmID: "test", defaults: defaults))
+		Mango9ChatNotificationSettings.cache(false, roomID: "91", identity: identity, crmID: "test", defaults: defaults)
+		XCTAssertFalse(Mango9ChatNotificationSettings.isMuted(roomID: "91", identity: identity, crmID: "test", defaults: defaults))
+	}
+
+	func testNotificationPreferenceRequiresSuccessfulResponseForExactRoom() throws {
+		let url = URL(string: "https://chat.example.invalid/push/rooms/91")!
+		let success = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+		let unavailable = HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)!
+		let data = Data(#"{"room_id":"91","muted":true}"#.utf8)
+		XCTAssertTrue(try Mango9ChatNotificationSettings.decode(data, response: success, roomID: "91"))
+		XCTAssertThrowsError(try Mango9ChatNotificationSettings.decode(data, response: success, roomID: "92"))
+		XCTAssertThrowsError(try Mango9ChatNotificationSettings.decode(data, response: unavailable, roomID: "91"))
+		XCTAssertThrowsError(try Mango9ChatNotificationSettings.decode(Data(), response: success, roomID: "91"))
+	}
+
 	private func room(
 		_ id: String,
 		direct: Bool = true,

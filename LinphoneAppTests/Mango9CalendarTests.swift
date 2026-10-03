@@ -95,6 +95,21 @@ private struct CalendarNavigationTestView: View {
 }
 
 final class Mango9CalendarTests: XCTestCase {
+	func testMovingNewAppointmentStartKeepsDurationAndSaveRangeValid() {
+		let start = Date(timeIntervalSince1970: 1_800_000_000)
+		for duration in [300.0, 1800, 3600, 7200] {
+			for shift in [-86400.0, -3600, 3600, 86400] {
+				let moved = start.addingTimeInterval(shift)
+				let end = Mango9AppointmentCreation.end(afterMovingStartFrom: start, to: moved,
+					previousEnd: start.addingTimeInterval(duration))
+				XCTAssertEqual(end.timeIntervalSince(moved), duration)
+				XCTAssertGreaterThan(end, moved)
+			}
+		}
+		XCTAssertEqual(Mango9AppointmentCreation.end(afterMovingStartFrom: start, to: start,
+			previousEnd: start.addingTimeInterval(-60)).timeIntervalSince(start), 1800)
+	}
+
 	func testZoomedOutTimelineAlwaysReservesAReadableTitleAndSeparatesVisualCollisions() throws {
 		let source = try event()
 		for hourHeight in [CGFloat(6), 12.5, 17.125, 24, 40.375, 60, 120] {
@@ -855,18 +870,6 @@ final class Mango9CalendarTests: XCTestCase {
 		await detachCalendarFixture(window)
 	}
 
-	func testMonthCellPreviewHandlesZeroNegativeAndNonfiniteHeights() throws {
-		guard #available(iOS 18.0, *) else { throw XCTSkip("Exyte is used only on iOS 18 and newer") }
-		for height: CGFloat in [-100, 0, 1, 20, .nan, .infinity, -.infinity] {
-			XCTAssertEqual(Mango9MonthDay.visibleEventCount(total: 3, availableHeight: height, rowHeight: 17), 0)
-		}
-		XCTAssertEqual(Mango9MonthDay.visibleEventCount(total: 3, availableHeight: 46, rowHeight: 17), 1)
-		XCTAssertEqual(Mango9MonthDay.visibleEventCount(total: 3, availableHeight: 69, rowHeight: 17), 3)
-		XCTAssertEqual(Mango9MonthDay.visibleEventCount(total: 3, availableHeight: .greatestFiniteMagnitude, rowHeight: 17), 3)
-		XCTAssertEqual(Mango9MonthDay.visibleEventCount(total: 0, availableHeight: 100, rowHeight: 17), 0)
-		XCTAssertEqual(Mango9MonthDay.visibleEventCount(total: 3, availableHeight: 100, rowHeight: 0), 0)
-	}
-
 	@MainActor func testMonthCellsRenderAtCompactAndAccessibilitySizes() async throws {
 		guard #available(iOS 18.0, *) else { throw XCTSkip("Exyte is used only on iOS 18 and newer") }
 		let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -1167,6 +1170,50 @@ final class Mango9CalendarTests: XCTestCase {
 		XCTAssertTrue(body["status_id"] is NSNull)
 	}
 
+	@MainActor func testMovingExistingEventUpdatesBothDatesAndReadsBackWithoutOtherChanges() async throws {
+		let original = try event()
+		let current = session()
+		let previousIdentity = Mango9SessionStore.activeIdentity
+		try Mango9SessionStore.save(current, persist: false, makeActive: true)
+		defer {
+			Mango9SessionStore.remove(for: current.sipIdentity!)
+			Mango9SessionStore.activate(sipIdentity: previousIdentity)
+			CalendarMockURLProtocol.handler = nil
+		}
+		var edit = draft(original)
+		edit.start = original.startAt.addingTimeInterval(3 * 86400)
+		edit.end = Mango9AppointmentCreation.end(afterMovingStartFrom: original.startAt, to: edit.start, previousEnd: original.endAt)
+		XCTAssertEqual(edit.end.timeIntervalSince(edit.start), original.endAt.timeIntervalSince(original.startAt))
+		let payload = edit.payload(event: original, owner: true, timezone: original.timezone)
+		XCTAssertEqual(Set(payload.keys), ["start_at", "end_at"])
+		var saved = try JSONSerialization.jsonObject(with: Data(eventJSON.utf8)) as! [String: Any]
+		var writes = 0
+		CalendarMockURLProtocol.handler = { request in
+			if request.httpMethod == "PATCH" {
+				XCTAssertEqual(request.value(forHTTPHeaderField: "If-Match"), "\"abc123\"")
+				var data = request.httpBody ?? Data()
+				if let stream = request.httpBodyStream {
+					stream.open(); defer { stream.close() }
+					var bytes = [UInt8](repeating: 0, count: 4096)
+					while stream.hasBytesAvailable { let n = stream.read(&bytes, maxLength: bytes.count); if n <= 0 { break }; data.append(contentsOf: bytes.prefix(n)) }
+				}
+				let body = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+				XCTAssertEqual(Set(body.keys), ["start_at", "end_at"])
+				for (key, value) in body { saved[key] = value }
+				saved["revision"] = "new-revision"; writes += 1
+			}
+			return (200, try JSONSerialization.data(withJSONObject: ["success": true, "message": "success", "data": saved]))
+		}
+		let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CalendarMockURLProtocol.self]
+		let transport = URLSession(configuration: config); defer { transport.invalidateAndCancel() }
+		let confirmed = try await Mango9AppointmentSave.save(session: current, event: original, body: payload, transport: transport)
+		XCTAssertEqual(confirmed.startAt, edit.start)
+		let reread = try await Mango9CalendarAPI.send(Mango9Appointment.self, session: current, path: "events/91", transport: transport)
+		XCTAssertEqual(reread.startAt, edit.start); XCTAssertEqual(reread.endAt, edit.end)
+		XCTAssertEqual(reread.title, original.title); XCTAssertEqual(reread.contact, original.contact)
+		XCTAssertEqual(writes, 1)
+	}
+
 	func testSharedRecipientCannotSendOwnerOnlyFields() throws {
 		let json = eventJSON.replacingOccurrences(of: "\"can_delete\":true", with: "\"can_delete\":false")
 			.replacingOccurrences(of: "\"can_assign\":true", with: "\"can_assign\":false")
@@ -1176,6 +1223,25 @@ final class Mango9CalendarTests: XCTestCase {
 		edit.title = "Updated"; edit.contact = nil; edit.assignee = 90; edit.reminder = 15
 		let body = edit.payload(event: value, owner: false, timezone: value.timezone)
 		XCTAssertEqual(Set(body.keys), ["title"])
+	}
+
+	@MainActor func testDateSaveRejectsHTTP200WithUnchangedDatesWithoutRetrying() async throws {
+		let original = try event(), current = session()
+		let previous = Mango9SessionStore.activeIdentity
+		try Mango9SessionStore.save(current, persist: false, makeActive: true)
+		defer { Mango9SessionStore.remove(for: current.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous); CalendarMockURLProtocol.handler = nil }
+		var methods: [String] = []
+		let response = Data("{\"success\":true,\"message\":\"success\",\"data\":\(eventJSON)}".utf8)
+		CalendarMockURLProtocol.handler = { request in methods.append(request.httpMethod!); return (200, response) }
+		let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CalendarMockURLProtocol.self]
+		let transport = URLSession(configuration: config); defer { transport.invalidateAndCancel() }
+		do {
+			_ = try await Mango9AppointmentSave.save(session: current, event: original,
+				body: ["start_at": Mango9CalendarAPI.timestamp(original.startAt.addingTimeInterval(86400)),
+					"end_at": Mango9CalendarAPI.timestamp(original.endAt.addingTimeInterval(86400))], transport: transport)
+			XCTFail("An unchanged server date must not dismiss the editor as saved")
+		} catch { XCTAssertEqual((error as? Mango9CalendarFailure)?.code, "event_save_unconfirmed") }
+		XCTAssertEqual(methods, ["PATCH", "GET"])
 	}
 
 	func testRevokingOwnSharesUsesEmptyArrayAndAssignmentIsExplicit() throws {

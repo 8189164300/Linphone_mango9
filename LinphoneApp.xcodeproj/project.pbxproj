@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CA1E00812FCA000100000001 /* Mango9CalendarUITestFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00822FCA000100000001; };
 		CA1E00712FCA000100000001 /* Mango9CallStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00722FCA000100000001; };
 		CA1E00612FCA000100000001 /* Mango9ContactsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00622FCA000100000001; };
 		CA1E000B2FCA000100000001 /* Mango9CRMSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E000C2FCA000100000001; };
@@ -292,6 +293,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		CA1E00822FCA000100000001 /* Mango9CalendarUITestFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9CalendarUITestFixture.swift; sourceTree = "<group>"; };
 		CA1E00722FCA000100000001 /* Mango9CallStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9CallStyle.swift; sourceTree = "<group>"; };
 		CA1E00622FCA000100000001 /* Mango9ContactsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9ContactsSettings.swift; sourceTree = "<group>"; };
 		CA1E000C2FCA000100000001 /* Mango9CRMSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9CRMSettings.swift; sourceTree = "<group>"; };
@@ -983,6 +985,7 @@
 				CA1E00222FCA000100000001 /* Mango9CalendarOccurrences.swift */,
 				CA1E00322FCA000100000001 /* Mango9BusinessHours.swift */,
 				CA1E00042FCA000100000001 /* Mango9Appointments.swift */,
+				CA1E00822FCA000100000001 /* Mango9CalendarUITestFixture.swift */,
 				CA1E000A2FCA000100000001 /* Mango9AppointmentReminders.swift */,
 				CA1E000C2FCA000100000001 /* Mango9CRMSettings.swift */,
 				CA1E00062FCA000100000001 /* Mango9ExyteCalendar.swift */,
@@ -1835,6 +1838,7 @@
 				CA1E00212FCA000100000001 /* Mango9CalendarOccurrences.swift in Sources */,
 				CA1E00312FCA000100000001 /* Mango9BusinessHours.swift in Sources */,
 				CA1E00032FCA000100000001 /* Mango9Appointments.swift in Sources */,
+				CA1E00812FCA000100000001 /* Mango9CalendarUITestFixture.swift in Sources */,
 				CA1E00402FCA000100000001 /* Mango9AppointmentReminders.swift in Sources */,
 				CA1E000B2FCA000100000001 /* Mango9CRMSettings.swift in Sources */,
 				CA1E00052FCA000100000001 /* Mango9ExyteCalendar.swift in Sources */,

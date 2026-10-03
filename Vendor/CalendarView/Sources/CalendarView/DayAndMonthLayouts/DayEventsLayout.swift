@@ -40,19 +40,25 @@ struct DayEventsLayout<Content: View>: View {
             minimumTimedEventHeight: minimumTimedEventHeight
         ) {
             ForEach(sorted, id: \.id) { event in
-                dayEventBuilder(event)
-                    .onTapGesture {
-                        showEventDetailsClosure(event)
-                    }
+                entityButton(event)
             }
             ForEach(reminders, id: \.id) { reminder in
-                dayEventBuilder(reminder)
-                    .onTapGesture {
-                        showEventDetailsClosure(reminder)
-                    }
+                entityButton(reminder)
             }
         }
         .transaction { $0.disablesAnimations = true }
+    }
+
+    private func entityButton(_ entity: any CalendarEntity) -> some View {
+        Button { showEventDetailsClosure(entity) } label: {
+            // The layout proposes the full event rectangle. Define the hit shape
+            // here, after filling that proposal, not just around the title glyphs.
+            dayEventBuilder(entity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("calendar.event.\(entity.id)")
     }
 }
 

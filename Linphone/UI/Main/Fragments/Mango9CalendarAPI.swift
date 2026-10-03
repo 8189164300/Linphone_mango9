@@ -142,6 +142,39 @@ struct Mango9CalendarFailure: LocalizedError {
 	static let accountChanged = Self(status: 0, code: "account_changed", message: "")
 }
 
+enum Mango9AppointmentSave {
+	/// A successful HTTP status is not enough if an older server ignores dates.
+	/// Never retry a write automatically; verify the persisted record instead.
+	static func save(session: Mango9Session, event: Mango9Appointment?, body: [String: Any],
+		transport: URLSession = .shared) async throws -> Mango9Appointment {
+		let saved = try await Mango9CalendarAPI.send(Mango9Appointment.self, session: session,
+			path: event.map { "events/\($0.id)" } ?? "events", method: event == nil ? "POST" : "PATCH",
+			body: body, revision: event?.revision, transport: transport)
+		guard event == nil || saved.id == event?.id else { throw unconfirmed }
+		guard event != nil, body["start_at"] != nil || body["end_at"] != nil else { return saved }
+		let persisted: Mango9Appointment
+		do {
+			persisted = try await Mango9CalendarAPI.send(Mango9Appointment.self, session: session,
+				path: "events/\(saved.id)", transport: transport)
+		} catch {
+			// The PATCH already succeeded: even an explicit read error cannot
+			// establish that retrying the write is safe.
+			if (error as? Mango9CalendarFailure)?.code == "account_changed" { throw error }
+			throw unconfirmed
+		}
+		guard persisted.id == saved.id, datesMatch(body, event: persisted) else { throw unconfirmed }
+		return persisted
+	}
+	static func datesMatch(_ body: [String: Any], event: Mango9Appointment) -> Bool {
+		for (key, actual) in [("start_at", event.startAt), ("end_at", event.endAt)] {
+			if let expected = body[key] as? String, expected != Mango9CalendarAPI.timestamp(actual) { return false }
+		}
+		return true
+	}
+	static let unconfirmed = Mango9CalendarFailure(status: 0, code: "event_save_unconfirmed",
+		message: "The server did not confirm the new event dates. Close and refresh Events to check the saved details before trying again.")
+}
+
 /// Uses the provisioned CRM identity, never the SIP proxy or a fixed tenant hostname.
 enum Mango9CalendarAPI {
 	enum Scope: String { case calendar, crm }

@@ -115,6 +115,9 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	}
 					 
 	func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+#if DEBUG && targetEnvironment(simulator)
+		if Mango9CalendarUITestFixture.isEnabled { return true }
+#endif
 		// Set up notifications
 		let notificationCenter = UNUserNotificationCenter.current()
 		notificationCenter.delegate = self
@@ -213,13 +216,16 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	// Display notifications on foreground
 	func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
 		let userInfo = notification.request.content.userInfo
-		Log.info("Received push notification in foreground, payload= \(userInfo)")
+		Log.info("Received push notification in foreground")
 
-		if mango9ChatTarget(from: userInfo) != nil {
+		if let target = mango9ChatTarget(from: userInfo) {
 			Task { @MainActor in
 				await Mango9ChatStore.shared.refreshDirectory()
 			}
-			completionHandler([.banner, .sound, .badge])
+			let nested = userInfo["mango9"] as? [String: Any]
+			let crmID = nested?["crm_id"] as? String ?? userInfo["crm_id"] as? String
+			let muted = Mango9ChatNotificationSettings.isMuted(roomID: target.roomId, identity: mango9AccountIdentity(from: userInfo), crmID: crmID)
+			completionHandler(muted ? [.badge] : [.banner, .sound, .badge])
 			return
 		}
 
@@ -474,6 +480,9 @@ struct LinphoneApp: App {
 	private let voipRegistry = PKPushRegistry(queue: coreQueue)
 
 	init() {
+#if DEBUG && targetEnvironment(simulator)
+		if Mango9CalendarUITestFixture.isEnabled { return }
+#endif
 #if DEBUG
 		LinphoneApp.applyUITestMDMConfigIfNeeded()
 #endif
@@ -508,14 +517,28 @@ struct LinphoneApp: App {
 
 	var body: some Scene {
 		WindowGroup {
-			if configAvailable {
-				AppView(delegate: delegate)
-			} else {
-				SplashScreen(showSpinner: true)
-					.onAppear {
-						waitForConfig()
-				}
-			}
+			rootContent
+		}
+	}
+
+	@ViewBuilder private var rootContent: some View {
+#if DEBUG && targetEnvironment(simulator)
+		if Mango9CalendarUITestFixture.isEnabled {
+			Mango9CalendarUITestFixture()
+		} else {
+			normalContent
+		}
+#else
+		normalContent
+#endif
+	}
+
+	@ViewBuilder private var normalContent: some View {
+		if configAvailable {
+			AppView(delegate: delegate)
+		} else {
+			SplashScreen(showSpinner: true)
+				.onAppear { waitForConfig() }
 		}
 	}
 

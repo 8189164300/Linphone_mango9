@@ -226,8 +226,8 @@ struct Mango9CRMFragment: View {
 			.buttonStyle(.plain)
 
 			NavigationLink(destination: Mango9AppointmentsFragment()) {
-				workspaceRow(icon: "calendar", title: "Appointments",
-					subtitle: viewModel.appointmentCount == nil ? "Schedule, share and manage appointments" : "Appointments this month", color: .mango9Primary, count: viewModel.appointmentCount)
+				workspaceRow(icon: "calendar", title: "Events",
+					subtitle: viewModel.appointmentCount == nil ? "Schedule, share and manage events" : "Events this month", color: .mango9Primary, count: viewModel.appointmentCount)
 			}.buttonStyle(.plain)
 			NavigationLink(destination: Mango9CRMSettings()) {
 				workspaceRow(icon: "slider.horizontal.3", title: "CRM Settings", subtitle: "Calendar, reminders and message notifications", color: .indigo)

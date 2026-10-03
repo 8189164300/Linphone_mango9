@@ -227,12 +227,14 @@ public struct DayLayout<Content: View>: View {
     }
 
     private func allDayEventsBuilderView(event: CalendarEvent) -> some View {
-        dayEventBuilder(event)
-            .frame(height: 30)
-            .fixedSize(horizontal: false, vertical: true)
-            .onTapGesture {
-                showEventDetailsClosure(event)
-            }
+        Button { showEventDetailsClosure(event) } label: {
+            dayEventBuilder(event)
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("calendar.event.\(event.id)")
     }
 
     func dayEventsAndRemindersView(availableWidth: CGFloat, oneHourHeight: CGFloat) -> some View {
@@ -264,7 +266,7 @@ public struct DayLayout<Content: View>: View {
                         background(date, oneHourHeight).allowsHitTesting(false)
                     }
                 }
-                .overlay(alignment: .leading) { theme.day.separators.frame(width: 1) }
+                .overlay(alignment: .leading) { theme.day.separators.frame(width: 1).allowsHitTesting(false) }
                 .overlay(alignment: .topLeading) {
                     TimelineView(.periodic(from: .now, by: 60)) { context in
                         if Calendar.current.isDate(date, inSameDayAs: context.date) {

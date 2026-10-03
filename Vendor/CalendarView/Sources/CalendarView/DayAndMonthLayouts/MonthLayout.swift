@@ -40,13 +40,14 @@ public struct MonthLayout<MonthDay: View>: View {
 
             LazyVGrid(columns: columns, spacing: 0) {
                 ForEach(days, id: \.self) { date in
+                        let dayEvents = eventsFor(date)
                         CalendarDateButton(date: date, onHold: viewModel.dateLongPressClosure, onTap: {
                             didSelectDay(date)
                         }) {
                             monthDayBuilder(
                                 MonthDayBuilderParams(
                                     date: date,
-                                    events: eventsFor(date),
+                                    events: dayEvents,
                                     viewHeight: rowHeight
                                 )
                             )
@@ -54,6 +55,8 @@ public struct MonthLayout<MonthDay: View>: View {
                             .frame(height: rowHeight)
                         }
                         .accessibilityLabel(date.formatted(date: .complete, time: .omitted))
+                        .accessibilityValue("\(dayEvents.count) events")
+                        .accessibilityIdentifier("calendar.day.\(Int(date.timeIntervalSince1970))")
                 }
             }
             .frame(height: g.size.height)

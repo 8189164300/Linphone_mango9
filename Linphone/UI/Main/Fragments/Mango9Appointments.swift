@@ -134,6 +134,11 @@ struct Mango9AppointmentCreation: Identifiable {
 		components.hour = 9; components.minute = 0; components.second = 0
 		return target.date(from: components) ?? day
 	}
+
+	static func end(afterMovingStartFrom previousStart: Date, to start: Date, previousEnd: Date) -> Date {
+		let duration = previousEnd.timeIntervalSince(previousStart)
+		return start.addingTimeInterval(duration > 0 ? duration : 1800)
+	}
 }
 
 @MainActor final class Mango9AppointmentsStore: ObservableObject {
@@ -248,6 +253,7 @@ struct Mango9AppointmentsFragment: View {
 	@State private var search = ""
 	@State private var wasBackgrounded = false
 	@State private var refreshID = UUID()
+	private var usesLegacyCalendar = false
 
 	init(contact: Mango9AppointmentContact? = nil, date: Date = Date()) {
 		_store = StateObject(wrappedValue: Mango9AppointmentsStore(contact: contact))
@@ -255,7 +261,8 @@ struct Mango9AppointmentsFragment: View {
 		_visibleCalendarDate = State(initialValue: date)
 	}
 
-	init(store: Mango9AppointmentsStore, date: Date, calendarMode: Bool = false, creating: Bool = false) {
+	init(store: Mango9AppointmentsStore, date: Date, calendarMode: Bool = false, creating: Bool = false, usesLegacyCalendar: Bool = false) {
+		self.usesLegacyCalendar = usesLegacyCalendar
 		_store = StateObject(wrappedValue: store)
 		_date = State(initialValue: date)
 		_visibleCalendarDate = State(initialValue: date)
@@ -276,7 +283,7 @@ struct Mango9AppointmentsFragment: View {
 			header
 			VStack(spacing: 12) {
 				Picker("View", selection: $calendarMode) {
-					Text("Appointments").tag(false)
+					Text("Events").tag(false)
 					Text("Calendar").tag(true)
 				}.pickerStyle(.segmented)
 				if !calendarMode {
@@ -289,7 +296,7 @@ struct Mango9AppointmentsFragment: View {
 					}
 					HStack {
 						Image(systemName: "magnifyingglass").foregroundColor(.secondary)
-						TextField("Search appointments or contacts", text: $search)
+						TextField("Search events or contacts", text: $search)
 						Menu {
 							Picker("Status", selection: $statusID) {
 								Text("All statuses").tag(-1)
@@ -308,14 +315,13 @@ struct Mango9AppointmentsFragment: View {
 				}.padding().accessibilityIdentifier("appointments.error")
 			}
 			if calendarMode {
-				if #available(iOS 18, *) {
+				if #available(iOS 18, *), !usesLegacyCalendar {
 					Mango9ExyteCalendar(session: store.session, contactID: store.contact?.id,
 						date: $date, revision: store.calendarRevision, onSelect: { selected = $0 },
 						onError: { store.calendarError = $0 }, onVisibleMonth: { visibleCalendarDate = $0 },
 						onCreate: store.canCreate ? createOnCalendarDate : nil,
 						onCreateAtTime: store.canCreate ? createAtCalendarTime : nil, transport: store.transport, businessHours: store.businessHours)
 						.id(store.session.map(Mango9CalendarAPI.accountKey) ?? "calendar-no-account")
-						.accessibilityIdentifier("appointments.calendar")
 				} else {
 					Mango9LegacyCalendar(session: store.session, contactID: store.contact?.id,
 						date: $date, revision: store.calendarRevision,
@@ -364,7 +370,7 @@ struct Mango9AppointmentsFragment: View {
 		}
 		.sheet(item: $selected) { event in
 			if let session = store.session, let metadata = store.metadata {
-				Mango9AppointmentDetail(event: event, session: session, metadata: metadata)
+				Mango9AppointmentDetail(event: event, session: session, metadata: metadata, transport: store.transport)
 			}
 		}
 		.sheet(isPresented: $showingHours) {
@@ -381,7 +387,8 @@ struct Mango9AppointmentsFragment: View {
 		.sheet(item: $creation) { request in
 			if Mango9SessionStore.isActive(request.session) {
 				Mango9AppointmentEditor(session: request.session, metadata: request.metadata, contact: request.contact,
-					date: request.date, initialTimezone: request.timezone)
+					date: request.date, initialTimezone: request.timezone, transport: store.transport)
+					.id(request.id) // Never reuse a prior create form's draft/busy/error state.
 			}
 		}
 	}
@@ -409,20 +416,17 @@ struct Mango9AppointmentsFragment: View {
 				Image(systemName: "chevron.left").font(.title3).frame(width: 44, height: 44)
 			}.accessibilityLabel("Back")
 			VStack(alignment: .leading, spacing: 2) {
-				Text("Appointments").font(.title2.bold()).foregroundColor(.primary).lineLimit(1).minimumScaleFactor(0.7)
+				Text("Events").font(.title2.bold()).foregroundColor(.primary).lineLimit(1).minimumScaleFactor(0.7)
 				Text(store.contact?.displayName ?? "Your CRM calendar").font(.caption).foregroundColor(.secondary).lineLimit(1)
 			}
 			Spacer()
 			Button { showingHours = true } label: {
 				Image(systemName: "clock.badge.checkmark").frame(width: 36, height: 44)
 			}.disabled(store.session == nil).accessibilityLabel("Business hours").accessibilityIdentifier("appointments.businessHours")
-			Button { date = Date() } label: {
-				Image(systemName: "calendar").opacity(store.loading ? 0 : 1)
-					.overlay { if store.loading { ProgressView() } }.frame(width: 36, height: 44)
-			}.disabled(store.loading).accessibilityLabel(store.loading ? "Loading appointments" : "Today")
+			if store.loading { ProgressView().accessibilityLabel("Loading events") }
 			Button { creation = store.creation(on: date) } label: { Image(systemName: "plus").font(.title3.bold()).frame(width: 44, height: 44) }
 				.disabled(!store.canCreate)
-				.accessibilityLabel("Create appointment").accessibilityIdentifier("appointments.create")
+				.accessibilityLabel("Create event").accessibilityIdentifier("appointments.create")
 		}.padding(.horizontal, 8).padding(.vertical, 8).background(Color(.systemBackground))
 	}
 
@@ -433,8 +437,8 @@ struct Mango9AppointmentsFragment: View {
 			if events.isEmpty && !store.loading && store.error == nil {
 				VStack(spacing: 12) {
 					Image(systemName: "calendar.badge.clock").font(.largeTitle).foregroundColor(.mango9Primary)
-					Text(search.isEmpty && statusID == -1 ? "No appointments this month" : "No matching appointments").font(.headline)
-					Text("Choose another month or create an appointment.").font(.subheadline).foregroundColor(.secondary)
+					Text(search.isEmpty && statusID == -1 ? "No events this month" : "No matching events").font(.headline)
+					Text("Choose another month or create an event.").font(.subheadline).foregroundColor(.secondary)
 				}.frame(maxWidth: .infinity).padding(.vertical, 24).listRowBackground(Color.clear)
 			}
 			ForEach(sections) { section in
@@ -445,7 +449,13 @@ struct Mango9AppointmentsFragment: View {
 					Text(section.day, format: .dateTime.weekday(.wide).month(.abbreviated).day())
 				}.textCase(nil)) {
 					ForEach(section.events, id: \.displayID) { event in
-						Button { selected = event } label: { Mango9AppointmentRow(event: event, now: now) }.buttonStyle(.plain)
+						Button { selected = event } label: {
+							Mango9AppointmentRow(event: event, now: now)
+								.frame(maxWidth: .infinity, alignment: .leading)
+								.padding(.horizontal, 16).padding(.vertical, 10)
+								.contentShape(Rectangle())
+						}.buttonStyle(.plain).listRowInsets(EdgeInsets())
+							.accessibilityIdentifier("appointments.event.\(event.displayID)")
 					}
 				}
 			}
@@ -555,7 +565,9 @@ struct Mango9AppointmentDetail: View {
 						.accessibilityHint("Opens the linked \(contact.kind)")
 					} else { Text(event.title).font(.title2.bold()) }
 					Label(event.startAt.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
+						.accessibilityIdentifier("appointment.startSummary")
 					Label("Until " + event.endAt.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
+						.accessibilityIdentifier("appointment.endSummary")
 					Text("Shown in \(TimeZone.current.identifier)").font(.caption).foregroundColor(.secondary)
 				}
 				Section("Details") {
@@ -587,9 +599,9 @@ struct Mango9AppointmentDetail: View {
 				}
 				if let error { Section { Text(error).foregroundColor(.red); Button("Refresh appointment") { Task { await refresh() } }.disabled(busy) } }
 				if event.permissions.canDelete {
-					Section { Button("Delete appointment", role: .destructive) { deleting = true }.disabled(busy || error != nil) }
+					Section { Button("Delete event", role: .destructive) { deleting = true }.disabled(busy || error != nil) }
 				}
-			}.navigationTitle("Appointment").navigationBarTitleDisplayMode(.inline)
+			}.navigationTitle("Event").navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
 				ToolbarItem(placement: .primaryAction) {
@@ -601,11 +613,11 @@ struct Mango9AppointmentDetail: View {
 								.overlay { if busy { ProgressView().accessibilityHidden(true) } }
 						}
 						.disabled(busy || error != nil)
-						.accessibilityLabel("Edit appointment")
+						.accessibilityLabel("Edit event")
 						.accessibilityValue(busy ? "Loading" : "")
 						.accessibilityIdentifier("appointment.edit")
 					} else if busy {
-						ProgressView().accessibilityLabel("Loading appointment")
+						ProgressView().accessibilityLabel("Loading event")
 					}
 				}
 			}
@@ -613,13 +625,14 @@ struct Mango9AppointmentDetail: View {
 		.task(id: detailRefreshID) { await refresh() }
 		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in dismiss() }
 		.sheet(isPresented: $editing, onDismiss: { detailRefreshID = UUID() }) {
-			Mango9AppointmentEditor(session: session, metadata: metadata, event: event)
+			Mango9AppointmentEditor(session: session, metadata: metadata, event: event, transport: transport,
+				onSaved: { event = $0 })
 		}
 		.sheet(isPresented: $pushingBack, onDismiss: { detailRefreshID = UUID() }) {
 			Mango9PushBackAppointment(event: event, session: session)
 		}
-		.confirmationDialog("Delete this appointment?", isPresented: $deleting, titleVisibility: .visible) {
-			Button("Delete appointment", role: .destructive) { Task { await remove() } }
+		.confirmationDialog("Delete this event?", isPresented: $deleting, titleVisibility: .visible) {
+			Button("Delete event", role: .destructive) { Task { await remove() } }
 		} message: { Text("This also removes it from the shared CRM calendar. This cannot be undone.") }
 	}
 
@@ -716,6 +729,8 @@ struct Mango9AppointmentEditor: View {
 	let metadata: Mango9CalendarMetadata
 	let event: Mango9Appointment?
 	let initialTimezone: TimeZone?
+	let transport: URLSession
+	let onSaved: (Mango9Appointment) -> Void
 	@State private var title: String
 	@State private var notes: String
 	@State private var start: Date
@@ -733,11 +748,15 @@ struct Mango9AppointmentEditor: View {
 	@State private var busy = false
 	@State private var blocked = false
 	@State private var error: String?
+	@State private var showingSaveError = false
 	@State private var confirmAssignment = false
 
 	init(session: Mango9Session, metadata: Mango9CalendarMetadata, event: Mango9Appointment? = nil,
-		contact: Mango9AppointmentContact? = nil, date: Date = Date(), initialTimezone: TimeZone? = nil) {
+		contact: Mango9AppointmentContact? = nil, date: Date = Date(), initialTimezone: TimeZone? = nil, transport: URLSession = .shared,
+		onSaved: @escaping (Mango9Appointment) -> Void = { _ in }) {
 		self.session = session; self.metadata = metadata; self.event = event
+		self.transport = transport
+		self.onSaved = onSaved
 		self.initialTimezone = initialTimezone
 		_title = State(initialValue: event?.title ?? "")
 		_notes = State(initialValue: event?.description ?? "")
@@ -768,9 +787,14 @@ struct Mango9AppointmentEditor: View {
 	var body: some View {
 		NavigationView {
 			Form {
-				Section("Appointment") {
+				Section("Event") {
 					TextField("Title", text: $title).accessibilityIdentifier("appointment.title")
-					DatePicker("Starts", selection: $start).accessibilityIdentifier("appointment.starts")
+					DatePicker("Starts", selection: Binding(get: { start }, set: { value in
+						// Moving either a new or existing event preserves its duration.
+						// The end remains independently editable afterward.
+						end = Mango9AppointmentCreation.end(afterMovingStartFrom: start, to: value, previousEnd: end)
+						start = value
+					})).accessibilityIdentifier("appointment.starts")
 					DatePicker("Ends", selection: $end).accessibilityIdentifier("appointment.ends")
 					Text("Times shown in \(editingTimezone.identifier)").font(.caption).foregroundColor(.secondary)
 					Picker("Status", selection: $status) {
@@ -820,7 +844,7 @@ struct Mango9AppointmentEditor: View {
 				if let error { Section { Text(error).foregroundColor(.red) } }
 				if end <= start { Text("End time must be after the start time.").foregroundColor(.red) }
 			}.disabled(busy).environment(\.timeZone, editingTimezone)
-			.navigationTitle(event == nil ? "New appointment" : "Edit appointment").navigationBarTitleDisplayMode(.inline)
+			.navigationTitle(event == nil ? "New event" : "Edit event").navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
 				ToolbarItem(placement: .confirmationAction) {
@@ -831,6 +855,9 @@ struct Mango9AppointmentEditor: View {
 				}
 			}
 		}.navigationViewStyle(.stack).tint(.mango9Primary).interactiveDismissDisabled(busy)
+		.alert("Event not saved", isPresented: $showingSaveError) {
+			Button("OK", role: .cancel) {}
+		} message: { Text(error ?? "Please check the appointment details and try again.") }
 		.sheet(isPresented: $choosingContact) { Mango9AppointmentContactPicker(session: session) { contact = $0 } }
 		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in dismiss() }
 		.confirmationDialog("Transfer appointment ownership?", isPresented: $confirmAssignment, titleVisibility: .visible) {
@@ -848,18 +875,19 @@ struct Mango9AppointmentEditor: View {
 		let body = draft.payload(event: event, owner: isOwner, timezone: editingTimezone.identifier)
 		if body.isEmpty { dismiss(); return }
 		do {
-			_ = try await Mango9CalendarAPI.send(Mango9Appointment.self, session: session,
-				path: event.map { "events/\($0.id)" } ?? "events", method: event == nil ? "POST" : "PATCH", body: body, revision: event?.revision)
+			let saved = try await Mango9AppointmentSave.save(session: session, event: event, body: body, transport: transport)
+			onSaved(saved)
 			NotificationCenter.default.post(name: .mango9AppointmentDidChange, object: nil)
 			dismiss()
 		} catch {
+			showingSaveError = true
 			if let failure = error as? Mango9CalendarFailure {
 				self.error = failure.localizedDescription
-				blocked = failure.code == "event_changed" || failure.code == "account_changed"
+				blocked = ["event_changed", "account_changed", "event_save_unconfirmed"].contains(failure.code)
 			} else {
 				// A timed-out POST may already have committed. Never offer a blind retry.
 				blocked = true
-				self.error = "We could not confirm whether the change was saved. Close this form and refresh Appointments before trying again."
+				self.error = "We could not confirm whether the change was saved. Close this form and refresh Events before trying again."
 			}
 		}
 	}
@@ -926,7 +954,7 @@ struct Mango9LinkedAppointmentsSection: View {
 			HStack(spacing: 12) {
 				Image(systemName: "calendar.badge.clock").font(.title2).foregroundColor(.mango9Primary)
 				VStack(alignment: .leading, spacing: 4) {
-					Text("Appointments").font(.headline)
+					Text("Events").font(.headline)
 					Text(count.map { "\($0) this month · View or schedule" } ?? (error ? "Open calendar to retry" : "Checking this month…"))
 						.font(.caption).foregroundColor(.secondary)
 				}

@@ -143,7 +143,7 @@ struct Mango9CRMSettings: View {
 				if embedded { Text("Tap Save CRM settings below to apply your changes.").font(.footnote).foregroundColor(.secondary) }
 			}
 			if loaded {
-				settingsSection("Appointments") {
+				settingsSection("Events") {
 					Toggle("In-app reminders", isOn: $draft.inAppReminders).accessibilityIdentifier("crm.inAppReminders")
 					Mango9CRMOptionPicker("Suggested reminder", value: Mango9AppointmentActions.reminderLabel(draft.reminderMinutes), selection: $draft.reminderMinutes) {
 						ForEach(Mango9AppointmentActions.reminderChoices, id: \.self) { Text(Mango9AppointmentActions.reminderLabel($0)).tag($0) }
@@ -158,8 +158,8 @@ struct Mango9CRMSettings: View {
 					Text("Enable a reminder on each appointment. Banners appear while this account is selected and the app is open, and pause during calls. Snooze is saved to the CRM; it never changes the appointment time. Email/SMS appointment reminders are managed on the appointment itself.").font(.footnote).foregroundColor(.secondary)
 				}
 				settingsSection("Calendar") {
-					Mango9CRMOptionPicker("Open appointments as", value: draft.defaultCalendarView == "calendar" ? "Calendar" : "Appointment list", selection: $draft.defaultCalendarView) {
-						Text("Appointment list").tag("appointments")
+					Mango9CRMOptionPicker("Open events as", value: draft.defaultCalendarView == "calendar" ? "Calendar" : "Event list", selection: $draft.defaultCalendarView) {
+						Text("Event list").tag("appointments")
 						Text("Calendar").tag("calendar")
 					}
 					Mango9CRMOptionPicker("Week starts on", value: draft.firstWeekday == 0 ? "Device default" : draft.firstWeekday == 1 ? "Sunday" : "Monday", selection: $draft.firstWeekday) {

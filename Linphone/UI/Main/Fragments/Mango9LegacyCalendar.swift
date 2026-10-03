@@ -74,6 +74,38 @@ struct Mango9TimelineAppointment: View {
 	}
 }
 
+/// The same count-only month cell is used by both supported calendar renderers.
+struct Mango9CalendarDaySummary: View {
+	let date: Date
+	let count: Int
+	@ScaledMetric(relativeTo: .subheadline) private var dateFontSize: CGFloat = 15
+	@ScaledMetric(relativeTo: .caption) private var countFontSize: CGFloat = 12
+	var body: some View {
+		GeometryReader { geometry in
+			// A six-week month on a compact phone has less vertical room. Scale
+			// both lines to the cell while VoiceOver still reads the full count.
+			let height = max(0, geometry.size.height)
+			let daySize = max(10, min(dateFontSize, height * 0.27))
+			let dayDiameter = ceil(UIFont.systemFont(ofSize: daySize, weight: .semibold).lineHeight) + 4
+			VStack(spacing: min(4, height * 0.04)) {
+				Divider()
+				Text(date, format: .dateTime.day())
+					.font(.system(size: daySize, weight: .semibold))
+					.foregroundColor(Calendar.current.isDateInToday(date) ? .white : .primary)
+					.frame(width: dayDiameter, height: dayDiameter)
+					.background(Calendar.current.isDateInToday(date) ? Color.mango9Primary : .clear, in: Circle())
+				if count > 0 {
+					Text("+\(count)")
+						.font(.system(size: max(9, min(countFontSize, height * 0.22)), weight: .semibold)).foregroundColor(.mango9Primary)
+						.lineLimit(1).minimumScaleFactor(0.65).padding(.horizontal, 5).padding(.vertical, 2)
+						.background(Color.mango9Primary.opacity(0.09), in: Capsule())
+				}
+				Spacer(minLength: 0)
+			}.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+		}.contentShape(Rectangle())
+	}
+}
+
 /// The iOS 15–17 calendar uses the same authenticated API and detail/editor flow.
 /// It does not import the iOS 18-only Exyte module or store a second appointment database.
 struct Mango9LegacyCalendar: View {
@@ -151,7 +183,6 @@ struct Mango9LegacyCalendar: View {
 		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in
 			loadGeneration = UUID(); events = []; busy = false; loadedRequestScope = nil
 		}
-		.accessibilityIdentifier("appointments.legacyCalendar")
 	}
 
 	private var monthGrid: some View {
@@ -176,25 +207,13 @@ struct Mango9LegacyCalendar: View {
 		return Mango9CalendarDateButton(date: day, onHold: onCreate, onTap: {
 			date = day; mode = .day
 		}) {
-			VStack(spacing: 5) {
-				Divider()
-				Text(day, format: .dateTime.day()).font(.subheadline.weight(.semibold))
-					.foregroundColor(calendar.isDateInToday(day) ? .white : .primary)
-					.padding(4).background(calendar.isDateInToday(day) ? Color.mango9Primary : .clear).clipShape(Circle())
-				ForEach(values.prefix(2), id: \.displayID) { event in
-					HStack(spacing: 2) {
-						if event.isRecurring { Image(systemName: "repeat").accessibilityLabel("Recurring appointment") }
-						Text(event.title).lineLimit(1)
-					}.font(.caption2).foregroundColor(.primary)
-						.frame(maxWidth: .infinity, alignment: .leading).padding(2)
-						.background(event.tint.opacity(0.2)).cornerRadius(3)
-				}
-				if values.count > 2 { Text("+\(values.count - 2)").font(.caption2).foregroundColor(.secondary) }
-				Spacer(minLength: 0)
-			}.frame(minHeight: 96, alignment: .top).contentShape(Rectangle())
+			Mango9CalendarDaySummary(date: day, count: values.count)
+				.frame(height: 96, alignment: .top)
 				.background(businessHours?.configured == true && businessHours?.openIntervals(on: day).isEmpty == true ? Color.secondary.opacity(0.10) : Color.clear)
 		}
-			.accessibilityLabel("\(day.formatted(date: .complete, time: .omitted)), \(values.count) appointments")
+			.accessibilityLabel(day.formatted(date: .complete, time: .omitted))
+			.accessibilityValue("\(values.count) events")
+			.accessibilityIdentifier("calendar.day.\(Int(day.timeIntervalSince1970))")
 	}
 
 	private func eventsOn(_ day: Date) -> [Mango9Appointment] {
@@ -244,12 +263,12 @@ struct Mango9CalendarDateButton<Content: View>: View {
 					.exclusively(before: TapGesture()).onEnded { value in
 						switch value { case .first(true): onHold(date); case .second: onTap(); default: break }
 					})
-				.accessibilityElement(children: .combine).accessibilityAddTraits(.isButton)
+				.accessibilityElement(children: .ignore).accessibilityAddTraits(.isButton)
 				.accessibilityAction { onTap() }
-				.accessibilityAction(named: Text("New appointment")) { onHold(date) }
-				.accessibilityHint("Touch and hold to add an appointment")
+				.accessibilityAction(named: Text("New event")) { onHold(date) }
+				.accessibilityHint("Tap to view the day. Touch and hold to add an event")
 		} else {
-			Button(action: onTap, label: content).buttonStyle(.plain)
+			Button(action: onTap) { content().contentShape(Rectangle()) }.buttonStyle(.plain)
 		}
 	}
 }
@@ -442,8 +461,11 @@ struct Mango9LegacyTimeline: View {
 				Button { onSelect(placement.event) } label: {
 					Mango9TimelineAppointment(title: placement.event.title, tint: placement.event.tint,
 						isRecurring: placement.event.isRecurring, status: placement.event.status?.name)
-				}.buttonStyle(.plain).frame(width: placement.frame.width, height: placement.frame.height)
+						.frame(width: placement.frame.width, height: placement.frame.height)
+						.contentShape(Rectangle())
+				}.buttonStyle(.plain)
 					.offset(x: placement.frame.minX, y: placement.frame.minY)
+					.accessibilityIdentifier("calendar.event.\(placement.event.displayID)")
 					.accessibilityLabel("\(placement.event.title), \(placement.event.startAt.formatted(date: .abbreviated, time: .shortened))\(placement.event.isRecurring ? ", recurring" : "")")
 			}
 			TimelineView(.periodic(from: .now, by: 60)) { context in
@@ -452,7 +474,7 @@ struct Mango9LegacyTimeline: View {
 				}
 			}.allowsHitTesting(false)
 		}.frame(width: width, height: 24 * hourHeight + Mango9TimelineAppointment.minimumHeight, alignment: .topLeading).clipped()
-			.overlay(alignment: .leading) { Color(.separator).opacity(0.3).frame(width: 1) }
+			.overlay(alignment: .leading) { Color(.separator).opacity(0.3).frame(width: 1).allowsHitTesting(false) }
 	}
 	struct Placement: Identifiable { let event: Mango9Appointment; let frame: CGRect; var id: String { event.displayID } }
 	private static func minute(_ date: Date, calendar: Calendar) -> Int { calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date) }
