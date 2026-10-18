@@ -80,6 +80,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
+## Social platform glyphs
+
+Facebook, Instagram, and TikTok glyphs are bundled from Simple Icons, revision
+`4d29a35c954699b389a834aacc97dd6e7e74143c`.
+
+- Source: https://github.com/simple-icons/simple-icons/tree/4d29a35c954699b389a834aacc97dd6e7e74143c
+- License: CC0 1.0 Universal; see `Vendor/SimpleIcons/LICENSE.txt`.
+- Brand names and logos remain trademarks of their respective owners. They
+  identify the connected messaging platform and do not imply endorsement.
+
 ## No warranty
 
 The covered software is distributed in the hope that it will be useful, but

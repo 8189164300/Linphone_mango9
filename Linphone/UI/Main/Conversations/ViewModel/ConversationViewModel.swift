@@ -286,6 +286,10 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 			.receive(on: RunLoop.main)
 			.sink { [weak self] _ in self?.synchronize() }
 			.store(in: &subscriptions)
+		Mango9PersonalMessageVisibility.shared.$hidden
+			.receive(on: RunLoop.main)
+			.sink { [weak self] _ in self?.synchronize() }
+			.store(in: &subscriptions)
 		store.$smsSenders
 			.receive(on: RunLoop.main)
 			.sink { [weak self] _ in self?.synchronize() }
@@ -399,7 +403,7 @@ final class Mango9SMSConversationAdapter: ObservableObject {
 
 		var previousIncoming: Bool?
 		messages = store.smsMessages.compactMap { record in
-			guard !hiddenMessageIDs.contains(record.id) else { return nil }
+			guard !hiddenMessageIDs.contains(record.id), !Mango9PersonalMessageVisibility.shared.isHidden(record.id, channel: .sms) else { return nil }
 			let isFirst = previousIncoming != record.isIncoming
 			previousIncoming = record.isIncoming
 			let date = Self.date(from: record.time) ?? Date()
@@ -484,6 +488,7 @@ class ConversationViewModel: ObservableObject {
 	private var coreContext = CoreContext.shared
 	private var sharedMainViewModel = SharedMainViewModel.shared
 	private(set) var smsAdapter: Mango9SMSConversationAdapter?
+	@Published var nativeSMSForwardMessage: EventLogMessage?
 	private var smsSubscriptions = Set<AnyCancellable>()
 	private let smsSectionDate = Date()
 
@@ -735,6 +740,32 @@ class ConversationViewModel: ObservableObject {
 	@Published var selectedMessageToDisplayDetails: EventLogMessage?
 	@Published var selectedMessageToPlayVoiceRecording: EventLogMessage?
 	@Published var selectedMessage: EventLogMessage?
+	@Published var nativeSMSSelection = false
+	@Published var nativeSMSSelectedIDs: Set<String> = []
+	@Published var nativeSMSForwardPayload: Mango9ForwardPayload?
+	@Published private(set) var deletingSMS = false
+
+	func forwardSelectedSMS(ids: Set<String>) {
+		guard isSMSConversation else { return }
+		let records = Mango9ChatStore.shared.smsMessages.filter { ids.contains($0.id) }
+		guard !records.isEmpty else { return }
+		nativeSMSForwardPayload = Mango9ForwardPayload(text: Mango9MessageText.forward(records.map(\.text)),
+			files: records.flatMap { $0.files.split(separator: ",").map(String.init) }, senderID: smsSelectedSenderID)
+	}
+	func deleteSelectedSMS() {
+		guard smsAdapter != nil, !deletingSMS, let session = Mango9SessionStore.load() else { return }
+		let ids = Array(nativeSMSSelectedIDs); deletingSMS = true
+		Task { @MainActor in
+			defer { deletingSMS = false }
+			do {
+				try await Mango9PersonalMessageVisibility.shared.update(session: session, channel: .sms, ids: ids, hide: true)
+				nativeSMSSelection = false; nativeSMSSelectedIDs = []
+			} catch {
+				nativeSMSSelectedIDs = nativeSMSSelectedIDs.filter { !Mango9PersonalMessageVisibility.shared.isHidden($0, channel: .sms) }
+				ToastViewModel.shared.show("Deletion could not be confirmed. Refresh or retry. \(error.localizedDescription)")
+			}
+		}
+	}
 	@Published var messageToReply: EventLogMessage?
 	@Published var messageToEdit: EventLogMessage?
 	
@@ -3256,20 +3287,8 @@ class ConversationViewModel: ObservableObject {
 	}
 	
 	func sendReaction(emoji: String) {
-		if isSMSConversation, let selectedMessage {
-			let description: String
-			switch emoji {
-			case "👍": description = "Liked"
-			case "❤️": description = "Loved"
-			case "😂": description = "Laughed at"
-			case "😮": description = "Emphasized"
-			case "😢": description = "Disliked"
-			default: description = emoji
-			}
-			let quoted = selectedMessage.message.text.isEmpty
-				? selectedMessage.message.attachmentsNames
-				: selectedMessage.message.text
-			requestedComposerText = "\(description) “\(quoted)”"
+		if isSMSConversation {
+			// Staff-only reactions must never turn into an outbound SMS draft.
 			self.selectedMessage = nil
 			return
 		}

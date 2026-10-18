@@ -90,7 +90,7 @@ private enum Mango9ChatError: LocalizedError {
 }
 
 @MainActor
-private final class Mango9ChatModerationStore: ObservableObject {
+final class Mango9ChatModerationStore: ObservableObject {
 	static let shared = Mango9ChatModerationStore()
 
 	@Published private(set) var blockedUserIds: Set<Int>
@@ -263,6 +263,7 @@ final class Mango9ChatStore: ObservableObject {
 	private var connectingIdentity: String?
 	private var connectedIdentity: String?
 	private var smsMessageCache: [String: [Mango9ServerSMSMessage]] = [:]
+	private var teamSnapshots = Mango9ConversationSnapshotCache<Mango9ChatMessage>()
 	private var pendingSMSStatuses: [String: Int] = [:]
 
 	private init() {}
@@ -415,6 +416,7 @@ final class Mango9ChatStore: ObservableObject {
 			typingUserIds = []
 			smsMessageCache = [:]
 			pendingSMSStatuses = [:]
+			teamSnapshots.removeAll()
 		}
 	}
 
@@ -459,6 +461,7 @@ final class Mango9ChatStore: ObservableObject {
 		guard let roomId, activeRoomId == roomId else {
 			return
 		}
+		rememberTeamConversation()
 		activeRoomId = nil
 		openingUserId = nil
 		chatOpenState = Mango9ChatOpenState()
@@ -469,6 +472,7 @@ final class Mango9ChatStore: ObservableObject {
 
 	func closeConversation(owner: UUID) {
 		guard chatOpenState.cancel(owner: owner) else { return }
+		rememberTeamConversation()
 		activeRoomId = nil
 		openingUserId = nil
 		isOpeningConversation = false
@@ -535,6 +539,21 @@ final class Mango9ChatStore: ObservableObject {
 		}
 	}
 
+	func applyReaction(_ receipt: Mango9StaffReactionReceipt, target: Mango9ReactionTarget) {
+		guard let session = Mango9SessionStore.load(), target.matches(session),
+			receipt.channel == target.channel, receipt.messageId == target.message else { return }
+		if target.channel == .team, activeRoomId == target.conversation,
+			let index = messages.firstIndex(where: { $0.id == target.message && $0.roomId == target.conversation }) {
+			messages[index].reactionState = messages[index].reactionState.merging(receipt.snapshot)
+		} else if target.channel == .sms, let index = smsMessages.firstIndex(where: {
+			$0.id == target.message && Self.normalizedPhone($0.phone) == Self.normalizedPhone(target.conversation)
+		}) {
+			var message = smsMessages[index]
+			message.reactionState = message.reactionState.merging(receipt.snapshot)
+			upsertSMS(message)
+		}
+	}
+
 	func deleteConversation(roomId: String) {
 		guard connectedIdentity == Mango9SessionStore.activeIdentity else {
 			errorMessage = Mango9ChatError.disconnected.localizedDescription
@@ -557,11 +576,16 @@ final class Mango9ChatStore: ObservableObject {
 
 	private func openConversation(roomId: String?, userId: Int?, fallbackName: String, owner: UUID) async {
 		guard !Task.isCancelled else { return }
+		rememberTeamConversation()
 		closeSMSConversation()
 		let request = chatOpenState.begin(owner: owner, identity: Mango9SessionStore.activeIdentity)
 		openingUserId = userId
 		activeRoomId = nil
 		messages = []
+		if let session = Mango9SessionStore.load(), connectedIdentity == Mango9SessionStore.activeIdentity,
+			let cachedRoom = roomId ?? userId.flatMap({ directRoom(with: $0)?.id }) {
+			messages = teamSnapshots.messages(account: Mango9ReactionTarget.accountKey(session), room: cachedRoom)
+		}
 		errorMessage = nil
 		conversationError = nil
 		isOpeningConversation = true
@@ -613,9 +637,20 @@ final class Mango9ChatStore: ObservableObject {
 		} catch {
 			guard !Task.isCancelled,
 			      chatOpenState.isCurrent(request, identity: Mango9SessionStore.activeIdentity) else { return }
+			// A failed authorization/refresh must not leave cached history visible.
+			if let session = Mango9SessionStore.load(), let id = activeRoomId ?? roomId {
+				teamSnapshots.remove(account: Mango9ReactionTarget.accountKey(session), room: id)
+			}
+			messages = []
 			conversationError = error.localizedDescription
 			errorMessage = error.localizedDescription
 		}
+	}
+
+	private func rememberTeamConversation() {
+		guard let room = activeRoomId, let session = Mango9SessionStore.load(),
+			connectedIdentity == Mango9SessionStore.activeIdentity, !messages.isEmpty else { return }
+		teamSnapshots.save(messages.filter { $0.roomId == room }, account: Mango9ReactionTarget.accountKey(session), room: room)
 	}
 
 	func createGroup(userIds: Set<Int>) async -> Mango9ChatRoom? {
@@ -623,12 +658,17 @@ final class Mango9ChatStore: ObservableObject {
 			errorMessage = "Choose at least two teammates for a group."
 			return nil
 		}
+		let identity = Mango9SessionStore.activeIdentity
 		await connectIfNeeded()
+		guard identity != nil, identity == Mango9SessionStore.activeIdentity,
+			connectedIdentity == identity else { return nil }
+		let generation = connectionGeneration
 		do {
 			let result = try await rpcCall(
 				"createChatGroup",
 				params: [userIds.sorted().map(String.init)]
 			)
+			guard generation == connectionGeneration, identity == Mango9SessionStore.activeIdentity else { return nil }
 			guard let room = Self.room(from: result) else {
 				throw Mango9ChatError.invalidResponse
 			}
@@ -639,6 +679,7 @@ final class Mango9ChatStore: ObservableObject {
 			}
 			return room
 		} catch {
+			guard generation == connectionGeneration, identity == Mango9SessionStore.activeIdentity else { return nil }
 			errorMessage = error.localizedDescription
 			return nil
 		}
@@ -859,13 +900,15 @@ final class Mango9ChatStore: ObservableObject {
 		disconnect()
 	}
 
-	func sendMessage(_ text: String, attachments: [Attachment] = []) async -> Bool {
+	func sendMessage(_ text: String, attachments: [Attachment] = [], forwardedFiles: [String] = []) async -> Bool {
 		let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard (!message.isEmpty || !attachments.isEmpty), let roomId = activeRoomId else {
+		guard (!message.isEmpty || !attachments.isEmpty || !forwardedFiles.isEmpty), let roomId = activeRoomId,
+			let session = Mango9SessionStore.load() else {
 			return false
 		}
 		do {
-			let files = try await upload(attachments)
+			let files = try await upload(attachments) + forwardedFiles
+			guard Mango9SessionStore.isActive(session), activeRoomId == roomId, !Task.isCancelled else { throw Mango9ChatError.noSession }
 			_ = try await rpcCall(
 				"sendChatMessage",
 				params: [roomId, message, files, UUID().uuidString.lowercased()]
@@ -891,14 +934,21 @@ final class Mango9ChatStore: ObservableObject {
 		to phone: String,
 		from senderID: String,
 		message: String,
-		attachments: [Attachment] = []
+		attachments: [Attachment] = [],
+		forwardedFiles: [String] = [],
+		expectedAccount: String? = nil
 	) async throws {
+		let origin = expectedAccount ?? Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey)
 		await connectIfNeeded()
 		guard isConnected,
+			  origin != nil, origin == Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey),
 			  connectedIdentity == Mango9SessionStore.activeIdentity else {
 			throw Mango9ChatError.disconnected
 		}
-		let files = try await upload(attachments)
+		let identity = connectedIdentity
+		let files = try await upload(attachments) + forwardedFiles
+		guard identity == connectedIdentity, connectedIdentity == Mango9SessionStore.activeIdentity,
+			origin == Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey), !Task.isCancelled else { throw Mango9ChatError.noSession }
 		_ = try await rpcCall(
 			"sendSmsMessage",
 			params: [
@@ -952,7 +1002,8 @@ final class Mango9ChatStore: ObservableObject {
 	var teamUnreadCount: Int {
 		rooms
 			.filter { room in
-				guard !Mango9ChatModerationStore.shared.isConversationDeleted(room.id) else {
+				guard !Mango9ChatModerationStore.shared.isConversationDeleted(room.id),
+					!Mango9PersonalConversationVisibility.shared.isHidden(room.id, channel: .team) else {
 					return false
 				}
 				guard room.isDirect, let userId = room.userIds.first else {
@@ -966,7 +1017,8 @@ final class Mango9ChatStore: ObservableObject {
 	}
 
 	var smsUnreadCount: Int {
-		smsParties.reduce(0) { $0 + max(0, $1.unread) }
+		smsParties.filter { !Mango9PersonalConversationVisibility.shared.isHidden($0.phone, channel: .sms) }
+			.reduce(0) { $0 + max(0, $1.unread) }
 	}
 
 	var unreadCount: Int {
@@ -976,7 +1028,7 @@ final class Mango9ChatStore: ObservableObject {
 	var inboxPreviewRoom: Mango9ChatRoom? {
 		rooms
 			.filter {
-				!Mango9ChatModerationStore.shared.isConversationDeleted($0.id)
+				!Mango9ChatModerationStore.shared.isConversationDeleted($0.id) && !Mango9PersonalConversationVisibility.shared.isHidden($0.id, channel: .team)
 			}
 			.filter { $0.unread > 0 }
 			.max { $0.latest < $1.latest }
@@ -1164,11 +1216,15 @@ final class Mango9ChatStore: ObservableObject {
 	}
 
 	private func loadSMSMessages(phone: String) async throws {
+		let generation = connectionGeneration
+		let identity = connectedIdentity
 		let normalized = Self.normalizedPhone(phone)
 		let result = try await rpcCall(
 			"getSmsMessages",
 			params: [normalized, 0, "json"]
 		)
+		guard generation == connectionGeneration, identity == connectedIdentity,
+			identity == Mango9SessionStore.activeIdentity else { throw CancellationError() }
 		guard let dictionary = result as? [String: Any] else {
 			throw Mango9ChatError.invalidResponse
 		}
@@ -1203,8 +1259,14 @@ final class Mango9ChatStore: ObservableObject {
 		guard let dictionary = result as? [String: Any] else {
 			throw Mango9ChatError.invalidResponse
 		}
+		let existing = Swift.Dictionary(messages.map { ($0.id, $0.reactionState) }, uniquingKeysWith: { $0.merging($1) })
 		messages = Self.array(from: dictionary["list"] as Any)
 			.compactMap(Self.message(from:))
+			.map { message in
+				var message = message
+				if let state = existing[message.id] { message.reactionState = message.reactionState.merging(state) }
+				return message
+			}
 			.sorted { $0.time < $1.time }
 
 		let inboundIds = messages
@@ -1378,6 +1440,16 @@ final class Mango9ChatStore: ObservableObject {
 		}
 		let params = json["params"] as? [Any] ?? []
 		switch method {
+		case "updateChatReaction", "updateSmsReaction":
+			guard let value = params.first as? [String: Any], let id = Self.string(value["messageId"]),
+				let session = Mango9SessionStore.load(), connectedIdentity == Mango9SessionStore.activeIdentity,
+				let data = try? JSONSerialization.data(withJSONObject: value),
+				let receipt = try? JSONDecoder().decode(Mango9StaffReactionReceipt.self, from: data),
+				receipt.channel == (method == "updateSmsReaction" ? .sms : .team) else { return }
+			let conversation = receipt.channel == .sms ? Self.string(value["phone"]) : Self.string(value["room"])
+			guard let conversation else { return }
+			applyReaction(receipt, target: .init(account: Mango9ReactionTarget.accountKey(session),
+				channel: receipt.channel, conversation: conversation, message: id))
 		case "newChatMessage":
 			guard let message = params.first.flatMap(Self.message(from:)) else {
 				return
@@ -1413,7 +1485,7 @@ final class Mango9ChatStore: ObservableObject {
 					text: existing.text,
 					time: existing.time,
 					status: status,
-					files: existing.files
+					files: existing.files, reactionState: existing.reactionState
 				)
 			}
 		case "updateChatGroup":
@@ -1483,7 +1555,9 @@ final class Mango9ChatStore: ObservableObject {
 
 	private func upsert(_ message: Mango9ChatMessage) {
 		if let index = messages.firstIndex(where: { $0.id == message.id }) {
-			messages[index] = message
+			var merged = message
+			merged.reactionState = messages[index].reactionState.merging(message.reactionState)
+			messages[index] = merged
 		} else if message.roomId == activeRoomId {
 			messages.append(message)
 			messages.sort { $0.time < $1.time }
@@ -1559,6 +1633,7 @@ final class Mango9ChatStore: ObservableObject {
 					}
 				}
 			}
+			if isConnected, let activeSMSPhone { try? await loadSMSMessages(phone: activeSMSPhone) }
 		}
 	}
 
@@ -1646,7 +1721,7 @@ final class Mango9ChatStore: ObservableObject {
 			text: dictionary["msg"] as? String ?? "",
 			time: dictionary["time"] as? String ?? "",
 			status: integer(dictionary["status"]) ?? 0,
-			files: dictionary["files"] as? String ?? ""
+			files: dictionary["files"] as? String ?? "", reactionState: .history(dictionary)
 		)
 	}
 
@@ -1691,7 +1766,7 @@ final class Mango9ChatStore: ObservableObject {
 			senderID: string(dictionary["did"]) ?? "",
 			status: integer(dictionary["status"]) ?? 0,
 			isIncoming: (dictionary["dir"] as? String) == "i",
-			files: dictionary["files"] as? String ?? ""
+			files: dictionary["files"] as? String ?? "", reactionState: .history(dictionary)
 		)
 	}
 
@@ -1706,7 +1781,9 @@ final class Mango9ChatStore: ObservableObject {
 				let status = versions
 					.map { $0.status }
 					.reduce(latest.status, Mango9SMSDeliveryPolicy.newest)
-				return latest.withStatus(status)
+				var result = latest.withStatus(status)
+				result.reactionState = versions.map(\.reactionState).reduce(.empty) { $0.merging($1) }
+				return result
 			}
 			.sorted { $0.time < $1.time }
 	}
@@ -1783,14 +1860,18 @@ enum Mango9SMSRouting {
 
 struct Mango9TeamChatListFragment: View {
 	@ObservedObject private var store = Mango9ChatStore.shared
+	@ObservedObject private var conversationVisibility = Mango9PersonalConversationVisibility.shared
 	@State private var isShowingCreateGroup = false
-	@State private var createdRoom: Mango9ChatRoom?
+	@Binding private var isShowingNewChat: Bool
+	@State private var pendingDestination: Mango9ChatDestination?
+	@State private var destination: Mango9ChatDestination?
 	let embedded: Bool
 	let searchText: String
 
-	init(embedded: Bool = false, searchText: String = "") {
+	init(embedded: Bool = false, searchText: String = "", isShowingNewChat: Binding<Bool> = .constant(false)) {
 		self.embedded = embedded
 		self.searchText = searchText
+		_isShowingNewChat = isShowingNewChat
 	}
 
 	var body: some View {
@@ -1826,6 +1907,7 @@ struct Mango9TeamChatListFragment: View {
 								NavigationLink(destination: Mango9ChatFragment(room: room)) {
 									Mango9GroupChatRow(room: room)
 								}
+								.mango9TeamConversationActions(room: room, title: store.groupTitle(room))
 								.listRowBackground(Color.white)
 							}
 						}
@@ -1835,6 +1917,7 @@ struct Mango9TeamChatListFragment: View {
 							NavigationLink(destination: Mango9ChatFragment(user: user)) {
 								Mango9TeamChatRow(user: user)
 							}
+							.mango9TeamConversationActions(room: store.roomPreview(for: user.id), title: user.name)
 							.listRowBackground(Color.white)
 						}
 					}
@@ -1846,13 +1929,15 @@ struct Mango9TeamChatListFragment: View {
 			}
 			NavigationLink(
 				destination: Group {
-					if let createdRoom {
-						Mango9ChatFragment(room: createdRoom)
+					switch destination {
+					case .room(let room): Mango9ChatFragment(room: room)
+					case .user(let user): Mango9ChatFragment(user: user)
+					case nil: EmptyView()
 					}
 				},
 				isActive: Binding(
-					get: { createdRoom != nil },
-					set: { if !$0 { createdRoom = nil } }
+					get: { destination != nil },
+					set: { if !$0 { destination = nil } }
 				)
 			) {
 				EmptyView()
@@ -1860,6 +1945,7 @@ struct Mango9TeamChatListFragment: View {
 			.hidden()
 		}
 		.navigationTitle(embedded ? "" : "Team Chat")
+		.mango9ConversationVisibilityRefresh(channel: .team, ids: store.rooms.map(\.id))
 		.navigationBarTitleDisplayMode(.inline)
 		.toolbar {
 			ToolbarItem(placement: .navigationBarTrailing) {
@@ -1875,7 +1961,7 @@ struct Mango9TeamChatListFragment: View {
 				.accessibilityLabel("New group")
 			}
 		}
-		.sheet(isPresented: $isShowingCreateGroup) {
+		.sheet(isPresented: $isShowingCreateGroup, onDismiss: openCreatedConversation) {
 			Mango9GroupMembersSheet(
 				title: "New group",
 				initialSelection: [],
@@ -1883,20 +1969,43 @@ struct Mango9TeamChatListFragment: View {
 				actionTitle: "Create"
 			) { selection in
 				if let room = await store.createGroup(userIds: selection) {
-					createdRoom = room
+					pendingDestination = .room(room)
 					return true
 				}
 				return false
 			}
+		}
+		.sheet(isPresented: $isShowingNewChat, onDismiss: openCreatedConversation) {
+			Mango9GroupMembersSheet(title: "New Team chat", initialSelection: [], minimumSelection: 1, actionTitle: "Start chat") { selection in
+				guard let start = Mango9TeamChatStart(selection: selection, users: store.users) else { return false }
+				switch start {
+				case .direct(let user):
+					pendingDestination = .user(user)
+					return true
+				case .group(let members):
+					guard let room = await store.createGroup(userIds: members) else { return false }
+					pendingDestination = .room(room)
+					return true
+				}
+			}
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in
+			pendingDestination = nil; destination = nil
+			isShowingNewChat = false; isShowingCreateGroup = false
 		}
 		.task {
 			await store.connectIfNeeded()
 		}
 	}
 
+	private func openCreatedConversation() {
+		destination = pendingDestination
+		pendingDestination = nil
+	}
+
 	private var groupRooms: [Mango9ChatRoom] {
 		let rooms = store.rooms.filter {
-			!$0.isDirect && !Mango9ChatModerationStore.shared.isConversationDeleted($0.id)
+			!$0.isDirect && !Mango9ChatModerationStore.shared.isConversationDeleted($0.id) && !conversationVisibility.isHidden($0.id, channel: .team)
 		}
 		let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 		let filteredRooms = query.isEmpty ? rooms : rooms.filter {
@@ -1908,7 +2017,11 @@ struct Mango9TeamChatListFragment: View {
 
 	private var visibleUsers: [Mango9ChatUser] {
 		let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-		let filteredUsers = query.isEmpty ? store.users : store.users.filter { user in
+		let users = store.users.filter { user in
+			guard let room = store.roomPreview(for: user.id) else { return true }
+			return !conversationVisibility.isHidden(room.id, channel: .team)
+		}
+		let filteredUsers = query.isEmpty ? users : users.filter { user in
 			user.name.localizedCaseInsensitiveContains(query)
 				|| user.category.localizedCaseInsensitiveContains(query)
 				|| (store.roomPreview(for: user.id)?.lastMessage
@@ -1962,14 +2075,21 @@ private struct Mango9TeamChatRow: View {
 
 			Spacer()
 
-			if let unread = store.roomPreview(for: user.id)?.unread, unread > 0 {
-				Text(String(unread))
-					.font(.system(size: 11, weight: .bold))
-					.foregroundStyle(Color.white)
-					.padding(.horizontal, 7)
-					.frame(minHeight: 22)
-					.background(Color.orangeMain500)
-					.clipShape(Capsule())
+			if let room = store.roomPreview(for: user.id) {
+				VStack(alignment: .trailing, spacing: 7) {
+					if room.unread > 0 {
+						Text(String(room.unread))
+							.font(.system(size: 11, weight: .bold))
+							.foregroundStyle(Color.white)
+							.padding(.horizontal, 7)
+							.frame(minHeight: 22)
+							.background(Color.orangeMain500)
+							.clipShape(Capsule())
+					}
+					Spacer(minLength: 0)
+					Text(Mango9ChatDateText.display(room.latest))
+						.font(.custom("NotoSans-Regular", size: 11)).foregroundStyle(.secondary).fixedSize()
+				}.frame(minHeight: 46)
 			}
 		}
 		.padding(.vertical, 5)
@@ -1989,10 +2109,10 @@ private struct Mango9GroupChatRow: View {
 		HStack(spacing: 12) {
 			ZStack {
 				Circle()
-					.fill(Color.grayMain2c800)
+					.fill(Color.orangeMain100)
 					.frame(width: 46, height: 46)
 				Image(systemName: "person.2.fill")
-					.foregroundStyle(Color.white)
+					.foregroundStyle(Color.orangeMain500)
 			}
 			VStack(alignment: .leading, spacing: 3) {
 				Text(store.groupTitle(room))
@@ -2004,15 +2124,20 @@ private struct Mango9GroupChatRow: View {
 					.lineLimit(1)
 			}
 			Spacer()
-			if room.unread > 0 {
-				Text(String(room.unread))
-					.font(.system(size: 11, weight: .bold))
-					.foregroundStyle(Color.white)
-					.padding(.horizontal, 7)
-					.frame(minHeight: 22)
-					.background(Color.orangeMain500)
-					.clipShape(Capsule())
-			}
+			VStack(alignment: .trailing, spacing: 7) {
+				if room.unread > 0 {
+					Text(String(room.unread))
+						.font(.system(size: 11, weight: .bold))
+						.foregroundStyle(Color.white)
+						.padding(.horizontal, 7)
+						.frame(minHeight: 22)
+						.background(Color.orangeMain500)
+						.clipShape(Capsule())
+				}
+				Spacer(minLength: 0)
+				Text(Mango9ChatDateText.display(room.latest))
+					.font(.custom("NotoSans-Regular", size: 11)).foregroundStyle(.secondary).fixedSize()
+			}.frame(minHeight: 46)
 		}
 		.padding(.vertical, 5)
 	}
@@ -2020,21 +2145,35 @@ private struct Mango9GroupChatRow: View {
 
 struct Mango9ChatFragment: View {
 	@ObservedObject private var store = Mango9ChatStore.shared
+	@ObservedObject private var visibility = Mango9PersonalMessageVisibility.shared
+	@State private var deletingMessages = false
+	@StateObject private var reactionActions = Mango9ReactionActions()
 	@ObservedObject private var moderation = Mango9ChatModerationStore.shared
 	@Environment(\.openURL) private var openURL
 	@Environment(\.dismiss) private var dismiss
 	private let user: Mango9ChatUser?
 	private let room: Mango9ChatRoom?
 	private let onClose: (() -> Void)?
+	private var initialText = ""
+	private var initialFiles: [String] = []
+	@State private var filledInitialDraft = false
+	@State private var forwardedFiles: [String] = []
+	@State private var replyQuote: String?
+	@State private var selectionMode = false
+	@State private var selectedIDs: Set<String> = []
+	@State private var confirmingMessageDelete = false
+	@State private var forwardPayload: Mango9ForwardPayload?
 
 	@State private var text = ""
 	@State private var selectedMedia: [Attachment] = []
 	@State private var isSending = false
-	@State private var isShowingAttachmentMenu = false
+	@State private var attachmentRequest: Mango9AttachmentRequest?
 	@State private var isShowingPhotoPicker = false
 	@State private var isShowingFilePicker = false
 	@State private var isRecordingVoice = false
 	@State private var isManagingMembers = false
+	@State private var isShowingConversationInfo = false
+	@State private var pendingInfoAction: String?
 	@State private var isRenamingGroup = false
 	@State private var isConfirmingReport = false
 	@State private var isConfirmingDelete = false
@@ -2047,17 +2186,21 @@ struct Mango9ChatFragment: View {
 	@State private var notificationBusy = false
 	@State private var notificationError: String?
 	@FocusState private var composerFocused: Bool
+	@State private var atMessageBottom = true
+	@State private var initiallyScrolled = false
 
-	init(user: Mango9ChatUser, onClose: (() -> Void)? = nil) {
+	init(user: Mango9ChatUser, onClose: (() -> Void)? = nil, initialText: String = "", initialFiles: [String] = []) {
 		self.user = user
 		self.room = nil
 		self.onClose = onClose
+		self.initialText = initialText; self.initialFiles = initialFiles
 	}
 
-	init(room: Mango9ChatRoom, onClose: (() -> Void)? = nil) {
+	init(room: Mango9ChatRoom, onClose: (() -> Void)? = nil, initialText: String = "", initialFiles: [String] = []) {
 		self.user = nil
 		self.room = room
 		self.onClose = onClose
+		self.initialText = initialText; self.initialFiles = initialFiles
 	}
 
 	var body: some View {
@@ -2065,11 +2208,37 @@ struct Mango9ChatFragment: View {
 			statusHeader
 			Divider()
 			messageList
-			Divider()
-			composer
+				.mango9VisibilityRefresh(channel: .team, thread: conversationRoomId, ids: store.messages.map(\.id))
+		}
+		.safeAreaInset(edge: .bottom, spacing: 0) {
+			VStack(spacing: 0) { Divider(); composer }
+				.background(Color(uiColor: .systemBackground).ignoresSafeArea(.container, edges: .bottom))
 		}
 		.background(Color.gray100)
 		.navigationTitle(conversationTitle)
+		.mango9ConversationNavigationHidden()
+		.mango9Attachments(request: $attachmentRequest, selected: $selectedMedia, error: { notificationError = $0 })
+		.sheet(item: $forwardPayload) { payload in Mango9TeamForwardSheet(payload: payload) }
+		.confirmationDialog("Delete for me on all my devices? Other participants will keep their copies.", isPresented: $confirmingMessageDelete, titleVisibility: .visible) {
+			Button("Delete for me", role: .destructive) {
+				guard !deletingMessages, let session = Mango9SessionStore.load() else { return }
+				let ids = Array(selectedIDs); deletingMessages = true
+				Task { @MainActor in
+					defer { deletingMessages = false }
+					do {
+						try await visibility.update(session: session, channel: .team, ids: ids, hide: true)
+						selectedIDs = []; selectionMode = false
+					} catch {
+						selectedIDs = selectedIDs.filter { !visibility.isHidden($0, channel: .team) }
+						notificationError = "Deletion could not be confirmed. Refresh or retry; other participants' messages are unchanged. \(error.localizedDescription)"
+					}
+				}
+			}
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in
+			text = ""; selectedMedia = []; forwardedFiles = []; replyQuote = nil; selectedIDs = []; forwardPayload = nil
+			if let onClose { onClose() } else { dismiss() }
+		}
 		.navigationBarTitleDisplayMode(.inline)
 		.navigationBarItems(
 			leading:
@@ -2102,7 +2271,18 @@ struct Mango9ChatFragment: View {
 						.accessibilityLabel("Group members")
 					}
 
-					Menu {
+					Button { isShowingConversationInfo = true } label: {
+						Image(systemName: "info.circle").foregroundStyle(Color.orangeMain500).frame(width: 44, height: 44)
+					}.accessibilityLabel("Conversation info")
+				}
+		)
+		.sheet(isPresented: $isShowingConversationInfo, onDismiss: {
+			if pendingInfoAction == "report" { reportedMessage = nil; isConfirmingReport = true }
+			if pendingInfoAction == "delete" { isConfirmingDelete = true }
+			pendingInfoAction = nil
+		}) {
+			NavigationView {
+				Form {
 						// Expose mute only after this server confirms support. Older
 						// deployments still deliver messages without a broken control.
 						if notificationMuted != nil {
@@ -2115,8 +2295,7 @@ struct Mango9ChatFragment: View {
 						Divider()
 						}
 						Button {
-							reportedMessage = nil
-							isConfirmingReport = true
+							pendingInfoAction = "report"; isShowingConversationInfo = false
 						} label: {
 							Label("Report conversation", systemImage: "exclamationmark.bubble")
 						}
@@ -2143,19 +2322,17 @@ struct Mango9ChatFragment: View {
 						if conversationRoomId != nil {
 							Divider()
 							Button(role: .destructive) {
-								isConfirmingDelete = true
+								pendingInfoAction = "delete"; isShowingConversationInfo = false
 							} label: {
 								Label("Delete conversation", systemImage: "trash")
 							}
 						}
-					} label: {
-						Image(systemName: notificationMuted == true ? "bell.slash.circle" : "ellipsis.circle")
-							.foregroundStyle(Color.orangeMain500)
-					}
-					.accessibilityLabel(notificationMuted == true ? "Conversation options, notifications muted" : "Conversation options")
-				}
-		)
+				}.navigationTitle("Conversation info").navigationBarTitleDisplayMode(.inline)
+					.toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { isShowingConversationInfo = false } } }
+			}.navigationViewStyle(.stack).tint(Color.orangeMain500)
+		}
 		.task(id: "\(conversationKey)-\(reloadAttempt)") {
+			if !filledInitialDraft { text = initialText; forwardedFiles = initialFiles; filledInitialDraft = true }
 			hasLoadedConversation = false
 			if let user {
 				await store.openConversation(with: user.id, fallbackName: user.name, owner: conversationOwner)
@@ -2180,21 +2357,12 @@ struct Mango9ChatFragment: View {
 		.alert("Notification settings", isPresented: Binding(get: { notificationError != nil }, set: { if !$0 { notificationError = nil } })) {
 			Button("OK", role: .cancel) {}
 		} message: { Text(notificationError ?? "") }
+		.alert("Reaction", isPresented: Binding(get: { reactionActions.notice != nil }, set: { if !$0 { reactionActions.notice = nil } })) {
+			Button("OK", role: .cancel) {}
+		} message: { Text(reactionActions.notice ?? "") }
 		.onDisappear {
 			store.closeConversation(owner: conversationOwner)
 			displayedRoomId = nil
-		}
-		.confirmationDialog(
-			"Add an attachment",
-			isPresented: $isShowingAttachmentMenu,
-			titleVisibility: .visible
-		) {
-			Button("Photo or video library") {
-				isShowingPhotoPicker = true
-			}
-			Button("Browse files") {
-				isShowingFilePicker = true
-			}
 		}
 		.sheet(isPresented: $isShowingPhotoPicker) {
 			PhotoPicker(filter: .any(of: [.images, .videos])) { results in
@@ -2254,22 +2422,24 @@ struct Mango9ChatFragment: View {
 			titleVisibility: .visible
 		) {
 			Button("Delete conversation", role: .destructive) {
-				guard let roomId = conversationRoomId else {
+				guard let roomId = conversationRoomId, let session = Mango9SessionStore.load(), !deletingMessages else {
 					return
 				}
-				store.deleteConversation(roomId: roomId)
-				displayedRoomId = nil
-				if let onClose {
-					onClose()
-				} else {
-					dismiss()
+				deletingMessages = true
+				Task { @MainActor in
+					defer { deletingMessages = false }
+					do {
+						try await Mango9PersonalConversationVisibility.shared.delete(session: session, channel: .team, id: roomId)
+						guard Mango9SessionStore.isActive(session) else { return }
+						displayedRoomId = nil
+						if let onClose { onClose() } else { dismiss() }
+					} catch { notificationError = error.localizedDescription }
 				}
 			}
 			Button("Cancel", role: .cancel) {}
 		} message: {
 			Text(
-				"The conversation history will be removed from this app. "
-					+ "A new incoming message can start the conversation again."
+				"Existing history is hidden only for you on all your devices. Other participants keep their copies. A new message brings the conversation back."
 			)
 		}
 	}
@@ -2320,7 +2490,7 @@ struct Mango9ChatFragment: View {
 						.foregroundStyle(Color.grayMain2c600)
 						.padding(.vertical, 24)
 					}
-					if !hasLoadedConversation || store.isOpeningConversation {
+					if (!hasLoadedConversation || store.isOpeningConversation) && store.messages.isEmpty {
 						ProgressView("Loading messages…")
 							.padding(.top, 36)
 					} else if let error = store.conversationError {
@@ -2346,42 +2516,36 @@ struct Mango9ChatFragment: View {
 								: nil
 						)
 						.id(message.id)
-						.contextMenu {
-							if message.fromUserId != store.currentUserId {
-								Button {
-									moderation.setHidden(true, messageId: message.id)
-								} label: {
-									Label("Hide message", systemImage: "eye.slash")
-								}
-
-								Button {
-									reportedMessage = message
-									isConfirmingReport = true
-								} label: {
-									Label("Report message", systemImage: "exclamationmark.bubble")
-								}
-							}
+						.mango9MessageActions(enabled: !selectionMode) { teamActions(message) }
+						.mango9MessageSelection(active: selectionMode, selected: selectedIDs.contains(message.id)) {
+							if !selectedIDs.insert(message.id).inserted { selectedIDs.remove(message.id) }
 						}
 					}
+					Color.clear.frame(height: 1).id("chat.latest")
+						.onAppear { atMessageBottom = true }.onDisappear { atMessageBottom = false }
 				}
 				.padding(.horizontal, 12)
 				.padding(.vertical, 14)
 			}
-			.onChange(of: store.messages.count) { _ in
-				guard let lastId = store.messages.last?.id else {
-					return
-				}
-				withAnimation {
-					proxy.scrollTo(lastId, anchor: .bottom)
-				}
+			.onChange(of: store.messages.last?.id) { _ in
+				guard !store.messages.isEmpty, !initiallyScrolled || atMessageBottom else { return }
+				// Open at the latest message without flying through the entire history.
+				proxy.scrollTo("chat.latest", anchor: .bottom); initiallyScrolled = true
+			}
+			.onChange(of: composerFocused) { focused in
+				if focused && atMessageBottom { proxy.scrollTo("chat.latest", anchor: .bottom) }
 			}
 		}
 	}
 
 	private var composer: some View {
 		VStack(spacing: 7) {
-			if isDirectUserBlocked {
-				Text("Unblock this user from the conversation menu to send a message.")
+			if selectionMode {
+				Mango9MessageSelectionBar(count: selectedIDs.count, delete: { confirmingMessageDelete = true }, forward: {
+					forwardPayload = forward(visibleMessages.filter { selectedIDs.contains($0.id) })
+				}, cancel: { selectionMode = false; selectedIDs = [] })
+			} else if isDirectUserBlocked {
+				Text("Unblock this user in Conversation info to send a message.")
 					.font(.system(size: 12, weight: .medium))
 					.foregroundStyle(Color.grayMain2c600)
 					.frame(maxWidth: .infinity, minHeight: 40)
@@ -2396,71 +2560,22 @@ struct Mango9ChatFragment: View {
 					}
 				)
 			} else {
+				if let quote = replyQuote { Mango9ReplyPreview(text: quote) { replyQuote = nil } }
+				if !forwardedFiles.isEmpty {
+					HStack { Label("\(forwardedFiles.count) forwarded attachment(s)", systemImage: "paperclip"); Spacer(); Button("Remove") { forwardedFiles = [] } }.font(.caption).padding(.horizontal)
+				}
 				if !selectedMedia.isEmpty {
 					Mango9PendingAttachmentStrip(attachments: $selectedMedia)
 				}
 
-				HStack(alignment: .bottom, spacing: 8) {
-					Button {
-						isShowingAttachmentMenu = true
-					} label: {
-						Image(systemName: "paperclip")
-							.font(.system(size: 19, weight: .semibold))
-							.foregroundStyle(Color.grayMain2c700)
-							.frame(width: 34, height: 40)
-					}
-					.disabled(isSending)
-					.accessibilityLabel("Attach photo, video, or file")
-
-					growingMessageInput
-						.padding(.horizontal, 14)
-						.padding(.vertical, 6)
-						.background(Color.gray100)
-						.cornerRadius(20)
-						.onChange(of: text) { newValue in
-							if !newValue.isEmpty {
-								store.notifyTyping()
-							}
-						}
-
-					Button {
-						isRecordingVoice = true
-					} label: {
-						Image(systemName: "mic.fill")
-							.font(.system(size: 18, weight: .semibold))
-							.foregroundStyle(Color.grayMain2c700)
-							.frame(width: 32, height: 40)
-					}
-					.disabled(isSending)
-					.accessibilityLabel("Record a voice message")
-
-					Button {
-						sendCurrentMessage()
-					} label: {
-						Group {
-							if isSending {
-								ProgressView()
-									.tint(Color.white)
-							} else {
-								Image("paper-plane-tilt")
-									.renderingMode(.template)
-									.resizable()
-									.foregroundStyle(Color.white)
-									.frame(width: 21, height: 21)
-							}
-						}
-						.frame(width: 21, height: 21)
-						.padding(10)
-						.background(canSend ? Color.orangeMain500 : Color.grayMain2c400)
-						.clipShape(Circle())
-					}
-					.disabled(!canSend)
-				}
+				Mango9MessageComposer(text: $text, focus: $composerFocused,
+					enabled: hasLoadedConversation && !store.isOpeningConversation && store.activeRoomId != nil,
+					sending: isSending, hasAttachments: !selectedMedia.isEmpty || !forwardedFiles.isEmpty,
+					attach: { attachmentRequest = $0 }, record: { isRecordingVoice = true }, send: sendCurrentMessage)
+					.onChange(of: text) { if !$0.isEmpty { store.notifyTyping() } }
 			}
 		}
-		.padding(.horizontal, 12)
-		.padding(.vertical, 9)
-		.background(Color.white)
+		.background(Color(uiColor: .systemBackground))
 	}
 
 	@ViewBuilder
@@ -2580,6 +2695,7 @@ struct Mango9ChatFragment: View {
 	private var visibleMessages: [Mango9ChatMessage] {
 		store.messages.filter { message in
 			!moderation.isHidden(message.id)
+				&& !visibility.isHidden(message.id, channel: .team)
 				&& (
 					message.fromUserId == store.currentUserId
 						|| !moderation.isBlocked(message.fromUserId)
@@ -2630,19 +2746,38 @@ struct Mango9ChatFragment: View {
 	}
 
 	private func sendCurrentMessage() {
-		let outgoing = text
+		let original = text
+		let outgoing = Mango9MessageText.reply(text, to: replyQuote)
+		let forwarding = forwardedFiles
 		let attachments = selectedMedia
 		text = ""
 		selectedMedia = []
 		isSending = true
 		Task {
-			let didSend = await store.sendMessage(outgoing, attachments: attachments)
+			let didSend = await store.sendMessage(outgoing, attachments: attachments, forwardedFiles: forwarding)
 			isSending = false
+			if didSend { replyQuote = nil; forwardedFiles = [] }
 			if !didSend {
-				text = outgoing
+				text = original
 				selectedMedia = attachments
 			}
 		}
+	}
+	private func forward(_ messages: [Mango9ChatMessage]) -> Mango9ForwardPayload {
+		Mango9ForwardPayload(text: Mango9MessageText.forward(messages.map(\.text)), files: messages.flatMap { $0.files.split(separator: ",").map(String.init) })
+	}
+	private func teamActions(_ message: Mango9ChatMessage) -> Mango9MessageActionSet {
+		var menu = Mango9MessageActionSet()
+		if let session = Mango9SessionStore.load() {
+			menu = .staff(target: .init(account: Mango9ReactionTarget.accountKey(session), channel: .team, conversation: message.roomId, message: message.id),
+				session: session, state: message.reactionState, actor: store.currentUserId, handler: reactionActions)
+		}
+		menu.actions.append(.init(title: "Reply", icon: "arrowshape.turn.up.left", perform: { replyQuote = message.text.isEmpty ? "Attachment" : message.text; composerFocused = true }))
+		if !message.text.isEmpty { menu.actions.append(.init(title: "Copy", icon: "doc.on.doc", perform: { UIPasteboard.general.string = message.text })) }
+		menu.actions.append(.init(title: "Select", icon: "checkmark.circle", perform: { selectedIDs = [message.id]; selectionMode = true; composerFocused = false }))
+		menu.actions.append(.init(title: "Forward", icon: "arrowshape.turn.up.right", perform: { forwardPayload = forward([message]) }))
+		if message.fromUserId != store.currentUserId { menu.actions.append(.init(title: "Report message", icon: "exclamationmark.bubble", perform: { reportedMessage = message; isConfirmingReport = true })) }
+		return menu
 	}
 }
 
@@ -2656,10 +2791,11 @@ private struct Mango9ChatBubble: View {
 			if isOutgoing {
 				Spacer(minLength: 52)
 			}
-			VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 4) {
+			VStack(alignment: .trailing, spacing: 4) {
+			VStack(alignment: .leading, spacing: 4) {
 				if let senderName, !isOutgoing {
 					Text(senderName)
-						.font(.system(size: 10, weight: .semibold))
+						.font(.caption)
 						.foregroundStyle(Color.grayMain2c500)
 						.padding(.horizontal, 6)
 				}
@@ -2673,7 +2809,8 @@ private struct Mango9ChatBubble: View {
 					}
 					if !message.text.isEmpty {
 						Text(message.text)
-							.default_text_style_white(styleSize: 14)
+							.font(.custom("NotoSans-Regular", size: 14))
+							.foregroundStyle(isOutgoing ? Color.white : Color.primary)
 							.multilineTextAlignment(.leading)
 							.lineLimit(nil)
 							.fixedSize(horizontal: false, vertical: true)
@@ -2683,19 +2820,16 @@ private struct Mango9ChatBubble: View {
 				.layoutPriority(1)
 				.padding(.horizontal, 13)
 				.padding(.vertical, 9)
-				.background(Color(uiColor: .systemBlue))
-				.clipShape(RoundedRectangle(cornerRadius: 16))
-
+				.background(isOutgoing ? Color.orangeMain500 : Color(uiColor: .secondarySystemBackground))
+				.clipShape(RoundedRectangle(cornerRadius: 20))
+				Mango9ReactionBadges(state: message.reactionState)
+			}
 				HStack(spacing: 4) {
-					Text(Self.shortTime(message.time))
-						.font(.system(size: 9))
-						.foregroundStyle(Color.grayMain2c500)
+					Text(Mango9ChatDateText.display(message.time, inConversation: true))
 					if isOutgoing {
 						Text(message.status >= 3 ? "Read" : (message.status >= 2 ? "Delivered" : "Sent"))
-							.font(.system(size: 9))
-							.foregroundStyle(Color.grayMain2c500)
 					}
-				}
+				}.font(.custom("NotoSans-Light", size: 12)).foregroundStyle(Color.grayMain2c500)
 			}
 			.layoutPriority(1)
 			if !isOutgoing {
@@ -2705,18 +2839,6 @@ private struct Mango9ChatBubble: View {
 		.frame(maxWidth: .infinity)
 	}
 
-	private static func shortTime(_ value: String) -> String {
-		let formatter = ISO8601DateFormatter()
-		formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-		let date = formatter.date(from: value)
-			?? ISO8601DateFormatter().date(from: value)
-		guard let date else {
-			return ""
-		}
-		let display = DateFormatter()
-		display.timeStyle = .short
-		return display.string(from: date)
-	}
 }
 
 struct Mango9ChatMedia: Identifiable {
@@ -2871,7 +2993,7 @@ private struct Mango9VideoAttachmentView: View {
 	}
 }
 
-private struct Mango9PendingAttachmentStrip: View {
+struct Mango9PendingAttachmentStrip: View {
 	@Binding var attachments: [Attachment]
 
 	var body: some View {
@@ -3127,33 +3249,63 @@ private struct Mango9RenameGroupSheet: View {
 }
 
 private struct Mango9GroupMembersSheet: View {
-	@Environment(\.dismiss) private var dismiss
 	@ObservedObject private var store = Mango9ChatStore.shared
 	let title: String
+	let initialSelection: Set<Int>
 	let minimumSelection: Int
 	let actionTitle: String
 	let onSave: (Set<Int>) async -> Bool
 
+	var body: some View {
+		Mango9TeamMemberPicker(title: title, users: store.users, initialSelection: initialSelection,
+			minimumSelection: minimumSelection, actionTitle: actionTitle,
+			failureMessage: { store.errorMessage ?? "The conversation could not be opened. Please try again." }, onSave: onSave)
+	}
+}
+
+/// Shared directory picker for new direct chats, new groups and member editing.
+/// It accepts teammate IDs only; phone/SMS recipients are never part of this flow.
+struct Mango9TeamMemberPicker: View {
+	@Environment(\.dismiss) private var dismiss
+	let title: String
+	let users: [Mango9ChatUser]
+	let minimumSelection: Int
+	let actionTitle: String
+	let failureMessage: () -> String
+	let onSave: (Set<Int>) async -> Bool
 	@State private var selection: Set<Int>
 	@State private var isSaving = false
+	@State private var search = ""
+	@State private var error: String?
+	@State private var account: String?
 
 	init(
 		title: String,
+		users: [Mango9ChatUser],
 		initialSelection: Set<Int>,
 		minimumSelection: Int,
 		actionTitle: String,
+		failureMessage: @escaping () -> String,
 		onSave: @escaping (Set<Int>) async -> Bool
 	) {
 		self.title = title
+		self.users = users
 		self.minimumSelection = minimumSelection
 		self.actionTitle = actionTitle
+		self.failureMessage = failureMessage
 		self.onSave = onSave
 		_selection = State(initialValue: initialSelection)
+		_account = State(initialValue: Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey))
 	}
 
 	var body: some View {
 		NavigationView {
-			List(store.users) { user in
+			List {
+				if minimumSelection == 1 {
+					Text("Choose one teammate for a direct chat, or several for a group.")
+						.font(.footnote).foregroundStyle(.secondary)
+				}
+				ForEach(visibleUsers) { user in
 				Button {
 					if selection.contains(user.id) {
 						selection.remove(user.id)
@@ -3162,8 +3314,10 @@ private struct Mango9GroupMembersSheet: View {
 					}
 				} label: {
 					HStack {
-						Mango9TeamChatRow(user: user)
-						.allowsHitTesting(false)
+						VStack(alignment: .leading, spacing: 3) {
+							Text(user.name).foregroundStyle(.primary)
+							if !user.category.isEmpty { Text(user.category).font(.caption).foregroundStyle(.secondary) }
+						}
 						Spacer()
 						Image(systemName: selection.contains(user.id) ? "checkmark.circle.fill" : "circle")
 							.foregroundStyle(
@@ -3172,9 +3326,19 @@ private struct Mango9GroupMembersSheet: View {
 									: Color.grayMain2c400
 							)
 					}
+					.contentShape(Rectangle())
 				}
-				.buttonStyle(.plain)
+				.accessibilityLabel(user.name)
+				.accessibilityValue(selection.contains(user.id) ? "Selected" : "Not selected")
+				.accessibilityIdentifier("team.member.\(user.id)")
+				.disabled(isSaving)
+				}
+				if visibleUsers.isEmpty {
+					Text(users.isEmpty ? "No teammates available. Return to Team Chat and refresh the directory." : "No matching teammates")
+						.foregroundStyle(.secondary)
+				}
 			}
+			.searchable(text: $search, prompt: "Find a teammate")
 			.navigationTitle(title)
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -3182,23 +3346,41 @@ private struct Mango9GroupMembersSheet: View {
 					Button("Cancel") {
 						dismiss()
 					}
+					.disabled(isSaving)
 				}
 				ToolbarItem(placement: .confirmationAction) {
 					Button(actionTitle) {
+						guard !isSaving, isCurrentAccount else { return }
 						isSaving = true
+						let submitted = selection
 						Task {
-							let saved = await onSave(selection)
+							let saved = await onSave(submitted)
 							isSaving = false
+							guard isCurrentAccount else { dismiss(); return }
 							if saved {
 								dismiss()
-							}
+							} else { error = failureMessage() }
 						}
 					}
-					.disabled(selection.count < minimumSelection || isSaving)
+					.disabled(selection.count < minimumSelection || isSaving || !isCurrentAccount)
 				}
 			}
 		}
 		.navigationViewStyle(.stack)
+		.interactiveDismissDisabled(isSaving)
+		.alert("Couldn’t save changes", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+			Button("OK") { error = nil }
+		} message: { Text(error ?? "") }
+		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in
+			selection = []; dismiss()
+		}
+	}
+	private var isCurrentAccount: Bool {
+		account != nil && account == Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey)
+	}
+	private var visibleUsers: [Mango9ChatUser] {
+		let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+		return query.isEmpty ? users : users.filter { $0.name.localizedCaseInsensitiveContains(query) }
 	}
 }
 
@@ -3826,6 +4008,7 @@ struct Mango9ChatMessage: Identifiable, Equatable {
 	let time: String
 	let status: Int
 	let files: String
+	var reactionState: Mango9StaffReactions = .empty
 }
 
 struct Mango9SMSParty: Identifiable, Equatable {
@@ -3847,6 +4030,7 @@ struct Mango9ServerSMSMessage: Identifiable, Equatable {
 	let status: Int
 	let isIncoming: Bool
 	let files: String
+	var reactionState: Mango9StaffReactions = .empty
 
 	func withStatus(_ newStatus: Int) -> Self {
 		Self(
@@ -3857,7 +4041,7 @@ struct Mango9ServerSMSMessage: Identifiable, Equatable {
 			senderID: senderID,
 			status: newStatus,
 			isIncoming: isIncoming,
-			files: files
+			files: files, reactionState: reactionState
 		)
 	}
 }
@@ -4084,12 +4268,12 @@ extension Mango9CRMAPI {
 		return payload.sip
 	}
 
-	static func chatBootstrap(session: Mango9Session) async throws -> Mango9ChatBootstrap {
+	static func chatBootstrap(session: Mango9Session, transport: URLSession = .shared) async throws -> Mango9ChatBootstrap {
 		let request = try authorizedRequest(
 			session: session,
 			path: ["mobile", "chat", "bootstrap"]
 		)
-		let envelope: Envelope<Mango9ChatBootstrap> = try await send(request)
+		let envelope: Envelope<Mango9ChatBootstrap> = try await send(request, transport: transport)
 		guard envelope.success, let bootstrap = envelope.data else {
 			throw Mango9CRMAPIError.server
 		}
@@ -4824,6 +5008,22 @@ final class Mango9LeadsViewModel: ObservableObject {
 		guard !reloadRequested else { return }
 		leads = payload.leads
 		total = payload.pagination.total
+	}
+}
+
+struct Mango9LeadPushView: View {
+	let target: Mango9LeadPushTarget
+	@Environment(\.dismiss) private var dismiss
+	var body: some View {
+		NavigationView {
+			Group {
+				if let session = Mango9SessionStore.load(), target.matches(session) {
+					if let leadID = target.leadID { Mango9LeadDetailFragment(leadId: leadID) }
+					else { Mango9LeadsFragment() }
+				} else { Text("This account is no longer available.") }
+			}
+		}.navigationViewStyle(.stack)
+			.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in dismiss() }
 	}
 }
 

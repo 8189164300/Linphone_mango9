@@ -95,6 +95,169 @@ private struct CalendarNavigationTestView: View {
 }
 
 final class Mango9CalendarTests: XCTestCase {
+	func testLeadPushRequiresExactScopeAndDistinctBulkTarget() throws {
+		let active = session()
+		var data: [String: Any] = ["event": "lead.created", "lead_id": "91", "crm_id": "crm",
+			"recipient_user_id": "42", "sip_identity": active.sipIdentity!]
+		let target = try XCTUnwrap(Mango9LeadPushTarget(userInfo: ["mango9": data]))
+		XCTAssertEqual(target.leadID, 91); XCTAssertTrue(target.matches(active))
+		XCTAssertFalse(target.matches(session(host: "other.example.invalid")))
+		XCTAssertFalse(target.matches(session(user: "43")))
+		for key in ["crm_id", "recipient_user_id", "sip_identity"] {
+			var invalid = data; invalid.removeValue(forKey: key)
+			XCTAssertNil(Mango9LeadPushTarget(userInfo: ["mango9": invalid]))
+		}
+		for invalid in ["0", "-1", "abc", "../91", "1.5", "999999999999999999999999999"] {
+			data["lead_id"] = invalid; XCTAssertNil(Mango9LeadPushTarget(userInfo: ["mango9": data]))
+		}
+		data["event"] = "leads.imported"; data.removeValue(forKey: "lead_id")
+		let batch = try XCTUnwrap(Mango9LeadPushTarget(userInfo: ["mango9": data]))
+		XCTAssertNil(batch.leadID); XCTAssertTrue(batch.matches(active)); XCTAssertNotEqual(batch.id, target.id)
+		data["lead_id"] = "91"; XCTAssertNil(Mango9LeadPushTarget(userInfo: ["mango9": data]))
+	}
+	func testLeadPushDoesNotConsumeMessagesAndRejectsUnscopedLegacyPayloads() {
+		for event in ["sms.received", "chat.message", "social.message", "appointment.booked", ""] {
+			let payload: [AnyHashable: Any] = ["mango9": ["event": event, "lead_id": "91",
+				"crm_id": "crm", "recipient_user_id": "42", "sip_identity": "sip:42@crm.example.invalid"]]
+			XCTAssertFalse(Mango9LeadPushTarget.isLeadNotification(payload)); XCTAssertNil(Mango9LeadPushTarget(userInfo: payload))
+		}
+		let legacy: [AnyHashable: Any] = ["event": "lead.created", "lead_id": 91]
+		XCTAssertTrue(Mango9LeadPushTarget.isLeadNotification(legacy)); XCTAssertNil(Mango9LeadPushTarget(userInfo: legacy))
+	}
+
+	func testBookingPushRequiresExactAccountAndPositiveEventID() throws {
+		let active = session()
+		var data: [String: Any] = ["event": "appointment.booked", "event_id": "91", "crm_id": "crm",
+			"recipient_user_id": "42", "sip_identity": active.sipIdentity!]
+		let target = try XCTUnwrap(Mango9AppointmentPushTarget(userInfo: ["mango9": data]))
+		XCTAssertEqual(target.eventID, 91); XCTAssertTrue(target.matches(active))
+		XCTAssertFalse(target.matches(session(host: "other.example.invalid")))
+		XCTAssertFalse(target.matches(session(user: "43")))
+		data["crm_id"] = "other-crm"
+		XCTAssertFalse(try XCTUnwrap(Mango9AppointmentPushTarget(userInfo: ["mango9": data])).matches(active))
+		data["crm_id"] = "crm"; data["recipient_user_id"] = "43"
+		XCTAssertFalse(try XCTUnwrap(Mango9AppointmentPushTarget(userInfo: ["mango9": data])).matches(active))
+		for invalid in ["0", "-1", "abc", "../91", "1.5", "999999999999999999999999999"] {
+			data["event_id"] = invalid
+			XCTAssertNil(Mango9AppointmentPushTarget(userInfo: ["mango9": data]))
+		}
+		data["event_id"] = "91"
+		for key in ["crm_id", "recipient_user_id", "sip_identity"] {
+			var invalid = data; invalid.removeValue(forKey: key)
+			XCTAssertNil(Mango9AppointmentPushTarget(userInfo: ["mango9": invalid]))
+		}
+	}
+
+	func testBookingPushDoesNotConsumeSMSChatSocialOrCallNotifications() {
+		for event in ["sms.received", "chat.message", "social.message", "appointment.reminder", ""] {
+			XCTAssertNil(Mango9AppointmentPushTarget(userInfo: ["mango9": ["event": event, "event_id": "91",
+				"crm_id": "crm", "recipient_user_id": "42", "sip_identity": "sip:42@crm.example.invalid"]]))
+		}
+		XCTAssertNil(Mango9AppointmentPushTarget(userInfo: ["CallId": "fixture-call"]))
+	}
+
+	@MainActor func testActivitiesHaveThreeTabsAndStandaloneCalendarHasNoListToggle() async throws {
+		try await withRefreshFixture { store, date, window in
+			for (mode, titles) in [(Mango9ActivityPresentation.activities, ["Appointments", "Events", "Tasks"]),
+				(.calendar, []), (.combined, ["Events", "Calendar"])] {
+				window.rootViewController = UIHostingController(rootView: NavigationView {
+					Mango9AppointmentsFragment(store: store, date: date, usesLegacyCalendar: true, presentation: mode)
+				}.navigationViewStyle(.stack))
+				window.makeKeyAndVisible()
+				try await Task.sleep(nanoseconds: 800_000_000)
+				let segments = self.descendants(window).compactMap { $0 as? UISegmentedControl }
+				if titles.isEmpty { XCTAssertTrue(segments.isEmpty, "Calendar is a standalone destination") }
+				else {
+					let picker = try XCTUnwrap(segments.first)
+					XCTAssertEqual(picker.numberOfSegments, titles.count)
+					XCTAssertEqual((0..<picker.numberOfSegments).compactMap { picker.titleForSegment(at: $0) }, titles)
+				}
+				self.capture(window, name: "CRM activity destination \(mode)")
+				await self.detachCalendarFixture(window)
+			}
+		}
+	}
+
+	func testActivityTabsMatchServerClassificationAndCreateDefaults() {
+		for value in ["", "appointment", " Appointment "] { XCTAssertEqual(Mango9ActivityKind.classify(value), .appointments) }
+		for value in ["task", "follow_up", "Follow Up Call", " TASK "] { XCTAssertEqual(Mango9ActivityKind.classify(value), .tasks) }
+		for value in ["meeting", "call", "custom activity"] { XCTAssertEqual(Mango9ActivityKind.classify(value), .events) }
+		let choices = ["appointment", "call", "meeting", "task", "follow_up"]
+		XCTAssertEqual(Mango9ActivityKind.events.defaultActivity(in: choices), "call")
+		XCTAssertEqual(Mango9ActivityKind.tasks.defaultActivity(in: choices), "task")
+		XCTAssertNil(Mango9ActivityKind.tasks.defaultActivity(in: ["appointment"]))
+	}
+
+	func testTaskProtocolUsesExistingBearerRouteAndDoesNotRequireMessageEnvelope() throws {
+		let request = try Mango9CalendarAPI.request(session: session(), path: "", scope: .tasks)
+		XCTAssertEqual(request.url?.absoluteString, "https://crm.example.invalid/api/v2/mobile/tasks")
+		XCTAssertEqual(request.httpMethod, "GET")
+		XCTAssertNil(request.httpBody)
+		XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token-not-a-credential")
+		let data = Data("{\"success\":true,\"data\":{\"items\":[\(taskJSON)],\"pagination\":{\"page\":1,\"limit\":50,\"total\":1,\"hasMore\":false}}}".utf8)
+		let page = try Mango9CalendarAPI.decode(Mango9TaskPage.self, data: data, status: 200)
+		XCTAssertEqual(page.items.first?.eventId, 91)
+		XCTAssertEqual(page.items.first?.assignees.first?.name, "Test staff")
+		XCTAssertEqual(page.items.first?.statusLabel, "In Progress")
+		XCTAssertNotNil(page.items.first?.dueDate)
+		let url = try XCTUnwrap(Mango9ManagedTaskDetail.webURL(session: session(), taskID: 7))
+		XCTAssertEqual(url.absoluteString, "https://crm.example.invalid/activity/tasks/task-7")
+		XCTAssertNil(url.query, "Never embed bearer credentials in web links")
+		XCTAssertNil(Mango9ManagedTaskDetail.webURL(session: session(), taskID: -1))
+	}
+
+	func testTaskDatesPreservePostgresOffsetsAndFractionalSeconds() throws {
+		let expected = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-17T16:00:00Z"))
+		for value in ["2026-10-17T16:00:00Z", "2026-10-17 16:00:00+00", "2026-10-17 09:00:00-07:00",
+			"2026-10-17 16:00:00.000000+00", "2026-10-17T16:00:00.000Z"] {
+			XCTAssertEqual(Mango9ManagedTask.date(value), expected, value)
+		}
+		XCTAssertNil(Mango9ManagedTask.date("not a date"))
+	}
+
+	@MainActor func testTasksPageDeduplicationRevocationAndAccountSwitch() async throws {
+		let previous = Mango9SessionStore.activeIdentity
+		let current = session(host: "tasks.example.invalid")
+		try Mango9SessionStore.save(current, persist: false, makeActive: true)
+		defer {
+			Mango9SessionStore.remove(for: current.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous)
+			CalendarMockURLProtocol.handler = nil
+		}
+		let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CalendarMockURLProtocol.self]
+		let transport = URLSession(configuration: config); defer { transport.invalidateAndCancel() }
+		let store = Mango9TasksStore(transport: transport)
+		var revoked = false; var requests = 0
+		let item = taskJSON
+		CalendarMockURLProtocol.handler = { request in
+			requests += 1
+			XCTAssertEqual(request.httpMethod, "GET", "Opening task tabs must not launch workflows or mutate tasks")
+			XCTAssertEqual(request.url?.path, "/api/v2/mobile/tasks")
+			if revoked { return (403, Data("{\"success\":false,\"message\":\"Denied\",\"error\":{\"code\":\"tasks_access_denied\"}}".utf8)) }
+			let page = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "page" }!.value!
+			return (200, Data("{\"success\":true,\"data\":{\"items\":[\(item)],\"pagination\":{\"page\":\(page),\"limit\":50,\"total\":2,\"hasMore\":\(page == "1")}}}".utf8))
+		}
+		await store.load(session: current, search: "")
+		XCTAssertEqual(store.items.count, 1); XCTAssertTrue(store.hasMore)
+		await store.load(session: current, search: "", more: true)
+		XCTAssertEqual(store.items.count, 1); XCTAssertFalse(store.hasMore)
+		XCTAssertEqual(store.representedEventIDs, [91])
+		revoked = true
+		await store.load(session: current, search: "")
+		XCTAssertTrue(store.items.isEmpty); XCTAssertNotNil(store.error)
+		let priorRequests = requests
+		await store.load(session: session(host: "other.example.invalid"), search: "")
+		XCTAssertEqual(requests, priorRequests)
+		XCTAssertTrue(store.items.isEmpty)
+	}
+
+	private var taskJSON: String {
+		"""
+		{"id":7,"event_id":91,"title":"Fixture task","description":"No customer data","type":"todo",
+		"execution":"manual","priority":"medium","status":"in_progress","due_at":"2026-10-17 16:00:00+00",
+		"timezone":"UTC","assignees":[{"id":42,"name":"Test staff"}],"revision":"fixture"}
+		"""
+	}
+
 	func testMovingNewAppointmentStartKeepsDurationAndSaveRangeValid() {
 		let start = Date(timeIntervalSince1970: 1_800_000_000)
 		for duration in [300.0, 1800, 3600, 7200] {
@@ -1677,6 +1840,29 @@ final class Mango9CalendarTests: XCTestCase {
 		let request = try Mango9CalendarAPI.request(session: session(), path: "settings", method: "PATCH", body: settings.body(), revision: settings.revision, scope: .crm)
 		XCTAssertEqual(request.url?.absoluteString, "https://crm.example.invalid/api/v2/mobile/crm/settings")
 		XCTAssertEqual(request.value(forHTTPHeaderField: "If-Match"), "\"settings-fixture\"")
+	}
+	func testExpandedPushPreferencesRoundTripWithoutChangingMessageOrReminderChoices() throws {
+		let json = settingsJSON.replacingOccurrences(of: "\"sms_push\":false", with: "\"social_push\":false,\"lead_push\":true,\"events_push\":false,\"sms_push\":false")
+		var value = try Mango9CalendarAPI.decoder().decode(Mango9CRMPreferences.self, from: Data(json.utf8))
+		XCTAssertEqual(value.socialPush, false); XCTAssertEqual(value.leadPush, true); XCTAssertEqual(value.eventsPush, false)
+		value.leadPush = false
+		let body = value.body()
+		XCTAssertEqual(body["social_push"] as? Bool, false); XCTAssertEqual(body["lead_push"] as? Bool, false)
+		XCTAssertEqual(body["events_push"] as? Bool, false)
+		XCTAssertEqual(body["sms_push"] as? Bool, false); XCTAssertEqual(body["team_chat_push"] as? Bool, true)
+		XCTAssertEqual(body["in_app_reminders"] as? Bool, true)
+		XCTAssertNil(body["user_id"]); XCTAssertNil(body["account_timezone"])
+	}
+	func testOlderServerOmitsUnavailablePushControlsFromSave() throws {
+		let value = try Mango9CalendarAPI.decoder().decode(Mango9CRMPreferences.self, from: Data(settingsJSON.utf8))
+		XCTAssertNil(value.socialPush); XCTAssertNil(value.leadPush); XCTAssertNil(value.eventsPush)
+		for key in ["social_push", "lead_push", "events_push"] { XCTAssertNil(value.body()[key]) }
+	}
+	func testPushPreferencesRejectMalformedServerValues() throws {
+		for invalid in ["\"false\"", "0", "[]"] {
+			let json = settingsJSON.replacingOccurrences(of: "\"sms_push\":false", with: "\"social_push\":\(invalid),\"sms_push\":false")
+			XCTAssertThrowsError(try Mango9CalendarAPI.decoder().decode(Mango9CRMPreferences.self, from: Data(json.utf8)))
+		}
 	}
 	@MainActor func testReminderStoreClearsOnOfflineAndAccountRemoval() async throws {
 		let previous = Mango9SessionStore.activeIdentity; let current = session()

@@ -37,6 +37,7 @@ struct ContentView: View {
 	
 	@StateObject private var callViewModel = CallViewModel()
 	@StateObject private var accountProfileViewModel = AccountProfileViewModel()
+	@StateObject private var conversationNavigation = Mango9ConversationNavigation()
 	
 	@State private var contactsListViewModel: ContactsListViewModel?
 	@State private var historyListViewModel: HistoryListViewModel?
@@ -78,6 +79,9 @@ struct ContentView: View {
 	@State var isShowCRMFragment = false
 	@State private var crmDeepLinkLeadId: Int?
 	@State private var mango9ChatTarget: Mango9ChatTarget?
+	@State private var mango9SocialTarget: Mango9SocialPushTarget?
+	@State private var mango9AppointmentTarget: Mango9AppointmentPushTarget?
+	@State private var mango9LeadPushTarget: Mango9LeadPushTarget?
 	@State private var mango9ChatPresentationID = UUID()
 	
 	@State var fullscreenVideo = false
@@ -332,9 +336,9 @@ struct ContentView: View {
 				ZStack {
 					VStack(spacing: 0) {
 						HStack(spacing: 0) {
-							if orientation == .landscapeLeft
+							if !conversationNavigation.hidesAppNavigation && (orientation == .landscapeLeft
 								|| orientation == .landscapeRight
-								|| UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height {
+								|| UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height) {
 								VStack(spacing: 0) {
 									Group {
 										Spacer()
@@ -977,6 +981,7 @@ struct ContentView: View {
 						   						showDeleteConversationHistoryPopup: $showDeleteConversationHistoryPopup,
 												isShowRemoveParticipantPopup: $isShowRemoveParticipantPopup,
 												text: $text,
+												isConversationOpen: conversationNavigation.hidesAppNavigation,
 												orientation: orientation
 											)
 										} else if sharedMainViewModel.indexView == 3 {
@@ -1001,7 +1006,7 @@ struct ContentView: View {
 							)
 							.background(
 								Color.white
-									.shadow(color: Color.gray200, radius: 4, x: 0, y: 0)
+									.shadow(color: conversationNavigation.hidesAppNavigation ? .clear : Color.gray200, radius: 4, x: 0, y: 0)
 									.mask(Rectangle().padding(.horizontal, -8))
 							)
 							
@@ -1014,7 +1019,7 @@ struct ContentView: View {
 						
 						if !(orientation == .landscapeLeft
 							 || orientation == .landscapeRight
-							 || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height) && !searchIsActive {
+							 || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height) && !searchIsActive && !conversationNavigation.hidesAppNavigation {
 							HStack {
 								Group {
 									Spacer()
@@ -1296,7 +1301,6 @@ struct ContentView: View {
 								.environmentObject(accountProfileViewModel)
 								.frame(maxWidth: .infinity)
 								.background(Color.gray100)
-								.ignoresSafeArea(.keyboard)
 							} else if let meetingsListVM = meetingsListViewModel, let displayedMeeting = sharedMainViewModel.displayedMeeting, sharedMainViewModel.indexView == 3 {
 								MeetingFragment(isShowScheduleMeetingFragment: $isShowScheduleMeetingFragment, isShowSendCancelMeetingNotificationPopup: $isShowSendCancelMeetingNotificationPopup)
 									.environmentObject(meetingsListVM)
@@ -1759,6 +1763,19 @@ struct ContentView: View {
 								withAnimation {
 									isShowLoginFragment = true
 								}
+							},
+							onOpenConversations: {
+								resetFilter()
+								isShowStartConversationFragment = false
+								mango9ChatTarget = nil
+								mango9SocialTarget = nil
+								sharedMainViewModel.displayedSMS = nil
+								sharedMainViewModel.displayedFriend = nil
+								sharedMainViewModel.displayedCall = nil
+								sharedMainViewModel.displayedConversation = nil
+								sharedMainViewModel.displayedMeeting = nil
+								sharedMainViewModel.changeIndexView(indexViewInt: 2)
+								withAnimation { isShowCRMFragment = false }
 							}
 						)
 						.zIndex(3)
@@ -1770,6 +1787,10 @@ struct ContentView: View {
 							.id(mango9ChatPresentationID)
 							.zIndex(4)
 							.transition(.move(edge: .trailing))
+					}
+					if let target = mango9SocialTarget {
+						Mango9SocialPushConversation(target: target, onClose: { mango9SocialTarget = nil })
+							.id(target.id + target.identity).zIndex(4)
 					}
 					
 					if let meetingsListVM = meetingsListViewModel, isShowSendCancelMeetingNotificationPopup {
@@ -2117,6 +2138,7 @@ struct ContentView: View {
                 accountProfileViewModel.defaultAccountModelIndex = CoreContext.shared.accounts.firstIndex(where: {$0.isDefaultAccount})
 				isShowCRMFragment = false
 				mango9ChatTarget = nil
+				mango9SocialTarget = nil
 				sharedMainViewModel.displayedSMS = nil
 				Mango9ChatStore.shared.disconnect()
 				ContactsManager.shared.syncMango9Team([])
@@ -2154,6 +2176,7 @@ struct ContentView: View {
 				isShowUpdatePasswordPopup = true
 			}
 		}
+		.environment(\.mango9ConversationNavigation, conversationNavigation)
 		.overlay {
 			if isMenuOpen {
 				Color.white.opacity(0.001)
@@ -2191,8 +2214,25 @@ struct ContentView: View {
 				isShowCRMFragment = true
 			}
 		}
+		.sheet(item: $mango9AppointmentTarget) { target in
+			Mango9AppointmentPushView(target: target).id(target.id)
+		}
+		.sheet(item: $mango9LeadPushTarget) { target in
+			Mango9LeadPushView(target: target).id(target.id)
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenLeadPush)) { notification in
+			guard let target = notification.object as? Mango9LeadPushTarget,
+				let session = Mango9SessionStore.load(), target.matches(session) else { return }
+			mango9LeadPushTarget = target
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenAppointment)) { notification in
+			guard let target = notification.object as? Mango9AppointmentPushTarget,
+				let session = Mango9SessionStore.load(), target.matches(session) else { return }
+			mango9AppointmentTarget = target
+		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenChat)) { notification in
 			guard let target = notification.object as? Mango9ChatTarget else { return }
+			mango9SocialTarget = nil
 			resetFilter()
 			isShowStartConversationFragment = false
 			isShowCRMFragment = false
@@ -2209,6 +2249,7 @@ struct ContentView: View {
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenSMS)) { notification in
 			guard let target = notification.object as? Mango9SMSTarget else { return }
+			mango9SocialTarget = nil
 			resetFilter()
 			isShowStartConversationFragment = false
 			isShowCRMFragment = false
@@ -2221,6 +2262,17 @@ struct ContentView: View {
 			withAnimation {
 				sharedMainViewModel.displayedSMS = target
 			}
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenSocial)) { notification in
+			guard let target = notification.object as? Mango9SocialPushTarget,
+				let session = Mango9SessionStore.load(), target.matches(session) else { return }
+			resetFilter(); isShowStartConversationFragment = false; isShowCRMFragment = false
+			mango9ChatTarget = nil
+			sharedMainViewModel.displayedSMS = nil
+			sharedMainViewModel.displayedFriend = nil; sharedMainViewModel.displayedCall = nil
+			sharedMainViewModel.displayedConversation = nil; sharedMainViewModel.displayedMeeting = nil
+			sharedMainViewModel.changeIndexView(indexViewInt: 2)
+			mango9SocialTarget = target
 		}
 		.task {
 			if var session = Mango9SessionStore.load() {
@@ -2450,6 +2502,7 @@ struct ConversationsContainer: View {
 	
 	@Binding var text: String
 	
+	var isConversationOpen: Bool
 	var orientation: UIDeviceOrientation
 
 	var body: some View {
@@ -2464,14 +2517,11 @@ struct ConversationsContainer: View {
 					isShowRemoveParticipantPopup: $isShowRemoveParticipantPopup
 				)
 				.environmentObject(conversationsListVM)
-				.roundedCorner(25, corners: [.topRight, .topLeft])
-				.shadow(
-					color: (orientation == .landscapeLeft
+				.mango9ConversationsPanel(
+					isConversationOpen: isConversationOpen,
+					isLandscape: orientation == .landscapeLeft
 							|| orientation == .landscapeRight
-							|| UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)
-					? .white.opacity(0.0)
-					: .black.opacity(0.2),
-					radius: 25
+							|| UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height
 				)
 			} else {
 				NavigationView {

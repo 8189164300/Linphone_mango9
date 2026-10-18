@@ -34,31 +34,14 @@ struct ConversationsView: View {
 	
 	var body: some View {
 		NavigationView {
-			ZStack(alignment: .bottomTrailing) {
 				ConversationsFragment(
 					text: $text,
+					onNewConversation: { withAnimation { isShowStartConversationFragment = true } },
 					showLeaveConversationPopup: $showLeaveConversationPopup,
 					showDeleteConversationPopup: $showDeleteConversationPopup,
 					showDeleteConversationHistoryPopup: $showDeleteConversationHistoryPopup,
 					isShowRemoveParticipantPopup: $isShowRemoveParticipantPopup
 				)
-				
-				Button {
-					withAnimation {
-						isShowStartConversationFragment = true
-					}
-				} label: {
-					Image("conversation")
-						.renderingMode(.template)
-						.foregroundStyle(.white)
-						.padding()
-						.background(Color.orangeMain500)
-						.clipShape(Circle())
-						.shadow(color: .black.opacity(0.2), radius: 4)
-					
-				}
-				.padding()
-			}
 		}
 		.navigationViewStyle(.stack)
 	}

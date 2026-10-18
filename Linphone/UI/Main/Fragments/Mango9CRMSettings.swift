@@ -52,13 +52,22 @@ struct Mango9CRMPreferences: Decodable, Equatable {
 	var defaultCalendarView = "appointments"
 	var smsPush = true
 	var teamChatPush = true
+	// Nil means the server has not exposed this control yet. Never send unsupported
+	// keys to an older server or silently pretend that a local-only toggle saved.
+	var socialPush: Bool?
+	var leadPush: Bool?
+	var eventsPush: Bool?
 	var accountTimezone = "UTC"
 	var revision = ""
 
 	func body() -> [String: Any] {
-		["in_app_reminders": inAppReminders, "reminder_minutes": reminderMinutes, "repeat_minutes": repeatMinutes,
+		var values: [String: Any] = ["in_app_reminders": inAppReminders, "reminder_minutes": reminderMinutes, "repeat_minutes": repeatMinutes,
 		 "snooze_minutes": snoozeMinutes, "new_appointment_timezone": newAppointmentTimezone, "first_weekday": firstWeekday,
 		 "default_calendar_view": defaultCalendarView, "sms_push": smsPush, "team_chat_push": teamChatPush]
+		if let socialPush { values["social_push"] = socialPush }
+		if let leadPush { values["lead_push"] = leadPush }
+		if let eventsPush { values["events_push"] = eventsPush }
+		return values
 	}
 	var appointmentTimezone: TimeZone {
 		if newAppointmentTimezone == "device" { return .current }
@@ -139,7 +148,7 @@ struct Mango9CRMSettings: View {
 			settingsSection {
 				Text(session?.displayName ?? "Connect a CRM account").font(.headline)
 				Text(session?.crmBaseUrl ?? "Sign in to manage settings.").font(.caption).foregroundColor(.secondary)
-				Text("These preferences apply to this CRM account. Message-push choices apply to all of its Mango9 devices; calls and other accounts are not changed.").font(.footnote).foregroundColor(.secondary)
+				Text("These preferences apply to this CRM account. Push choices apply to all of its Mango9 devices; calls and other accounts are not changed.").font(.footnote).foregroundColor(.secondary)
 				if embedded { Text("Tap Save CRM settings below to apply your changes.").font(.footnote).foregroundColor(.secondary) }
 			}
 			if loaded {
@@ -175,16 +184,32 @@ struct Mango9CRMSettings: View {
 					}
 					Text("The calendar grid and appointment list use your phone's time zone (\(TimeZone.current.identifier)). The selection above applies only when creating appointments; it does not move existing events.").font(.footnote).foregroundColor(.secondary)
 				}
-				settingsSection("Message notifications") {
-					Toggle("SMS / MMS push", isOn: $draft.smsPush)
-					Toggle("Team chat push", isOn: $draft.teamChatPush)
-					Text("Turning a switch off stops new pushes from the server. Messages still arrive in your conversations. Pushes already handed to Apple cannot be recalled. iOS notification permission is also required.").font(.footnote).foregroundColor(.secondary)
+				settingsSection("Push notifications") {
+					Toggle("SMS / MMS", isOn: $draft.smsPush).accessibilityIdentifier("crm.push.sms")
+					Toggle("Team chat", isOn: $draft.teamChatPush).accessibilityIdentifier("crm.push.team")
+					pushToggle("Social direct messages", value: $draft.socialPush, identifier: "social")
+					pushToggle("New leads & imports", value: $draft.leadPush, identifier: "leads")
+					Text("One alert for a new lead; one summary for a completed bulk import.").font(.footnote).foregroundColor(.secondary)
+					pushToggle("Events & tasks", value: $draft.eventsPush, identifier: "events")
+					Text("Currently includes appointment booking alerts. Push delivery for tasks and other event changes is not available yet. In-app reminders are managed separately above.").font(.footnote).foregroundColor(.secondary)
+					Text("Turning a switch off stops new pushes from the server. Messages, leads and events remain available. Muted conversations stay muted. Pushes already handed to Apple cannot be recalled. iOS notification permission and any applicable CRM alert preferences are also required.").font(.footnote).foregroundColor(.secondary)
 					Button("Open iOS notification settings") {
 						if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
 					}
 				}
 			}
 			if let error { settingsSection { Text(error).foregroundColor(.red); Button("Reload saved settings") { Task { await load() } } } }
+	}
+	@ViewBuilder private func pushToggle(_ title: String, value: Binding<Bool?>, identifier: String) -> some View {
+		if value.wrappedValue != nil {
+			Toggle(title, isOn: Binding(get: { value.wrappedValue ?? false }, set: { value.wrappedValue = $0 }))
+				.accessibilityIdentifier("crm.push.\(identifier)")
+		} else {
+			VStack(alignment: .leading, spacing: 4) {
+				Text(title)
+				Text("Requires a server update").font(.footnote).foregroundColor(.secondary)
+			}
+		}
 	}
 
 	@ViewBuilder private func settingsSection<Content: View>(_ title: String? = nil, @ViewBuilder content: () -> Content) -> some View {

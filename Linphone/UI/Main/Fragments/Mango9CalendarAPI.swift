@@ -1,5 +1,60 @@
 import Foundation
 
+/// Push scope is mandatory; the CRM API remains authoritative for access to each lead.
+struct Mango9LeadPushTarget: Equatable, Identifiable {
+	let leadID: Int?
+	let crmID: String
+	let userID: String
+	let identity: String
+	var id: String { [crmID, userID, identity, leadID.map(String.init) ?? "list"].joined(separator: "|") }
+	static func isLeadNotification(_ userInfo: [AnyHashable: Any]) -> Bool {
+		let nested = userInfo["mango9"] as? [String: Any]
+		let event = nested?["event"] as? String ?? userInfo["mango9_event"] as? String ?? userInfo["event"] as? String
+		return ["lead.created", "lead.assigned", "leads.imported"].contains(event ?? "")
+	}
+	init?(userInfo: [AnyHashable: Any]) {
+		guard let data = userInfo["mango9"] as? [String: Any], let event = data["event"] as? String,
+			["lead.created", "lead.assigned", "leads.imported"].contains(event),
+			let crm = data["crm_id"] as? String, !crm.isEmpty,
+			let user = data["recipient_user_id"] as? String, let userID = Int(user), userID > 0,
+			let identity = Mango9SessionStore.normalizedIdentity(data["sip_identity"] as? String) else { return nil }
+		if event == "leads.imported" {
+			guard data["lead_id"] == nil else { return nil }
+			leadID = nil
+		} else {
+			guard let raw = data["lead_id"] as? String, let value = Int(raw), value > 0 else { return nil }
+			leadID = value
+		}
+		crmID = crm; self.userID = String(userID); self.identity = identity
+	}
+	func matches(_ session: Mango9Session) -> Bool {
+		session.crmId == crmID && session.userId == userID
+			&& Mango9SessionStore.normalizedIdentity(session.sipIdentity) == identity
+	}
+}
+
+/// A remote alert is only a navigation hint; the calendar API still authorizes the read.
+struct Mango9AppointmentPushTarget: Equatable, Identifiable {
+	let eventID: Int
+	let crmID: String
+	let userID: String
+	let identity: String
+	var id: String { [crmID, userID, identity, String(eventID)].joined(separator: "|") }
+	init?(userInfo: [AnyHashable: Any]) {
+		guard let data = userInfo["mango9"] as? [String: Any],
+			data["event"] as? String == "appointment.booked",
+			let raw = data["event_id"] as? String, let eventID = Int(raw), eventID > 0,
+			let crm = data["crm_id"] as? String, !crm.isEmpty,
+			let user = data["recipient_user_id"] as? String, let userID = Int(user), userID > 0,
+			let identity = Mango9SessionStore.normalizedIdentity(data["sip_identity"] as? String) else { return nil }
+		self.eventID = eventID; crmID = crm; self.userID = String(userID); self.identity = identity
+	}
+	func matches(_ session: Mango9Session) -> Bool {
+		session.crmId == crmID && session.userId == userID
+			&& Mango9SessionStore.normalizedIdentity(session.sipIdentity) == identity
+	}
+}
+
 struct Mango9AppointmentStatus: Decodable, Identifiable, Equatable, Sendable {
 	let id: Int
 	let name: String
@@ -177,8 +232,8 @@ enum Mango9AppointmentSave {
 
 /// Uses the provisioned CRM identity, never the SIP proxy or a fixed tenant hostname.
 enum Mango9CalendarAPI {
-	enum Scope: String { case calendar, crm }
-	struct Envelope<T: Decodable>: Decodable { let success: Bool; let message: String; let data: T? }
+	enum Scope: String { case calendar, crm, tasks }
+	struct Envelope<T: Decodable>: Decodable { let success: Bool; let message: String?; let data: T? }
 	struct ErrorBody: Decodable {
 		struct Detail: Decodable { let code: String }
 		let message: String
@@ -213,7 +268,7 @@ enum Mango9CalendarAPI {
 	static func request(session: Mango9Session, path: String, method: String = "GET",
 		query: [URLQueryItem] = [], body: [String: Any]? = nil, revision: String? = nil, scope: Scope = .calendar) throws -> URLRequest {
 		guard let base = URL(string: session.crmApiBaseUrl), base.scheme == "https", base.host != nil,
-			var components = URLComponents(url: base.appendingPathComponent("mobile/" + scope.rawValue + "/" + path), resolvingAgainstBaseURL: false)
+			var components = URLComponents(url: base.appendingPathComponent("mobile/" + scope.rawValue + (path.isEmpty ? "" : "/" + path)), resolvingAgainstBaseURL: false)
 		else { throw Mango9CRMAPIError.invalidConfiguration }
 		components.queryItems = query.isEmpty ? nil : query
 		guard let url = components.url else { throw Mango9CRMAPIError.invalidConfiguration }
@@ -237,7 +292,7 @@ enum Mango9CalendarAPI {
 		}
 		let envelope = try decoder().decode(Envelope<T>.self, from: data)
 		guard envelope.success, let result = envelope.data else {
-			throw Mango9CalendarFailure(status: status, code: "invalid_response", message: envelope.message)
+			throw Mango9CalendarFailure(status: status, code: "invalid_response", message: envelope.message ?? "The server response could not be read. Please refresh.")
 		}
 		return result
 	}
@@ -257,7 +312,7 @@ enum Mango9CalendarAPI {
 			let (data, response) = try await transport.data(for: request)
 			_ = try active()
 			guard let http = response as? HTTPURLResponse else { throw Mango9CRMAPIError.server }
-			if http.statusCode == 404, path == "metadata" {
+			if http.statusCode == 404, path == "metadata", scope == .calendar {
 				throw Mango9CalendarFailure(status: 404, code: "calendar_endpoint_unavailable",
 					message: "Appointment sync is unavailable on \(request.url?.host ?? "your CRM server"). You can still browse the calendar.")
 			}

@@ -26,10 +26,20 @@ import PushKit
 let accountTokenNotification = Notification.Name("AccountCreationTokenReceived")
 var displayedChatroomPeerAddr: String?
 
+private var usesOfflineMessagingTestHost: Bool {
+#if DEBUG && targetEnvironment(simulator)
+	return ProcessInfo.processInfo.environment["UITEST_MESSAGING_PROTOCOLS"] == "1"
+		|| Mango9CalendarUITestFixture.isEnabled || Mango9ReactionsUITestFixture.isEnabled
+#else
+	return false
+#endif
+}
+
 extension Notification.Name {
 	static let mango9LeadDidChange = Notification.Name("mango9LeadDidChange")
 	static let mango9ClientDidChange = Notification.Name("mango9ClientDidChange")
 	static let mango9OpenLead = Notification.Name("mango9OpenLead")
+	static let mango9OpenLeadPush = Notification.Name("mango9OpenLeadPush")
 	static let mango9OpenChat = Notification.Name("mango9OpenChat")
 	static let mango9OpenSMS = Notification.Name("mango9OpenSMS")
 	static let mango9AccountContextChanged =
@@ -45,9 +55,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	var launchNotificationCallId: String?
 	var launchNotificationPeerAddr: String?
 	var launchNotificationLocalAddr: String?
-	var launchMango9LeadId: Int?
+	var launchMango9LeadTarget: Mango9LeadPushTarget?
 	var launchMango9SMSTarget: Mango9SMSTarget?
 	var launchMango9ChatTarget: Mango9ChatTarget?
+	var launchMango9SocialTarget: Mango9SocialPushTarget?
+	var launchMango9AppointmentTarget: Mango9AppointmentPushTarget?
 	
 	var coreContext: CoreContext? {
 		didSet {
@@ -86,7 +98,35 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	}
 	
 	func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-		Log.info("Received background push notification, payload = \(userInfo.description)")
+		Log.info("Received background push notification")
+		if Mango9LeadPushTarget.isLeadNotification(userInfo) {
+			DispatchQueue.main.async {
+				if let target = Mango9LeadPushTarget(userInfo: userInfo),
+					let session = Mango9SessionStore.load(), target.matches(session) {
+					NotificationCenter.default.post(name: .mango9LeadDidChange, object: nil)
+				}
+				completionHandler(.noData)
+			}
+			return
+		}
+		if let target = Mango9AppointmentPushTarget(userInfo: userInfo) {
+			DispatchQueue.main.async {
+				if let session = Mango9SessionStore.load(), target.matches(session) {
+					NotificationCenter.default.post(name: .mango9AppointmentDidChange, object: nil)
+				}
+				completionHandler(.noData)
+			}
+			return
+		}
+		if let target = Mango9SocialPushTarget(userInfo: userInfo) {
+			DispatchQueue.main.async {
+				if let session = Mango9SessionStore.load(), target.matches(session) {
+					NotificationCenter.default.post(name: .mango9SocialInboxDidChange, object: target)
+				}
+				completionHandler(.noData)
+			}
+			return
+		}
 		if mango9ChatTarget(from: userInfo) != nil {
 			Task { @MainActor in
 				await Mango9ChatStore.shared.refreshDirectory()
@@ -101,11 +141,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 			completionHandler(.newData)
 			return
 		}
-		if let leadId = mango9LeadId(from: userInfo) {
-			NotificationCenter.default.post(name: .mango9LeadDidChange, object: leadId)
-			completionHandler(.newData)
-			return
-		}
 		let creationToken = (userInfo["customPayload"] as? NSDictionary)?["token"] as? String
 		if let creationToken = creationToken {
 			NotificationCenter.default.post(name: accountTokenNotification, object: nil, userInfo: ["token": creationToken])
@@ -116,7 +151,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 					 
 	func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
 #if DEBUG && targetEnvironment(simulator)
-		if Mango9CalendarUITestFixture.isEnabled { return true }
+		if usesOfflineMessagingTestHost { return true }
 #endif
 		// Set up notifications
 		let notificationCenter = UNUserNotificationCenter.current()
@@ -154,6 +189,40 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	// Called when the user interacts with the notification
 	func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
 		let userInfo = response.notification.request.content.userInfo
+		if Mango9LeadPushTarget.isLeadNotification(userInfo) {
+			guard let target = Mango9LeadPushTarget(userInfo: userInfo),
+				let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler(); return }
+			let openID = UUID(); chatPushOpenID = openID
+			activateMango9ChatAccount(identity: target.identity) { [weak self] activated in
+				guard let self, activated, self.chatPushOpenID == openID,
+					let session = Mango9SessionStore.load(), target.matches(session) else { return }
+				if self.navigationManager == nil { self.launchMango9LeadTarget = target }
+				else { NotificationCenter.default.post(name: .mango9OpenLeadPush, object: target) }
+			}
+			completionHandler(); return
+		}
+		if let target = Mango9AppointmentPushTarget(userInfo: userInfo) {
+			guard let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler(); return }
+			let openID = UUID(); chatPushOpenID = openID
+			activateMango9ChatAccount(identity: target.identity) { [weak self] activated in
+				guard let self, activated, self.chatPushOpenID == openID,
+					let session = Mango9SessionStore.load(), target.matches(session) else { return }
+				if self.navigationManager == nil { self.launchMango9AppointmentTarget = target }
+				else { NotificationCenter.default.post(name: .mango9OpenAppointment, object: target) }
+			}
+			completionHandler(); return
+		}
+		if let target = Mango9SocialPushTarget(userInfo: userInfo) {
+			guard let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler(); return }
+			let openID = UUID(); chatPushOpenID = openID
+			activateMango9ChatAccount(identity: target.identity) { [weak self] activated in
+				guard let self, activated, self.chatPushOpenID == openID,
+					let session = Mango9SessionStore.load(), target.matches(session) else { return }
+				if self.navigationManager == nil { self.launchMango9SocialTarget = target }
+				else { NotificationCenter.default.post(name: .mango9OpenSocial, object: target) }
+			}
+			completionHandler(); return
+		}
 		if let target = mango9ChatTarget(from: userInfo) {
 			let openID = UUID()
 			chatPushOpenID = openID
@@ -188,16 +257,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 			return
 		}
 
-		if let leadId = mango9LeadId(from: userInfo) {
-			if navigationManager == nil {
-				launchMango9LeadId = leadId
-			} else {
-				NotificationCenter.default.post(name: .mango9OpenLead, object: leadId)
-			}
-			completionHandler()
-			return
-		}
-		
 		if let callId = userInfo["CallId"] as? String, let peerAddr = userInfo["peer_addr"] as? String, let localAddr = userInfo["local_addr"] as? String {
 			if self.navigationManager != nil {
 				self.navigationManager!.selectedCallId = callId
@@ -217,6 +276,30 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
 		let userInfo = notification.request.content.userInfo
 		Log.info("Received push notification in foreground")
+		if Mango9LeadPushTarget.isLeadNotification(userInfo) {
+			guard let target = Mango9LeadPushTarget(userInfo: userInfo),
+				let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler([]); return }
+			DispatchQueue.main.async {
+				if let session = Mango9SessionStore.load(), target.matches(session) {
+					NotificationCenter.default.post(name: .mango9LeadDidChange, object: nil)
+				}
+			}
+			completionHandler([.banner, .sound, .badge]); return
+		}
+		if let target = Mango9AppointmentPushTarget(userInfo: userInfo) {
+			guard let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler([]); return }
+			DispatchQueue.main.async {
+				if let session = Mango9SessionStore.load(), target.matches(session) {
+					NotificationCenter.default.post(name: .mango9AppointmentDidChange, object: nil)
+				}
+			}
+			completionHandler([.banner, .sound, .badge]); return
+		}
+		if let target = Mango9SocialPushTarget(userInfo: userInfo) {
+			guard let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler([]); return }
+			DispatchQueue.main.async { NotificationCenter.default.post(name: .mango9SocialInboxDidChange, object: target) }
+			completionHandler(Mango9SocialMutePreferences.isMuted(session: stored, thread: target.id) ? [.badge] : [.banner, .sound, .badge]); return
+		}
 
 		if let target = mango9ChatTarget(from: userInfo) {
 			Task { @MainActor in
@@ -245,11 +328,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 			return
 		}
 
-		if let leadId = mango9LeadId(from: userInfo) {
-			NotificationCenter.default.post(name: .mango9LeadDidChange, object: leadId)
-			completionHandler([.banner, .sound])
-			return
-		}
 		
 		let strPeerAddr = userInfo["peer_addr"] as? String
 		if strPeerAddr == nil {
@@ -270,30 +348,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 				}
 			}
 		}
-	}
-
-	private func mango9LeadId(from userInfo: [AnyHashable: Any]) -> Int? {
-		let nested = userInfo["mango9"] as? [String: Any]
-		let event = (nested?["event"] as? String)
-			?? (userInfo["mango9_event"] as? String)
-			?? (userInfo["event"] as? String)
-		guard event == "lead.created" || event == "lead.assigned" else {
-			return nil
-		}
-
-		let rawLeadId = nested?["lead_id"]
-			?? userInfo["lead_id"]
-			?? userInfo["leadId"]
-		if let leadId = rawLeadId as? Int {
-			return leadId
-		}
-		if let leadId = rawLeadId as? NSNumber {
-			return leadId.intValue
-		}
-		if let leadId = rawLeadId as? String {
-			return Int(leadId)
-		}
-		return nil
 	}
 
 	private func mango9SMSTarget(
@@ -475,13 +529,13 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 struct LinphoneApp: App {
 	@UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
-	@State private var configAvailable = AppServices.configIfAvailable != nil
+	@State private var configAvailable = !usesOfflineMessagingTestHost && AppServices.configIfAvailable != nil
 	private let earlyPushDelegate = EarlyPushkitDelegate()
 	private let voipRegistry = PKPushRegistry(queue: coreQueue)
 
 	init() {
 #if DEBUG && targetEnvironment(simulator)
-		if Mango9CalendarUITestFixture.isEnabled { return }
+		if usesOfflineMessagingTestHost { return }
 #endif
 #if DEBUG
 		LinphoneApp.applyUITestMDMConfigIfNeeded()
@@ -525,6 +579,10 @@ struct LinphoneApp: App {
 #if DEBUG && targetEnvironment(simulator)
 		if Mango9CalendarUITestFixture.isEnabled {
 			Mango9CalendarUITestFixture()
+		} else if Mango9ReactionsUITestFixture.isEnabled {
+			Mango9ReactionsUITestFixture()
+		} else if usesOfflineMessagingTestHost {
+			Color.clear
 		} else {
 			normalContent
 		}
@@ -721,10 +779,10 @@ struct MainViewSwitcher: View {
 					navigationManager.openChatRoom(callId: callId, peerAddr: peerAddr, localAddr: localAddr)
 				}
 
-				if let leadId = appDelegate.launchMango9LeadId {
-					appDelegate.launchMango9LeadId = nil
+				if let target = appDelegate.launchMango9LeadTarget {
+					appDelegate.launchMango9LeadTarget = nil
 					DispatchQueue.main.async {
-						NotificationCenter.default.post(name: .mango9OpenLead, object: leadId)
+						NotificationCenter.default.post(name: .mango9OpenLeadPush, object: target)
 					}
 				}
 
@@ -740,6 +798,14 @@ struct MainViewSwitcher: View {
 					DispatchQueue.main.async {
 						NotificationCenter.default.post(name: .mango9OpenChat, object: chatTarget)
 					}
+				}
+				if let socialTarget = appDelegate.launchMango9SocialTarget {
+					appDelegate.launchMango9SocialTarget = nil
+					DispatchQueue.main.async { NotificationCenter.default.post(name: .mango9OpenSocial, object: socialTarget) }
+				}
+				if let target = appDelegate.launchMango9AppointmentTarget {
+					appDelegate.launchMango9AppointmentTarget = nil
+					DispatchQueue.main.async { NotificationCenter.default.post(name: .mango9OpenAppointment, object: target) }
 				}
 			}
 			.id(colors.theme.name)

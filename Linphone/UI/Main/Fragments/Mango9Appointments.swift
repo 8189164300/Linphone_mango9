@@ -1,6 +1,7 @@
 import SwiftUI
 
 extension Notification.Name {
+	static let mango9OpenAppointment = Notification.Name("mango9OpenAppointment")
 	static let mango9AppointmentDidChange = Notification.Name("mango9AppointmentDidChange")
 }
 
@@ -253,26 +254,35 @@ struct Mango9AppointmentsFragment: View {
 	@State private var search = ""
 	@State private var wasBackgrounded = false
 	@State private var refreshID = UUID()
+	@State private var activityKind: Mango9ActivityKind = .appointments
+	private var presentation: Mango9ActivityPresentation = .combined
 	private var usesLegacyCalendar = false
 
-	init(contact: Mango9AppointmentContact? = nil, date: Date = Date()) {
+	init(contact: Mango9AppointmentContact? = nil, date: Date = Date(), presentation: Mango9ActivityPresentation = .combined,
+		initialKind: Mango9ActivityKind = .appointments) {
+		self.presentation = presentation
 		_store = StateObject(wrappedValue: Mango9AppointmentsStore(contact: contact))
 		_date = State(initialValue: date)
 		_visibleCalendarDate = State(initialValue: date)
+		_calendarMode = State(initialValue: presentation == .calendar)
+		_activityKind = State(initialValue: initialKind)
 	}
 
-	init(store: Mango9AppointmentsStore, date: Date, calendarMode: Bool = false, creating: Bool = false, usesLegacyCalendar: Bool = false) {
+	init(store: Mango9AppointmentsStore, date: Date, calendarMode: Bool = false, creating: Bool = false,
+		usesLegacyCalendar: Bool = false, presentation: Mango9ActivityPresentation = .combined) {
+		self.presentation = presentation
 		self.usesLegacyCalendar = usesLegacyCalendar
 		_store = StateObject(wrappedValue: store)
 		_date = State(initialValue: date)
 		_visibleCalendarDate = State(initialValue: date)
-		_calendarMode = State(initialValue: calendarMode)
+		_calendarMode = State(initialValue: presentation == .calendar || (presentation == .combined && calendarMode))
 		_creation = State(initialValue: creating ? store.creation(on: date) : nil)
 	}
 
 	private var filtered: [Mango9Appointment] {
 		store.events.filter {
-			(statusID == -1 || ($0.status?.id ?? 0) == statusID) &&
+			(presentation != .activities || Mango9ActivityKind.classify($0.activity) == activityKind) &&
+			(activityKind == .tasks || statusID == -1 || ($0.status?.id ?? 0) == statusID) &&
 			(search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) ||
 			 ($0.contact?.name?.localizedCaseInsensitiveContains(search) ?? false))
 		}
@@ -281,11 +291,18 @@ struct Mango9AppointmentsFragment: View {
 	var body: some View {
 		VStack(spacing: 0) {
 			header
+			if presentation != .calendar {
 			VStack(spacing: 12) {
-				Picker("View", selection: $calendarMode) {
-					Text("Events").tag(false)
-					Text("Calendar").tag(true)
-				}.pickerStyle(.segmented)
+				if presentation == .activities {
+					Picker("Activity type", selection: $activityKind) {
+						ForEach(Mango9ActivityKind.allCases) { Text($0.title).tag($0) }
+					}.pickerStyle(.segmented).accessibilityIdentifier("activities.tabs")
+				} else {
+					Picker("View", selection: $calendarMode) {
+						Text("Events").tag(false)
+						Text("Calendar").tag(true)
+					}.pickerStyle(.segmented)
+				}
 				if !calendarMode {
 					HStack {
 						Button { moveMonth(-1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 36) }
@@ -296,7 +313,8 @@ struct Mango9AppointmentsFragment: View {
 					}
 					HStack {
 						Image(systemName: "magnifyingglass").foregroundColor(.secondary)
-						TextField("Search events or contacts", text: $search)
+						TextField("Search activities or contacts", text: $search)
+						if presentation != .activities || activityKind != .tasks {
 						Menu {
 							Picker("Status", selection: $statusID) {
 								Text("All statuses").tag(-1)
@@ -304,9 +322,11 @@ struct Mango9AppointmentsFragment: View {
 								ForEach(store.metadata?.statuses ?? []) { Text($0.name).tag($0.id) }
 							}
 						} label: { Image(systemName: statusID == -1 ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill").padding(8) }
+						}
 					}.padding(8).background(Color(.secondarySystemGroupedBackground)).cornerRadius(12)
 				}
 			}.padding(16)
+			}
 			if let error = (calendarMode && store.listCapacityExceeded ? store.calendarError : store.error ?? (calendarMode ? store.calendarError : nil)) {
 				HStack(alignment: .top, spacing: 8) {
 					Image(systemName: "exclamationmark.triangle").foregroundColor(.orange)
@@ -335,6 +355,9 @@ struct Mango9AppointmentsFragment: View {
 				if store.businessHours?.configured == true {
 					Label("Shaded time is outside business hours", systemImage: "clock").font(.caption2).foregroundColor(.secondary).padding(.bottom, 4)
 				}
+			} else if presentation == .activities && activityKind == .tasks {
+				Mango9TasksList(events: filtered, session: store.session, search: search, refreshID: refreshID,
+					onSelect: { selected = $0 }, onRefresh: { await store.load(month: date) })
 			} else {
 				// Update countdown/order locally, without another API request, changing
 				// the list identity, or interrupting the open detail/editor sheet.
@@ -348,7 +371,7 @@ struct Mango9AppointmentsFragment: View {
 		.task {
 			if let session = Mango9SessionStore.load() {
 				await preferencesStore.refresh(session: session)
-				if preferencesStore.value(for: session)?.defaultCalendarView == "calendar" { calendarMode = true }
+				if presentation == .combined, preferencesStore.value(for: session)?.defaultCalendarView == "calendar" { calendarMode = true }
 			}
 		}
 		.onChange(of: calendarMode) { if !$0 { date = visibleCalendarDate } else { visibleCalendarDate = date } }
@@ -387,7 +410,9 @@ struct Mango9AppointmentsFragment: View {
 		.sheet(item: $creation) { request in
 			if Mango9SessionStore.isActive(request.session) {
 				Mango9AppointmentEditor(session: request.session, metadata: request.metadata, contact: request.contact,
-					date: request.date, initialTimezone: request.timezone, transport: store.transport)
+					date: request.date, initialTimezone: request.timezone,
+					initialActivity: presentation == .activities ? activityKind.defaultActivity(in: request.metadata.activities) : nil,
+					transport: store.transport)
 					.id(request.id) // Never reuse a prior create form's draft/busy/error state.
 			}
 		}
@@ -416,10 +441,20 @@ struct Mango9AppointmentsFragment: View {
 				Image(systemName: "chevron.left").font(.title3).frame(width: 44, height: 44)
 			}.accessibilityLabel("Back")
 			VStack(alignment: .leading, spacing: 2) {
-				Text("Events").font(.title2.bold()).foregroundColor(.primary).lineLimit(1).minimumScaleFactor(0.7)
-				Text(store.contact?.displayName ?? "Your CRM calendar").font(.caption).foregroundColor(.secondary).lineLimit(1)
+				Text(presentation == .calendar ? "Calendar" : presentation == .activities ? "Events & Tasks" : "Events")
+					.font(.title2.bold()).foregroundColor(.primary).lineLimit(1).minimumScaleFactor(0.7)
+				Text(store.contact?.displayName ?? (presentation == .activities ? "Your CRM activities" : "Your CRM calendar"))
+					.font(.caption).foregroundColor(.secondary).lineLimit(1)
 			}
 			Spacer()
+			if presentation != .combined {
+				NavigationLink {
+					Mango9AppointmentsFragment(date: calendarMode ? visibleCalendarDate : date,
+						presentation: calendarMode ? .activities : .calendar)
+				} label: {
+					Image(systemName: calendarMode ? "checklist" : "calendar").frame(width: 36, height: 44)
+				}.accessibilityLabel(calendarMode ? "Events & Tasks" : "See in Calendar")
+			}
 			Button { showingHours = true } label: {
 				Image(systemName: "clock.badge.checkmark").frame(width: 36, height: 44)
 			}.disabled(store.session == nil).accessibilityLabel("Business hours").accessibilityIdentifier("appointments.businessHours")
@@ -437,14 +472,14 @@ struct Mango9AppointmentsFragment: View {
 			if events.isEmpty && !store.loading && store.error == nil {
 				VStack(spacing: 12) {
 					Image(systemName: "calendar.badge.clock").font(.largeTitle).foregroundColor(.mango9Primary)
-					Text(search.isEmpty && statusID == -1 ? "No events this month" : "No matching events").font(.headline)
-					Text("Choose another month or create an event.").font(.subheadline).foregroundColor(.secondary)
+					Text(search.isEmpty && statusID == -1 ? "No \(presentation == .activities ? activityKind.rawValue : "events") this month" : "No matching activities").font(.headline)
+					Text("Choose another month or add a new activity.").font(.subheadline).foregroundColor(.secondary)
 				}.frame(maxWidth: .infinity).padding(.vertical, 24).listRowBackground(Color.clear)
 			}
 			ForEach(sections) { section in
 				Section(header: VStack(alignment: .leading, spacing: 3) {
 					if section.bucket == .dueNow { Text("Due now").foregroundColor(.orange) }
-					else if section.bucket == .past { Text("Past appointments") }
+					else if section.bucket == .past { Text("Past activities") }
 					else if section.bucket == .closed { Text("Completed or closed") }
 					Text(section.day, format: .dateTime.weekday(.wide).month(.abbreviated).day())
 				}.textCase(nil)) {
@@ -537,6 +572,42 @@ struct Mango9AppointmentRow: View {
 	}
 }
 
+struct Mango9AppointmentPushView: View {
+	let target: Mango9AppointmentPushTarget
+	@Environment(\.dismiss) private var dismiss
+	@State private var event: Mango9Appointment?
+	@State private var metadata: Mango9CalendarMetadata?
+	@State private var session: Mango9Session?
+	@State private var error: String?
+	@State private var retry = 0
+	var body: some View {
+		Group {
+			if let event, let metadata, let session {
+				Mango9AppointmentDetail(event: event, session: session, metadata: metadata)
+			} else {
+				NavigationView {
+					VStack(spacing: 16) {
+						if let error { Text(error); Button("Try again") { retry += 1 } }
+						else { ProgressView("Opening appointment…") }
+					}.padding().navigationTitle("Appointment")
+						.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+				}.navigationViewStyle(.stack)
+			}
+		}.task(id: retry) {
+			error = nil
+			guard let active = Mango9SessionStore.load(), target.matches(active) else {
+				error = "This account is no longer available."; return
+			}
+			do {
+				let value = try await Mango9CalendarAPI.send(Mango9Appointment.self, session: active, path: "events/\(target.eventID)")
+				let context = try await Mango9CalendarAPI.send(Mango9CalendarMetadata.self, session: active, path: "metadata")
+				guard !Task.isCancelled, value.id == target.eventID, Mango9SessionStore.isActive(active) else { return }
+				session = active; event = value; metadata = context
+			} catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+		}.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in dismiss() }
+	}
+}
+
 struct Mango9AppointmentDetail: View {
 	@ObservedObject private var preferencesStore = Mango9CRMPreferencesStore.shared
 	@Environment(\.dismiss) private var dismiss
@@ -569,6 +640,13 @@ struct Mango9AppointmentDetail: View {
 					Label("Until " + event.endAt.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
 						.accessibilityIdentifier("appointment.endSummary")
 					Text("Shown in \(TimeZone.current.identifier)").font(.caption).foregroundColor(.secondary)
+					NavigationLink {
+						Mango9AppointmentsFragment(contact: nil, date: event.startAt, presentation: .calendar)
+					} label: { Label("See in Calendar", systemImage: "calendar") }
+					NavigationLink {
+						Mango9AppointmentsFragment(date: event.startAt, presentation: .activities,
+							initialKind: Mango9ActivityKind.classify(event.activity))
+					} label: { Label("See in Events & Tasks", systemImage: "checklist") }
 				}
 				Section("Details") {
 					Menu {
@@ -752,7 +830,8 @@ struct Mango9AppointmentEditor: View {
 	@State private var confirmAssignment = false
 
 	init(session: Mango9Session, metadata: Mango9CalendarMetadata, event: Mango9Appointment? = nil,
-		contact: Mango9AppointmentContact? = nil, date: Date = Date(), initialTimezone: TimeZone? = nil, transport: URLSession = .shared,
+		contact: Mango9AppointmentContact? = nil, date: Date = Date(), initialTimezone: TimeZone? = nil,
+		initialActivity: String? = nil, transport: URLSession = .shared,
 		onSaved: @escaping (Mango9Appointment) -> Void = { _ in }) {
 		self.session = session; self.metadata = metadata; self.event = event
 		self.transport = transport
@@ -763,7 +842,7 @@ struct Mango9AppointmentEditor: View {
 		let start = event?.startAt ?? date
 		_start = State(initialValue: start)
 		_end = State(initialValue: event?.endAt ?? start.addingTimeInterval(1800))
-		_activity = State(initialValue: event?.activity ?? "appointment")
+		_activity = State(initialValue: event?.activity ?? initialActivity ?? "appointment")
 		_priority = State(initialValue: event?.priority ?? "medium")
 		_status = State(initialValue: event?.status?.id ?? 0)
 		_contact = State(initialValue: event?.contact ?? contact)

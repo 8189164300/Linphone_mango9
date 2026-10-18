@@ -15,6 +15,7 @@ struct Mango9CRMFragment: View {
 	@Binding var isPresented: Bool
 	let initialLeadId: Int?
 	let onConnectAccount: () -> Void
+	let onOpenConversations: () -> Void
 
 	@StateObject private var viewModel = Mango9CRMViewModel()
 	@ObservedObject private var chatStore = Mango9ChatStore.shared
@@ -24,11 +25,13 @@ struct Mango9CRMFragment: View {
 	init(
 		isPresented: Binding<Bool>,
 		initialLeadId: Int? = nil,
-		onConnectAccount: @escaping () -> Void
+		onConnectAccount: @escaping () -> Void,
+		onOpenConversations: @escaping () -> Void
 	) {
 		_isPresented = isPresented
 		self.initialLeadId = initialLeadId
 		self.onConnectAccount = onConnectAccount
+		self.onOpenConversations = onOpenConversations
 		_pushedLeadId = State(initialValue: initialLeadId)
 		_showPushedLead = State(initialValue: initialLeadId != nil)
 	}
@@ -214,20 +217,24 @@ struct Mango9CRMFragment: View {
 			}
 			.buttonStyle(.plain)
 
-			NavigationLink(destination: Mango9TeamChatListFragment()) {
+			Button(action: onOpenConversations) {
 				workspaceRow(
 					icon: "bubble.left.and.bubble.right.fill",
-					title: "Team Chat",
-					subtitle: chatStore.teamUnreadCount > 0 ? "New messages from your team" : "Stay connected with your team",
+					title: "Conversations",
+					subtitle: "SMS, Team and Social messages",
 					color: .pink,
 					unreadCount: chatStore.teamUnreadCount
 				)
 			}
 			.buttonStyle(.plain)
 
-			NavigationLink(destination: Mango9AppointmentsFragment()) {
-				workspaceRow(icon: "calendar", title: "Events",
-					subtitle: viewModel.appointmentCount == nil ? "Schedule, share and manage events" : "Events this month", color: .mango9Primary, count: viewModel.appointmentCount)
+			NavigationLink(destination: Mango9AppointmentsFragment(presentation: .calendar)) {
+				workspaceRow(icon: "calendar", title: "Calendar",
+					subtitle: "Your schedule by month, week or day", color: .mango9Primary)
+			}.buttonStyle(.plain)
+			NavigationLink(destination: Mango9AppointmentsFragment(presentation: .activities)) {
+				workspaceRow(icon: "checklist", title: "Events & Tasks",
+					subtitle: "Appointments, events and tasks", color: .indigo)
 			}.buttonStyle(.plain)
 			NavigationLink(destination: Mango9CRMSettings()) {
 				workspaceRow(icon: "slider.horizontal.3", title: "CRM Settings", subtitle: "Calendar, reminders and message notifications", color: .indigo)
@@ -570,6 +577,7 @@ enum Mango9CRMAPIError: Error {
 	Mango9CRMFragment(
 		isPresented: .constant(true),
 		initialLeadId: nil,
-		onConnectAccount: {}
+		onConnectAccount: {},
+		onOpenConversations: {}
 	)
 }

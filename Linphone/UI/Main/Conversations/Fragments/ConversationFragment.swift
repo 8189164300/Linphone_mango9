@@ -52,6 +52,8 @@ struct ConversationFragment: View {
 	@State private var displayFloatingButton = false
 	
 	@State private var areFilePickersOpen = false
+	@State private var nativeSMSAttachmentRequest: Mango9AttachmentRequest?
+	@State private var confirmSMSDelete = false
 	
 	@State private var isShowPhotoLibrary = false
 	@State private var isShowCamera = false
@@ -284,6 +286,19 @@ struct ConversationFragment: View {
 			}
 		}
 		.navigationViewStyle(.stack)
+		.mango9Attachments(request: $nativeSMSAttachmentRequest, selected: $conversationViewModel.mediasToSend,
+			limit: conversationViewModel.maxMediaCount, error: { ToastViewModel.shared.show($0) })
+		.sheet(item: $conversationViewModel.nativeSMSForwardPayload) { payload in Mango9SMSForwardSheet(payload: payload) }
+		.confirmationDialog("Delete for me on all my devices? Other staff and the recipient will keep their copies. This does not unsend an SMS.", isPresented: $confirmSMSDelete, titleVisibility: .visible) {
+			Button("Delete for me", role: .destructive) { conversationViewModel.deleteSelectedSMS() }
+		}
+		.onChange(of: conversationViewModel.nativeSMSSelection) { selected in if selected { isMessageTextFocused = false; areFilePickersOpen = false } }
+		.onChange(of: conversationViewModel.nativeSMSForwardMessage?.message.id) { value in
+			if value != nil { isShowConversationForwardMessageFragment = true }
+		}
+		.onChange(of: conversationViewModel.messageToReply?.message.id) { value in
+			if conversationViewModel.isSMSConversation && value != nil { isMessageTextFocused = true }
+		}
 		.onAppear {
 			if let conv = SharedMainViewModel.shared.displayedConversation {
 				cachedConversation = conv
@@ -406,7 +421,7 @@ struct ConversationFragment: View {
 			if isShowConversationForwardMessageFragment {
 				ConversationForwardMessageFragment(
 					conversationsList: conversationsListViewModel.conversationsList,
-					selectedMessage: conversationViewModel.selectedMessage,
+					selectedMessage: conversationViewModel.nativeSMSForwardMessage ?? conversationViewModel.selectedMessage,
 					isShowConversationForwardMessageFragment: $isShowConversationForwardMessageFragment
 				)
 				.environmentObject(conversationViewModel)
@@ -416,6 +431,7 @@ struct ConversationFragment: View {
 				.onAppear {
 					conversationViewModel.selectedMessage = nil
 				}
+				.onDisappear { conversationViewModel.nativeSMSForwardMessage = nil }
 			}
 
 			if isShowInfoConversationFragment {
@@ -804,6 +820,8 @@ struct ConversationFragment: View {
 			                       )
 						.environmentObject(conversationViewModel)
 						.environmentObject(conversationsListViewModel)
+						.mango9VisibilityRefresh(channel: .sms, thread: conversationViewModel.smsTarget?.phone,
+							ids: conversationViewModel.isSMSConversation ? Mango9ChatStore.shared.smsMessages.map(\.id) : [])
 
 						if conversationViewModel.isSMSConversation &&
 							conversationViewModel.smsIsLoading &&
@@ -1295,6 +1313,23 @@ struct ConversationFragment: View {
 
 	private func messageComposer(geometry: GeometryProxy) -> AnyView {
 		AnyView(Group {
+			if conversationViewModel.isSMSConversation && conversationViewModel.nativeSMSSelection {
+				Mango9MessageSelectionBar(count: conversationViewModel.nativeSMSSelectedIDs.count,
+					delete: { confirmSMSDelete = true }, forward: { conversationViewModel.forwardSelectedSMS(ids: conversationViewModel.nativeSMSSelectedIDs) },
+					cancel: { conversationViewModel.nativeSMSSelection = false; conversationViewModel.nativeSMSSelectedIDs = [] })
+			} else if conversationViewModel.isSMSConversation && !voiceRecordingInProgress {
+				Mango9MessageComposer(text: $messageText, focus: $isMessageTextFocused,
+					hasAttachments: !conversationViewModel.mediasToSend.isEmpty,
+					attach: { nativeSMSAttachmentRequest = $0 },
+					record: { voiceRecordingInProgress = true }, send: {
+						let value = messageText
+						messageText = ""
+						isMessageTextFocused = true
+						NotificationCenter.default.post(name: .onScrollToBottom, object: nil)
+						conversationViewModel.sendMessage(messageText: value)
+					})
+					.onChange(of: messageText) { conversationViewModel.compose(stop: $0.isEmpty) }
+			} else {
 			HStack(spacing: 0) {
 				if !voiceRecordingInProgress {
 					Button {
@@ -1435,6 +1470,7 @@ struct ConversationFragment: View {
 			.padding(.bottom, geometry.safeAreaInsets.bottom > 0 ? (isMessageTextFocused ? 12 : 0) : 12)
 			.padding(.horizontal, 10)
 			.background(Color.gray100)
+			}
 		})
 	}
 

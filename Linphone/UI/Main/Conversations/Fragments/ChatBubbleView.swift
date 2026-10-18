@@ -26,9 +26,26 @@ import AVKit
 import Photos
 import ImageIO
 
+/// SMS uses the system context menu; attach the legacy recognizer only to SIP chat.
+private struct LegacyChatPressModifier: ViewModifier {
+	let enabled: Bool
+	let pressing: (Bool) -> Void
+	@ViewBuilder func body(content: Content) -> some View {
+		if enabled {
+			content.onTapGesture {}
+				.onLongPressGesture(minimumDuration: .infinity, maximumDistance: .infinity,
+					pressing: pressing, perform: {})
+		} else {
+			content
+		}
+	}
+}
+
 // swiftlint:disable type_body_length
 // swiftlint:disable cyclomatic_complexity
 struct ChatBubbleView: View {
+	@ObservedObject private var reactionStore = Mango9ChatStore.shared
+	@StateObject private var reactionActions = Mango9ReactionActions()
 	
 	private var idiom: UIUserInterfaceIdiom { UIDevice.current.userInterfaceIdiom }
 	
@@ -55,6 +72,54 @@ struct ChatBubbleView: View {
 	
 	@State private var showShareSheet = false
 	
+	private var smsActions: Mango9MessageActionSet {
+		var menu = Mango9MessageActionSet()
+		if let session = Mango9SessionStore.load(), let record = reactionStore.smsMessages.first(where: { $0.id == eventLogMessage.message.id }) {
+			menu = .staff(target: .init(account: Mango9ReactionTarget.accountKey(session), channel: .sms, conversation: record.phone, message: record.id),
+				session: session, state: record.reactionState, actor: reactionStore.currentUserId, handler: reactionActions)
+		}
+		menu.actions.append(.init(title: "Reply", icon: "arrowshape.turn.up.left", perform: {
+			conversationViewModel.messageToEdit = nil; conversationViewModel.messageToReply = eventLogMessage
+		}))
+		if !eventLogMessage.message.text.isEmpty { menu.actions.append(.init(title: "Copy", icon: "doc.on.doc", perform: { UIPasteboard.general.string = eventLogMessage.message.text })) }
+		menu.actions.append(.init(title: "Select", icon: "checkmark.circle", perform: {
+			conversationViewModel.nativeSMSSelectedIDs = [eventLogMessage.message.id]; conversationViewModel.nativeSMSSelection = true
+		}))
+		menu.actions.append(.init(title: "Forward", icon: "arrowshape.turn.up.right", perform: { conversationViewModel.forwardSelectedSMS(ids: [eventLogMessage.message.id]) }))
+		menu.actions.append(.init(title: "Message details", icon: "info.circle", perform: {
+			conversationViewModel.selectedMessageToDisplayDetails = eventLogMessage; conversationViewModel.prepareBottomSheetForDeliveryStatus()
+		}))
+		return menu
+	}
+
+	@ViewBuilder private var nativeSMSMenu: some View {
+		if let session = Mango9SessionStore.load(),
+			let record = reactionStore.smsMessages.first(where: { $0.id == eventLogMessage.message.id }) {
+			Mango9StaffReactionMenu(target: .init(account: Mango9ReactionTarget.accountKey(session), channel: .sms,
+				conversation: record.phone, message: record.id), session: session, state: record.reactionState,
+				actorID: reactionStore.currentUserId, actions: reactionActions)
+		}
+		if !eventLogMessage.message.text.isEmpty {
+			Button { UIPasteboard.general.string = eventLogMessage.message.text } label: { Label("Copy", systemImage: "doc.on.doc") }
+		}
+		Button {
+			conversationViewModel.messageToEdit = nil
+			conversationViewModel.messageToReply = eventLogMessage
+		} label: { Label("Reply", systemImage: "arrowshape.turn.up.left") }
+		Button { conversationViewModel.nativeSMSForwardMessage = eventLogMessage } label: { Label("Forward", systemImage: "arrowshape.turn.up.right") }
+		Button {
+			conversationViewModel.selectedMessageToDisplayDetails = eventLogMessage
+			conversationViewModel.prepareBottomSheetForDeliveryStatus()
+		} label: { Label("Message details", systemImage: "info.circle") }
+		if eventLogMessage.message.status == .error {
+			Button { conversationViewModel.resendMessage(chatMessage: eventLogMessage) } label: { Label("Retry message", systemImage: "arrow.clockwise") }
+		}
+		Button(role: .destructive) {
+			conversationViewModel.selectedMessage = eventLogMessage
+			conversationViewModel.deleteMessage()
+		} label: { Label("Delete for me", systemImage: "trash") }
+	}
+
 	var body: some View {
 		HStack {
 			if eventLogMessage.eventModel.eventLogType == .ConferenceChatMessage {
@@ -456,7 +521,10 @@ struct ChatBubbleView: View {
 												stroke: eventLogMessage.message.id == conversationViewModel.highlightedMessageID
 											)
 											
-											if !eventLogMessage.message.reactions.isEmpty {
+											if conversationViewModel.isSMSConversation,
+												let record = reactionStore.smsMessages.first(where: { $0.id == eventLogMessage.message.id }) {
+												Mango9ReactionBadges(state: record.reactionState)
+											} else if !eventLogMessage.message.reactions.isEmpty {
 												HStack {
 													ForEach(0..<eventLogMessage.message.reactions.count, id: \.self) { index in
 														if eventLogMessage.message.reactions.firstIndex(of: eventLogMessage.message.reactions[index]) == index {
@@ -507,8 +575,8 @@ struct ChatBubbleView: View {
 						.padding(.trailing, !eventLogMessage.message.isOutgoing ? 40 : 0)
 					}
 				}
-				.onTapGesture {}
-				.onLongPressGesture(minimumDuration: .infinity, maximumDistance: .infinity, pressing: { value in
+				.modifier(LegacyChatPressModifier(enabled: !conversationViewModel.isSMSConversation, pressing: { value in
+					guard !conversationViewModel.isSMSConversation else { return }
 					if !self.conversationViewModel.isSwiping {
 						self.isPressed = value
 						if !value {
@@ -524,8 +592,9 @@ struct ChatBubbleView: View {
 						self.ticker.stop()
 						return
 					}
-				}, perform: {})
+				}))
 				.onReceive(ticker.objectWillChange) { _ in
+					guard !conversationViewModel.isSMSConversation else { ticker.stop(); return }
 					guard isPressed else {
 						ticker.stop()
 						return
@@ -542,6 +611,15 @@ struct ChatBubbleView: View {
 						}
 					}
 				}
+				.mango9MessageActions(enabled: conversationViewModel.isSMSConversation && !conversationViewModel.nativeSMSSelection) { smsActions }
+				.mango9MessageSelection(active: conversationViewModel.isSMSConversation && conversationViewModel.nativeSMSSelection,
+					selected: conversationViewModel.nativeSMSSelectedIDs.contains(eventLogMessage.message.id)) {
+					let id = eventLogMessage.message.id
+					if !conversationViewModel.nativeSMSSelectedIDs.insert(id).inserted { conversationViewModel.nativeSMSSelectedIDs.remove(id) }
+				}
+				.alert("Reaction", isPresented: Binding(get: { reactionActions.notice != nil }, set: { if !$0 { reactionActions.notice = nil } })) {
+					Button("OK", role: .cancel) {}
+				} message: { Text(reactionActions.notice ?? "") }
 			} else if !eventLogMessage.eventModel.text.isEmpty {
 				HStack {
 					Spacer()

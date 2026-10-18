@@ -68,35 +68,38 @@ struct PhotoPicker: UIViewControllerRepresentable {
 	}
 	
 	static func convertToAttachmentArray(fromResults results: [PHPickerResult], onComplete: @escaping ([Attachment]?, Error?) -> Void) {
-		var medias = [Attachment]()
-		
+		// Providers complete on different queues and in an arbitrary order. Never
+		// mutate one Array concurrently or overwrite photos with identical names.
+		let lock = NSLock()
+		var medias: [Int: Attachment] = [:]
+		var failure: Error?
+		func record(_ index: Int, attachment: Attachment? = nil, error: Error? = nil) {
+			lock.lock(); defer { lock.unlock() }
+			if let attachment { medias[index] = attachment }
+			if let error { failure = error }
+		}
 		let dispatchGroup = DispatchGroup()
-		for result in results {
+		for (index, result) in results.enumerated() {
 			dispatchGroup.enter()
 			let itemProvider = result.itemProvider
 			if itemProvider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
 				itemProvider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { urlFile, error in
-					if urlFile != nil {
+					defer { dispatchGroup.leave() }
+					if let urlFile {
 						do {
-							let dataResult = try Data(contentsOf: urlFile!)
-							let urlImage = self.saveMedia(name: urlFile!.lastPathComponent, data: dataResult, type: .image)
-							if urlImage != nil {
-								let attachment = Attachment(id: UUID().uuidString, name: urlFile!.lastPathComponent, url: urlImage!, type: .image)
-								medias.append(attachment)
-							}
-						} catch {
-							
-						}
+							let id = UUID().uuidString
+							let urlImage = FileManager.default.temporaryDirectory.appendingPathComponent(id).appendingPathExtension(urlFile.pathExtension)
+							try FileManager.default.copyItem(at: urlFile, to: urlImage)
+							record(index, attachment: Attachment(id: id, name: urlFile.lastPathComponent, url: urlImage, type: .image))
+						} catch { record(index, error: error) }
 					} else {
-						Log.error("Could not load file representation: \(error?.localizedDescription ?? "unknown error")")
+						record(index, error: error ?? CocoaError(.fileReadUnknown))
 					}
-					
-					dispatchGroup.leave()
 				}
 			} else if itemProvider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
 				itemProvider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { urlFile, error in
 					guard let urlFile else {
-						Log.error("Could not load file representation: \(error?.localizedDescription ?? "unknown error")")
+						record(index, error: error ?? CocoaError(.fileReadUnknown))
 						dispatchGroup.leave()
 						return
 					}
@@ -106,18 +109,19 @@ struct PhotoPicker: UIViewControllerRepresentable {
 					) { result in
 						switch result {
 						case .success(let attachment):
-							medias.append(attachment)
+							record(index, attachment: attachment)
 						case .failure(let error):
-							Log.error("Could not prepare video attachment: \(error.localizedDescription)")
+							record(index, error: error)
 						}
 						dispatchGroup.leave()
 					}
 				}
-			}
+			} else { record(index, error: CocoaError(.fileReadUnknown)); dispatchGroup.leave() }
 		}
 		
 		dispatchGroup.notify(queue: .main) {
-			onComplete(medias, nil)
+			lock.lock(); let ordered = medias.keys.sorted().compactMap { medias[$0] }; let error = failure; lock.unlock()
+			onComplete(ordered, error)
 		}
 	}
 	

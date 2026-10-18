@@ -26,6 +26,7 @@ struct ConversationsFragment: View {
 	private var idiom: UIUserInterfaceIdiom { UIDevice.current.userInterfaceIdiom }
 	
 	@Binding var text: String
+	var onNewConversation: () -> Void
 	
 	@State var showingSheet: Bool = false
 	
@@ -37,7 +38,7 @@ struct ConversationsFragment: View {
 	var body: some View {
 		ZStack {
 			if #available(iOS 16.0, *), idiom != .pad {
-				ConversationsListFragment(text: $text, showingSheet: $showingSheet)
+				ConversationsListFragment(text: $text, showingSheet: $showingSheet, onNewConversation: onNewConversation)
 					.sheet(isPresented: $showingSheet) {
 						ConversationsListBottomSheet(
 							showingSheet: $showingSheet,
@@ -52,7 +53,7 @@ struct ConversationsFragment: View {
 						)
 					}
 			} else {
-				ConversationsListFragment(text: $text, showingSheet: $showingSheet)
+				ConversationsListFragment(text: $text, showingSheet: $showingSheet, onNewConversation: onNewConversation)
 					.halfSheet(showSheet: $showingSheet) {
 						ConversationsListBottomSheet(
 							showingSheet: $showingSheet,

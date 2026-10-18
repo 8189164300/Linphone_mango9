@@ -20,9 +20,10 @@
 import SwiftUI
 import linphonesw
 
-private enum Mango9ConversationTab: Hashable {
+enum Mango9ConversationTab: Hashable {
 	case sms
 	case team
+	case social
 }
 
 struct ConversationsListFragment: View {
@@ -32,12 +33,15 @@ struct ConversationsListFragment: View {
 	
 	@ObservedObject var contactsManager = ContactsManager.shared
 	@ObservedObject private var mango9ChatStore = Mango9ChatStore.shared
+	@ObservedObject private var conversationVisibility = Mango9PersonalConversationVisibility.shared
 	
 	@EnvironmentObject var conversationsListViewModel: ConversationsListViewModel
 	
 	@Binding var text: String
 	@Binding var showingSheet: Bool
+	var onNewConversation: () -> Void
 	@State private var mango9Tab: Mango9ConversationTab = .sms
+	@State private var showingNewTeamChat = false
 	
 	var body: some View {
 		VStack(spacing: 0) {
@@ -47,21 +51,33 @@ struct ConversationsListFragment: View {
 					smsUnreadCount: mango9ChatStore.smsUnreadCount,
 					teamUnreadCount: mango9ChatStore.teamUnreadCount
 				)
-				Mango9ConversationConnectionStatus(
-					isConnecting: mango9ChatStore.isConnecting,
-					isConnected: mango9ChatStore.isConnected
-				)
+				if mango9Tab != .social {
+					Mango9ConversationConnectionStatus(
+						isConnecting: mango9ChatStore.isConnecting,
+						isConnected: mango9ChatStore.isConnected
+					)
+				}
 				if mango9Tab == .sms {
 					mango9SMSConversationList
+				} else if mango9Tab == .social {
+					Mango9SocialChatList(searchText: conversationsListViewModel.currentFilter)
 				} else {
 					Mango9TeamChatListFragment(
 						embedded: true,
-						searchText: conversationsListViewModel.currentFilter
+						searchText: conversationsListViewModel.currentFilter,
+						isShowingNewChat: $showingNewTeamChat
 					)
 				}
 			} else {
 				legacyConversationList
 			}
+		}
+		.overlay(alignment: .bottomTrailing) {
+			Mango9ConversationComposeButton(tab: hasMango9Account ? mango9Tab : .sms,
+				onSMS: onNewConversation, onTeam: { showingNewTeamChat = true })
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in
+			showingNewTeamChat = false
 		}
 		.navigationTitle("")
 		.navigationBarHidden(true)
@@ -82,7 +98,7 @@ struct ConversationsListFragment: View {
 			guard hasMango9Account else { return }
 			if mango9Tab == .sms {
 				await mango9ChatStore.refreshSMSDirectory()
-			} else {
+			} else if mango9Tab == .team {
 				await mango9ChatStore.connectIfNeeded()
 				await mango9ChatStore.refreshDirectory()
 			}
@@ -97,8 +113,9 @@ struct ConversationsListFragment: View {
 		guard Mango9SessionStore.load() != nil else { return [] }
 		let query = conversationsListViewModel.currentFilter
 			.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !query.isEmpty else { return mango9ChatStore.smsParties }
-		return mango9ChatStore.smsParties.filter {
+		let parties = mango9ChatStore.smsParties.filter { !conversationVisibility.isHidden($0.phone, channel: .sms) }
+		guard !query.isEmpty else { return parties }
+		return parties.filter {
 			Mango9CallerIdentity.formattedPhoneNumber($0.phone)
 				.localizedCaseInsensitiveContains(query)
 			|| $0.lastMessage.localizedCaseInsensitiveContains(query)
@@ -123,11 +140,13 @@ struct ConversationsListFragment: View {
 						)
 					}
 					.listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 14))
+					.mango9SMSConversationActions(phone: party.phone, title: Mango9CallerIdentity.formattedPhoneNumber(party.phone))
 					.listRowSeparator(.hidden)
 					.listRowBackground(Color.white)
 			}
 		}
 		.listStyle(.plain)
+		.mango9ConversationVisibilityRefresh(channel: .sms, ids: mango9ChatStore.smsParties.map(\.phone))
 		.refreshable {
 			await mango9ChatStore.refreshSMSDirectory()
 		}
@@ -256,7 +275,7 @@ struct ConversationsListFragment: View {
 	}
 }
 
-private struct Mango9ConversationTabs: View {
+struct Mango9ConversationTabs: View {
 	@Binding var selectedTab: Mango9ConversationTab
 	let smsUnreadCount: Int
 	let teamUnreadCount: Int
@@ -273,6 +292,7 @@ private struct Mango9ConversationTabs: View {
 				tab: .team,
 				unreadCount: teamUnreadCount
 			)
+			tabButton(title: "Social", tab: .social, unreadCount: 0)
 		}
 		.frame(height: 48)
 		.background(Color.white)
@@ -588,6 +608,7 @@ struct ConversationRow: View {
 #Preview {
 	ConversationsListFragment(
 		text: .constant(""),
-		showingSheet: .constant(false)
+		showingSheet: .constant(false),
+		onNewConversation: {}
 	)
 }
