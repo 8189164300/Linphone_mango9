@@ -37,7 +37,6 @@ import androidx.annotation.StringRes
 import androidx.annotation.UiThread
 import androidx.core.content.ContextCompat
 import androidx.core.view.SoftwareKeyboardControllerCompat
-import java.util.Locale
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.core.tools.Log
 
@@ -136,31 +135,7 @@ class AppUtils {
 
         @AnyThread
         fun getInitials(displayName: String, limit: Int = 2): String {
-            if (displayName.isEmpty()) return ""
-
-            val split = displayName.uppercase(Locale.getDefault()).split(" ")
-            var initials = ""
-            var characters = 0
-
-            for (i in split.indices) {
-                val split = split[i]
-                if (split.isNotEmpty()) {
-                    try {
-                        val symbol = extractFirstSymbol(split)
-                        initials += symbol
-                        if (symbol.length > 1) {
-                            break
-                        }
-                    } catch (e: Exception) {
-                        Log.e("$TAG Failed to extract first symbol if any: $e")
-                        initials += split[0]
-                    }
-
-                    characters += 1
-                    if (characters >= limit) break
-                }
-            }
-            return initials
+            return org.linphone.contacts.ContactInitials.fromName(displayName, limit)
         }
 
         @AnyThread

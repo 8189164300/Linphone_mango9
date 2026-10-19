@@ -14,6 +14,7 @@ coreKtx = "1.18.0"
 splashscreen = "1.2.0"
 telecom = "1.1.0-alpha05"
 media = "1.8.0"
+media3 = "1.11.1"
 recyclerview = "1.4.0"
 swipeRefreshLayout = "1.2.0"
 slidingpanelayout = "1.2.0"
@@ -32,7 +33,7 @@ dotsIndicator = "5.1.0"
 photoview = "2.3.0"
 openidAppauth = "0.11.1"
 okhttp = "5.3.0"
-linphone = "5.5.17-pre.1+3896ec0681"
+linphone = "5.5.32"
 junit4 = "4.13.2"
 jsonJava = "20260814"
 androidxTest = "1.6.1"
@@ -47,6 +48,8 @@ androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = 
 androidx-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "splashscreen" }
 androidx-telecom = { group = "androidx.core", name = "core-telecom", version.ref = "telecom" }
 androidx-media = { group = "androidx.media", name = "media", version.ref = "media" }
+androidx-media3-transformer = { group = "androidx.media3", name = "media3-transformer", version.ref = "media3" }
+androidx-media3-effect = { group = "androidx.media3", name = "media3-effect", version.ref = "media3" }
 androidx-recyclerview = { group = "androidx.recyclerview", name = "recyclerview", version.ref = "recyclerview" }
 androidx-swiperefreshlayout = { group = "androidx.swiperefreshlayout", name = "swiperefreshlayout", version.ref = "swipeRefreshLayout" }
 androidx-slidingpanelayout = { group = "androidx.slidingpanelayout", name = "slidingpanelayout", version.ref = "slidingpanelayout" }
@@ -57,6 +60,7 @@ androidx-navigation-fragment-ktx = { group = "androidx.navigation", name = "navi
 androidx-navigation-ui-ktx = { group = "androidx.navigation", name = "navigation-ui-ktx", version.ref = "navigation" }
 androidx-emoji2 = { group = "androidx.emoji2", name = "emoji2-emojipicker", version.ref = "emoji2" }
 androidx-car = { group = "androidx.car.app", name = "app", version.ref = "car" }
+androidx-car-testing = { group = "androidx.car.app", name = "app-testing", version.ref = "car" }
 
 google-firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBomVersion" }
 google-firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }

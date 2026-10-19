@@ -55,7 +55,6 @@
     <string name="settings_user_interface_title">Interface do usuário</string>
     <string name="settings_advanced_print_logs_crashlytics_title">Ajudar os desenvolvedores a solucionar problemas enviando logs para o Crashlytics após uma falha</string>
     <string name="remote_provisioning_config_failed_toast">Erro ao tentar baixar e aplicar a configuração remota</string>
-    <string name="assistant_qr_code_invalid_toast">QR code inválido!</string>
     <string name="assistant_create_account_using_email_on_our_web_platform">Crie uma conta com seu e-mail em:</string>
     <string name="assistant_third_party_sip_account_warning_explanation">Alguns recursos exigem uma conta &appName;, como mensagens em grupo, videoconferências…\n\nEsses recursos ficam ocultos quando você se registra com uma conta SIP de terceiros.\n\nPara habilitá-los em um projeto comercial, entre em contato conosco.</string>
     <string name="assistant_permissions_skip_permissions">Fazer isso mais tarde</string>
@@ -145,7 +144,6 @@
     <string name="assistant_dialog_confirm_phone_number_title">Confirmar número de telefone</string>
     <string name="assistant_dialog_confirm_phone_number_message">Tem certeza de que seu número de telefone é %s?</string>
     <string name="assistant_account_login">Login</string>
-    <string name="assistant_scan_qr_code">Escanear QR code</string>
     <string name="assistant_login_third_party_sip_account">Usar uma conta SIP de terceiros</string>
     <string name="assistant_login_third_party_sip_account_title">Conta SIP de terceiros</string>
     <string name="assistant_login_using_single_sign_on">Login único</string>

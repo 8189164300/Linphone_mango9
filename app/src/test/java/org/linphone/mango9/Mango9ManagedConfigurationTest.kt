@@ -105,4 +105,19 @@ class Mango9ManagedConfigurationTest {
             Mango9ManagedConfigBackupCodec.decodeKey(Mango9ManagedConfigBackupCodec.encodeKey(backup.entryKey)),
         )
     }
+
+    @Test
+    fun corruptedBackupFlagsAreNotInterpretedAsPermissionToDelete() {
+        val backup = Mango9ManagedConfigEntryBackup("ui", "value", true, "original", true, false)
+        val fields = Mango9ManagedConfigBackupCodec.encode(backup).split('.')
+        for (index in listOf(2, 4, 5)) {
+            assertNull(
+                Mango9ManagedConfigBackupCodec.decode(
+                    fields.toMutableList().apply {
+                this[index] = "invalid"
+            }.joinToString(".")
+                )
+            )
+        }
+    }
 }

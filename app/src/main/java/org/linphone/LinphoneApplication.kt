@@ -44,6 +44,7 @@ import org.linphone.core.VFS
 import org.linphone.core.tools.Log
 import org.linphone.mango9.Mango9FirebaseTokenSync
 import org.linphone.mango9.Mango9ManagedConfigurationManager
+import org.linphone.mango9.Mango9MessagePushSync
 
 @MainThread
 class LinphoneApplication : Application(), SingletonImageLoader.Factory {
@@ -107,6 +108,7 @@ class LinphoneApplication : Application(), SingletonImageLoader.Factory {
         coreContext = CoreContext(context)
         managedConfigurationManager.attach(coreContext)
         coreContext.start()
+        Mango9MessagePushSync.resumeAfterProcessStart(context)
         if (BuildConfig.MANGO9_FCM_ENABLED) {
             Mango9FirebaseTokenSync.refresh(context)
         }

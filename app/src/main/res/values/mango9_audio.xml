@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mango9_audio_message">Voice message</string>
+    <string name="mango9_audio_play">Play voice message</string>
+    <string name="mango9_audio_pause">Pause voice message</string>
+    <string name="mango9_audio_retry">Retry voice message</string>
+    <string name="mango9_audio_cancel">Cancel loading voice message</string>
+    <string name="mango9_audio_seek">Playback position</string>
+    <string name="mango9_audio_loading">Loading audio…</string>
+    <string name="mango9_audio_error">Audio couldn’t play. Tap to retry.</string>
+    <string name="mango9_audio_focus_denied">Audio is busy. Try again when your call or other audio ends.</string>
+</resources>

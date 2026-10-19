@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Fixed Mango9 call palette; video and security warnings retain their own contrast. -->
+    <color name="mango9_call_canvas">#FFFFFF</color>
+    <color name="mango9_call_tray">#F5F6FA</color>
+    <color name="mango9_call_control">#E9EDF3</color>
+    <color name="mango9_call_divider">#DDE3EB</color>
+    <color name="mango9_call_accent">#4053C8</color>
+    <color name="mango9_call_ink">#22334D</color>
+    <color name="mango9_call_secondary">#4E6074</color>
+    <color name="mango9_call_disabled">#68788D</color>
+    <color name="mango9_call_destructive">#DD5F5F</color>
+    <color name="mango9_call_destructive_pressed">#BF4D4D</color>
+    <color name="mango9_call_meter">#334053C8</color>
+    <color name="mango9_call_meter_selected">#3CFFFFFF</color>
+    <color name="mango9_call_video_scrim">#B322334D</color>
+    <color name="mango9_call_warning">#8A5A00</color>
+    <color name="mango9_call_security_info">#2363AB</color>
+    <string name="mango9_call_mute">Mute microphone</string>
+    <string name="mango9_call_unmute">Unmute microphone</string>
+    <string name="mango9_call_camera_on">Turn camera on</string>
+    <string name="mango9_call_camera_off">Turn camera off</string>
+    <style name="Mango9CallHeader" parent="call_header_style">
+        <item name="android:textColor">@color/mango9_call_ink</item>
+    </style>
+    <style name="Mango9CallNumpadButton" parent="numpad_button_style">
+        <item name="android:layout_height">wrap_content</item>
+    </style>
+    <style name="Mango9CallPalette" parent="Mango9CallPaletteBase" />
+    <style name="Mango9CallPaletteBase" parent="">
+        <item name="android:windowBackground">@color/mango9_call_canvas</item>
+        <item name="android:colorBackground">@color/mango9_call_canvas</item>
+        <item name="android:textColorPrimary">@color/mango9_call_ink</item>
+        <item name="android:textColorSecondary">@color/mango9_call_secondary</item>
+        <item name="colorSurface">@color/mango9_call_tray</item>
+        <item name="colorOnSurface">@color/mango9_call_ink</item>
+        <item name="colorPrimary">@color/mango9_call_accent</item>
+        <item name="colorOnPrimary">@color/bc_white</item>
+        <item name="color_main1_500">@color/mango9_call_accent</item>
+        <item name="color_main1_100">@color/mango9_call_control</item>
+        <item name="color_main2_000">@color/mango9_call_canvas</item>
+        <item name="color_main2_100">@color/mango9_call_tray</item>
+        <item name="color_main2_200">@color/mango9_call_divider</item>
+        <item name="color_main2_300">@color/mango9_call_divider</item>
+        <item name="color_main2_400">@color/mango9_call_disabled</item>
+        <item name="color_main2_500">@color/mango9_call_secondary</item>
+        <item name="color_main2_600">@color/mango9_call_secondary</item>
+        <item name="color_main2_700">@color/mango9_call_ink</item>
+        <item name="color_main2_800">@color/mango9_call_ink</item>
+        <item name="color_main2_900">@color/mango9_call_ink</item>
+        <item name="color_grey_100">@color/mango9_call_tray</item>
+        <item name="color_grey_200">@color/mango9_call_control</item>
+        <item name="color_grey_300">@color/mango9_call_divider</item>
+        <item name="color_grey_400">@color/mango9_call_disabled</item>
+        <item name="color_grey_500">@color/mango9_call_secondary</item>
+        <item name="color_grey_600">@color/mango9_call_secondary</item>
+        <item name="color_grey_800">@color/mango9_call_ink</item>
+        <item name="color_grey_900">@color/mango9_call_ink</item>
+        <item name="color_text">@color/mango9_call_ink</item>
+        <item name="color_hint_text">@color/mango9_call_secondary</item>
+        <item name="color_separator">@color/mango9_call_divider</item>
+        <item name="color_background_contrast_in_dark_mode">@color/mango9_call_canvas</item>
+        <item name="color_bottom_sheet_background">@color/mango9_call_tray</item>
+        <item name="color_bottom_sheet_handle">@color/mango9_call_secondary</item>
+        <item name="color_bottom_sheet_disabled_menu">@color/mango9_call_disabled</item>
+        <item name="color_button_background">@color/mango9_call_control</item>
+        <item name="color_button_pressed_background">@color/mango9_call_divider</item>
+        <item name="color_button_disabled_background">@color/mango9_call_control</item>
+    </style>
+    <integer name="mango9_call_keypad_columns">3</integer>
+</resources>

@@ -93,9 +93,14 @@ class CallLogModel
             friendExists = false
         } else {
             avatarModel = coreContext.contactsManager.getContactAvatarModelForAddress(address)
-            val friend = avatarModel.friend
-            friendRefKey = friend.refKey
-            friendExists = coreContext.contactsManager.isContactAvailable(friend)
+            if (avatarModel.nativeContact != null) {
+                friendRefKey = avatarModel.id
+                friendExists = coreContext.contactsManager.nativeContactsSnapshot().find(avatarModel.id) != null
+            } else {
+                val friend = avatarModel.friend
+                friendRefKey = friend.refKey
+                friendExists = coreContext.contactsManager.isContactAvailable(friend)
+            }
         }
         displayedAddress = if (corePreferences.onlyDisplaySipUriUsername) {
             address.username ?: ""

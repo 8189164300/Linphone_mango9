@@ -12,9 +12,10 @@
             type="org.linphone.ui.call.model.CallMediaEncryptionModel" />
     </data>
 
-    <androidx.constraintlayout.widget.ConstraintLayout
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:orientation="vertical"
         android:background="@drawable/shape_call_bottom_sheet_background"
         android:clickable="true"
         android:focusable="true"
@@ -23,26 +24,32 @@
         app:behavior_peekHeight="0dp"
         app:layout_behavior="com.google.android.material.bottomsheet.BottomSheetBehavior">
 
-    <com.google.android.material.bottomsheet.BottomSheetDragHandleView
+        <com.google.android.material.bottomsheet.BottomSheetDragHandleView
         android:id="@+id/media_encryption_stats_bottom_sheet_handle"
-        android:layout_width="0dp"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:padding="11dp"
         android:src="@drawable/shape_drawer_handle"
-        app:tint="@color/bc_white"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:tint="@color/mango9_call_ink" />
 
-        <androidx.gridlayout.widget.GridLayout
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/call_encryption_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clipToPadding="false">
+
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+<androidx.gridlayout.widget.GridLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="20dp"
             android:layout_marginEnd="20dp"
             android:layout_marginBottom="20dp"
-            android:background="@drawable/shape_squircle_gray_600_background"
+            android:background="@drawable/mango9_call_card"
             app:columnCount="2"
-            app:layout_constraintTop_toBottomOf="@id/media_encryption_stats_bottom_sheet_handle"
+            app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintBottom_toBottomOf="parent">
@@ -54,7 +61,7 @@
                 android:layout_marginTop="10dp"
                 android:text="@string/call_stats_media_encryption_title"
                 android:textSize="12sp"
-                android:textColor="@color/bc_white"
+                android:textColor="@color/mango9_call_ink"
                 android:gravity="center"
                 app:layout_columnSpan="2"/>
 
@@ -66,7 +73,7 @@
                 android:layout_marginEnd="16dp"
                 android:layout_marginTop="10dp"
                 android:text="@{model.mediaEncryption, default=`Media Encryption: Post Quantum ZRTP`}"
-                android:textColor="@color/bc_white"
+                android:textColor="@color/mango9_call_ink"
                 android:gravity="center"
                 app:layout_columnWeight="1" />
 
@@ -78,7 +85,7 @@
                 android:layout_marginEnd="16dp"
                 android:layout_marginTop="10dp"
                 android:text="@{model.zrtpCipher, default=@string/call_stats_zrtp_cipher_algo}"
-                android:textColor="@color/bc_white"
+                android:textColor="@color/mango9_call_ink"
                 android:gravity="center"
                 android:visibility="@{model.isMediaEncryptionZrtp ? View.VISIBLE : View.GONE}"
                 app:layout_columnWeight="1"/>
@@ -91,7 +98,7 @@
                 android:layout_marginEnd="16dp"
                 android:layout_marginTop="10dp"
                 android:text="@{model.zrtpKeyAgreement, default=@string/call_stats_zrtp_key_agreement_algo}"
-                android:textColor="@color/bc_white"
+                android:textColor="@color/mango9_call_ink"
                 android:gravity="center"
                 android:visibility="@{model.isMediaEncryptionZrtp ? View.VISIBLE : View.GONE}"
                 app:layout_columnWeight="1" />
@@ -104,7 +111,7 @@
                 android:layout_marginEnd="16dp"
                 android:layout_marginTop="10dp"
                 android:text="@{model.zrtpHash, default=@string/call_stats_zrtp_hash_algo}"
-                android:textColor="@color/bc_white"
+                android:textColor="@color/mango9_call_ink"
                 android:gravity="center"
                 android:visibility="@{model.isMediaEncryptionZrtp ? View.VISIBLE : View.GONE}"
                 app:layout_columnWeight="1" />
@@ -117,7 +124,7 @@
                 android:layout_marginEnd="16dp"
                 android:layout_marginTop="10dp"
                 android:text="@{model.zrtpAuthTag, default=@string/call_stats_zrtp_auth_tag_algo}"
-                android:textColor="@color/bc_white"
+                android:textColor="@color/mango9_call_ink"
                 android:gravity="center"
                 android:visibility="@{model.isMediaEncryptionZrtp ? View.VISIBLE : View.GONE}"
                 app:layout_columnWeight="1" />
@@ -130,7 +137,7 @@
                 android:layout_marginEnd="16dp"
                 android:layout_marginTop="10dp"
                 android:text="@{model.zrtpAuthSas, default=@string/call_stats_zrtp_sas_algo}"
-                android:textColor="@color/bc_white"
+                android:textColor="@color/mango9_call_ink"
                 android:gravity="center"
                 android:visibility="@{model.isMediaEncryptionZrtp ? View.VISIBLE : View.GONE}"
                 app:layout_columnWeight="1" />
@@ -147,7 +154,8 @@
                 app:layout_gravity="center_horizontal"/>
 
         </androidx.gridlayout.widget.GridLayout>
-
-    </androidx.constraintlayout.widget.ConstraintLayout>
+            </androidx.constraintlayout.widget.ConstraintLayout>
+        </androidx.core.widget.NestedScrollView>
+    </LinearLayout>
 
 </layout>

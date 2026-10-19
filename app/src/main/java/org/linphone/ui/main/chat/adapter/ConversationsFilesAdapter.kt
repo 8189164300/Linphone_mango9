@@ -19,6 +19,7 @@
  */
 package org.linphone.ui.main.chat.adapter
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.view.LayoutInflater
 import android.view.View
@@ -36,6 +37,7 @@ import org.linphone.databinding.MeetingsListDecorationBinding
 import org.linphone.ui.main.chat.model.FileModel
 import org.linphone.utils.AppUtils
 import org.linphone.utils.HeaderAdapter
+import java.io.Closeable
 
 class ConversationsFilesAdapter :
     ListAdapter<FileModel, RecyclerView.ViewHolder>(
@@ -49,6 +51,13 @@ class ConversationsFilesAdapter :
 
     private val topBottomPadding = AppUtils.getDimension(R.dimen.chat_documents_list_padding_top_bottom).toInt()
     private val startEndPadding = AppUtils.getDimension(R.dimen.chat_documents_list_padding_start_end).toInt()
+    private val holders = linkedSetOf<FileViewHolder>()
+    private var presentationEnabled = true
+
+    fun setPresentationEnabled(enabled: Boolean) {
+        presentationEnabled = enabled
+        holders.forEach { it.setActive(enabled && it.attached) }
+    }
 
     override fun displayHeaderForPosition(position: Int): Boolean {
         if (position == 0) return true
@@ -109,19 +118,59 @@ class ConversationsFilesAdapter :
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         val fileModel = getItem(position)
-        when (holder) {
-            is MediaFileViewHolder -> holder.bind(fileModel)
-            is DocumentFileViewHolder -> holder.bind(fileModel)
+        (holder as FileViewHolder).let { holders.add(it); it.bind(fileModel) }
+    }
+
+    override fun onViewAttachedToWindow(holder: RecyclerView.ViewHolder) {
+        super.onViewAttachedToWindow(holder)
+        (holder as FileViewHolder).let { holders.add(it); it.attached = true; it.setActive(presentationEnabled) }
+    }
+
+    override fun onViewDetachedFromWindow(holder: RecyclerView.ViewHolder) {
+        (holder as FileViewHolder).let { it.attached = false; it.setActive(false) }
+        super.onViewDetachedFromWindow(holder)
+    }
+
+    override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+        (holder as FileViewHolder).let { it.recycle(); holders.remove(it) }
+        super.onViewRecycled(holder)
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        holders.forEach { it.recycle() }; holders.clear()
+        super.onDetachedFromRecyclerView(recyclerView)
+    }
+
+    abstract class FileViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        var attached = false
+        private var active = false
+        private var file: FileModel? = null
+        private var presentation: Closeable? = null
+
+        @UiThread fun bind(model: FileModel) {
+            if (file !== model) { presentation?.close(); presentation = null; file = model }
+            render(model)
+            if (active && presentation == null) presentation = model.retainPresentation()
         }
+
+        fun setActive(value: Boolean) {
+            active = value
+            if (value) {
+                if (presentation == null) presentation = file?.retainPresentation()
+            } else { presentation?.close(); presentation = null }
+        }
+
+        fun recycle() { attached = false; setActive(false); file = null; render(null) }
+
+        protected abstract fun render(model: FileModel?)
     }
 
     class MediaFileViewHolder(
         val binding: ChatMediaContentGridCellBinding
-    ) : RecyclerView.ViewHolder(binding.root) {
-        @UiThread
-        fun bind(fileModel: FileModel) {
+    ) : FileViewHolder(binding.root) {
+        override fun render(model: FileModel?) {
             with(binding) {
-                model = fileModel
+                this.model = model
                 executePendingBindings()
             }
         }
@@ -129,11 +178,10 @@ class ConversationsFilesAdapter :
 
     class DocumentFileViewHolder(
         val binding: ChatBubbleSingleFileContentBinding
-    ) : RecyclerView.ViewHolder(binding.root) {
-        @UiThread
-        fun bind(fileModel: FileModel) {
+    ) : FileViewHolder(binding.root) {
+        override fun render(model: FileModel?) {
             with(binding) {
-                model = fileModel
+                this.model = model
                 executePendingBindings()
             }
         }
@@ -141,11 +189,14 @@ class ConversationsFilesAdapter :
 
     private class FilesDiffCallback : DiffUtil.ItemCallback<FileModel>() {
         override fun areItemsTheSame(oldItem: FileModel, newItem: FileModel): Boolean {
-            return oldItem.path == newItem.path && oldItem.fileName == newItem.fileName
+            return oldItem.originalPath == newItem.originalPath && oldItem.fileName == newItem.fileName &&
+                oldItem.relatedMessageId == newItem.relatedMessageId && oldItem.fileCreationTimestamp == newItem.fileCreationTimestamp
         }
 
+        @SuppressLint("DiffUtilEquals") // These observable models own callbacks/leases; replacement must rebind.
         override fun areContentsTheSame(oldItem: FileModel, newItem: FileModel): Boolean {
-            return oldItem.mimeType == newItem.mimeType
+            // A replacement owns new callbacks/leases even when metadata is unchanged.
+            return oldItem === newItem
         }
     }
 }

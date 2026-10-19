@@ -26,7 +26,6 @@ import androidx.annotation.WorkerThread
 import androidx.lifecycle.MutableLiveData
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.R
-import org.linphone.core.Address
 import org.linphone.core.ChatRoom
 import org.linphone.core.Conference
 import org.linphone.core.ConferenceListenerStub
@@ -86,7 +85,9 @@ abstract class AbstractConversationViewModel : GenericViewModel() {
     fun findChatRoom(room: ChatRoom?, conversationId: String) {
         coreContext.postOnCoreThread { core ->
             Log.i("$TAG Looking for conversation with conversation ID [$conversationId]")
-            if (room != null && ::chatRoom.isInitialized && chatRoom == room) {
+            if (room != null && ::chatRoom.isInitialized && chatRoom == room &&
+                conversationId == LinphoneUtils.getConversationId(room)
+            ) {
                 Log.i("$TAG Conversation object already in memory, skipping")
 
                 this@AbstractConversationViewModel.conversationId = conversationId
@@ -169,31 +170,23 @@ abstract class AbstractConversationViewModel : GenericViewModel() {
                 return@postOnCoreThread
             }
 
-            val conference = LinphoneUtils.createGroupCall(account, chatRoom.subjectUtf8.orEmpty())
-            if (conference == null) {
-                Log.e("$TAG Failed to create group call!")
-                showRedToast(R.string.conference_failed_to_create_group_call_toast, R.drawable.warning_circle)
-                return@postOnCoreThread
-            }
-
-            val callParams = core.createCallParams(null)
-            callParams?.isVideoEnabled = true
-            callParams?.videoDirection = MediaDirection.RecvOnly
-
-            val participants = arrayOfNulls<Address>(chatRoom.participants.size)
-            var index = 0
-            for (participant in chatRoom.participants) {
-                participants[index] = participant.address
-                index += 1
-            }
-            Log.i(
-                "$TAG Inviting ${participants.size} participant(s) into newly created conference"
-            )
-            if (conference.inviteParticipants(participants, callParams) != 0) {
-                Log.e("$TAG Failed to invite participants into group call!")
-                showRedToast(R.string.conference_failed_to_create_group_call_toast, R.drawable.warning_circle)
-            } else {
+            val subject = chatRoom.subjectUtf8.orEmpty()
+            val participants = chatRoom.participants.map { it.address.clone() }.toTypedArray()
+            coreContext.withOutgoingCallMicrophone(account) {
+                val conference = LinphoneUtils.createGroupCall(account, subject)
+                    ?: return@withOutgoingCallMicrophone false
+                val callParams = core.createCallParams(null)
+                callParams?.account = account
+                callParams?.isVideoEnabled = true
+                callParams?.videoDirection = MediaDirection.RecvOnly
                 conference.addListener(conferenceListener)
+                val started = conference.inviteParticipants(participants, callParams) == 0
+                if (!started) {
+                    conference.removeListener(conferenceListener)
+                    conference.terminate()
+                    showRedToast(R.string.conference_failed_to_create_group_call_toast, R.drawable.warning_circle)
+                }
+                started
             }
         }
     }

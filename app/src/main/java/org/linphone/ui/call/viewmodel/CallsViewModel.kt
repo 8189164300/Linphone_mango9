@@ -232,13 +232,20 @@ class CallsViewModel
                 AppUtils.getString(R.string.conference_locally_hosted_title)
             }
 
-            val conference = LinphoneUtils.createGroupCall(defaultAccount, subject)
-            if (conference == null) {
-                Log.e("$TAG Failed to create conference!")
-                showRedToast(R.string.conference_failed_to_merge_calls_into_conference_toast, R.drawable.warning_circle)
-            } else {
-                conference.addParticipants(core.calls)
-                allCallsIntoConference.postValue(true)
+            val callsToMerge = core.calls.copyOf()
+            coreContext.withOutgoingCallMicrophone(defaultAccount) {
+                if (callsToMerge.isEmpty() || callsToMerge.any { selected -> core.calls.none { it === selected } }) {
+                    return@withOutgoingCallMicrophone false
+                }
+                val conference = LinphoneUtils.createGroupCall(defaultAccount, subject)
+                if (conference == null) {
+                    showRedToast(R.string.conference_failed_to_merge_calls_into_conference_toast, R.drawable.warning_circle)
+                    false
+                } else {
+                    conference.addParticipants(callsToMerge)
+                    allCallsIntoConference.postValue(true)
+                    true
+                }
             }
         }
     }

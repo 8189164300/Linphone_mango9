@@ -30,6 +30,7 @@ import android.widget.SeekBar
 import androidx.annotation.UiThread
 import androidx.lifecycle.ViewModelProvider
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9NativeAttachment
 import org.linphone.databinding.FileMediaViewerChildFragmentBinding
 import org.linphone.ui.fileviewer.viewmodel.MediaViewModel
 import org.linphone.ui.main.fragment.GenericMainFragment
@@ -48,13 +49,15 @@ class MediaViewerFragment : GenericMainFragment() {
 
     private var wasVideoPlayingBeforeTrackingTouch = false
 
+    private var playerSurface: Surface? = null
+
     private val seekBarListener = object : SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
 
         }
 
         override fun onStartTrackingTouch(seekBar: SeekBar) {
-            wasVideoPlayingBeforeTrackingTouch = viewModel.isMediaPlaying.value == true
+            wasVideoPlayingBeforeTrackingTouch = viewModel.isPlaybackRequested.value == true
             viewModel.pause()
         }
 
@@ -81,6 +84,13 @@ class MediaViewerFragment : GenericMainFragment() {
         }
 
         viewModel = ViewModelProvider(this)[MediaViewModel::class.java]
+        val nativeLease = ViewModelProvider(this)[org.linphone.ui.fileviewer.viewmodel.Mango9NativeViewerLease::class.java]
+        if (!nativeLease.accept(requireArguments())) {
+            viewModel.releasePlayback()
+            requireActivity().finish()
+            return
+        }
+        viewModel.retainNativeFile(nativeLease.retainFile())
         viewModel.fullScreenMode.value = sharedViewModel.mediaViewerFullScreenMode.value == true
 
         binding.lifecycleOwner = viewLifecycleOwner
@@ -99,7 +109,10 @@ class MediaViewerFragment : GenericMainFragment() {
 
         val exists = FileUtils.doesFileExist(path)
         Log.i("$TAG Path argument is [$path], it ${if (exists) "exists" else "doesn't exist"}")
-        viewModel.loadFile(path)
+        viewModel.loadFile(
+            path, mimeType = arguments?.getString(Mango9NativeAttachment.MIME),
+            displayName = arguments?.getString(Mango9NativeAttachment.NAME)
+        )
 
         binding.setToggleFullScreenModeClickListener {
             val fullScreenMode = viewModel.toggleFullScreen()
@@ -122,6 +135,23 @@ class MediaViewerFragment : GenericMainFragment() {
                 sharedViewModel.mediaViewerFullScreenMode.value = fullScreenMode
             }
         }
+
+        binding.videoPlayer.surfaceTextureListener = object : SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+                attachSurface(texture)
+                if (isResumed) viewModel.play()
+            }
+
+            override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
+
+            override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                viewModel.pause()
+                detachSurface()
+                return true
+            }
+
+            override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+        }
     }
 
     override fun onResume() {
@@ -129,45 +159,45 @@ class MediaViewerFragment : GenericMainFragment() {
 
         val textureView = binding.videoPlayer
         if (textureView.isAvailable) {
-            Log.i("$TAG Surface created, setting display in mediaPlayer")
-            viewModel.setMediaPlayerSurface((Surface(textureView.surfaceTexture)))
-        } else {
-            Log.i("$TAG Surface not available yet, setting listener")
-            textureView.surfaceTextureListener = object : SurfaceTextureListener {
-                override fun onSurfaceTextureAvailable(
-                    surfaceTexture: SurfaceTexture,
-                    p1: Int,
-                    p2: Int
-                ) {
-                    Log.i("$TAG Surface available, setting display in mediaPlayer")
-                    viewModel.setMediaPlayerSurface(Surface(surfaceTexture))
-                }
-
-                override fun onSurfaceTextureSizeChanged(
-                    surfaceTexture: SurfaceTexture,
-                    p1: Int,
-                    p2: Int
-                ) {
-                }
-
-                override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
-                    return true
-                }
-
-                override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) {
-                }
-            }
+            textureView.surfaceTexture?.let { attachSurface(it) }
         }
 
         viewModel.play()
     }
 
     override fun onPause() {
-        if (viewModel.isMediaPlaying.value == true) {
-            Log.i("$TAG Paused, stopping media player")
-            viewModel.pause()
-        }
-
+        // A file can still be Preparing here; cancel its pending autoplay too.
+        viewModel.pause()
         super.onPause()
+    }
+
+    override fun onStop() {
+        viewModel.releasePlayback()
+        detachSurface()
+        super.onStop()
+    }
+
+    override fun onDestroyView() {
+        binding.videoPlayer.surfaceTextureListener = null
+        viewModel.releasePlayback()
+        detachSurface()
+        binding.unbind()
+        super.onDestroyView()
+    }
+
+    private fun attachSurface(texture: SurfaceTexture) {
+        detachSurface()
+        playerSurface = Surface(texture)
+        viewModel.setMediaPlayerSurface(playerSurface)
+    }
+
+    internal fun releaseOwnedPlayback() {
+        if (::viewModel.isInitialized) viewModel.releasePlayback()
+    }
+
+    private fun detachSurface() {
+        viewModel.setMediaPlayerSurface(null)
+        playerSurface?.release()
+        playerSurface = null
     }
 }

@@ -19,6 +19,8 @@
  */
 package org.linphone.ui.main.chat.fragment
 
+import org.linphone.mango9.Mango9NativeAttachment
+
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
@@ -36,7 +38,6 @@ import org.linphone.R
 import org.linphone.core.tools.Log
 import org.linphone.databinding.ChatMediaFragmentBinding
 import org.linphone.ui.GenericActivity
-import org.linphone.ui.main.chat.RecyclerViewScrollListener
 import org.linphone.ui.main.chat.adapter.ConversationsFilesAdapter
 import org.linphone.ui.main.chat.model.FileModel
 import org.linphone.ui.main.chat.viewmodel.ConversationMediaListViewModel
@@ -59,7 +60,7 @@ class ConversationMediaListFragment : SlidingPaneChildFragment() {
 
     private val args: ConversationMediaListFragmentArgs by navArgs()
 
-    private lateinit var scrollListener: RecyclerViewScrollListener
+    private lateinit var scrollListener: RecyclerView.OnScrollListener
 
     override fun goBack(): Boolean {
         try {
@@ -73,7 +74,7 @@ class ConversationMediaListFragment : SlidingPaneChildFragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        adapter = ConversationsFilesAdapter()
+        adapter = ConversationsFilesAdapter().apply { setPresentationEnabled(false) }
     }
 
     override fun onCreateView(
@@ -171,27 +172,20 @@ class ConversationMediaListFragment : SlidingPaneChildFragment() {
             }
         }
 
-        scrollListener = object : RecyclerViewScrollListener(layoutManager, spanCount, true) {
-            @UiThread
-            override fun onLoadMore(totalItemsCount: Int) {
-                Log.i("$TAG Asking for more data to display, currently displayed items count is [$totalItemsCount]")
-                viewModel.loadMoreData(totalItemsCount)
-            }
-
-            @UiThread
-            override fun onScrolledUp() {
-
-            }
-
-            @UiThread
-            override fun onScrolledToEnd() {
-
+        scrollListener = object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(view: RecyclerView, dx: Int, dy: Int) {
+                if (viewModel.loadFailed.value != true && adapter.itemCount > 0 &&
+                    layoutManager.findLastVisibleItemPosition() >= adapter.itemCount - spanCount
+                ) {
+                    viewModel.loadMoreData()
+                }
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
+        adapter.setPresentationEnabled(true)
 
         if (::scrollListener.isInitialized) {
             binding.mediaList.addOnScrollListener(scrollListener)
@@ -200,26 +194,35 @@ class ConversationMediaListFragment : SlidingPaneChildFragment() {
 
     override fun onPause() {
         super.onPause()
+        adapter.setPresentationEnabled(false)
 
         if (::scrollListener.isInitialized) {
             binding.mediaList.removeOnScrollListener(scrollListener)
         }
     }
 
+    override fun onDestroyView() {
+        binding.mediaList.adapter = null
+        binding.lifecycleOwner = null
+        binding.unbind()
+        super.onDestroyView()
+    }
+
     private fun goToFileViewer(fileModel: FileModel) {
         val path = fileModel.path
-        Log.i("$TAG Navigating to file viewer fragment with path [$path]")
-        val extension = FileUtils.getExtensionFromFileName(path)
-        val mime = FileUtils.getMimeTypeFromExtension(extension)
+        val mime = fileModel.mimeTypeString
 
         val bundle = Bundle()
         bundle.apply {
             putString("conversationId", viewModel.conversationId)
             putString("path", path)
+            putString(Mango9NativeAttachment.MIME, mime)
+            putString(Mango9NativeAttachment.NAME, fileModel.fileName)
             putBoolean("isEncrypted", fileModel.isEncrypted)
             putLong("timestamp", fileModel.fileCreationTimestamp)
             putString("originalPath", fileModel.originalPath)
             putBoolean("isFromEphemeralMessage", fileModel.isFromEphemeralMessage)
+            org.linphone.mango9.Mango9NativeFileTransfers.bind(this, fileModel)
             putBoolean("isMedia", true)
         }
         when (FileUtils.getMimeType(mime)) {

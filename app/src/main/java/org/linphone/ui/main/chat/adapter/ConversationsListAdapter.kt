@@ -32,6 +32,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import org.linphone.R
+import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.core.Address
 import org.linphone.core.Friend
 import org.linphone.databinding.ChatListCellBinding
@@ -106,7 +107,7 @@ class ConversationsListAdapter :
             val model = getItem(position)
             return if (model.isConversation) {
                 CONVERSATION_TYPE
-            } else if (model.contactModel?.friend != null) {
+            } else if (model.contactModel?.isFriend == true) {
                 CONTACT_TYPE
             } else {
                 SUGGESTION_TYPE
@@ -154,11 +155,18 @@ class ConversationsListAdapter :
                     lifecycleOwner = parent.findViewTreeLifecycleOwner()
 
                     setOnCreateConversationClickListener {
-                        val friend = model?.friend
-                        if (friend != null) {
-                            createConversationWithFriendClickedEvent.value = Event(friend)
-                        } else {
-                            createConversationWithAddressClickedEvent.value = Event(model!!.address)
+                        val selected = model ?: return@setOnCreateConversationClickListener
+                        coreContext.postOnCoreThread {
+                            if (!selected.isAvailable) {
+                                coreContext.showRedToastEvent.postValue(Event(Pair(R.string.mango9_contact_no_longer_available, R.drawable.warning_circle)))
+                                return@postOnCoreThread
+                            }
+                            val friend = selected.friend
+                            if (friend != null) {
+                                createConversationWithFriendClickedEvent.postValue(Event(friend))
+                            } else {
+                                createConversationWithAddressClickedEvent.postValue(Event(selected.address))
+                            }
                         }
                     }
                 }
@@ -168,11 +176,14 @@ class ConversationsListAdapter :
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        onNearEnd?.invoke(position)
         when (getItemViewType(position)) {
             CONVERSATION_TYPE -> (holder as ConversationViewHolder).bind(getItem(position).conversationModel!!)
             else -> (holder as ContactSuggestionViewHolder).bind(getItem(position).contactModel!!)
         }
     }
+
+    var onNearEnd: ((Int) -> Unit)? = null
 
     fun resetSelection() {
         notifyItemChanged(selectedAdapterPosition)

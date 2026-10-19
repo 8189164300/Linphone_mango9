@@ -44,6 +44,7 @@ import org.linphone.ui.main.contacts.model.ContactNumberOrAddressModel
 import org.linphone.ui.main.contacts.model.NumberOrAddressPickerDialogModel
 import org.linphone.ui.main.history.viewmodel.StartCallViewModel
 import org.linphone.ui.main.model.ConversationContactOrSuggestionModel
+import org.linphone.utils.Event
 import org.linphone.utils.DialogUtils
 import org.linphone.utils.LinphoneUtils
 import org.linphone.utils.RecyclerViewHeaderDecoration
@@ -235,6 +236,10 @@ class NewCallFragment : GenericCallFragment() {
 
     private fun startCall(model: ConversationContactOrSuggestionModel) {
         coreContext.postOnCoreThread {
+            if (!model.isAvailable) {
+                coreContext.showRedToastEvent.postValue(Event(Pair(R.string.mango9_contact_no_longer_available, R.drawable.warning_circle)))
+                return@postOnCoreThread
+            }
             val friend = model.friend
             if (friend == null) {
                 startCall(model.address)
@@ -277,14 +282,17 @@ class NewCallFragment : GenericCallFragment() {
     @WorkerThread
     private fun startCall(address: Address) {
         Log.i("$TAG Calling [${address.asStringUriOnly()}]")
-        coreContext.startAudioCall(address)
-
-        coreContext.postOnMainThread {
-            try {
-                findNavController().popBackStack()
-            } catch (ise: IllegalStateException) {
-                Log.e("$TAG Can't go back: $ise")
+        coreContext.startAudioCall(address, onResult = { started ->
+            if (started) {
+                coreContext.postOnMainThread {
+                    if (view == null || !isAdded) return@postOnMainThread
+                    try {
+                        findNavController().popBackStack()
+                    } catch (ise: IllegalStateException) {
+                        Log.e("$TAG Can't go back: $ise")
+                    }
+                }
             }
-        }
+        })
     }
 }

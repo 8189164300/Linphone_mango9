@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mango9_reminder_view">View</string>
+    <string name="mango9_reminder_opening">Opening…</string>
+    <string name="mango9_reminder_open_error">Unable to open. Check your connection and try again.</string>
+    <string name="mango9_reminder_banner_caption">%1$s · Appointment reminder</string>
+    <string name="mango9_reminder_heading">Your reminder</string>
+    <string name="mango9_reminder_title">In-app reminder</string>
+    <string name="mango9_reminder_option">In-app reminder\n%1$s</string>
+    <string name="mango9_reminder_loading">Loading…</string>
+    <string name="mango9_reminder_off">Off</string>
+    <string name="mango9_reminder_at_start">At start time</string>
+    <string name="mango9_reminder_day_before">1 day before</string>
+    <string name="mango9_reminder_before">%1$d minutes before</string>
+    <string name="mango9_reminder_minutes">%1$d minutes</string>
+    <string name="mango9_reminder_suggested">Use suggested reminder · %1$s</string>
+    <string name="mango9_reminder_snooze_minutes">Snooze %1$d minutes</string>
+    <string name="mango9_reminder_snooze">Snooze reminder</string>
+    <string name="mango9_reminder_dismiss">Dismiss reminder</string>
+    <string name="mango9_reminder_dismissed">Dismissed for this appointment time.</string>
+    <string name="mango9_reminder_next">Next reminder: %1$s</string>
+    <string name="mango9_reminder_reenable">The appointment status or owner changed. Choose a reminder time to enable it again.</string>
+    <string name="mango9_reminder_paused">In-app reminders are paused in CRM Settings.</string>
+    <string name="mango9_reminder_defaults_unavailable">Default reminder settings could not be loaded. You can still choose a reminder time.</string>
+    <string name="mango9_reminder_reload">Refresh reminder</string>
+    <string name="mango9_reminder_reload_appointment">Refresh appointment</string>
+    <string name="mango9_reminder_reopen">Refresh the appointment before trying again.</string>
+    <string name="mango9_reminder_scope">Only for you, while this CRM account is selected and the app is open. Snoozing does not move the appointment or send email/SMS. Manage defaults in CRM Settings.</string>
+    <string name="mango9_reminder_push_back">Push back appointment</string>
+    <string name="mango9_reminder_future">The new start is still in the past. Use Edit to choose a future time.</string>
+    <string name="mango9_reminder_push_confirm">Current start\n%1$s\n\nNew start\n%2$s\n\nNew end\n%3$s\n\nThis changes the shared CRM appointment, keeping its duration and status. The server checks overlaps and business hours before saving. Existing CRM update notifications still apply.</string>
+</resources>

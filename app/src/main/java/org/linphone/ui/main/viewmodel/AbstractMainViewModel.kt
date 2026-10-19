@@ -104,7 +104,7 @@ open class AbstractMainViewModel
         MutableLiveData()
     }
 
-    protected var currentFilter = ""
+    @Volatile protected var currentFilter = ""
 
     private val coreListener = object : CoreListenerStub() {
         @WorkerThread

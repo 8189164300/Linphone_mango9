@@ -26,6 +26,7 @@ import androidx.annotation.WorkerThread
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.LinphoneApplication.Companion.corePreferences
@@ -455,7 +456,7 @@ class MainViewModel
 
         if (VFS.isEnabled(coreContext.context)) {
             val cache = corePreferences.vfsCachePath
-            viewModelScope.launch {
+            viewModelScope.launch(Dispatchers.IO) {
                 val notClearedCount = FileUtils.countFilesInDirectory(cache)
                 if (notClearedCount > 0) {
                     Log.w(
@@ -550,8 +551,7 @@ class MainViewModel
     }
 
     @UiThread
-    fun addFilesPendingSharing(list: ArrayList<String>) {
-        val count = list.size
+    fun addFilesPendingSharing(count: Int) {
         Log.i("$TAG Adding [$count] files to pending sharing files list")
         if (count > 0) {
             filesOrTextPendingSharingLabel.value = AppUtils.getStringWithPlural(
@@ -566,6 +566,12 @@ class MainViewModel
     @UiThread
     fun addTextPendingSharing() {
         filesOrTextPendingSharingLabel.value = AppUtils.getString(R.string.conversations_text_waiting_to_be_shared_toast)
+        pendingFilesOrTextSharing.value = true
+    }
+
+    @UiThread
+    fun showPendingSharing(label: String) {
+        filesOrTextPendingSharingLabel.value = label
         pendingFilesOrTextSharing.value = true
     }
 

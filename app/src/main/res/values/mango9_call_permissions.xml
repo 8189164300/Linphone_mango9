@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mango9_call_microphone_title">Microphone access for calls</string>
+    <string name="mango9_call_microphone_rationale">Allow microphone access so the other person can hear you. You can keep using Mango9 without placing this call.</string>
+    <string name="mango9_call_microphone_continue">Continue</string>
+    <string name="mango9_call_microphone_off">Microphone access is off</string>
+    <string name="mango9_call_microphone_denied">The other person cannot hear you without microphone access. You can enable Microphone in Android Settings, then return and tap Call again.</string>
+    <string name="mango9_call_microphone_in_call_denied">The other person cannot hear you without microphone access. You can enable Microphone in Android Settings, then return and tap the microphone button to unmute.</string>
+    <string name="mango9_call_open_settings">Open Settings</string>
+    <string name="mango9_call_open_app_for_microphone">Open Mango9 on your phone and tap Call to allow microphone access.</string>
+    <string name="mango9_call_request_changed">This call could not start. Check your account and connection, then tap Call again.</string>
+</resources>

@@ -42,7 +42,7 @@
             android:id="@+id/constraint_layout"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="@color/gray_900">
+            android:background="@color/mango9_call_canvas">
 
             <androidx.constraintlayout.widget.Guideline
                 android:id="@+id/hinge_top"
@@ -92,7 +92,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="15dp"
                     android:text="@{viewModel.displayedName, default=`John Doe`}"
-                    android:textColor="@color/bc_white"
+                    android:textColor="@color/mango9_call_ink"
                     android:textSize="22sp" />
 
                 <androidx.appcompat.widget.AppCompatTextView
@@ -102,7 +102,7 @@
                     android:layout_height="wrap_content"
                     android:visibility="@{viewModel.hideSipAddresses ? View.GONE : View.VISIBLE}"
                     android:text="@{viewModel.displayedAddress, default=`sip:johndoe@proxy.mango9.com`}"
-                    android:textColor="@color/bc_white"
+                    android:textColor="@color/mango9_call_ink"
                     android:textSize="14sp" />
 
             </LinearLayout>
@@ -120,6 +120,18 @@
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"/>
 
+            <View
+                android:id="@+id/call_header_surface"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:background="@color/mango9_call_canvas"
+                android:importantForAccessibility="no"
+                android:visibility="@{viewModel.fullScreenMode || viewModel.pipMode ? View.INVISIBLE : View.VISIBLE}"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="@id/back"
+                app:layout_constraintBottom_toBottomOf="@id/back" />
+
             <androidx.constraintlayout.widget.Group
                 android:id="@+id/header_info_visibility"
                 android:layout_width="wrap_content"
@@ -135,14 +147,14 @@
                 android:adjustViewBounds="true"
                 android:padding="15dp"
                 android:src="@drawable/caret_left"
-                android:background="@drawable/circle_transparent_dark_button_background"
+                android:background="@drawable/mango9_call_touch_overlay"
                 android:contentDescription="@string/content_description_go_back_icon"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/hinge_top"
-                app:tint="@color/bc_white" />
+                app:tint="@color/mango9_call_ink" />
 
             <androidx.appcompat.widget.AppCompatTextView
-                style="@style/call_header_style"
+                style="@style/Mango9CallHeader"
                 android:id="@+id/name"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -159,7 +171,7 @@
                 app:layout_constraintBottom_toTopOf="@id/call_media_encryption_info"/>
 
             <androidx.appcompat.widget.AppCompatTextView
-                style="@style/call_header_style"
+                style="@style/Mango9CallHeader"
                 android:id="@+id/separator"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -171,7 +183,7 @@
                 app:layout_constraintEnd_toStartOf="@id/chronometer"/>
 
             <Chronometer
-                style="@style/call_header_style"
+                style="@style/Mango9CallHeader"
                 android:id="@+id/chronometer"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -182,7 +194,7 @@
                 app:layout_constraintTop_toTopOf="@id/name"/>
 
             <androidx.appcompat.widget.AppCompatTextView
-                style="@style/call_header_style"
+                style="@style/Mango9CallHeader"
                 android:id="@+id/paused_call_header"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
@@ -207,9 +219,9 @@
                 android:src="@drawable/camera_rotate"
                 android:adjustViewBounds="true"
                 android:contentDescription="@string/content_description_change_camera"
-                android:background="@drawable/circle_transparent_dark_button_background"
+                android:background="@drawable/mango9_call_touch_overlay"
                 android:visibility="@{!viewModel.fullScreenMode &amp;&amp; !viewModel.pipMode &amp;&amp; viewModel.isSendingVideo &amp;&amp; viewModel.showSwitchCamera ? View.VISIBLE : View.GONE}"
-                app:tint="@color/bc_white"
+                app:tint="@color/mango9_call_ink"
                 app:layout_constraintDimensionRatio="1:1"
                 app:layout_constraintTop_toTopOf="@id/back"
                 app:layout_constraintBottom_toBottomOf="@id/back"
@@ -241,9 +253,9 @@
                 android:src="@{viewModel.qualityIcon, default=@drawable/cell_signal_full}"
                 android:adjustViewBounds="true"
                 android:contentDescription="@string/content_description_show_call_statistics"
-                android:background="@drawable/circle_transparent_dark_button_background"
+                android:background="@drawable/mango9_call_touch_overlay"
                 android:visibility="@{!viewModel.fullScreenMode &amp;&amp; !viewModel.pipMode &amp;&amp; !(viewModel.isPaused || viewModel.isPausedByRemote) ? View.VISIBLE : View.GONE}"
-                android:tint="@{viewModel.qualityValue >= 2 ? @color/bc_white : viewModel.qualityValue >= 1 ? @color/orange_warning_600 : @color/red_danger_500, default=@color/bc_white}"
+                android:tint="@{viewModel.qualityValue >= 2 ? @color/mango9_call_ink : viewModel.qualityValue >= 1 ? @color/mango9_call_warning : @color/red_danger_500, default=@color/mango9_call_ink}"
                 app:layout_constraintDimensionRatio="1:1"
                 app:layout_constraintTop_toTopOf="@id/back"
                 app:layout_constraintBottom_toBottomOf="@id/back"

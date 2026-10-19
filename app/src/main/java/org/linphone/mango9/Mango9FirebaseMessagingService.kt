@@ -15,7 +15,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import com.google.firebase.messaging.RemoteMessage
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
@@ -38,12 +37,14 @@ class Mango9FirebaseMessagingService : FirebaseMessaging() {
             return
         }
         Mango9FirebaseTokenBridge.forwardToLinphone(token)
-        Mango9ChatStore.get(applicationContext).registerRemotePushTokenAsync()
+        Mango9MessagePushSync.get(applicationContext).refreshAsync()
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
         val push = Mango9MessagePush.parse(message.data)
         if (push == null) {
+            // Malformed/unknown Mango9 message payloads must not become VoIP wakes.
+            if (message.data.containsKey("mango9") || message.data.containsKey("mango9_event") || message.data.containsKey("event")) return
             super.onMessageReceived(message)
             return
         }
@@ -82,7 +83,7 @@ object Mango9FirebaseTokenSync {
                         return@addOnCompleteListener
                     }
                     Mango9FirebaseTokenBridge.forwardToLinphone(token)
-                    Mango9ChatStore.get(appContext).registerRemotePushTokenAsync()
+                    Mango9MessagePushSync.get(appContext).refreshAsync()
                 }
         }
     }
@@ -110,37 +111,34 @@ object Mango9MessagePushCoordinator {
     fun receive(context: Context, push: Mango9MessagePush) {
         val appContext = context.applicationContext
         val sessions = Mango9SessionStore(appContext)
-        val identity = resolveStoredIdentity(sessions, push) ?: run {
+        val login = sessions.resolvePushLogin(push) ?: run {
             Log.w("$TAG Ignoring a push for an account not stored on this device")
             return
         }
-        val resolved = push.copy(sipIdentity = identity)
+        val identity = login.session.sipIdentity ?: return
+        val resolved = sessions.bindNotification(push, login) ?: return
         if (sessions.isActive(identity)) {
             scope.launch {
+                if (sessions.currentLogin(login) == null || !sessions.isActive(identity)) return@launch
                 val store = Mango9ChatStore.get(appContext)
                 when (resolved.target) {
                     is Mango9MessagePushTarget.Chat -> store.refreshDirectory()
                     is Mango9MessagePushTarget.Sms -> store.refreshSmsDirectory()
-                    is Mango9MessagePushTarget.Lead -> Unit
+                    else -> Unit
                 }
             }
         }
-        showNotification(appContext, resolved)
+        if (sessions.currentLogin(login) != null) showNotification(appContext, resolved)
     }
 
-    suspend fun activateForOpen(context: Context, push: Mango9MessagePush): Boolean {
-        val sessions = Mango9SessionStore(context.applicationContext)
-        val identity = resolveStoredIdentity(sessions, push) ?: return false
-        return Mango9AccountContextSync.activateStoredAccount(context, identity)
-    }
-
-    private fun resolveStoredIdentity(
-        sessions: Mango9SessionStore,
+    suspend fun activateForOpen(
+        context: Context,
         push: Mango9MessagePush,
-    ): String? {
-        val pushed = Mango9SessionStore.normalizedIdentity(push.sipIdentity)
-        if (pushed != null) return pushed.takeIf(sessions::hasSession)
-        return push.crmId?.let(sessions::identityForCrmId)
+        ticket: Mango9OpenRequestGate.Ticket,
+    ): Mango9SessionLease? {
+        val sessions = Mango9SessionStore(context.applicationContext)
+        val login = sessions.resolveNotificationLogin(push) ?: return null
+        return Mango9AccountContextSync.activateStoredAccount(context, login, ticket)
     }
 
     @SuppressLint("MissingPermission")
@@ -153,7 +151,7 @@ object Mango9MessagePushCoordinator {
         ensureChannel(context)
         val notificationId = nextNotificationId.getAndIncrement()
         val notification = buildNotification(context, push, notificationId)
-        publishNotification(context, notificationId, notification)
+        publishNotification(context, push, notificationId, notification)
     }
 
     @SuppressLint("MissingPermission")
@@ -163,13 +161,14 @@ object Mango9MessagePushCoordinator {
         notificationId: Int,
         state: Mango9SmsReplyState,
     ) {
-        if (push.target !is Mango9MessagePushTarget.Sms) return
+        if (push.target !is Mango9MessagePushTarget.Sms || Mango9SessionStore(context).resolveNotificationLogin(push) == null) return
         ensureChannel(context)
         val body = context.getString(
             when (state) {
                 Mango9SmsReplyState.Sending -> R.string.mango9_push_sms_reply_sending
                 Mango9SmsReplyState.Sent -> R.string.mango9_push_sms_reply_sent
                 Mango9SmsReplyState.Failed -> R.string.mango9_push_sms_reply_failed
+                Mango9SmsReplyState.CheckDelivery -> R.string.mango9_push_sms_reply_check
             },
         )
         val notification = buildNotification(
@@ -179,11 +178,15 @@ object Mango9MessagePushCoordinator {
             bodyOverride = body,
             includeSmsReply = state == Mango9SmsReplyState.Failed,
         )
-        publishNotification(context, notificationId, notification)
+        publishNotification(context, push, notificationId, notification)
         if (state == Mango9SmsReplyState.Sent) {
             scope.launch {
                 delay(REPLY_CONFIRMATION_MS)
-                NotificationManagerCompat.from(context).cancel(notificationId)
+                runCatching {
+                    Mango9SessionStore(context).withNotificationLogin(push) {
+                        Mango9MessageNotifications.cancelIfUnchanged(context, requireNotNull(push.notificationLogin), notificationId, notification)
+                    }
+                }
             }
         }
     }
@@ -209,15 +212,19 @@ object Mango9MessagePushCoordinator {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val (title, body) = when (val target = push.target) {
-            is Mango9MessagePushTarget.Chat -> target.name to context.getString(R.string.mango9_push_team_chat)
+            is Mango9MessagePushTarget.Chat -> (push.previewTitle ?: target.name) to (push.previewBody ?: context.getString(R.string.mango9_push_team_chat))
             is Mango9MessagePushTarget.Sms -> target.name to context.getString(R.string.mango9_push_sms)
-            is Mango9MessagePushTarget.Lead -> context.getString(R.string.mango9_crm_title) to
-                context.getString(R.string.mango9_push_lead)
+            is Mango9MessagePushTarget.Lead -> (push.previewTitle ?: context.getString(R.string.mango9_crm_title)) to
+                (push.previewBody ?: context.getString(R.string.mango9_push_lead))
+            Mango9MessagePushTarget.Leads -> (push.previewTitle ?: "Leads imported") to (push.previewBody ?: "Open your leads to view the completed import.")
+            is Mango9MessagePushTarget.Appointment -> (push.previewTitle ?: "New appointment") to (push.previewBody ?: "Open Events to view the booking.")
+            is Mango9MessagePushTarget.Social -> (push.previewTitle ?: "Social message") to (push.previewBody ?: "You have a new direct message.")
         }
         val notification = NotificationCompat.Builder(
             context,
             context.getString(R.string.notification_channel_chat_id),
         )
+            .addExtras(Mango9MessageNotifications.instanceExtras())
             .setSmallIcon(R.drawable.chat_teardrop_text)
             .setContentTitle(title)
             .setContentText(bodyOverride ?: body)
@@ -238,9 +245,11 @@ object Mango9MessagePushCoordinator {
     }
 
     @SuppressLint("MissingPermission")
-    private fun publishNotification(context: Context, notificationId: Int, notification: Notification) {
+    private fun publishNotification(context: Context, push: Mango9MessagePush, notificationId: Int, notification: Notification) {
         runCatching {
-            NotificationManagerCompat.from(context).notify(notificationId, notification)
+            Mango9SessionStore(context).withNotificationLogin(push) {
+                Mango9MessageNotifications.publish(context, requireNotNull(push.notificationLogin), notificationId, notification)
+            }
         }.onFailure { Log.e("$TAG Failed to publish a message notification: $it") }
     }
 

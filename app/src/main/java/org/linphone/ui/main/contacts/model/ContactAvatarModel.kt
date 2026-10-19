@@ -26,6 +26,10 @@ import androidx.lifecycle.MutableLiveData
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.R
 import org.linphone.contacts.AbstractAvatarModel
+import org.linphone.contacts.NativeContactValue
+import org.linphone.contacts.NativeContactDirectory
+import org.linphone.contacts.asFriend
+import org.linphone.contacts.sortName
 import org.linphone.contacts.getNativeContactPictureUri
 import org.linphone.core.Address
 import org.linphone.core.ChatRoom
@@ -38,23 +42,44 @@ import org.linphone.utils.AppUtils
 import org.linphone.utils.TimestampUtils
 import androidx.core.net.toUri
 import org.linphone.LinphoneApplication.Companion.corePreferences
+import org.linphone.mango9.Mango9ContactHeading
 
-class ContactAvatarModel
+class ContactAvatarModel private constructor(
+    private val sdkFriend: Friend?,
+    val nativeContact: NativeContactValue?,
+    val address: Address?,
+    private val nativeIsFavorite: Boolean,
+) : AbstractAvatarModel() {
     @WorkerThread
-    constructor(val friend: Friend, val address: Address? = null) : AbstractAvatarModel() {
+    constructor(friend: Friend, address: Address? = null) : this(friend, null, address, false)
+    constructor(contact: NativeContactValue, favorite: Boolean, address: Address? = null) : this(null, contact, address, favorite)
+
+    // Only actions use this SDK bridge; provider list rows contain no JNI objects.
+    // Callers must resolve the current directory before acting on a native row.
+    val friend: Friend
+        @WorkerThread get() = sdkFriend ?: nativeContact!!.asFriend(coreContext.core, nativeIsFavorite)
+
+    /** Retain an existing SDK object for navigation without reading it or bridging a native row. */
+    val friendForNavigation: Friend?
+        @AnyThread get() = sdkFriend
+
     companion object {
         private const val TAG = "[Contact Avatar Model]"
     }
 
-    val id = friend.refKey ?: friend.name ?: ""
+    val id = nativeContact?.let { NativeContactDirectory.REF_PREFIX + it.id } ?: sdkFriend!!.refKey ?: sdkFriend?.name ?: ""
 
-    val contactName = friend.name
+    // Navigation retains the upstream ref key; list identity must distinguish
+    // same-name contacts and identical provider IDs from different directories.
+    val rowKey = nativeContact?.let { NativeContactDirectory.REF_PREFIX + it.id } ?: "sdk:${sdkFriend!!.nativePointer}"
 
-    val isStored = friend.inList()
+    val contactName = nativeContact?.displayName?.ifBlank { nativeContact.sortName(true) } ?: sdkFriend?.name
 
-    val isReadOnly = friend.isReadOnly
+    val isStored = nativeContact != null || sdkFriend!!.inList() || !sdkFriend.nativeUri.isNullOrBlank()
 
-    val isNative = !friend.nativeUri.isNullOrEmpty()
+    val isReadOnly = sdkFriend?.isReadOnly == true
+
+    val isNative = nativeContact != null || !sdkFriend?.nativeUri.isNullOrEmpty()
 
     val isFavourite = MutableLiveData<Boolean>()
 
@@ -65,6 +90,8 @@ class ContactAvatarModel
     var sortingName: String? = null
 
     var firstLetter: String? = null
+
+    private var listeningForPresence = false
 
     private val friendListener = object : FriendListenerStub() {
         @WorkerThread
@@ -79,8 +106,9 @@ class ContactAvatarModel
     init {
         presenceStatus.postValue(ConsolidatedPresence.Offline)
 
-        if (friend.addresses.isNotEmpty()) {
-            friend.addListener(friendListener)
+        if (sdkFriend?.address != null) {
+            sdkFriend.addListener(friendListener)
+            listeningForPresence = true
         }
 
         update(address)
@@ -93,7 +121,7 @@ class ContactAvatarModel
 
         val picture = picturePath.value
         val otherPicture = other.picturePath.value
-        if (picture != null && otherPicture != null && picture != otherPicture) {
+        if (picture != otherPicture) {
             return false
         }
 
@@ -114,19 +142,30 @@ class ContactAvatarModel
 
     @WorkerThread
     fun destroy() {
-        if (friend.addresses.isNotEmpty()) {
+        if (listeningForPresence) {
             friend.removeListener(friendListener)
+            listeningForPresence = false
         }
     }
 
     @WorkerThread
     fun refreshSortingName() {
         sortingName = getNameToUseForSorting()
-        firstLetter = AppUtils.getFirstLetter(getNameToUseForSorting().orEmpty())
+        firstLetter = Mango9ContactHeading.of(sortingName)
     }
 
     @WorkerThread
     fun update(address: Address?) {
+        if (nativeContact != null) {
+            isFavourite.postValue(nativeIsFavorite)
+            initials.postValue(AppUtils.getInitials(contactName.orEmpty()))
+            showTrust.postValue(false)
+            trust.postValue(SecurityLevel.None)
+            picturePath.postValue(nativeContact.photoUri.orEmpty())
+            name.postValue(contactName)
+            lastPresenceInfo.postValue("")
+            return
+        }
         updateSecurityLevel(address)
 
         isFavourite.postValue(friend.starred)
@@ -181,6 +220,7 @@ class ContactAvatarModel
 
     @WorkerThread
     fun updateSecurityLevel(address: Address?) {
+        if (nativeContact != null) { trust.postValue(SecurityLevel.None); return }
         if (address == null) {
             trust.postValue(friend.securityLevel)
         } else {
@@ -191,8 +231,12 @@ class ContactAvatarModel
     @WorkerThread
     fun getNameToUseForSorting(): String {
         val sortByFirstName = corePreferences.sortContactsByFirstName
+        nativeContact?.let { return it.sortName(sortByFirstName) }
         val firstOrLastName = if (sortByFirstName) friend.firstName else friend.lastName
-        return firstOrLastName ?: friend.name ?: friend.organization ?: friend.vcard?.fullName ?: ""
+        return firstOrLastName?.takeIf { it.isNotBlank() }
+            ?: friend.name?.takeIf { it.isNotBlank() }
+            ?: friend.organization?.takeIf { it.isNotBlank() }
+            ?: friend.vcard?.fullName.orEmpty()
     }
 
     @WorkerThread

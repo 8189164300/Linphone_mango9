@@ -20,16 +20,30 @@ sealed interface Mango9MessagePushTarget {
     data class Sms(val phone: String, val name: String) : Mango9MessagePushTarget
 
     data class Lead(val id: Int) : Mango9MessagePushTarget
+
+    data object Leads : Mango9MessagePushTarget
+
+    data class Appointment(val id: Int) : Mango9MessagePushTarget
+
+    data class Social(val threadId: String) : Mango9MessagePushTarget
 }
 
 data class Mango9MessagePush(
     val target: Mango9MessagePushTarget,
     val sipIdentity: String?,
     val crmId: String?,
+    // Device-local login incarnation. Never accepted from a remote push payload.
+    val notificationLogin: String? = null,
+    val recipientUserId: String? = null,
+    val previewTitle: String? = null,
+    val previewBody: String? = null,
 ) {
     fun toJson(): String = JSONObject().apply {
         put("sip_identity", sipIdentity ?: JSONObject.NULL)
         put("crm_id", crmId ?: JSONObject.NULL)
+        put("notification_login", notificationLogin ?: JSONObject.NULL)
+        put("recipient_user_id", recipientUserId ?: JSONObject.NULL)
+        put("title", previewTitle ?: JSONObject.NULL); put("body", previewBody ?: JSONObject.NULL)
         when (val value = target) {
             is Mango9MessagePushTarget.Chat -> {
                 put("type", "chat")
@@ -46,6 +60,9 @@ data class Mango9MessagePush(
                 put("type", "lead")
                 put("lead_id", value.id)
             }
+            Mango9MessagePushTarget.Leads -> put("type", "leads")
+            is Mango9MessagePushTarget.Appointment -> { put("type", "appointment"); put("event_id", value.id) }
+            is Mango9MessagePushTarget.Social -> { put("type", "social"); put("thread_id", value.threadId) }
         }
     }.toString()
 
@@ -66,6 +83,13 @@ data class Mango9MessagePush(
             }
 
             val event = value("event", "mango9_event") ?: return null
+            val crm = value("crm_id", "crmId")
+            val identity = value("sip_identity", "sipIdentity")
+            val recipient = value("recipient_user_id")?.toIntOrNull()?.takeIf { it > 0 }?.toString()
+            if (event in setOf("lead.created", "lead.assigned", "leads.imported", "appointment.booked", "social.message")) {
+                if (crm == null || Mango9SessionStore.normalizedIdentity(identity) == null) return null
+                if (event != "social.message" && recipient == null) return null
+            }
             val target = when (event) {
                 "chat.message" -> {
                     val userId = value("sender_user_id", "senderUserId")?.toIntOrNull() ?: 0
@@ -87,12 +111,31 @@ data class Mango9MessagePush(
                         ?: return null
                     Mango9MessagePushTarget.Lead(leadId)
                 }
+                "leads.imported" -> {
+                    if (value("lead_id", "leadId") != null) return null
+                    Mango9MessagePushTarget.Leads
+                }
+                "appointment.booked" -> Mango9MessagePushTarget.Appointment(
+                    value("event_id")?.toIntOrNull()?.takeIf {
+                    it > 0
+                } ?: return null
+                )
+                "social.message" -> {
+                    val id = value("thread_id") ?: return null
+                    if (runCatching {
+                        java.util.UUID.fromString(id).toString().equals(id, ignoreCase = true)
+                    }.getOrDefault(false).not()
+                    ) {
+                        return null
+                    }
+                    Mango9MessagePushTarget.Social(id.lowercase())
+                }
                 else -> return null
             }
             return Mango9MessagePush(
                 target = target,
-                sipIdentity = value("sip_identity", "sipIdentity"),
-                crmId = value("crm_id", "crmId"),
+                sipIdentity = identity, crmId = crm, recipientUserId = recipient,
+                previewTitle = value("title")?.take(200), previewBody = value("body")?.take(1000),
             )
         }
 
@@ -114,12 +157,21 @@ data class Mango9MessagePush(
                     Mango9MessagePushTarget.Sms(phone, json.optionalString("name") ?: phone)
                 }
                 "lead" -> Mango9MessagePushTarget.Lead(json.optInt("lead_id").takeIf { it > 0 } ?: return null)
+                "leads" -> Mango9MessagePushTarget.Leads
+                "appointment" -> Mango9MessagePushTarget.Appointment(json.optInt("event_id").takeIf { it > 0 } ?: return null)
+                "social" -> Mango9MessagePushTarget.Social(
+                    json.optionalString("thread_id")?.takeIf {
+                    runCatching { java.util.UUID.fromString(it).toString() == it }.getOrDefault(false)
+                } ?: return null
+                )
                 else -> return null
             }
             return Mango9MessagePush(
                 target,
                 json.optionalString("sip_identity"),
                 json.optionalString("crm_id"),
+                json.optionalString("notification_login"),
+                json.optionalString("recipient_user_id"), json.optionalString("title"), json.optionalString("body"),
             )
         }
     }
@@ -147,6 +199,18 @@ class Mango9MessagePushTokenStore(context: Context) {
 
         fun isValidToken(token: String): Boolean =
             token.length in 20..4096 && token.all { it.code in 33..126 && !it.isWhitespace() }
+    }
+}
+
+/** The API removes this device's registration for the authenticated CRM user, not a SIP URI. */
+data class Mango9PushOwner(val endpoint: String, val crmId: String, val userId: String) {
+    companion object {
+        fun from(session: Mango9Session): Mango9PushOwner? {
+            val base = Mango9Configuration.verifiedHttpsUrl(session.smsChatApi) ?: return null
+            val url = base.toString().toHttpUrlOrNull() ?: return null
+            if (url.querySize > 0 || session.crmId.isBlank() || session.userId.isBlank()) return null
+            return Mango9PushOwner(url.toString().trimEnd('/'), session.crmId, session.userId)
+        }
     }
 }
 

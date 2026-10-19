@@ -20,6 +20,9 @@
 package org.linphone.contacts
 
 import android.content.ContentUris
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
@@ -68,7 +71,6 @@ import org.linphone.utils.ImageUtils
 import org.linphone.utils.LinphoneUtils
 import org.linphone.utils.PhoneNumberUtils
 import org.linphone.utils.ShortcutUtils
-import java.io.FileNotFoundException
 
 class ContactsManager
     @UiThread
@@ -84,6 +86,61 @@ class ContactsManager
     }
 
     private var nativeContactsLoaded = false
+
+    @Volatile private var nativeDirectory = NativeContactDirectory.EMPTY
+    private val nativeFavoritePreferences by lazy {
+        coreContext.context.getSharedPreferences("mango9_native_favorites", android.content.Context.MODE_PRIVATE)
+    }
+    private val nativeFavoriteOverrides by lazy {
+        java.util.concurrent.ConcurrentHashMap(
+            nativeFavoritePreferences.all.mapNotNull { (key, value) ->
+            (value as? Boolean)?.let { key to it }
+        }.toMap()
+        )
+    }
+
+    fun nativeContactsSnapshot(): NativeContactDirectory = if (ContextCompat.checkSelfPermission(
+            coreContext.context, Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+    ) {
+            nativeDirectory
+        } else {
+            NativeContactDirectory.EMPTY
+        }
+
+    fun nativeFavorite(value: NativeContactValue): Boolean = nativeFavoriteOverrides[nativeFavoriteKey(value)] ?: value.starred
+
+    private fun nativeFavoriteKey(value: NativeContactValue) = value.lookupKey.ifBlank { value.id }
+
+    @WorkerThread
+    fun resolveNativeFriend(id: String): Friend? = nativeContactsSnapshot().find(id)?.let {
+        it.asFriend(coreContext.core, nativeFavorite(it))
+    }
+
+    @WorkerThread
+    fun setNativeFavorite(id: String, favorite: Boolean): Boolean {
+        val value = nativeContactsSnapshot().find(id) ?: return false
+        val key = nativeFavoriteKey(value)
+        nativeFavoriteOverrides[key] = favorite
+        nativeFavoritePreferences.edit().putBoolean(key, favorite).apply()
+        onNativeContactsLoaded()
+        return true
+    }
+
+    @WorkerThread
+    fun installNativeContacts(directory: NativeContactDirectory) {
+        val changed = nativeDirectory.contacts != directory.contacts
+        // Preserve snapshot identity on an unchanged reload. Active native
+        // queries use that identity to reject genuinely stale provider results.
+        if (changed) nativeDirectory = directory
+        // Replace only Mango9's old provider mirror. No native Contacts rows or
+        // app-created, team, CardDAV or remote directory lists are deleted.
+        val legacyMirror = coreContext.core.getFriendListByName(ContactLoader.NATIVE_ADDRESS_BOOK_FRIEND_LIST)
+        legacyMirror?.let {
+            coreContext.core.removeFriendList(it)
+        }
+        if (changed || !nativeContactsLoaded || legacyMirror != null) onNativeContactsLoaded()
+    }
 
     private val listeners = arrayListOf<ContactsListener>()
 
@@ -123,7 +180,7 @@ class ContactsManager
 
             var found = false
             if (results.isNotEmpty()) {
-                val result = results.first { it.friend != null }
+                val result = results.firstOrNull { it.friend != null }
                 if (result != null) {
                     val friend = result.friend!!
                     Log.i("$TAG Found matching friend in source [${result.sourceFlags}]")
@@ -439,6 +496,9 @@ class ContactsManager
 
     @WorkerThread
     fun findContactById(id: String): Friend? {
+        if (id.startsWith(NativeContactDirectory.REF_PREFIX)) return resolveNativeFriend(id)
+        // Keep routes opened before the provider-mirror migration working.
+        if (id.isNotEmpty() && id.all(Char::isDigit)) resolveNativeFriend(id)?.let { return it }
         Log.d("$TAG Looking for a friend with ref key [$id]")
         for (friendList in coreContext.core.friendsLists) {
             val found = friendList.findFriendByRefKey(id)
@@ -453,6 +513,9 @@ class ContactsManager
 
     @WorkerThread
     fun findContactByAddress(address: Address): Friend? {
+        nativeContactsSnapshot().findDestination(address.asStringUriOnly(), address.username)?.let {
+            return it.asFriend(coreContext.core, nativeFavorite(it))
+        }
         Log.i("$TAG Looking for friend matching SIP address [${address.asStringUriOnly()}]")
         val found = coreContext.core.findFriend(address)
         if (found != null) {
@@ -498,7 +561,7 @@ class ContactsManager
 
     @WorkerThread
     fun findDisplayName(address: Address): String {
-        return getContactAvatarModelForAddress(address).friend.name ?: LinphoneUtils.getDisplayName(
+        return getContactAvatarModelForAddress(address).contactName ?: LinphoneUtils.getDisplayName(
             address
         )
     }
@@ -535,6 +598,11 @@ class ContactsManager
             unknownContactsAvatarsMap[key] = model
             model
         } else {
+            nativeContactsSnapshot().findDestination(key, clone.username)?.let { native ->
+                val model = ContactAvatarModel(native, nativeFavorite(native), clone)
+                knownContactsAvatarsMap[key] = model
+                return model
+            }
             Log.d("$TAG Looking for friend matching SIP URI [$key]")
             val friend = findContactByAddress(clone)
             if (friend != null) {
@@ -596,6 +664,7 @@ class ContactsManager
 
     @WorkerThread
     fun isContactTemporary(friend: Friend, allowNullFriendList: Boolean = false): Boolean {
+        if (!friend.nativeUri.isNullOrBlank() && nativeContactsSnapshot().find(friend.refKey.orEmpty()) != null) return false
         val friendList = friend.friendList
         if (friendList == null && !allowNullFriendList) return true
         return friendList?.type == FriendList.Type.ApplicationCache
@@ -824,13 +893,13 @@ class ContactsManager
             "$TAG Default account mode is [${if (showTrust) "end-to-end encryption mandatory" else "interoperable"}], update all contact models showTrust value"
         )
         knownContactsAvatarsMap.forEach { (_, contactAvatarModel) ->
-            contactAvatarModel.showTrust.postValue(showTrust)
+            contactAvatarModel.showTrust.postValue(showTrust && !contactAvatarModel.isNative)
         }
         unknownContactsAvatarsMap.forEach { (_, contactAvatarModel) ->
-            contactAvatarModel.showTrust.postValue(showTrust)
+            contactAvatarModel.showTrust.postValue(showTrust && !contactAvatarModel.isNative)
         }
         conferenceAvatarMap.forEach { (_, contactAvatarModel) ->
-            contactAvatarModel.showTrust.postValue(showTrust)
+            contactAvatarModel.showTrust.postValue(showTrust && !contactAvatarModel.isNative)
         }
     }
 
@@ -862,42 +931,14 @@ fun Friend.getAvatarBitmap(round: Boolean = false): Bitmap? {
 
 @WorkerThread
 fun Friend.getNativeContactPictureUri(): Uri? {
-    val contactId = refKey
-    if (contactId != null) {
-        try {
-            val lookupUri = ContentUris.withAppendedId(
-                ContactsContract.Contacts.CONTENT_URI,
-                contactId.toLong()
-            )
-
-            val pictureUri = Uri.withAppendedPath(
-                lookupUri,
-                ContactsContract.Contacts.Photo.DISPLAY_PHOTO
-            )
-            // Check that the URI points to a real file
-            val contentResolver = coreContext.context.contentResolver
-            try {
-                val fd = contentResolver.openAssetFileDescriptor(pictureUri, "r")
-                if (fd != null) {
-                    fd.close()
-                    return pictureUri
-                }
-            } catch (fnfe: FileNotFoundException) {
-                Log.w("[Contacts Manager] Can't open [$pictureUri] for contact [$name]: $fnfe")
-            } catch (e: Exception) {
-                Log.e("[Contacts Manager] Can't open [$pictureUri] for contact [$name]: $e")
-            }
-
-            // Fallback to thumbnail
-            return Uri.withAppendedPath(
-                lookupUri,
-                ContactsContract.Contacts.Photo.CONTENT_DIRECTORY
-            )
-        } catch (_: NumberFormatException) {
-            // Expected for contacts created by Linphone
-        }
-    }
-    return null
+    // No ContentResolver I/O on the SIP thread or while constructing every row.
+    // Non-native numeric ref keys are not Android contact IDs.
+    if (nativeUri.isNullOrBlank()) return null
+    val contactId = refKey?.toLongOrNull() ?: return null
+    return Uri.withAppendedPath(
+        ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contactId),
+        ContactsContract.Contacts.Photo.CONTENT_DIRECTORY
+    )
 }
 
 @WorkerThread

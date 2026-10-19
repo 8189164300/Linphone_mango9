@@ -65,13 +65,25 @@
                     android:background="@drawable/shape_squircle_white_r20_top_shadow"
                     app:layout_constraintTop_toTopOf="parent" />
 
+                <TextView
+                    android:id="@+id/contact_search_limit"
+                    style="@style/default_text_style"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:background="@color/bc_white"
+                    android:padding="8dp"
+                    android:text="@string/contacts_list_search_results_limit_reached_label"
+                    android:visibility="@{viewModel.showResultsLimitReached ? View.VISIBLE : View.GONE}"
+                    app:layout_constraintTop_toBottomOf="@id/top_bar"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent" />
+
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/history_list"
                     android:background="@drawable/shape_squircle_white_r20_top_background"
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
-                    android:layout_marginTop="@dimen/top_bar_height"
-                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintTop_toBottomOf="@id/contact_search_limit"
                     app:layout_constraintBottom_toTopOf="@id/bottom_nav_bar" />
 
                 <ImageView

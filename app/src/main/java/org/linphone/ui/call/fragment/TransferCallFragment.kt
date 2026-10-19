@@ -50,6 +50,7 @@ import org.linphone.ui.main.contacts.model.ContactNumberOrAddressModel
 import org.linphone.ui.main.contacts.model.NumberOrAddressPickerDialogModel
 import org.linphone.ui.main.history.viewmodel.StartCallViewModel
 import org.linphone.ui.main.model.ConversationContactOrSuggestionModel
+import org.linphone.utils.Event
 import org.linphone.utils.ConfirmationDialogModel
 import org.linphone.utils.AppUtils
 import org.linphone.utils.DialogUtils
@@ -294,6 +295,10 @@ class TransferCallFragment : GenericCallFragment() {
 
     private fun startCallTransfer(model: ConversationContactOrSuggestionModel) {
         coreContext.postOnCoreThread {
+            if (!model.isAvailable) {
+                coreContext.showRedToastEvent.postValue(Event(Pair(R.string.mango9_contact_no_longer_available, R.drawable.warning_circle)))
+                return@postOnCoreThread
+            }
             val friend = model.friend
             if (friend == null) {
                 doCallTransfer(model.address, model.name)

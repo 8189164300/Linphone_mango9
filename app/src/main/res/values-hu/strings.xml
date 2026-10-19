@@ -63,7 +63,6 @@
     <string name="assistant_dialog_general_terms_and_privacy_policy_message">A folytatással elfogadja az %1$s-et és a %2$s-at.</string>
     <string name="assistant_dialog_confirm_phone_number_title">Erősítse meg a telefonszámot</string>
     <string name="assistant_account_login">Bejelentkezés</string>
-    <string name="assistant_scan_qr_code">QR–kód beolvasása</string>
     <string name="assistant_login_using_single_sign_on">Egyszerű bejelentkezés</string>
     <string name="assistant_login_cant_parse_address_toast">Érvénytelen SIP cím!</string>
     <string name="assistant_login_address_without_username_toast">A SIP cím nem tartalmaz felhasználónevet!</string>
@@ -108,7 +107,6 @@
     <string name="notification_channel_service_desc">Ez a szolgáltatás mindig futni fog, hogy ébren tartsa az appot, hogy hívásokat és üzeneteket tudjon fogadni push értesítés nélkül.</string>
     <string name="sip_address_copied_to_clipboard_toast">SIP cím a vágólapra másolva</string>
     <string name="assistant_dialog_confirm_phone_number_message">Biztos benne, hogy %s a telefonszáma?</string>
-    <string name="assistant_qr_code_invalid_toast">Érvénytelen QR–kód!</string>
     <string name="assistant_account_register_unavailable_no_push_warning">Úgy tűnik, a push értesítések nem elérhetőek a készülékén, de ezek szükségesek egy fiók létrehozásához a mobil appban.\n\nHozzon létre fiókot a weboldalunkon keresztül:</string>
     <string name="drawer_menu_add_account">Fiók hozzáadása</string>
     <string name="sip_address_display_name">Megjelenített név</string>

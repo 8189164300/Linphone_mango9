@@ -25,9 +25,7 @@ import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
-import android.net.Uri
 import android.os.Bundle
-import android.os.Parcelable
 import android.view.Gravity
 import android.view.ViewTreeObserver
 import android.view.WindowManager
@@ -52,10 +50,8 @@ import androidx.navigation.NavDestination
 import androidx.navigation.NavOptions
 import androidx.navigation.findNavController
 import kotlin.math.max
-import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.linphone.LinphoneApplication.Companion.coreContext
@@ -66,16 +62,25 @@ import org.linphone.core.tools.Log
 import org.linphone.databinding.MainActivityBinding
 import org.linphone.mango9.Mango9AccountContextSync
 import org.linphone.mango9.Mango9ChatRouting
+import org.linphone.mango9.Mango9ExternalShare
+import org.linphone.mango9.Mango9NativeConversationRoute
 import org.linphone.mango9.Mango9ChatTarget
 import org.linphone.mango9.Mango9MessagePush
 import org.linphone.mango9.Mango9MessagePushCoordinator
 import org.linphone.mango9.Mango9MessagePushTarget
 import org.linphone.mango9.Mango9SmsRouting
 import org.linphone.mango9.Mango9SmsTarget
+import org.linphone.mango9.Mango9SessionLease
+import org.linphone.mango9.Mango9SessionStore
+import org.linphone.mango9.Mango9NavigationSession
+import org.linphone.mango9.Mango9OpenRequestGate
 import org.linphone.ui.GenericActivity
 import org.linphone.ui.assistant.AssistantActivity
 import org.linphone.ui.main.chat.fragment.ConversationsListFragmentDirections
+import org.linphone.ui.main.chat.fragment.ConversationsListFragment
 import org.linphone.ui.main.crm.fragment.Mango9CrmFragment
+import org.linphone.ui.main.crm.fragment.Mango9ReminderHost
+import org.linphone.ui.main.crm.viewmodel.Mango9ReminderEditsViewModel
 import org.linphone.ui.main.crm.fragment.Mango9MessagingListFragment
 import org.linphone.utils.PasswordDialogModel
 import org.linphone.ui.main.viewmodel.MainViewModel
@@ -112,6 +117,11 @@ class MainActivity : GenericActivity() {
     private var currentlyDisplayedAuthDialog: Dialog? = null
 
     private var navigatedToDefaultFragment = false
+
+    private val messageOpenRequests = Mango9OpenRequestGate()
+    private var messageOpenJob: Job? = null
+    private var contactsRefreshJob: Job? = null
+    private var reminderHost: Mango9ReminderHost? = null
 
     private val destinationListener = object : NavController.OnDestinationChangedListener {
         override fun onDestinationChanged(
@@ -158,6 +168,14 @@ class MainActivity : GenericActivity() {
         }
     }
 
+    override fun onDestroy() {
+        reminderHost?.close(); reminderHost = null
+        contactsRefreshJob?.cancel()
+        messageOpenRequests.cancel()
+        messageOpenJob?.cancel()
+        super.onDestroy()
+    }
+
     @SuppressLint("InlinedApi")
     override fun onCreate(savedInstanceState: Bundle?) {
         // Must be done before the setContentView
@@ -174,6 +192,8 @@ class MainActivity : GenericActivity() {
         binding = DataBindingUtil.setContentView(this, R.layout.main_activity)
         binding.lifecycleOwner = this
         setUpToastsArea(binding.toastsArea)
+        val reminderEdits = androidx.lifecycle.ViewModelProvider(this)[Mango9ReminderEditsViewModel::class.java]
+        reminderHost = Mango9ReminderHost(this, binding.mango9ReminderBanner, repository = reminderEdits.repository, retainedEdits = reminderEdits.edits)
 
         // Will give the device's status bar background color
         ViewCompat.setOnApplyWindowInsetsListener(binding.notificationsArea) { v, windowInsets ->
@@ -195,10 +215,8 @@ class MainActivity : GenericActivity() {
             WindowInsetsCompat.CONSUMED
         }
 
-        while (!coreContext.isReady()) {
-            Thread.sleep(50)
-        }
-
+        // SDK work in the view models is queued until Core/listeners exist.
+        // Waiting here blocks Android lifecycle/input and can deadlock startup.
         viewModel = run {
             ViewModelProvider(this)[MainViewModel::class.java]
         }
@@ -210,12 +228,20 @@ class MainActivity : GenericActivity() {
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                Mango9ChatRouting.openRequests.collect(::openMango9Chat)
+                Mango9ChatRouting.openRequests.collect {
+                    messageOpenRequests.cancel()
+                    messageOpenJob?.cancel()
+                    openMango9Chat(it.target, it.session, it.shareRequestId)
+                }
             }
         }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                Mango9SmsRouting.openRequests.collect(::openMango9Sms)
+                Mango9SmsRouting.openRequests.collect {
+                    messageOpenRequests.cancel()
+                    messageOpenJob?.cancel()
+                    openMango9Sms(it.target, it.session, it.shareRequestId)
+                }
             }
         }
         refreshMango9AccountContext()
@@ -290,26 +316,19 @@ class MainActivity : GenericActivity() {
         }
 
         viewModel.clearFilesOrTextPendingSharingEvent.observe(this) {
-            it.consume {
-                sharedViewModel.completePendingShareRecipientSelection()
-                sharedViewModel.filesToShareFromIntent.value = arrayListOf()
-                sharedViewModel.textToShareFromIntent.value = ""
-            }
+            it.consume { sharedViewModel.externalShare.clear() }
         }
-
-        sharedViewModel.filesToShareFromIntent.observe(this) { list ->
-            if (list.isNotEmpty()) {
-                viewModel.addFilesPendingSharing(list)
-            } else {
-                viewModel.filesOrTextPendingSharingListCleared()
-            }
-        }
-
-        sharedViewModel.textToShareFromIntent.observe(this) { text ->
-            if (!text.isEmpty()) {
-                viewModel.addTextPendingSharing()
-            } else {
-                viewModel.filesOrTextPendingSharingListCleared()
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                sharedViewModel.externalShare.state.collect { share ->
+                    when {
+                        share.id == null -> viewModel.filesOrTextPendingSharingListCleared()
+                        share.error != null -> viewModel.showPendingSharing(share.error)
+                        share.preparing -> viewModel.showPendingSharing(getString(R.string.mango9_share_preparing))
+                        share.count > 0 -> viewModel.addFilesPendingSharing(share.count)
+                        else -> viewModel.addTextPendingSharing()
+                    }
+                }
             }
         }
 
@@ -428,6 +447,7 @@ class MainActivity : GenericActivity() {
             if (core.accountList.isEmpty()) {
                 Log.w("$TAG No account found, showing Mango9 assistant")
                 coreContext.postOnMainThread {
+                    if (isFinishing || isDestroyed) return@postOnMainThread
                     try {
                         startActivity(Intent(this, AssistantActivity::class.java))
                     } catch (ise: IllegalStateException) {
@@ -441,7 +461,10 @@ class MainActivity : GenericActivity() {
     override fun onPostCreate(savedInstanceState: Bundle?) {
         super.onPostCreate(savedInstanceState)
 
-        goToLatestVisitedFragment()
+        // NavHost restores its back stack for every entry route, not only ACTION_MAIN.
+        // Reopening the default tab here destroys forms/retained drafts after rotation
+        // when the Activity originally came from a notification or another app.
+        if (savedInstanceState == null) goToLatestVisitedFragment() else navigatedToDefaultFragment = true
 
         // We don't want that intent to be handled upon rotation
         if (savedInstanceState == null && intent != null) {
@@ -451,6 +474,8 @@ class MainActivity : GenericActivity() {
     }
 
     override fun onPause() {
+        contactsRefreshJob?.cancel()
+        contactsRefreshJob = null
         viewModel.enableAccountMonitoring(false)
 
         currentlyDisplayedAuthDialog?.dismiss()
@@ -487,6 +512,14 @@ class MainActivity : GenericActivity() {
         viewModel.enableAccountMonitoring(true)
         viewModel.updateMissingPermissionAlert()
         viewModel.updateAccountsAndNetworkReachability()
+        // Refresh permission/deletions on return from Android Contacts or app settings.
+        // The loader performs its query off-thread and also clears only the native
+        // cache after permission revocation; it never requests access automatically.
+        contactsRefreshJob?.cancel()
+        contactsRefreshJob = lifecycleScope.launch {
+            coreContext.awaitReady()
+            if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) loadContacts()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -516,8 +549,21 @@ class MainActivity : GenericActivity() {
         return findNavController(R.id.main_nav_container)
     }
 
-    private fun openMango9Chat(target: Mango9ChatTarget) {
+    private fun openMango9Chat(
+        target: Mango9ChatTarget,
+        lease: Mango9SessionLease? = Mango9SessionStore(this).captureSession(),
+        shareRequestId: String? = null,
+    ) {
+        if (shareRequestId != null && sharedViewModel.externalShare.pendingRequestId() != shareRequestId) return
+        if (lease == null || Mango9SessionStore(this).currentSession(lease) == null) return
         val arguments = Bundle().apply {
+            Mango9NavigationSession.bind(this, lease)
+            putString(
+                Mango9ExternalShare.ARG_DELIVERY,
+                sharedViewModel.externalShare.bind(
+                shareRequestId, Mango9ExternalShare.crmDestination(Mango9MessagingListFragment.TYPE_TEAM, target.userId, target.roomId, null),
+            )
+            )
             putString(Mango9MessagingListFragment.ARG_TYPE, Mango9MessagingListFragment.TYPE_TEAM)
             putInt(Mango9MessagingListFragment.ARG_USER_ID, target.userId)
             putString(Mango9MessagingListFragment.ARG_ROOM_ID, target.roomId)
@@ -527,8 +573,21 @@ class MainActivity : GenericActivity() {
         findNavController().navigate(R.id.action_global_mango9MessagingConversationFragment, arguments)
     }
 
-    private fun openMango9Sms(target: Mango9SmsTarget) {
+    private fun openMango9Sms(
+        target: Mango9SmsTarget,
+        lease: Mango9SessionLease? = Mango9SessionStore(this).captureSession(),
+        shareRequestId: String? = null,
+    ) {
+        if (shareRequestId != null && sharedViewModel.externalShare.pendingRequestId() != shareRequestId) return
+        if (lease == null || Mango9SessionStore(this).currentSession(lease) == null) return
         val arguments = Bundle().apply {
+            Mango9NavigationSession.bind(this, lease)
+            putString(
+                Mango9ExternalShare.ARG_DELIVERY,
+                sharedViewModel.externalShare.bind(
+                shareRequestId, Mango9ExternalShare.crmDestination(Mango9MessagingListFragment.TYPE_SMS, 0, null, target.phone),
+            )
+            )
             putString(Mango9MessagingListFragment.ARG_TYPE, Mango9MessagingListFragment.TYPE_SMS)
             putInt(Mango9MessagingListFragment.ARG_USER_ID, 0)
             putString(Mango9MessagingListFragment.ARG_ROOM_ID, null)
@@ -538,8 +597,9 @@ class MainActivity : GenericActivity() {
         findNavController().navigate(R.id.action_global_mango9MessagingConversationFragment, arguments)
     }
 
-    private fun openMango9Lead(id: Int) {
+    private fun openMango9Lead(id: Int, lease: Mango9SessionLease) {
         val arguments = Bundle().apply {
+            Mango9NavigationSession.bind(this, lease)
             putString(Mango9CrmFragment.ARG_PUSH_RECORD_KIND, "lead")
             putInt(Mango9CrmFragment.ARG_PUSH_RECORD_ID, id)
         }
@@ -623,19 +683,21 @@ class MainActivity : GenericActivity() {
     }
 
     private fun handleIntent(intent: Intent) {
+        messageOpenRequests.cancel()
+        messageOpenJob?.cancel()
         val extras = intent.extras
         val hasExtra = extras != null && !extras.isEmpty
         Log.i(
-            "$TAG Handling intent action [${intent.action}], type [${intent.type}], data [${intent.data}] and has ${if (hasExtra) "extras" else "no extra"}"
+            "$TAG Handling intent action [${intent.action}], type [${intent.type}] and has ${if (hasExtra) "extras" else "no extra"}"
         )
 
         val action = intent.action ?: return
         when (action) {
             Intent.ACTION_SEND -> {
-                handleSendIntent(intent, false)
+                handleSendIntent(intent)
             }
             Intent.ACTION_SEND_MULTIPLE -> {
-                handleSendIntent(intent, true)
+                handleSendIntent(intent)
             }
             Intent.ACTION_VIEW -> {
                 val uri = intent.data?.toString() ?: ""
@@ -670,24 +732,49 @@ class MainActivity : GenericActivity() {
     }
 
     private fun handleMainIntent(intent: Intent) {
+        messageOpenJob?.cancel()
+        val request = messageOpenRequests.begin()
         val messagePush = Mango9MessagePush.fromJson(
             intent.getStringExtra(Mango9MessagePushCoordinator.EXTRA_PUSH),
         )
         if (messagePush != null) {
             intent.removeExtra(Mango9MessagePushCoordinator.EXTRA_PUSH)
-            lifecycleScope.launch {
-                if (!Mango9MessagePushCoordinator.activateForOpen(this@MainActivity, messagePush)) {
+            messageOpenJob = lifecycleScope.launch {
+                val lease = Mango9MessagePushCoordinator.activateForOpen(this@MainActivity, messagePush, request)
+                if (lease == null) {
                     Log.w("$TAG Ignoring Mango9 message push for an unavailable account")
                     return@launch
                 }
-                when (val target = messagePush.target) {
-                    is Mango9MessagePushTarget.Chat -> openMango9Chat(
-                        Mango9ChatTarget(target.userId, target.name, target.roomId),
-                    )
-                    is Mango9MessagePushTarget.Sms -> openMango9Sms(
-                        Mango9SmsTarget(target.phone, target.name),
-                    )
-                    is Mango9MessagePushTarget.Lead -> openMango9Lead(target.id)
+                request.ifCurrent {
+                    if (Mango9SessionStore(this@MainActivity).currentSession(lease) == null) return@ifCurrent
+                    when (val target = messagePush.target) {
+                        is Mango9MessagePushTarget.Chat -> openMango9Chat(
+                            Mango9ChatTarget(target.userId, target.name, target.roomId), lease,
+                        )
+                        is Mango9MessagePushTarget.Sms -> openMango9Sms(Mango9SmsTarget(target.phone, target.name), lease)
+                        is Mango9MessagePushTarget.Lead -> openMango9Lead(target.id, lease)
+                        Mango9MessagePushTarget.Leads -> findNavController().navigate(
+                            R.id.action_global_mango9CrmFragment,
+                            Bundle().apply {
+                            Mango9NavigationSession.bind(this, lease); putBoolean("mango9_open_leads", true)
+                        }
+                        )
+                        is Mango9MessagePushTarget.Appointment -> findNavController().navigate(
+                            R.id.action_global_mango9CalendarFragment,
+                            Bundle().apply {
+                            Mango9NavigationSession.bind(this, lease); putInt("mango9_event_id", target.id)
+                        }
+                        )
+                        is Mango9MessagePushTarget.Social -> findNavController().navigate(
+                            R.id.action_global_mango9MessagingConversationFragment,
+                            Bundle().apply {
+                            Mango9NavigationSession.bind(this, lease)
+                            putString(Mango9MessagingListFragment.ARG_TYPE, Mango9MessagingListFragment.TYPE_SOCIAL)
+                            putString(Mango9MessagingListFragment.ARG_ROOM_ID, target.threadId)
+                            putString(Mango9MessagingListFragment.ARG_TARGET, "Social conversation")
+                        }
+                        )
+                    }
                 }
             }
             return
@@ -734,119 +821,31 @@ class MainActivity : GenericActivity() {
         }
     }
 
-    private fun handleSendIntent(intent: Intent, multiple: Boolean) {
-        val parcelablesUri = arrayListOf<Uri>()
-        if (multiple) {
-            val parcelables =
-                intent.getParcelableArrayListExtra<Parcelable>(Intent.EXTRA_STREAM)
-            for (parcelable in parcelables.orEmpty()) {
-                val uri = parcelable as? Uri
-                if (uri != null) {
-                    Log.i("$TAG Found URI [$uri] in parcelable extra list")
-                    parcelablesUri.add(uri)
-                }
-            }
-        } else {
-            val uri = intent.getParcelableExtra<Parcelable>(Intent.EXTRA_STREAM) as? Uri
-            if (uri != null) {
-                Log.i("$TAG Found URI [$uri] in parcelable extra")
-                parcelablesUri.add(uri)
-            }
+    private fun handleSendIntent(intent: Intent) {
+        val request = sharedViewModel.externalShare.begin(
+            intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty(),
+            Mango9ExternalShare.streams(intent),
+            intent.type,
+        ) ?: return
+        if (binding.drawerMenu.isOpen) closeDrawerMenu()
+        val host = supportFragmentManager.findFragmentById(R.id.main_nav_container) as? androidx.navigation.fragment.NavHostFragment
+        (host?.childFragmentManager?.primaryNavigationFragment as? ConversationsListFragment)?.showShareRecipientPicker()
+        val controller = findNavController()
+        if (controller.currentDestination?.id != R.id.conversationsListFragment) {
+            val action = ConversationsListFragmentDirections.actionGlobalConversationsListFragment()
+            val options = NavOptions.Builder().setLaunchSingleTop(true)
+            if (controller.currentDestination?.id == R.id.debugFragment) options.setPopUpTo(R.id.helpFragment, true)
+            controller.navigate(action, options.build())
         }
-
-        val list = arrayListOf<String>()
-        lifecycleScope.launch {
-            val deferred = arrayListOf<Deferred<String?>>()
-            for (uri in parcelablesUri) {
-                Log.i("$TAG Deferring copy from file [${uri.path}] to local storage")
-                deferred.add(async { FileUtils.getFilePath(this@MainActivity, uri, false) })
-            }
-
-            if (binding.drawerMenu.isOpen) {
-                Log.i("$TAG Drawer menu is opened, closing it")
-                closeDrawerMenu()
-            }
-            if (findNavController().currentDestination?.id == R.id.conversationsListFragment) {
-                if (sharedViewModel.displayedChatRoom != null) {
-                    Log.w(
-                        "$TAG Closing already opened conversation to prevent attaching file in it directly"
-                    )
-                    sharedViewModel.hideConversationEvent.value = Event(true)
-                } else {
-                    Log.i("$TAG No chat room currently displayed, nothing to close")
-                }
-            }
-
-            val paths = deferred.awaitAll()
-            for (path in paths) {
-                Log.i("$TAG Found file to share [$path] in intent")
-                if (path != null) list.add(path)
-            }
-
-            val textToShare = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
-            if (textToShare.isNotEmpty()) {
-                Log.i("$TAG Found [${textToShare.length}] characters of text in the share intent")
-            }
-
-            if (list.isNotEmpty()) {
-                sharedViewModel.beginPendingShareRecipientSelection()
-                sharedViewModel.filesToShareFromIntent.postValue(list)
-            }
-            if (textToShare.isNotEmpty()) {
-                sharedViewModel.beginPendingShareRecipientSelection()
-                sharedViewModel.textToShareFromIntent.postValue(textToShare)
-            }
-            if (list.isEmpty() && textToShare.isEmpty()) {
-                sharedViewModel.completePendingShareRecipientSelection()
-                Log.w("$TAG Failed to find at least one file or text to share!")
-            }
-
-            if (findNavController().currentDestination?.id == R.id.debugFragment) {
-                Log.i(
-                    "$TAG App is already started and in debug fragment, navigating to conversations list"
-                )
-                val conversationId = parseShortcutIfAny(intent)
-                if (conversationId != null) {
-                    sharedViewModel.completePendingShareRecipientSelection()
-                    Log.i(
-                        "$TAG Navigating from debug to conversation with ID [$conversationId], computed from shortcut ID"
-                    )
-                    sharedViewModel.showConversationEvent.postValue(Event(conversationId))
-                }
-
-                val action = ConversationsListFragmentDirections.actionGlobalConversationsListFragment()
-                val options = NavOptions.Builder()
-                options.apply {
-                    setPopUpTo(R.id.helpFragment, true)
-                    setLaunchSingleTop(true)
-                }
-                findNavController().navigate(action, options.build())
-            } else {
-                val conversationId = parseShortcutIfAny(intent)
-                if (conversationId != null) {
-                    sharedViewModel.completePendingShareRecipientSelection()
-                    Log.i(
-                        "$TAG Navigating to conversation with conversation ID [$conversationId] addresses, computed from shortcut ID"
-                    )
-                    sharedViewModel.showConversationEvent.postValue(Event(conversationId))
-                }
-
-                if (findNavController().currentDestination?.id == R.id.conversationsListFragment) {
-                    Log.w(
-                        "$TAG Current destination is already conversations list, skipping navigation"
-                    )
-                } else {
-                    val action = ConversationsListFragmentDirections.actionGlobalConversationsListFragment()
-                    findNavController().navigate(action)
-                }
-            }
+        parseShortcutIfAny(intent)?.let { id ->
+            sharedViewModel.showSharedConversationEvent.value = Event(Mango9NativeConversationRoute(id, request))
         }
     }
 
     private fun parseShortcutIfAny(intent: Intent): String? {
         val shortcutId = intent.getStringExtra("android.intent.extra.shortcut.ID") // Intent.EXTRA_SHORTCUT_ID
         if (shortcutId != null) {
-            Log.i("$TAG Found shortcut ID [$shortcutId]")
+            Log.i("$TAG Found conversation shortcut")
             return shortcutId
         } else {
             Log.i("$TAG No shortcut ID was found")

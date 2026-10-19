@@ -24,10 +24,15 @@ import android.app.RemoteInput
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.core.Address
 import org.linphone.core.AudioDevice
 import org.linphone.core.ConferenceParams
+import org.linphone.core.Core
+import org.linphone.core.CoreTaskDispatcher
 import org.linphone.core.tools.Log
 import org.linphone.utils.AudioUtils
 
@@ -41,61 +46,72 @@ class NotificationBroadcastReceiver : BroadcastReceiver() {
         val action = intent.action
         Log.i("$TAG Got notification broadcast for ID [$notificationId] with action [$action]")
 
-        // Wait for coreContext to be ready to handle intent
-        while (!coreContext.isReady()) {
-            Thread.sleep(50)
-        }
-
-        if (
+        val isCall =
             action == NotificationsManager.INTENT_HANGUP_CALL_NOTIF_ACTION ||
             action == NotificationsManager.INTENT_TOGGLE_SPEAKER_CALL_NOTIF_ACTION
-        ) {
-            handleCallIntent(intent, notificationId, action)
-        } else if (
+        val isChat =
             action == NotificationsManager.INTENT_REPLY_MESSAGE_NOTIF_ACTION ||
             action == NotificationsManager.INTENT_MARK_MESSAGE_AS_READ_NOTIF_ACTION
-        ) {
-            handleChatIntent(context, intent, notificationId, action)
+        if ((!isCall && !isChat) || action == null) return
+
+        val pendingResult = goAsync()
+        val appContext = context.applicationContext
+        val capturedIntent = Intent(intent)
+        val mainHandler = Handler(Looper.getMainLooper())
+        val timeoutToken = Any()
+        val lifetime = NotificationActionLifetime(SystemClock::elapsedRealtime, 8_000L) {
+            mainHandler.removeCallbacksAndMessages(timeoutToken)
+            pendingResult.finish()
         }
-    }
-
-    private fun handleCallIntent(intent: Intent, notificationId: Int, action: String) {
-        val remoteSipUri = intent.getStringExtra(NotificationsManager.INTENT_REMOTE_SIP_URI)
-        if (remoteSipUri == null) {
-            Log.e("$TAG Remote SIP address is null for call notification ID [$notificationId]")
-            return
-        }
-
-        coreContext.postOnCoreThread { core ->
-            val call = core.calls.find {
-                it.remoteAddress.asStringUriOnly() == remoteSipUri
-            }
-            if (call == null) {
-                Log.e("$TAG Couldn't find call from remote address [$remoteSipUri]")
-            } else {
-                when (action) {
-
-                    NotificationsManager.INTENT_HANGUP_CALL_NOTIF_ACTION -> {
-                        Log.i("$TAG Declining/terminating call with remote address [$remoteSipUri]")
-                        coreContext.terminateCall(call)
+        // This variable and the timeout callback are confined to the main looper.
+        var ticket: CoreTaskDispatcher.Ticket? = null
+        mainHandler.postAtTime({
+            ticket?.cancel()
+            lifetime.finish()
+            Log.w("$TAG Notification action exceeded its execution deadline")
+        }, timeoutToken, SystemClock.uptimeMillis() + 8_000L)
+        ticket = coreContext.postOnCoreThreadCancellable { core ->
+            lifetime.run {
+                try {
+                    if (isCall) {
+                        handleCallIntent(capturedIntent, notificationId, action)
+                    } else {
+                        handleChatIntent(core, appContext, capturedIntent, notificationId, action)
                     }
-                    NotificationsManager.INTENT_TOGGLE_SPEAKER_CALL_NOTIF_ACTION -> {
-                        val audioDevice = call.outputAudioDevice
-                        val isUsingSpeaker = audioDevice?.type == AudioDevice.Type.Speaker
-                        if (isUsingSpeaker) {
-                            Log.i("$TAG Routing audio to earpiece for call [$remoteSipUri]")
-                            AudioUtils.routeAudioToEarpiece(call)
-                        } else {
-                            Log.i("$TAG Routing audio to speaker for call [$remoteSipUri]")
-                            AudioUtils.routeAudioToSpeaker(call)
-                        }
-                    }
+                } catch (error: Exception) {
+                    Log.e("$TAG Notification action failed: ${error.javaClass.simpleName}")
                 }
             }
         }
     }
 
-    private fun handleChatIntent(context: Context, intent: Intent, notificationId: Int, action: String) {
+    private fun handleCallIntent(intent: Intent, notificationId: Int, action: String) {
+        val target = CallNotificationIntent.read(intent) ?: return
+        val expectedOperation = if (action == NotificationsManager.INTENT_HANGUP_CALL_NOTIF_ACTION) {
+            CallNotificationIntent.HANGUP
+        } else {
+            CallNotificationIntent.SPEAKER
+        }
+        if (target.operation != expectedOperation) return
+        // No remote-address/default-call fallback: it can affect another account's call.
+        val call = coreContext.notificationsManager.findCallForNotification(target.token)
+        if (call == null) {
+            Log.i("$TAG Ignoring expired call notification [$notificationId]")
+            return
+        }
+        when (action) {
+            NotificationsManager.INTENT_HANGUP_CALL_NOTIF_ACTION -> coreContext.terminateCall(call)
+            NotificationsManager.INTENT_TOGGLE_SPEAKER_CALL_NOTIF_ACTION -> {
+                if (call.outputAudioDevice?.type == AudioDevice.Type.Speaker) {
+                    AudioUtils.routeAudioToEarpiece(call)
+                } else {
+                    AudioUtils.routeAudioToSpeaker(call)
+                }
+            }
+        }
+    }
+
+    private fun handleChatIntent(core: Core, context: Context, intent: Intent, notificationId: Int, action: String) {
         val remoteSipAddress = intent.getStringExtra(NotificationsManager.INTENT_REMOTE_SIP_URI)
         if (remoteSipAddress == null) {
             Log.e("$TAG Remote SIP address is null for notification ID [$notificationId]")
@@ -115,13 +131,13 @@ class NotificationBroadcastReceiver : BroadcastReceiver() {
             }
         }
 
-        coreContext.postOnCoreThread { core ->
+        run {
             val remoteAddress = core.interpretUrl(remoteSipAddress, false)
             if (remoteAddress == null) {
                 Log.e(
                     "$TAG Couldn't interpret remote address [$remoteSipAddress]"
                 )
-                return@postOnCoreThread
+                return
             }
 
             val localAddress = core.interpretUrl(localIdentity, false)
@@ -129,7 +145,7 @@ class NotificationBroadcastReceiver : BroadcastReceiver() {
                 Log.e(
                     "$TAG Couldn't interpret local address [$localIdentity]"
                 )
-                return@postOnCoreThread
+                return
             }
 
             val params: ConferenceParams? = null
@@ -145,7 +161,7 @@ class NotificationBroadcastReceiver : BroadcastReceiver() {
                 Log.e(
                     "$TAG Couldn't find conversation for remote address [$remoteSipAddress] and local address [$localIdentity]"
                 )
-                return@postOnCoreThread
+                return
             }
 
             if (action == NotificationsManager.INTENT_REPLY_MESSAGE_NOTIF_ACTION) {

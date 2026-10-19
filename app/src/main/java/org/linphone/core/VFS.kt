@@ -53,13 +53,22 @@ class VFS {
         private const val VFS_KEY = "vfskey"
         private const val ENCRYPTED_SHARED_PREFS_FILE = "encrypted.pref"
 
-        fun isEnabled(context: Context): Boolean {
-            val preferences = getEncryptedSharedPreferences(context)
-            if (preferences == null) {
-                Log.e("$TAG Failed to get encrypted shared preferences!")
-                return false
+        @Volatile private var preferenceStore: VfsPreferenceStore? = null
+
+        private fun preferences(context: Context): VfsPreferenceStore {
+            preferenceStore?.let { return it }
+            return synchronized(this) {
+                preferenceStore ?: run {
+                    val appContext = context.applicationContext
+                    VfsPreferenceStore(
+                        appContext.getSharedPreferences(ENCRYPTED_SHARED_PREFS_FILE, Context.MODE_PRIVATE),
+                    ) { createEncryptedSharedPreferences(appContext) }.also { preferenceStore = it }
+                }
             }
-            return preferences.getBoolean("vfs_enabled", false)
+        }
+
+        fun isEnabled(context: Context): Boolean {
+            return preferences(context).isEnabled()
         }
 
         fun enable(context: Context): Boolean {
@@ -119,6 +128,10 @@ class VFS {
         }
 
         private fun getEncryptedSharedPreferences(context: Context): SharedPreferences? {
+            return preferences(context).open()
+        }
+
+        private fun createEncryptedSharedPreferences(context: Context): SharedPreferences? {
             return try {
                 val masterKey: MasterKey = MasterKey.Builder(
                     context,

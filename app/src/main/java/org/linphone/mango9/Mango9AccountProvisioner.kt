@@ -26,22 +26,29 @@ import org.linphone.core.tools.Log
 object Mango9AccountProvisioner {
     private const val TAG = "[Mango9 Account Provisioner]"
 
-    suspend fun install(enrollment: Mango9SipEnrollment, displayName: String?) {
+    suspend fun install(
+        enrollment: Mango9SipEnrollment,
+        displayName: String?,
+        stillAllowed: () -> Boolean = { true },
+        mutationGuard: ((() -> Unit) -> Unit) = { it() },
+    ) {
         val normalizedIdentity = Mango9SessionStore.normalizedIdentity(enrollment.identity)
             ?: throw Mango9ApiException.InvalidResponse
-        installOnCore(enrollment, displayName)
+        installOnCore(enrollment, displayName, stillAllowed, mutationGuard)
         val registered = withTimeoutOrNull(REGISTRATION_TIMEOUT_MS) {
             var failedSince: Long? = null
             var pushFallbackAttempted = false
             while (true) {
+                if (!stillAllowed()) throw Mango9ApiException.Unauthorized
                 val snapshot = registrationSnapshot(normalizedIdentity)
+                if (!stillAllowed()) throw Mango9ApiException.Unauthorized
                 when (snapshot?.state) {
                     RegistrationState.Ok -> return@withTimeoutOrNull true
                     RegistrationState.Failed -> {
                         if (
                             !pushFallbackAttempted &&
                             shouldRetryWithoutSipPush(snapshot.protocolCode, snapshot.phrase) &&
-                            retryWithoutSipPush(normalizedIdentity)
+                            retryWithoutSipPush(normalizedIdentity, stillAllowed, mutationGuard)
                         ) {
                             pushFallbackAttempted = true
                             failedSince = null
@@ -75,59 +82,69 @@ object Mango9AccountProvisioner {
         return Mango9SipEnrollment(identity, username, domain, realm, digest)
     }
 
-    private suspend fun installOnCore(enrollment: Mango9SipEnrollment, displayName: String?) =
+    private suspend fun installOnCore(
+        enrollment: Mango9SipEnrollment,
+        displayName: String?,
+        stillAllowed: () -> Boolean,
+        mutationGuard: ((() -> Unit) -> Unit),
+    ) =
         suspendCancellableCoroutine { continuation ->
             coreContext.postOnCoreThread { core ->
+                if (!continuation.isActive) return@postOnCoreThread
                 try {
-                    if (core.globalState != GlobalState.On) throw Mango9ApiException.RegistrationFailed
-                    val identity = Factory.instance().createAddress(enrollment.identity)
-                        ?: throw Mango9ApiException.InvalidResponse
-                    displayName?.trim()?.takeIf { it.isNotEmpty() }?.let { identity.displayName = it }
-                    val normalizedIdentity = Mango9SessionStore.normalizedIdentity(identity.asStringUriOnly())
-                        ?: throw Mango9ApiException.InvalidResponse
-                    val authInfo = Factory.instance().createAuthInfo(
-                        enrollment.username,
-                        null,
-                        null,
-                        enrollment.ha1,
-                        enrollment.realm,
-                        enrollment.domain,
-                    )
-                    val params = core.createAccountParams()
-                    params.identityAddress = identity
-                    val proxy = Factory.instance().createAddress(Mango9Configuration.SIP_PROXY_URI)
-                        ?: throw Mango9ApiException.InvalidResponse
-                    proxy.transport = TransportType.Tls
-                    params.serverAddress = proxy
-                    params.setRoutesAddresses(arrayOf(proxy.clone()))
-                    params.expires = Mango9Configuration.MOBILE_REGISTRATION_EXPIRES_SECONDS
-                    params.isRegisterEnabled = true
-                    params.pushNotificationAllowed = Mango9Configuration.SIP_PUSH_NOTIFICATION_ENABLED
+                    mutationGuard {
+                        if (!continuation.isActive) return@mutationGuard
+                        if (!stillAllowed()) throw Mango9ApiException.Unauthorized
+                        if (core.globalState != GlobalState.On) throw Mango9ApiException.RegistrationFailed
+                        val identity = Factory.instance().createAddress(enrollment.identity)
+                            ?: throw Mango9ApiException.InvalidResponse
+                        displayName?.trim()?.takeIf { it.isNotEmpty() }?.let { identity.displayName = it }
+                        val normalizedIdentity = Mango9SessionStore.normalizedIdentity(identity.asStringUriOnly())
+                            ?: throw Mango9ApiException.InvalidResponse
+                        val authInfo = Factory.instance().createAuthInfo(
+                            enrollment.username,
+                            null,
+                            null,
+                            enrollment.ha1,
+                            enrollment.realm,
+                            enrollment.domain,
+                        )
+                        val params = core.createAccountParams()
+                        params.identityAddress = identity
+                        val proxy = Factory.instance().createAddress(Mango9Configuration.SIP_PROXY_URI)
+                            ?: throw Mango9ApiException.InvalidResponse
+                        proxy.transport = TransportType.Tls
+                        params.serverAddress = proxy
+                        params.setRoutesAddresses(arrayOf(proxy.clone()))
+                        params.expires = Mango9Configuration.MOBILE_REGISTRATION_EXPIRES_SECONDS
+                        params.isRegisterEnabled = true
+                        params.pushNotificationAllowed = Mango9Configuration.SIP_PUSH_NOTIFICATION_ENABLED
 
-                    val matching = core.accountList.filter {
-                        Mango9SessionStore.normalizedIdentity(it.params.identityAddress?.asStringUriOnly()) ==
-                            normalizedIdentity
+                        val matching = core.accountList.filter {
+                            Mango9SessionStore.normalizedIdentity(it.params.identityAddress?.asStringUriOnly()) ==
+                                normalizedIdentity
+                        }
+                        val existing = matching.firstOrNull { it == core.defaultAccount } ?: matching.firstOrNull()
+                        val selected: Account
+                        if (existing != null) {
+                            matching.filter { it != existing }.forEach(core::removeAccount)
+                            existing.findAuthInfo()?.let(core::removeAuthInfo)
+                            core.addAuthInfo(authInfo)
+                            existing.params = params
+                            selected = existing
+                        } else {
+                            selected = core.createAccount(params)
+                            core.addAuthInfo(authInfo)
+                            core.addAccount(selected)
+                        }
+                        core.defaultAccount = selected
+                        selected.refreshRegister()
+                        enableAndroidSipKeepAliveIfNeeded()
+                        core.config.setString("misc", "config-uri", null)
+                        core.provisioningUri = null
+                        Log.i("$TAG Installed managed account [$normalizedIdentity] through ${Mango9Configuration.SIP_PROXY_HOST}")
+                        if (continuation.isActive) continuation.resume(Unit)
                     }
-                    val existing = matching.firstOrNull { it == core.defaultAccount } ?: matching.firstOrNull()
-                    val selected: Account
-                    if (existing != null) {
-                        matching.filter { it != existing }.forEach(core::removeAccount)
-                        existing.findAuthInfo()?.let(core::removeAuthInfo)
-                        core.addAuthInfo(authInfo)
-                        existing.params = params
-                        selected = existing
-                    } else {
-                        selected = core.createAccount(params)
-                        core.addAuthInfo(authInfo)
-                        core.addAccount(selected)
-                    }
-                    core.defaultAccount = selected
-                    selected.refreshRegister()
-                    enableAndroidSipKeepAliveIfNeeded()
-                    core.config.setString("misc", "config-uri", null)
-                    core.provisioningUri = null
-                    Log.i("$TAG Installed managed account [$normalizedIdentity] through ${Mango9Configuration.SIP_PROXY_HOST}")
-                    if (continuation.isActive) continuation.resume(Unit)
                 } catch (error: Exception) {
                     if (continuation.isActive) continuation.resumeWithException(error)
                 }
@@ -137,6 +154,7 @@ object Mango9AccountProvisioner {
     private suspend fun registrationSnapshot(identity: String): RegistrationSnapshot? =
         suspendCancellableCoroutine { continuation ->
             coreContext.postOnCoreThread { core: Core ->
+                if (!continuation.isActive) return@postOnCoreThread
                 val account = core.accountList.firstOrNull {
                     Mango9SessionStore.normalizedIdentity(it.params.identityAddress?.asStringUriOnly()) == identity
                 }
@@ -148,20 +166,29 @@ object Mango9AccountProvisioner {
             }
         }
 
-    private suspend fun retryWithoutSipPush(identity: String): Boolean =
+    private suspend fun retryWithoutSipPush(
+        identity: String,
+        stillAllowed: () -> Boolean,
+        mutationGuard: ((() -> Unit) -> Unit),
+    ): Boolean =
         suspendCancellableCoroutine { continuation ->
             coreContext.postOnCoreThread { core: Core ->
+                if (!continuation.isActive) return@postOnCoreThread
                 try {
-                    val account = core.accountList.firstOrNull {
-                        Mango9SessionStore.normalizedIdentity(it.params.identityAddress?.asStringUriOnly()) == identity
+                    mutationGuard {
+                        if (!continuation.isActive) return@mutationGuard
+                        if (!stillAllowed()) throw Mango9ApiException.Unauthorized
+                        val account = core.accountList.firstOrNull {
+                            Mango9SessionStore.normalizedIdentity(it.params.identityAddress?.asStringUriOnly()) == identity
+                        }
+                        val errorInfo = account?.errorInfo
+                        val retried = account != null && retryWithoutSipPushIfUnsupported(
+                            account,
+                            errorInfo?.protocolCode,
+                            errorInfo?.phrase,
+                        )
+                        if (continuation.isActive) continuation.resume(retried)
                     }
-                    val errorInfo = account?.errorInfo
-                    val retried = account != null && retryWithoutSipPushIfUnsupported(
-                        account,
-                        errorInfo?.protocolCode,
-                        errorInfo?.phrase,
-                    )
-                    if (continuation.isActive) continuation.resume(retried)
                 } catch (error: Exception) {
                     if (continuation.isActive) continuation.resumeWithException(error)
                 }

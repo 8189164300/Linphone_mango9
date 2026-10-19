@@ -6,8 +6,8 @@ CRM access, contacts, Team Chat, SMS/MMS, and Firebase Cloud Messaging support.
 
 This repository is the public corresponding-source location displayed by the
 Mango9 app. The immutable release tag
-[`android-6.2.8-build-602027`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.8-build-602027)
-corresponds to Mango9 Android version 6.2.8, version code 602027.
+[`android-6.2.8-build-602037`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.8-build-602037)
+corresponds to Mango9 Android version 6.2.8, version code 602037.
 
 Mango9 modified the upstream Linphone Android application in 2026. Mango9 is
 not affiliated with or endorsed by Belledonne Communications SARL.
@@ -46,13 +46,13 @@ dependency license information.
 ## Source relationship
 
 - Mango9 release source:
-  [`android-6.2.8-build-602027`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.8-build-602027)
+  [`android-6.2.8-build-602037`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.8-build-602037)
 - Upstream Linphone Android tag: [`6.2.6`](https://github.com/BelledonneCommunications/linphone-android/tree/6.2.6)
 - Upstream application commit:
   [`42b1fcce3c8037e6f5a891cf8d108eb47e308386`](https://github.com/BelledonneCommunications/linphone-android/commit/42b1fcce3c8037e6f5a891cf8d108eb47e308386)
-- Linphone SDK Android artifact: `5.5.17-pre.1+3896ec0681`
+- Linphone SDK Android artifact: `5.5.32`
 - Linphone SDK source commit:
-  [`3896ec0681`](https://github.com/BelledonneCommunications/linphone-sdk/commit/3896ec0681)
+  [`5eaa11cfd2`](https://github.com/BelledonneCommunications/linphone-sdk/commit/5eaa11cfd2b052d9a9c71989faa0d55a8a8c57aa)
 
 This branch contains the complete modified application source and build scripts,
 not only a patch against upstream.
@@ -88,8 +88,8 @@ server credential.
 ## Verification
 
 The source branch includes JVM tests, Android instrumentation tests, strict
-Android lint, and a Mango9 static-policy gate. The detailed implementation and
-verification record is in [`MANGO9_ANDROID_PARITY.md`](MANGO9_ANDROID_PARITY.md).
+Android lint, and a Mango9 static-policy gate. Run the build and test commands
+above to verify your checkout locally.
 
 The public-source tag makes the source available; it does not include Mango9
 production credentials and does not grant access to Mango9 services.

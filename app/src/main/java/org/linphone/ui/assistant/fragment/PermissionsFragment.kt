@@ -188,15 +188,9 @@ class PermissionsFragment : GenericFragment() {
     }
 
     private fun areAllPermissionsGranted(): Boolean {
-        for (permission in Compatibility.getAllRequiredPermissionsArray()) {
-            val granted = ContextCompat.checkSelfPermission(requireContext(), permission) == PackageManager.PERMISSION_GRANTED
-            viewModel.setPermissionGranted(permission, granted)
-            if (!granted) {
-                Log.w("$TAG Permission [$permission] hasn't been granted yet!")
-                return false
-            }
-
+        val allGranted = viewModel.refreshPermissions { permission ->
+            ContextCompat.checkSelfPermission(requireContext(), permission) == PackageManager.PERMISSION_GRANTED
         }
-        return Compatibility.hasFullScreenIntentPermission(requireContext())
+        return allGranted && Compatibility.hasFullScreenIntentPermission(requireContext())
     }
 }

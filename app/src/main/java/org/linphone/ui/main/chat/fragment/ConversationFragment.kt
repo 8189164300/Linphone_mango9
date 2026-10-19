@@ -19,6 +19,8 @@
  */
 package org.linphone.ui.main.chat.fragment
 
+import org.linphone.mango9.Mango9NativeAttachment
+
 import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
@@ -46,6 +48,9 @@ import androidx.core.view.doOnPreDraw
 import androidx.databinding.DataBindingUtil
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import org.linphone.mango9.Mango9ExternalShare
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -546,31 +551,14 @@ open class ConversationFragment : SlidingPaneChildFragment() {
                         }
                     }
 
-                    sharedViewModel.textToShareFromIntent.observe(viewLifecycleOwner) { text ->
-                        if (
-                            text.isNotEmpty() &&
-                            sharedViewModel.displayedChatRoom != null &&
-                            !sharedViewModel.pendingShareNeedsRecipientSelection
-                        ) {
-                            Log.i("$TAG Found text to share from intent")
-                            sendMessageViewModel.textToSend.value = text
-
-                            sharedViewModel.textToShareFromIntent.value = ""
-                        }
-                    }
-
-                    sharedViewModel.filesToShareFromIntent.observe(viewLifecycleOwner) { files ->
-                        if (
-                            files.isNotEmpty() &&
-                            sharedViewModel.displayedChatRoom != null &&
-                            !sharedViewModel.pendingShareNeedsRecipientSelection
-                        ) {
-                            Log.i("$TAG Found [${files.size}] files to share from intent")
-                            for (path in files) {
-                                sendMessageViewModel.addAttachments(arrayListOf(path))
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                            sharedViewModel.externalShare.state.collect {
+                                sharedViewModel.externalShare.claim(
+                                    arguments?.getString(Mango9ExternalShare.ARG_DELIVERY),
+                                    Mango9ExternalShare.nativeDestination(args.conversationId),
+                                )?.let { sendMessageViewModel.adoptSharedDraft(it, args.conversationId) }
                             }
-
-                            sharedViewModel.filesToShareFromIntent.value = arrayListOf()
                         }
                     }
                 }
@@ -1224,24 +1212,20 @@ open class ConversationFragment : SlidingPaneChildFragment() {
 
     private fun goToFileViewer(fileModel: FileModel) {
         val path = fileModel.path
-        Log.i("$TAG Navigating to file viewer fragment with path [$path]")
-        val extension = FileUtils.getExtensionFromFileName(path)
-        val mime = FileUtils.getMimeTypeFromExtension(extension)
-        val mimeType = FileUtils.getMimeType(mime)
-        if (mimeType == FileUtils.MimeType.Unknown && extension.contains("/")) {
-            Log.w("$TAG Slash character found in 'extension' [$extension] deduced from file path [$path]; MIME type will be Unknown")
-        } else {
-            Log.i("$TAG Extension for file [$path] is [$extension], associated MIME type is [$mimeType]")
-        }
+        val mime = fileModel.mimeTypeString
+        val mimeType = fileModel.mimeType
 
         val bundle = Bundle()
         bundle.apply {
             putString("conversationId", viewModel.conversationId)
             putString("path", path)
+            putString(Mango9NativeAttachment.MIME, mime)
+            putString(Mango9NativeAttachment.NAME, fileModel.fileName)
             putBoolean("isEncrypted", fileModel.isEncrypted)
             putLong("timestamp", fileModel.fileCreationTimestamp)
             putString("originalPath", fileModel.originalPath)
             putBoolean("isFromEphemeralMessage", fileModel.isFromEphemeralMessage)
+            org.linphone.mango9.Mango9NativeFileTransfers.bind(this, fileModel)
         }
         when (mimeType) {
             FileUtils.MimeType.Image, FileUtils.MimeType.Video, FileUtils.MimeType.Audio -> {

@@ -193,7 +193,9 @@ class ContactFragment : SlidingPaneChildFragment() {
                     }
                     startActivity(editIntent)
                 } catch (anfe: ActivityNotFoundException) {
-                    Log.e("$TAG Failed to open native contact editor with URI [$uri]: $anfe")
+                    viewModel.showRedToast(R.string.mango9_contact_editor_unavailable, R.drawable.warning_circle)
+                } catch (_: SecurityException) {
+                    viewModel.showRedToast(R.string.mango9_contact_editor_unavailable, R.drawable.warning_circle)
                 }
             }
         }
@@ -239,6 +241,10 @@ class ContactFragment : SlidingPaneChildFragment() {
             it.consume { triple ->
                 callDirectlyOrShowConfirmTrustCallDialog(triple.first, triple.second, triple.third)
             }
+        }
+
+        viewModel.contactUnavailableEvent.observe(viewLifecycleOwner) {
+            it.consume { goBack() }
         }
 
         viewModel.contactRemovedEvent.observe(viewLifecycleOwner) {

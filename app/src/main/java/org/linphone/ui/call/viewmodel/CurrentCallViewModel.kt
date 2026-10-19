@@ -58,6 +58,7 @@ import org.linphone.core.MediaEncryption
 import org.linphone.core.SecurityLevel
 import org.linphone.core.tools.Log
 import org.linphone.mango9.Mango9PushCallerIdentityCache
+import org.linphone.notifications.CallNotificationIntent
 import org.linphone.ui.GenericViewModel
 import org.linphone.ui.call.conference.viewmodel.ConferenceViewModel
 import org.linphone.ui.call.model.AudioDeviceModel
@@ -175,7 +176,7 @@ class CurrentCallViewModel
         MutableLiveData()
     }
 
-    val requestRecordAudioPermission: MutableLiveData<Event<Boolean>> by lazy {
+    val requestRecordAudioPermission: MutableLiveData<Event<Call>> by lazy {
         MutableLiveData()
     }
 
@@ -270,6 +271,13 @@ class CurrentCallViewModel
     val isScreenLocked = MutableLiveData<Boolean>()
 
     lateinit var currentCall: Call
+
+    // Capture the displayed target before posting a user action to the core thread.
+    @Volatile private var currentCallKey: Long? = null
+
+    internal enum class NotificationScreen { INCOMING, OUTGOING, ACTIVE, CONFERENCE }
+
+    internal val notificationScreenEvent = MutableLiveData<Event<NotificationScreen>>()
 
     private val contactsListener = object : ContactsListener {
         @WorkerThread
@@ -612,36 +620,56 @@ class CurrentCallViewModel
     }
 
     @UiThread
-    fun answerCallFrom(caller: String) {
+    fun answer() {
+        val key = currentCallKey ?: return
         coreContext.postOnCoreThread { core ->
             val call = core.calls.find {
-                LinphoneUtils.isCallIncoming(it.state) && (caller.isEmpty() || caller == it.remoteAddress.asStringUriOnly())
+                it.nativePointer == key && LinphoneUtils.isCallIncoming(it.state)
             }
             if (call != null) {
                 Log.i("$TAG Answering call [${call.remoteAddress.asStringUriOnly()}]")
                 coreContext.answerCall(call)
             } else {
-                Log.e("$TAG No call found in incoming state, can't answer any!")
-                finishActivityEvent.postValue(Event(true))
+                Log.i("$TAG Displayed incoming call has ended; ignoring Answer")
             }
         }
     }
 
     @UiThread
-    fun answer() {
-        answerCallFrom("")
+    internal fun handleNotification(target: CallNotificationIntent.Target) {
+        coreContext.postOnCoreThread {
+            val call = coreContext.notificationsManager.findCallForNotification(target.token)
+                ?: return@postOnCoreThread
+            val answer = target.operation == CallNotificationIntent.ANSWER
+            if (answer && !LinphoneUtils.isCallIncoming(call.state)) return@postOnCoreThread
+            if (!::currentCall.isInitialized || currentCallKey != call.nativePointer) {
+                if (::currentCall.isInitialized) currentCall.removeListener(callListener)
+                configureCall(call)
+            }
+            if (answer) {
+                coreContext.answerCall(call)
+            } else {
+                val screen = when {
+                    LinphoneUtils.isCallIncoming(call.state) -> NotificationScreen.INCOMING
+                    LinphoneUtils.isCallOutgoing(call.state) -> NotificationScreen.OUTGOING
+                    call.conference != null -> NotificationScreen.CONFERENCE
+                    else -> NotificationScreen.ACTIVE
+                }
+                notificationScreenEvent.postValue(Event(screen))
+            }
+        }
     }
 
     @UiThread
     fun hangUp() {
-        coreContext.postOnCoreThread {
-            if (::currentCall.isInitialized) {
-                Log.i("$TAG Terminating call [${currentCall.remoteAddress.asStringUriOnly()}]")
-                terminatedByUser = true
-                coreContext.terminateCall(currentCall)
-            } else {
-                Log.e("$TAG No call to decline!")
-                finishActivityEvent.postValue(Event(true))
+        val key = currentCallKey ?: return
+        coreContext.postOnCoreThread { core ->
+            val call = core.calls.find {
+                it.nativePointer == key && !LinphoneUtils.isCallEnding(it.state, true)
+            }
+            if (call != null) {
+                if (currentCallKey == key) terminatedByUser = true
+                coreContext.terminateCall(call)
             }
         }
     }
@@ -682,7 +710,11 @@ class CurrentCallViewModel
             ) != PackageManager.PERMISSION_GRANTED
         ) {
             Log.w("$TAG RECORD_AUDIO permission isn't granted, requesting it")
-            requestRecordAudioPermission.postValue(Event(true))
+            coreContext.postOnCoreThread { core ->
+                if (::currentCall.isInitialized && core.calls.any { it === currentCall }) {
+                    requestRecordAudioPermission.postValue(Event(currentCall))
+                }
+            }
             return
         }
 
@@ -705,6 +737,20 @@ class CurrentCallViewModel
                 }
                 isMicrophoneMuted.postValue(!micMuted)
             }
+        }
+    }
+
+    @UiThread
+    fun unmuteAfterMicrophonePermission(call: Call) {
+        coreContext.postOnCoreThread { core ->
+            if (!::currentCall.isInitialized || currentCall !== call || core.calls.none { it === call } ||
+                ActivityCompat.checkSelfPermission(coreContext.context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+            ) {
+                return@postOnCoreThread
+            }
+            // A permission response means unmute this call, never toggle a different/new call.
+            if (call.conference != null) call.conference?.microphoneMuted = false else call.microphoneMuted = false
+            isMicrophoneMuted.postValue(false)
         }
     }
 
@@ -1078,6 +1124,7 @@ class CurrentCallViewModel
 
         terminatedByUser = false
         currentCall = call
+        currentCallKey = call.nativePointer
         callStatsModel.update(call, call.audioStats)
         callMediaEncryptionModel.update(call)
         call.addListener(callListener)
@@ -1228,7 +1275,7 @@ class CurrentCallViewModel
         }
 
         contact.postValue(model)
-        displayedName.postValue(model.friend.name)
+        displayedName.postValue(model.contactName)
 
         val recording = call.params.isRecording
         isRecording.postValue(recording)

@@ -10,17 +10,24 @@ import androidx.annotation.UiThread
 import androidx.lifecycle.MediatorLiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
+import kotlin.coroutines.resume
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.mango9.Mango9ApiException
+import org.linphone.mango9.Mango9EnrollmentAttempts
 import org.linphone.mango9.Mango9LoginRepository
+import org.linphone.mango9.Mango9LoginActions
 import org.linphone.ui.GenericViewModel
 import org.linphone.utils.Event
 
 @UiThread
-class Mango9LoginViewModel : GenericViewModel() {
+class Mango9LoginViewModel(
+    private val repository: Mango9LoginActions = Mango9LoginRepository(coreContext.context),
+) : GenericViewModel() {
     private enum class LoginMode { Password, EmailRequest, EmailVerification }
 
     val showBackButton = MutableLiveData(false)
@@ -40,12 +47,13 @@ class Mango9LoginViewModel : GenericViewModel() {
     val resendCountdown = MutableLiveData(0)
     val resendButtonTitle = MutableLiveData("")
     val primaryActionEnabled = MediatorLiveData<Boolean>()
-    val accountLoggedInEvent = MutableLiveData<Event<Boolean>>()
+    val accountLoggedInEvent = MutableLiveData<Event<Boolean>?>()
 
-    private val repository = Mango9LoginRepository(coreContext.context)
     private var mode = LoginMode.Password
     private var resendJob: Job? = null
     private var restoreAttempted = false
+    private var actionJob: Job? = null
+    private var activeAttempt: Mango9EnrollmentAttempts.Attempt? = null
 
     init {
         rememberLogin.value = repository.sessions.rememberLogin
@@ -63,14 +71,17 @@ class Mango9LoginViewModel : GenericViewModel() {
         restoreAttempted = true
         val session = repository.sessions.load() ?: return
         username.value = session.loginId
-        coreContext.postOnCoreThread { core ->
-            if (core.accountList.isEmpty()) {
-                coreContext.postOnMainThread {
-                    runAction {
-                        repository.restore(session)
-                        accountLoggedInEvent.postValue(Event(true))
+        runAction { attempt ->
+            val hasAccounts = attempt.awaitCurrent {
+                suspendCancellableCoroutine<Boolean> { continuation ->
+                    coreContext.postOnCoreThread { core ->
+                        if (continuation.isActive) continuation.resume(core.accountList.isNotEmpty())
                     }
                 }
+            }
+            if (!hasAccounts) {
+                repository.restore(session, attempt)
+                attempt.requireCurrent { accountLoggedInEvent.value = Event(true) }
             }
         }
     }
@@ -92,14 +103,18 @@ class Mango9LoginViewModel : GenericViewModel() {
         val submittedUsername = username.value.orEmpty().trim()
         val submittedPassword = password.value.orEmpty()
         if (submittedUsername.isEmpty() || submittedPassword.isEmpty() || inProgress.value == true) return
-        runAction {
+        val remember = rememberLogin.value != false
+        runAction { attempt ->
             repository.signIn(
                 submittedUsername,
                 submittedPassword,
-                rememberLogin.value != false,
+                remember,
+                attempt,
             )
-            password.postValue("")
-            accountLoggedInEvent.postValue(Event(true))
+            attempt.requireCurrent {
+                password.value = ""
+                accountLoggedInEvent.value = Event(true)
+            }
         }
     }
 
@@ -107,10 +122,10 @@ class Mango9LoginViewModel : GenericViewModel() {
         val submittedEmail = email.value.orEmpty().trim().lowercase()
         if (!isValidEmail(submittedEmail) || inProgress.value == true) return
         email.value = submittedEmail
-        runAction {
-            val resendAfter = repository.requestLoginCode(submittedEmail)
-            verificationCode.postValue("")
-            coreContext.postOnMainThread {
+        runAction { attempt ->
+            val resendAfter = attempt.awaitCurrent { repository.requestLoginCode(submittedEmail) }
+            attempt.requireCurrent {
+                verificationCode.value = ""
                 updateMode(LoginMode.EmailVerification)
                 startResendCountdown(resendAfter)
             }
@@ -121,19 +136,24 @@ class Mango9LoginViewModel : GenericViewModel() {
         val submittedEmail = email.value.orEmpty().trim().lowercase()
         val submittedCode = verificationCode.value.orEmpty().trim()
         if (submittedCode.length != 6 || inProgress.value == true) return
-        runAction {
+        val remember = rememberLogin.value != false
+        runAction { attempt ->
             repository.verifyLoginCode(
                 submittedEmail,
                 submittedCode,
-                rememberLogin.value != false,
+                remember,
+                attempt,
             )
-            verificationCode.postValue("")
-            resendJob?.cancel()
-            accountLoggedInEvent.postValue(Event(true))
+            attempt.requireCurrent {
+                verificationCode.value = ""
+                resendJob?.cancel()
+                accountLoggedInEvent.value = Event(true)
+            }
         }
     }
 
     fun showEmailLogin() {
+        cancelPendingActions()
         resendJob?.cancel()
         resendCountdown.value = 0
         errorMessage.value = null
@@ -145,6 +165,7 @@ class Mango9LoginViewModel : GenericViewModel() {
     }
 
     fun showPasswordLogin() {
+        cancelPendingActions()
         resendJob?.cancel()
         resendCountdown.value = 0
         verificationCode.value = ""
@@ -153,6 +174,7 @@ class Mango9LoginViewModel : GenericViewModel() {
     }
 
     fun changeEmail() {
+        cancelPendingActions()
         verificationCode.value = ""
         resendJob?.cancel()
         resendCountdown.value = 0
@@ -167,23 +189,44 @@ class Mango9LoginViewModel : GenericViewModel() {
         showPassword.value = showPassword.value != true
     }
 
-    private fun runAction(action: suspend () -> Unit) {
+    fun cancelPendingActions() {
+        activeAttempt?.cancel()
+        activeAttempt = null
+        actionJob?.cancel()
+        actionJob = null
+        resendJob?.cancel()
+        resendJob = null
+        resendCountdown.value = 0
+        updateResendButtonTitle()
+        accountLoggedInEvent.value = null
+        inProgress.value = false
+        updatePrimaryButtonTitle()
+        updatePrimaryActionEnabled()
+    }
+
+    private fun runAction(action: suspend (Mango9EnrollmentAttempts.Attempt) -> Unit) {
         if (inProgress.value == true) return
+        val attempt = Mango9EnrollmentAttempts.shared.begin()
+        activeAttempt = attempt
         inProgress.value = true
         errorMessage.value = null
         updatePrimaryButtonTitle()
-        viewModelScope.launch {
+        actionJob = viewModelScope.launch {
             try {
-                action()
+                attempt.bindToCurrentJob()
+                action(attempt)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
-                if (mode == LoginMode.EmailVerification) verificationCode.postValue("")
-                errorMessage.postValue(
-                    (error as? Mango9ApiException)?.userMessage
-                        ?: "We couldn't reach Mango9. Check your connection and try again.",
-                )
+                attempt.ifCurrent {
+                    if (mode == LoginMode.EmailVerification) verificationCode.value = ""
+                    errorMessage.value =
+                        (error as? Mango9ApiException)?.userMessage
+                            ?: "We couldn't reach Mango9. Check your connection and try again."
+                }
             } finally {
-                inProgress.postValue(false)
-                coreContext.postOnMainThread {
+                attempt.ifCurrent {
+                    inProgress.value = false
                     updatePrimaryButtonTitle()
                     updatePrimaryActionEnabled()
                 }
@@ -233,8 +276,8 @@ class Mango9LoginViewModel : GenericViewModel() {
         resendJob = viewModelScope.launch {
             while ((resendCountdown.value ?: 0) > 0) {
                 delay(1_000)
-                resendCountdown.postValue((resendCountdown.value ?: 1) - 1)
-                coreContext.postOnMainThread(::updateResendButtonTitle)
+                resendCountdown.value = (resendCountdown.value ?: 1) - 1
+                updateResendButtonTitle()
             }
         }
     }
@@ -251,7 +294,7 @@ class Mango9LoginViewModel : GenericViewModel() {
     }
 
     override fun onCleared() {
-        resendJob?.cancel()
+        cancelPendingActions()
         super.onCleared()
     }
 }

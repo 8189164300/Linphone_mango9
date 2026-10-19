@@ -25,7 +25,6 @@ import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
 import org.linphone.BuildConfig
 import java.io.File
-import java.io.FileOutputStream
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.contacts.ContactLoader.Companion.LINPHONE_ADDRESS_BOOK_FRIEND_LIST
 
@@ -425,10 +424,6 @@ class CorePreferences
         get() = config.getBool("ui", "assistant_hide_create_account", false)
 
     @get:AnyThread
-    val hideAssistantScanQrCode: Boolean
-        get() = config.getBool("ui", "assistant_disable_qr_code", false)
-
-    @get:AnyThread
     val hideAssistantThirdPartySipAccount: Boolean
         get() = config.getBool("ui", "assistant_hide_third_party_account", false)
 
@@ -499,11 +494,17 @@ class CorePreferences
         get() = context.filesDir.absolutePath + "/share/sounds/linphone/incoming_chat.wav"
 
     @UiThread
+    @Suppress("DEPRECATION")
     fun copyAssetsFromPackage() {
-        copy("linphonerc_default", configPath)
-        copy("linphonerc_factory", factoryConfigPath, true)
-        copy("assistant_linphone_default_values", linphoneDefaultValuesPath, true)
-        copy("assistant_third_party_default_values", thirdPartyDefaultValuesPath, true)
+        // Include install identity, not just versionCode: development APKs may be
+        // replaced without a version bump. A new install refreshes packaged defaults.
+        val installed = context.packageManager.getPackageInfo(context.packageName, 0)
+        val revision = buildString {
+            appendLine(installed.lastUpdateTime)
+            appendLine(context.applicationInfo.sourceDir)
+            context.applicationInfo.splitSourceDirs?.forEach { appendLine(it) }
+        }
+        ConfigAssetInstaller(context.filesDir, context.assets::open).install(revision)
     }
 
     @AnyThread
@@ -548,35 +549,4 @@ class CorePreferences
         }
     }
 
-    @AnyThread
-    private fun copy(from: String, to: String, overrideIfExists: Boolean = false) {
-        val outFile = File(to)
-        if (outFile.exists()) {
-            if (!overrideIfExists) {
-                android.util.Log.i(
-                    context.getString(org.linphone.R.string.app_name),
-                    "$TAG File $to already exists"
-                )
-                return
-            }
-        }
-        android.util.Log.i(
-            context.getString(org.linphone.R.string.app_name),
-            "$TAG Overriding $to by $from asset"
-        )
-
-        val outStream = FileOutputStream(outFile)
-        val inFile = context.assets.open(from)
-        val buffer = ByteArray(1024)
-        var length: Int = inFile.read(buffer)
-
-        while (length > 0) {
-            outStream.write(buffer, 0, length)
-            length = inFile.read(buffer)
-        }
-
-        inFile.close()
-        outStream.flush()
-        outStream.close()
-    }
 }

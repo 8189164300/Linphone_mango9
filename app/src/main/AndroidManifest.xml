@@ -25,9 +25,10 @@
     (https://developer.android.com/guide/components/foreground-services) -->
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- The SDK declares this for video calls. Mango9 uses the camera only for attachments. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" tools:node="remove" />
     <!-- Needed for Android 14
     https://developer.android.com/about/versions/14/behavior-changes-14#fgs-types -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <!-- Required for foreground service started when a push is being received,
@@ -61,6 +62,9 @@
         android:appCategory="social"
         android:largeHeap="true"
         tools:targetApi="35">
+
+        <service android:name=".mango9.Mango9PushCleanupJob"
+            android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false" />
 
         <meta-data
             android:name="android.content.APP_RESTRICTIONS"
@@ -168,7 +172,7 @@
         <service
             android:name=".core.CoreInCallService"
             android:exported="false"
-            android:foregroundServiceType="phoneCall|camera|microphone"
+            android:foregroundServiceType="phoneCall|microphone"
             android:stopWithTask="false"
             android:label="@string/app_name" />
 

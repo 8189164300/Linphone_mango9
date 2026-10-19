@@ -49,8 +49,6 @@ open class AccountLoginViewModel
 
     val hideCreateAccount = MutableLiveData<Boolean>()
 
-    val hideScanQrCode = MutableLiveData<Boolean>()
-
     val hideThirdPartyAccount = MutableLiveData<Boolean>()
 
     val sipIdentity = MutableLiveData<String>()
@@ -132,7 +130,6 @@ open class AccountLoginViewModel
             // Prevent user from leaving assistant if no account was configured yet
             showBackButton.postValue(core.accountList.isNotEmpty())
             hideCreateAccount.postValue(corePreferences.hideAssistantCreateAccount)
-            hideScanQrCode.postValue(corePreferences.hideAssistantScanQrCode)
             hideThirdPartyAccount.postValue(corePreferences.hideAssistantThirdPartySipAccount)
             conditionsAndPrivacyPolicyAccepted = corePreferences.conditionsAndPrivacyPolicyAccepted
 

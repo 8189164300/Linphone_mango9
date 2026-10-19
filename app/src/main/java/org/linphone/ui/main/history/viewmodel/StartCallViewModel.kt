@@ -136,8 +136,9 @@ class StartCallViewModel
                         )
                         if (address != null) {
                             Log.i("$TAG Calling [${address.asStringUriOnly()}]")
-                            coreContext.startAudioCall(address)
-                            leaveFragmentEvent.postValue(Event(true))
+                            coreContext.startAudioCall(address, onResult = { started ->
+                                if (started) leaveFragmentEvent.postValue(Event(true))
+                            })
                         } else {
                             Log.e("$TAG Failed to parse [$suggestion] as SIP address")
                         }
@@ -177,8 +178,9 @@ class StartCallViewModel
 
     @WorkerThread
     override fun onSingleAddressSelected(address: Address, friend: Friend?) {
-        coreContext.startAudioCall(address)
-        leaveFragmentEvent.postValue(Event(true))
+        coreContext.startAudioCall(address, onResult = { started ->
+            if (started) leaveFragmentEvent.postValue(Event(true))
+        })
     }
 
     @UiThread
@@ -208,6 +210,8 @@ class StartCallViewModel
 
     @UiThread
     fun createGroupCall() {
+        val requestedSubject = subject.value.orEmpty()
+        val requestedParticipants = selection.value.orEmpty().toList()
         coreContext.postOnCoreThread { core ->
             val account = core.defaultAccount
             if (account == null) {
@@ -217,34 +221,24 @@ class StartCallViewModel
                 return@postOnCoreThread
             }
             operationInProgress.postValue(true)
-
-            Log.i("$TAG Creating group call with subject ${subject.value}")
-            val conference = LinphoneUtils.createGroupCall(account, subject.value.orEmpty())
-            if (conference == null) {
-                Log.e("$TAG Failed to create group call!")
-                showRedToast(R.string.conference_failed_to_create_group_call_toast, R.drawable.warning_circle)
-                operationInProgress.postValue(false)
-                return@postOnCoreThread
-            }
-
-            val callParams = core.createCallParams(null)
-            callParams?.isVideoEnabled = true
-            callParams?.videoDirection = MediaDirection.RecvOnly
-
-            val participants = arrayOfNulls<Address>(selection.value.orEmpty().size)
-            var index = 0
-            for (participant in selection.value.orEmpty()) {
-                participants[index] = participant.address
-                index += 1
-            }
-            Log.i(
-                "$TAG Inviting ${participants.size} participant(s) into newly created conference"
-            )
-            conference.addListener(conferenceListener)
-            if (conference.inviteParticipants(participants, callParams) != 0) {
-                Log.e("$TAG Failed to invite participants into group call!")
-                showRedToast(R.string.conference_failed_to_create_group_call_toast, R.drawable.warning_circle)
-                operationInProgress.postValue(false)
+            val participants = requestedParticipants.map { it.address.clone() }.toTypedArray()
+            coreContext.withOutgoingCallMicrophone(account, onResult = { started ->
+                if (!started) operationInProgress.postValue(false)
+            }) {
+                val conference = LinphoneUtils.createGroupCall(account, requestedSubject)
+                    ?: return@withOutgoingCallMicrophone false
+                val callParams = core.createCallParams(null)
+                callParams?.account = account
+                callParams?.isVideoEnabled = true
+                callParams?.videoDirection = MediaDirection.RecvOnly
+                conference.addListener(conferenceListener)
+                val started = conference.inviteParticipants(participants, callParams) == 0
+                if (!started) {
+                    conference.removeListener(conferenceListener)
+                    conference.terminate()
+                    showRedToast(R.string.conference_failed_to_create_group_call_toast, R.drawable.warning_circle)
+                }
+                started
             }
         }
     }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Synthetic bytes only, installed exclusively with the instrumentation APK. -->
+        <provider
+            android:name="org.linphone.mango9.Mango9OutgoingTestProvider"
+            android:authorities="com.mango9.phone.test.outgoing"
+            android:exported="true" />
+    </application>
+</manifest>

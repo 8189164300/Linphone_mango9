@@ -22,6 +22,7 @@ package org.linphone.utils
 import android.app.Activity
 import android.app.Application.ActivityLifecycleCallbacks
 import android.os.Bundle
+import java.lang.ref.WeakReference
 import androidx.annotation.AnyThread
 import androidx.annotation.UiThread
 import org.linphone.LinphoneApplication.Companion.coreContext
@@ -38,6 +39,9 @@ class ActivityMonitor : ActivityLifecycleCallbacks {
     private var mActive = false
     private var mRunningActivities = 0
     private var mLastChecker: InactivityChecker? = null
+    private var resumedActivity = WeakReference<Activity>(null)
+
+    fun foregroundActivity(): Activity? = resumedActivity.get()?.takeUnless { it.isFinishing || it.isDestroyed }
 
     @Synchronized
     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
@@ -51,6 +55,7 @@ class ActivityMonitor : ActivityLifecycleCallbacks {
 
     @Synchronized
     override fun onActivityResumed(activity: Activity) {
+        resumedActivity = WeakReference(activity)
         Log.d("$TAG onActivityResumed [$activity]")
         if (!activities.contains(activity)) {
             activities.add(activity)
@@ -61,6 +66,7 @@ class ActivityMonitor : ActivityLifecycleCallbacks {
 
     @Synchronized
     override fun onActivityPaused(activity: Activity) {
+        if (resumedActivity.get() === activity) resumedActivity.clear()
         Log.d("$TAG onActivityPaused [$activity]")
         if (!activities.contains(activity)) {
             activities.add(activity)
@@ -76,6 +82,7 @@ class ActivityMonitor : ActivityLifecycleCallbacks {
 
     @Synchronized
     override fun onActivityDestroyed(activity: Activity) {
+        if (resumedActivity.get() === activity) resumedActivity.clear()
         Log.d("$TAG onActivityDestroyed [$activity]")
         activities.remove(activity)
     }

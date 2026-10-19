@@ -28,8 +28,10 @@ class Mango9LicensingFragment : GenericMainFragment() {
         private const val UPSTREAM_APP_URL =
             "https://github.com/BelledonneCommunications/linphone-android/commit/" +
                 "42b1fcce3c8037e6f5a891cf8d108eb47e308386"
+        private const val SDK_LICENSE_URL =
+            "https://github.com/BelledonneCommunications/linphone-sdk/blob/5eaa11cfd2b052d9a9c71989faa0d55a8a8c57aa/LICENSE.txt"
         private const val SDK_SOURCE_URL =
-            "https://github.com/BelledonneCommunications/linphone-sdk/commit/3896ec0681"
+            "https://github.com/BelledonneCommunications/linphone-sdk/commit/5eaa11cfd2b052d9a9c71989faa0d55a8a8c57aa"
         private const val THIRD_PARTY_URL =
             "https://wiki.linphone.org/xwiki/wiki/public/view/Linphone/Third%20party%20components/"
     }
@@ -51,7 +53,7 @@ class Mango9LicensingFragment : GenericMainFragment() {
         binding.back.setOnClickListener { goBack() }
         bindLink(binding.appLicense, GPL_URL)
         bindLink(binding.upstreamApp, UPSTREAM_APP_URL)
-        bindLink(binding.sdkLicense, GPL_URL)
+        bindLink(binding.sdkLicense, SDK_LICENSE_URL)
         bindLink(binding.sdkSource, SDK_SOURCE_URL)
         bindLink(binding.thirdParty, THIRD_PARTY_URL)
 

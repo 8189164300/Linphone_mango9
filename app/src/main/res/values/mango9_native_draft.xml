@@ -1,0 +1,3 @@
+<resources>
+    <string name="mango9_native_draft_send_failed">Couldn’t send this draft. Check the selected account and try again.</string>
+</resources>

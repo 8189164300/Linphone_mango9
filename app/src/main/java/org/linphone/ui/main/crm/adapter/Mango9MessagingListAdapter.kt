@@ -14,12 +14,16 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import org.linphone.R
 import org.linphone.databinding.Mango9MessagingListCellBinding
+import org.linphone.mango9.Mango9ConversationRecency
 import org.linphone.mango9.Mango9ChatRoom
 import org.linphone.mango9.Mango9ChatState
 import org.linphone.mango9.Mango9ChatUser
 import org.linphone.mango9.Mango9SmsParty
+import org.linphone.mango9.Mango9SocialThread
 
 sealed class Mango9MessagingListItem(val stableId: String) {
+    data class Social(val thread: Mango9SocialThread) : Mango9MessagingListItem("social:${thread.id}")
+
     data class Group(val room: Mango9ChatRoom, val title: String) : Mango9MessagingListItem("group:${room.id}")
 
     data class User(
@@ -36,11 +40,13 @@ sealed class Mango9MessagingListItem(val stableId: String) {
 
 enum class Mango9MessagingTab {
     Sms,
-    Team;
+    Team,
+    Social;
 
     fun accepts(item: Mango9MessagingListItem): Boolean = when (this) {
         Sms -> item is Mango9MessagingListItem.Sms
-        Team -> item !is Mango9MessagingListItem.Sms
+        Team -> item is Mango9MessagingListItem.Group || item is Mango9MessagingListItem.User
+        Social -> item is Mango9MessagingListItem.Social
     }
 }
 
@@ -51,35 +57,55 @@ object Mango9MessagingListItems {
         isConversationDeleted: (String) -> Boolean,
         roomTitle: (Mango9ChatRoom) -> String,
     ): List<Mango9MessagingListItem> {
+        // Build the directory lookup once; a room scan per person becomes quadratic
+        // for large organizations and makes opening the recipient picker stall.
+        val directRooms = mutableMapOf<Int, Mango9ChatRoom>()
+        state.rooms.filter { it.isDirect && !isConversationDeleted(it.id) }.forEach { room ->
+            room.userIds.forEach { id ->
+                val previous = directRooms[id]
+                if (previous == null || Mango9ConversationRecency.newer(room.latest, previous.latest)) directRooms[id] = room
+            }
+        }
         val groups = state.rooms
             .filter { !it.isDirect && !isConversationDeleted(it.id) }
-            .sortedWith(compareByDescending<Mango9ChatRoom> { it.latest }.thenBy { it.id })
+            .sortedWith(compareByDescending<Mango9ChatRoom> { Mango9ConversationRecency.time(it.latest) }.thenBy { it.id })
             .map { Mango9MessagingListItem.Group(it, roomTitle(it)) }
         val people = state.users.map { user ->
-            val room = state.rooms.firstOrNull {
-                it.isDirect && it.userIds.contains(user.id) && !isConversationDeleted(it.id)
-            }
+            val room = directRooms[user.id]
             Mango9MessagingListItem.User(user, room, state.onlineUserIds.contains(user.id))
         }.sortedWith(
-            compareByDescending<Mango9MessagingListItem.User> { it.room?.latest.orEmpty() }
+            compareByDescending<Mango9MessagingListItem.User> { Mango9ConversationRecency.time(it.room?.latest.orEmpty()) }
                 .thenByDescending { it.room != null }
                 .thenBy(String.CASE_INSENSITIVE_ORDER) { it.user.name }
                 .thenBy { it.user.id },
         )
-        return groups + people
+        return (groups + people).sortedWith(
+            compareByDescending<Mango9MessagingListItem> {
+                Mango9ConversationRecency.time(
+                    when (it) {
+                    is Mango9MessagingListItem.Group -> it.room.latest
+                    is Mango9MessagingListItem.User -> it.room?.latest.orEmpty()
+                    else -> ""
+                }
+                )
+            }
+        )
     }
 
     fun sms(
         state: Mango9ChatState,
         isMuted: (String) -> Boolean,
-    ): List<Mango9MessagingListItem> = state.smsParties.map { party ->
+    ): List<Mango9MessagingListItem> = Mango9ConversationRecency.sms(state.smsParties).map { party ->
         Mango9MessagingListItem.Sms(party, isMuted(party.phone))
     }
 }
 
 class Mango9MessagingListAdapter(
     private val onClick: (Mango9MessagingListItem) -> Unit,
+    private val onHold: ((View, Mango9MessagingListItem) -> Unit)? = null,
 ) : ListAdapter<Mango9MessagingListItem, Mango9MessagingListAdapter.ViewHolder>(DiffCallback) {
+    internal var notificationScope: org.linphone.mango9.Mango9SessionLease? = null
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         val binding = Mango9MessagingListCellBinding.inflate(LayoutInflater.from(parent.context), parent, false)
         return ViewHolder(binding)
@@ -96,6 +122,13 @@ class Mango9MessagingListAdapter(
             val online: Boolean?
             val initials: String
             when (item) {
+                is Mango9MessagingListItem.Social -> {
+                    title = item.thread.title
+                    preview = item.thread.summary
+                    unread = if (item.thread.unread) 1 else 0
+                    online = null
+                    initials = when (item.thread.platform) { "facebook" -> "FB"; "instagram" -> "IG"; "tiktok" -> "TT"; else -> "" }
+                }
                 is Mango9MessagingListItem.Group -> {
                     title = item.title
                     preview = item.room.lastMessage.ifBlank {
@@ -134,8 +167,41 @@ class Mango9MessagingListAdapter(
             )
             binding.unread.visibility = if (unread > 0) View.VISIBLE else View.GONE
             binding.unread.text = if (unread > 99) "99+" else unread.toString()
-            binding.muted.visibility = if (item is Mango9MessagingListItem.Sms && item.muted) View.VISIBLE else View.GONE
+            val lease = notificationScope
+            val notifications = org.linphone.mango9.Mango9ConversationNotifications(context)
+            val muted = when (item) {
+                is Mango9MessagingListItem.Sms -> item.muted
+                is Mango9MessagingListItem.Social -> lease?.let {
+                    notifications.cached(it, org.linphone.mango9.Mango9MessageChannel.social, item.thread.id)
+                } == true
+                is Mango9MessagingListItem.Group -> lease?.let {
+                    notifications.cached(it, org.linphone.mango9.Mango9MessageChannel.team, item.room.id)
+                } == true
+                is Mango9MessagingListItem.User -> item.room?.let { room ->
+                    lease?.let {
+                    notifications.cached(it, org.linphone.mango9.Mango9MessageChannel.team, room.id)
+                }
+                } == true
+            }
+            binding.muted.visibility = if (muted) View.VISIBLE else View.GONE
             binding.root.setOnClickListener { onClick(item) }
+            binding.root.setOnLongClickListener { onHold?.invoke(it, item); onHold != null }
+            binding.date.text = Mango9MessageAdapter.dateText(
+                when (item) {
+                is Mango9MessagingListItem.Sms -> item.party.latest
+                is Mango9MessagingListItem.Group -> item.room.latest
+                is Mango9MessagingListItem.User -> item.room?.latest.orEmpty()
+                is Mango9MessagingListItem.Social -> item.thread.activityAt
+            }
+            )
+            val logo = (item as? Mango9MessagingListItem.Social)?.thread?.platform?.let {
+                when (it) { "facebook" -> R.drawable.social_facebook; "instagram" -> R.drawable.social_instagram; "tiktok" -> R.drawable.social_tiktok; else -> null }
+            }
+            binding.brand.visibility = if (logo != null) View.VISIBLE else View.GONE
+            binding.avatar.visibility = if (logo != null) View.INVISIBLE else View.VISIBLE
+            if (logo != null) {
+                binding.brand.setImageResource(logo); binding.brand.contentDescription = (item as Mango9MessagingListItem.Social).thread.platform
+            }
         }
     }
 

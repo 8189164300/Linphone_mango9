@@ -28,11 +28,14 @@ import org.linphone.LinphoneApplication.Companion.corePreferences
 import org.linphone.R
 import org.linphone.core.Address
 import org.linphone.core.ChatRoom
-import org.linphone.core.ChatRoomListenerStub
+import org.linphone.core.GlobalState
 import org.linphone.core.Conference
 import org.linphone.core.Friend
 import org.linphone.core.tools.Log
 import org.linphone.mango9.Mango9ChatRouting
+import org.linphone.mango9.Mango9ChatRoomNavigation
+import org.linphone.mango9.Mango9NativeConversationRoute
+import org.linphone.mango9.Mango9SmsRouting
 import org.linphone.ui.main.viewmodel.AddressSelectionViewModel
 import org.linphone.utils.AppUtils
 import org.linphone.utils.Event
@@ -45,6 +48,20 @@ class StartConversationViewModel
         private const val TAG = "[Start Conversation ViewModel]"
     }
 
+    @Volatile private var shareRequestId: String? = null
+    private var shareBound = false
+
+    fun bindShareRequest(request: String?) {
+        if (shareBound) return
+        shareBound = true
+        shareRequestId = request
+    }
+
+    override fun onCleared() {
+        roomNavigation.dispose()
+        super.onCleared()
+    }
+
     val hideGroupChatButton = MutableLiveData<Boolean>()
 
     val subject = MutableLiveData<String>()
@@ -53,30 +70,16 @@ class StartConversationViewModel
 
     val operationInProgress = MutableLiveData<Boolean>()
 
-    val chatRoomCreatedEvent: MutableLiveData<Event<String>> by lazy {
+    val chatRoomCreatedEvent: MutableLiveData<Event<Mango9NativeConversationRoute>> by lazy {
         MutableLiveData()
     }
 
-    private val chatRoomListener = object : ChatRoomListenerStub() {
-        @WorkerThread
-        override fun onStateChanged(chatRoom: ChatRoom, newState: ChatRoom.State?) {
-            val state = chatRoom.state
-            if (state == ChatRoom.State.Instantiated) return
-
-            val id = LinphoneUtils.getConversationId(chatRoom)
-            Log.i("$TAG Conversation [$id] (${chatRoom.subjectUtf8}) state changed: [$state]")
-
-            if (state == ChatRoom.State.Created) {
-                Log.i("$TAG Conversation [$id] successfully created")
-                chatRoom.removeListener(this)
-                operationInProgress.postValue(false)
-                chatRoomCreatedEvent.postValue(Event(LinphoneUtils.getConversationId(chatRoom)))
-            } else if (state == ChatRoom.State.CreationFailed) {
-                Log.e("$TAG Conversation [$id] creation has failed!")
-                chatRoom.removeListener(this)
-                operationInProgress.postValue(false)
-                showRedToast(R.string.conversation_failed_to_create_toast, R.drawable.warning_circle)
-            }
+    private val roomNavigation = Mango9ChatRoomNavigation { route ->
+        operationInProgress.postValue(false)
+        if (route != null) {
+            chatRoomCreatedEvent.postValue(Event(route))
+        } else {
+            showRedToast(R.string.conversation_failed_to_create_toast, R.drawable.warning_circle)
         }
     }
 
@@ -91,21 +94,24 @@ class StartConversationViewModel
 
     @WorkerThread
     override fun onSingleAddressSelected(address: Address, friend: Friend?) {
-        createOneToOneChatRoomWith(address)
+        createOneToOneChatRoomWith(address, shareRequestId)
     }
 
     @WorkerThread
     override fun onFriendSelectedDirectly(friend: Friend): Boolean {
         val target = coreContext.contactsManager.mango9ChatTarget(friend) ?: return false
-        Mango9ChatRouting.open(target)
+        Mango9ChatRouting.open(target, shareRequestId)
         return true
     }
 
     @UiThread
     fun createGroupChatRoom() {
+        val shareRequestId = this.shareRequestId
+        val groupChatRoomSubject = subject.value.orEmpty()
+        val selectedParticipants = selection.value.orEmpty().map { it.address }
         coreContext.postOnCoreThread { core ->
             val account = core.defaultAccount
-            if (account == null) {
+            if (account == null || core.globalState != GlobalState.On) {
                 Log.e(
                     "$TAG No default account found, can't create group conversation!"
                 )
@@ -114,7 +120,6 @@ class StartConversationViewModel
 
             operationInProgress.postValue(true)
 
-            val groupChatRoomSubject = subject.value.orEmpty()
             val params = coreContext.core.createConferenceParams(null)
             params.isChatEnabled = true
             params.isGroupEnabled = true
@@ -131,8 +136,8 @@ class StartConversationViewModel
             chatParams.backend = ChatRoom.Backend.FlexisipChat
 
             val participants = arrayListOf<Address>()
-            for (participant in selection.value.orEmpty()) {
-                participants.add(participant.address)
+            for (participant in selectedParticipants) {
+                participants.add(participant)
             }
 
             val participantsArray = arrayOf<Address>()
@@ -145,18 +150,18 @@ class StartConversationViewModel
                             "$TAG Group conversation [$id] ($groupChatRoomSubject) has been created"
                         )
                         operationInProgress.postValue(false)
-                        chatRoomCreatedEvent.postValue(Event(LinphoneUtils.getConversationId(chatRoom)))
+                        roomNavigation.watch(chatRoom, shareRequestId)
                     } else {
                         Log.i(
                             "$TAG Conversation [$groupChatRoomSubject] isn't in Created state yet, wait for it"
                         )
-                        chatRoom.addListener(chatRoomListener)
+                        roomNavigation.watch(chatRoom, shareRequestId)
                     }
                 } else {
                     val id = LinphoneUtils.getConversationId(chatRoom)
                     Log.i("$TAG Conversation successfully created [$id] ($groupChatRoomSubject)")
                     operationInProgress.postValue(false)
-                    chatRoomCreatedEvent.postValue(Event(LinphoneUtils.getConversationId(chatRoom)))
+                    roomNavigation.watch(chatRoom, shareRequestId)
                 }
             } else {
                 Log.e("$TAG Failed to create group conversation [$groupChatRoomSubject]!")
@@ -167,11 +172,12 @@ class StartConversationViewModel
     }
 
     @WorkerThread
-    fun createOneToOneChatRoomWith(remote: Address) {
-        if (Mango9ChatRouting.openIfNeeded(remote)) return
+    fun createOneToOneChatRoomWith(remote: Address, shareRequestId: String? = null) {
+        if (Mango9ChatRouting.openIfNeeded(remote, shareRequestId)) return
+        if (Mango9SmsRouting.openIfNeeded(remote, shareRequestId = shareRequestId)) return
         val core = coreContext.core
         val account = core.defaultAccount
-        if (account == null) {
+        if (account == null || core.globalState != GlobalState.On) {
             Log.e(
                 "$TAG No default account found, can't create conversation with [${remote.asStringUriOnly()}]!"
             )
@@ -232,16 +238,16 @@ class StartConversationViewModel
                         val id = LinphoneUtils.getConversationId(chatRoom)
                         Log.i("$TAG 1-1 conversation [$id] has been created")
                         operationInProgress.postValue(false)
-                        chatRoomCreatedEvent.postValue(Event(LinphoneUtils.getConversationId(chatRoom)))
+                        roomNavigation.watch(chatRoom, shareRequestId)
                     } else {
                         Log.i("$TAG Conversation isn't in Created state yet (state is [$state]), wait for it")
-                        chatRoom.addListener(chatRoomListener)
+                        roomNavigation.watch(chatRoom, shareRequestId)
                     }
                 } else {
                     val id = LinphoneUtils.getConversationId(chatRoom)
                     Log.i("$TAG Conversation successfully created [$id]")
                     operationInProgress.postValue(false)
-                    chatRoomCreatedEvent.postValue(Event(LinphoneUtils.getConversationId(chatRoom)))
+                    roomNavigation.watch(chatRoom, shareRequestId)
                 }
             } else {
                 Log.e("$TAG Failed to create 1-1 conversation with [${remote.asStringUriOnly()}]!")
@@ -253,7 +259,7 @@ class StartConversationViewModel
                 "$TAG A 1-1 conversation between local account [${localAddress?.asStringUriOnly()}] and remote [${remote.asStringUriOnly()}] for given parameters already exists!"
             )
             operationInProgress.postValue(false)
-            chatRoomCreatedEvent.postValue(Event(LinphoneUtils.getConversationId(existingChatRoom)))
+            roomNavigation.watch(existingChatRoom, shareRequestId)
         }
     }
 

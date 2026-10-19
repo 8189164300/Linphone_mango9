@@ -65,6 +65,8 @@ abstract class GenericAddressPickerFragment : GenericMainFragment() {
             val trimmed = filter.trim()
             viewModel.applyFilter(trimmed)
         }
+        adapter.onNearEnd = viewModel::revealMoreContacts
+        viewModel.applyFilter(viewModel.searchFilter.value.orEmpty().trim(), immediately = true)
 
         viewModel.showNumberOrAddressPickerDialogEvent.observe(viewLifecycleOwner) {
             it.consume { list ->
@@ -85,6 +87,13 @@ abstract class GenericAddressPickerFragment : GenericMainFragment() {
 
         numberOrAddressPickerDialog?.dismiss()
         numberOrAddressPickerDialog = null
+    }
+
+    override fun onDestroyView() {
+        adapter.onNearEnd = null
+        viewModel.cancelContactSearch()
+        if (::recyclerView.isInitialized) recyclerView.adapter = null
+        super.onDestroyView()
     }
 
     protected fun setupRecyclerView(view: RecyclerView) {

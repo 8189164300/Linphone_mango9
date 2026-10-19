@@ -27,7 +27,12 @@ class Mango9CrmRecordAdapter(
         RecyclerView.ViewHolder(binding.root) {
         fun bind(record: Mango9CrmRecord) {
             binding.record = record
-            binding.root.setOnClickListener { onClick(record) }
+            binding.root.setOnClickListener {
+                // Equal-content refreshes don't rebind holders. Resolve the current
+                // snapshot rather than retaining the previous account's row object.
+                val position = bindingAdapterPosition
+                if (position != RecyclerView.NO_POSITION) onClick(getItem(position))
+            }
             binding.executePendingBindings()
         }
     }

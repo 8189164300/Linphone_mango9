@@ -63,8 +63,6 @@
     <string name="assistant_dialog_privacy_policy_label">ນະໂຍບາຍຄວາມເປັນສ່ວນຕົວ</string>
     <string name="assistant_dialog_confirm_phone_number_title">ຢືນຢັນເບີໂທລະສັບ</string>
     <string name="assistant_account_login">ເຂົ້າສູ່ລະບົບ</string>
-    <string name="assistant_scan_qr_code">ສະແກນລະຫັດ QR</string>
-    <string name="assistant_qr_code_invalid_toast">ລະຫັດ QR ບໍ່ຖືກຕ້ອງ!</string>
     <string name="assistant_login_third_party_sip_account">ໃຊ້ບັນຊີ SIP ຂອງພາກສ່ວນທີສາມ</string>
     <string name="assistant_no_account_yet">ຍັງບໍ່ມີບັນຊີບໍ?</string>
     <string name="assistant_account_register">ລົງທະບຽນ</string>

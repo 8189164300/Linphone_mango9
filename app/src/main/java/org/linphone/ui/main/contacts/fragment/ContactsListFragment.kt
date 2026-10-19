@@ -128,6 +128,9 @@ class ContactsListFragment : AbstractMainFragment() {
         super.onViewCreated(view, savedInstanceState)
 
         listViewModel = ViewModelProvider(this)[ContactsListViewModel::class.java]
+        adapter.onNearEnd = { listViewModel.revealMoreContacts(it) }
+        favouritesAdapter.onNearEnd = { listViewModel.revealMoreContacts(it, favorites = true) }
+        listViewModel.refreshContacts()
 
         binding.lifecycleOwner = viewLifecycleOwner
         binding.viewModel = listViewModel
@@ -290,8 +293,18 @@ class ContactsListFragment : AbstractMainFragment() {
         bottomSheetDialog = null
     }
 
+    override fun onDestroyView() {
+        adapter.onNearEnd = null
+        favouritesAdapter.onNearEnd = null
+        binding.contactsList.adapter = null
+        binding.favouritesContactsList.adapter = null
+        listViewModel.cancelContactSearch()
+        super.onDestroyView()
+    }
+
     override fun onResume() {
         super.onResume()
+        val currentView = view ?: return
 
         coreContext.postOnCoreThread { core ->
             val cardDavFriendList = core.friendsLists.find {
@@ -304,7 +317,7 @@ class ContactsListFragment : AbstractMainFragment() {
                 Log.i("$TAG No CardDAV friend list was found, disabling swipe to refresh")
             }
             coreContext.postOnMainThread {
-                binding.contactsListSwipeRefresh.isEnabled = cardDavFriendListFound
+                if (view === currentView) binding.contactsListSwipeRefresh.isEnabled = cardDavFriendListFound
             }
         }
     }
@@ -327,7 +340,7 @@ class ContactsListFragment : AbstractMainFragment() {
                         Log.i(
                             "$TAG Sharing friend [${model.name.value}], exporting it as vCard file first"
                         )
-                        listViewModel.exportContactAsVCard(model.friend)
+                        listViewModel.exportContactAsVCard(model)
                     },
                     { // onDelete
                         showDeleteConfirmationDialog(model)
@@ -340,7 +353,7 @@ class ContactsListFragment : AbstractMainFragment() {
 
         adapter.contactClickedEvent.observe(viewLifecycleOwner) {
             it.consume { model ->
-                sharedViewModel.displayedFriend = model.friend
+                sharedViewModel.displayedFriend = model.friendForNavigation
                 sharedViewModel.showContactEvent.value = Event(model.id)
             }
         }

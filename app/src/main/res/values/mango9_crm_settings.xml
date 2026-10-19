@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mango9_crm_settings_title">CRM Settings</string>
+    <string name="mango9_crm_scope">These preferences apply to the selected CRM account. Message-push choices apply to all its Mango9 devices; calls and other accounts are not changed. Tap Save CRM settings to apply your changes.</string>
+    <string name="mango9_crm_connect">Connect a CRM account to manage its settings.</string>
+    <string name="mango9_crm_appointments">Appointments</string>
+    <string name="mango9_crm_calendar">Calendar</string>
+    <string name="mango9_crm_messages">Push notifications</string>
+    <string name="mango9_crm_social_push">Social direct messages</string>
+    <string name="mango9_crm_lead_push">New leads &amp; imports</string>
+    <string name="mango9_crm_events_push">Events &amp; tasks</string>
+    <string name="mango9_crm_push_update_required">Some notification controls require a server update.</string>
+    <string name="mango9_crm_events_push_info">Currently controls appointment-booking alerts. Task and other event alerts require server support.</string>
+    <string name="mango9_crm_reminders">In-app reminders</string>
+    <string name="mango9_crm_reminder_before">Suggested reminder</string>
+    <string name="mango9_crm_reminder_repeat">Show reminder again</string>
+    <string name="mango9_crm_reminder_snooze">Default snooze</string>
+    <string name="mango9_crm_reminder_info">Enable a reminder on each appointment. Banners appear while this account is selected and the app is open, and pause during calls. Snooze is saved to the CRM; it never changes the appointment time. Email/SMS reminders are managed on the appointment itself.</string>
+    <string name="mango9_crm_calendar_default">Open appointments as</string>
+    <string name="mango9_crm_appointment_list">Appointment list</string>
+    <string name="mango9_crm_weekday">Week starts on</string>
+    <string name="mango9_crm_device_default">Device default</string>
+    <string name="mango9_crm_sunday">Sunday</string>
+    <string name="mango9_crm_monday">Monday</string>
+    <string name="mango9_crm_new_zone">New appointment time zone</string>
+    <string name="mango9_crm_zone_account">CRM default · %1$s</string>
+    <string name="mango9_crm_zone_device">Device · %1$s</string>
+    <string name="mango9_crm_zone_phone">Use phone time zone · %1$s</string>
+    <string name="mango9_crm_zone_search">Search time zones</string>
+    <string name="mango9_crm_zone_info">The calendar and appointment list use your phone’s time zone (%1$s). This selection applies only when creating appointments; it does not move existing events.</string>
+    <string name="mango9_crm_sms_push">SMS / MMS push</string>
+    <string name="mango9_crm_team_push">Team chat push</string>
+    <string name="mango9_crm_push_info">Turning a switch off stops new pushes from the server. Messages remain available in conversations. Pushes already dispatched cannot be recalled. Android notification permission is also required.</string>
+    <string name="mango9_crm_notification_settings">Open Android notification settings</string>
+    <string name="mango9_crm_permission_on">Android notifications are allowed.</string>
+    <string name="mango9_crm_permission_off">Android notifications are disabled. Enable them in system settings to receive alerts.</string>
+    <string name="mango9_crm_reload">Reload saved settings</string>
+    <string name="mango9_crm_settings_save">Save CRM settings</string>
+    <string name="mango9_crm_saved">Saved</string>
+    <string name="mango9_crm_discard">Discard your unsaved changes and reload the server settings?</string>
+    <plurals name="mango9_crm_minutes"><item quantity="one">%1$d minute</item><item quantity="other">%1$d minutes</item></plurals>
+    <plurals name="mango9_crm_minutes_before"><item quantity="one">%1$d minute before</item><item quantity="other">%1$d minutes before</item></plurals>
+    <string name="mango9_crm_day_before">1 day before</string>
+    <string name="mango9_crm_at_start">At appointment time</string>
+    <string name="mango9_crm_once">Once on this device</string>
+    <plurals name="mango9_crm_every_minutes"><item quantity="one">Every %1$d minute</item><item quantity="other">Every %1$d minutes</item></plurals>
+    <string name="mango9_crm_expanded">Expanded</string>
+    <string name="mango9_crm_collapsed">Collapsed</string>
+</resources>

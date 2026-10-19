@@ -35,6 +35,7 @@ import org.linphone.ui.main.fragment.GenericAddressPickerFragment
 import org.linphone.ui.main.model.GroupSetOrEditSubjectDialogModel
 import org.linphone.utils.DialogUtils
 import org.linphone.utils.Event
+import org.linphone.mango9.Mango9ExternalShare
 import org.linphone.utils.hideKeyboard
 
 @UiThread
@@ -61,6 +62,7 @@ class StartConversationFragment : GenericAddressPickerFragment() {
 
         postponeEnterTransition()
         super.onViewCreated(view, savedInstanceState)
+        viewModel.bindShareRequest(arguments?.getString(Mango9ExternalShare.ARG_REQUEST))
 
         binding.lifecycleOwner = viewLifecycleOwner
         binding.viewModel = viewModel
@@ -90,12 +92,11 @@ class StartConversationFragment : GenericAddressPickerFragment() {
         }
 
         viewModel.chatRoomCreatedEvent.observe(viewLifecycleOwner) {
-            it.consume { conversationId ->
-                sharedViewModel.completePendingShareRecipientSelection()
+            it.consume { route ->
                 Log.i(
-                    "$TAG Conversation [$conversationId] has been created, navigating to it"
+                    "$TAG Conversation [${route.conversationId}] has been created, navigating to it"
                 )
-                sharedViewModel.showConversationEvent.value = Event(conversationId)
+                sharedViewModel.showSharedConversationEvent.value = Event(route)
                 goBack()
             }
         }

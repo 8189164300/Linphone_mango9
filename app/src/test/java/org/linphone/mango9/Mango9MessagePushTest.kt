@@ -60,7 +60,7 @@ class Mango9MessagePushTest {
         assertEquals(
             Mango9MessagePushTarget.Lead(91),
             Mango9MessagePush.parse(
-                mapOf("mango9_event" to "lead.assigned", "leadId" to "91"),
+                mapOf("mango9_event" to "lead.assigned", "leadId" to "91", "recipient_user_id" to "42", "crm_id" to "fixture", "sip_identity" to "sip:42@tenant.example.invalid"),
             )?.target,
         )
         assertNull(Mango9MessagePush.parse(mapOf("event" to "chat.message")))
@@ -77,6 +77,33 @@ class Mango9MessagePushTest {
         )
 
         assertEquals(expected, Mango9MessagePush.fromJson(expected.toJson()))
+    }
+
+    @Test
+    fun androidCrmGatewayDataKeepsPreviewAndExactScopedDestination() {
+        val common = mapOf(
+            "crm_id" to "fixture-crm",
+            "sip_identity" to "sip:7@tenant.example.invalid",
+            "recipient_user_id" to "42",
+            "notification_id" to "fixture-message",
+            "title" to "Fixture title",
+            "body" to "Hello 👍🏽 👨‍👩‍👧‍👦 🇦🇲",
+        )
+        val cases = listOf(
+            (mapOf("event" to "appointment.booked", "event_id" to "91") to Mango9MessagePushTarget.Appointment(91)),
+            (mapOf("event" to "lead.created", "lead_id" to "91") to Mango9MessagePushTarget.Lead(91)),
+            (mapOf("event" to "leads.imported") to Mango9MessagePushTarget.Leads),
+        )
+        for ((details, target) in cases) {
+            val parsed = requireNotNull(Mango9MessagePush.parse(common + details))
+            assertEquals(target, parsed.target)
+            assertEquals("fixture-crm", parsed.crmId)
+            assertEquals("sip:7@tenant.example.invalid", parsed.sipIdentity)
+            assertEquals("42", parsed.recipientUserId)
+            assertEquals(common["title"], parsed.previewTitle)
+            assertEquals(common["body"], parsed.previewBody)
+            assertEquals(parsed, Mango9MessagePush.fromJson(parsed.toJson()))
+        }
     }
 
     @Test

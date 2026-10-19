@@ -51,7 +51,7 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="@id/wait_for_encryption_info_label"
             app:layout_constraintBottom_toBottomOf="@id/wait_for_encryption_info_label"
-            app:tint="@color/bc_white" />
+            app:tint="@color/mango9_call_ink" />
 
         <androidx.appcompat.widget.AppCompatTextView
             style="@style/default_text_style"
@@ -61,7 +61,7 @@
             android:layout_marginStart="5dp"
             android:text="@string/call_waiting_for_encryption_info"
             android:textSize="12sp"
-            android:textColor="@color/bc_white"
+            android:textColor="@color/mango9_call_ink"
             android:maxLines="1"
             android:ellipsize="end"
             app:layout_constraintStart_toEndOf="@id/wait_for_encryption_info_icon"
@@ -78,7 +78,7 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="@id/no_media_encryption_label"
             app:layout_constraintBottom_toBottomOf="@id/no_media_encryption_label"
-            app:tint="@color/bc_white" />
+            app:tint="@color/mango9_call_ink" />
 
         <androidx.appcompat.widget.AppCompatTextView
             style="@style/default_text_style"
@@ -88,7 +88,7 @@
             android:layout_marginStart="5dp"
             android:text="@string/call_not_encrypted"
             android:textSize="12sp"
-            android:textColor="@color/bc_white"
+            android:textColor="@color/mango9_call_ink"
             android:maxLines="1"
             android:ellipsize="end"
             app:layout_constraintStart_toEndOf="@id/no_media_encryption_icon"
@@ -106,7 +106,7 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="@id/sas_validation_required_label"
             app:layout_constraintBottom_toBottomOf="@id/sas_validation_required_label"
-            app:tint="@color/orange_warning_600_night" />
+            app:tint="@color/mango9_call_warning" />
 
         <androidx.appcompat.widget.AppCompatTextView
             style="@style/default_text_style"
@@ -117,7 +117,7 @@
             android:layout_marginStart="5dp"
             android:text="@string/call_zrtp_sas_validation_required"
             android:textSize="12sp"
-            android:textColor="@color/orange_warning_600_night"
+            android:textColor="@color/mango9_call_warning"
             android:maxLines="1"
             android:ellipsize="end"
             app:layout_constraintStart_toEndOf="@id/sas_validation_required_icon"
@@ -135,7 +135,7 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="@id/media_encryption_label"
             app:layout_constraintBottom_toBottomOf="@id/media_encryption_label"
-            app:tint="@color/blue_info_500" />
+            app:tint="@color/mango9_call_security_info" />
 
         <androidx.appcompat.widget.AppCompatTextView
             style="@style/default_text_style"
@@ -146,7 +146,7 @@
             android:layout_marginStart="5dp"
             android:text="@{viewModel.conferenceModel.isCurrentCallInConference ? (viewModel.conferenceModel.isEndToEndEncrypted ? @string/call_conference_end_to_end_encrypted : (viewModel.isZrtp ? @string/call_zrtp_point_to_point_encrypted : @string/call_srtp_point_to_point_encrypted)) : viewModel.isZrtp ? @string/call_zrtp_end_to_end_encrypted : @string/call_srtp_point_to_point_encrypted, default=@string/call_zrtp_end_to_end_encrypted}"
             android:textSize="12sp"
-            android:textColor="@color/blue_info_500"
+            android:textColor="@color/mango9_call_security_info"
             android:maxLines="1"
             android:ellipsize="end"
             app:layout_constraintStart_toEndOf="@id/media_encryption_icon"

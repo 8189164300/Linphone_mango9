@@ -23,7 +23,6 @@ import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.IBinder
-import androidx.annotation.AnyThread
 import androidx.annotation.MainThread
 import androidx.annotation.WorkerThread
 import androidx.core.app.NotificationCompat
@@ -41,9 +40,7 @@ class CoreFileTransferService : FileTransferService() {
         private const val TAG = "[Core File Transfer Service]"
     }
 
-    var builder = NotificationCompat.Builder(this, SERVICE_NOTIFICATION_CHANNEL_ID)
-
-    var listenerAdded = false
+    private val builder by lazy { NotificationCompat.Builder(this, SERVICE_NOTIFICATION_CHANNEL_ID) }
 
     private val coreListener = object : CoreListenerStub() {
         @WorkerThread
@@ -52,25 +49,25 @@ class CoreFileTransferService : FileTransferService() {
             downloadCount: Int,
             uploadCount: Int
         ) {
-            updateNotificationContent(downloadCount, uploadCount)
+            publishTransferCounts(downloadCount, uploadCount)
         }
     }
 
+    private val subscription = CoreServiceSubscription<Core>(
+        enqueue = { action -> coreContext.postOnCoreThread { action(it) } },
+        attach = { it.addListener(coreListener) },
+        detach = { it.removeListener(coreListener) },
+    )
+
     override fun onCreate() {
         super.onCreate()
-        if (!listenerAdded && coreContext.isCoreAvailable()) {
-            coreContext.core.addListener(coreListener)
-            listenerAdded = true
-        }
+        subscription.start()
         Log.i("$TAG Created")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i("$TAG onStartCommand")
-        if (!listenerAdded && coreContext.isCoreAvailable()) {
-            coreContext.core.addListener(coreListener)
-            listenerAdded = true
-        }
+        subscription.start()
         return super.onStartCommand(intent, flags, startId)
     }
 
@@ -81,8 +78,12 @@ class CoreFileTransferService : FileTransferService() {
 
     override fun onDestroy() {
         Log.i("$TAG onDestroy")
-        coreContext.core.removeListener(coreListener)
-        listenerAdded = false
+        subscription.close()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        // Also remove an ordinary update posted before foreground promotion.
+        // Only this service's notification is owned here, never call/chat alerts.
+        NotificationManagerCompat.from(this).cancel(SERVICE_NOTIF_ID)
+        mServiceNotification = null
         super.onDestroy()
     }
 
@@ -94,16 +95,27 @@ class CoreFileTransferService : FileTransferService() {
         Log.i("$TAG Creating notification")
 
         buildNotification()
-        postNotification()
+        // The SDK immediately promotes this notification with startForeground.
+        // Posting it separately here can leave an ordinary notification behind
+        // when creation and teardown happen in quick succession.
 
         coreContext.postOnCoreThread { core ->
+            if (subscription.isClosed) return@postOnCoreThread
             val downloadingFilesCount = core.remainingDownloadFileCount
             val uploadingFilesCount = core.remainingUploadFileCount
-            updateNotificationContent(downloadingFilesCount, uploadingFilesCount)
+            publishTransferCounts(downloadingFilesCount, uploadingFilesCount)
         }
     }
 
-    @AnyThread
+    @WorkerThread
+    private fun publishTransferCounts(downloadCount: Int, uploadCount: Int) {
+        if (subscription.isClosed) return
+        coreContext.postOnMainThread {
+            if (!subscription.isClosed) updateNotificationContent(downloadCount, uploadCount)
+        }
+    }
+
+    @MainThread
     private fun buildNotification() {
         val intent = Intent(applicationContext, MainActivity::class.java)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -130,7 +142,7 @@ class CoreFileTransferService : FileTransferService() {
             .build()
     }
 
-    @WorkerThread
+    @MainThread
     private fun updateNotificationContent(downloadingFilesCount: Int, uploadingFilesCount: Int) {
         Log.i(
             "$TAG [$downloadingFilesCount] file(s) being downloaded, [$uploadingFilesCount] file(s) being uploaded"
@@ -171,8 +183,9 @@ class CoreFileTransferService : FileTransferService() {
     }
 
     @SuppressLint("MissingPermission")
-    @AnyThread
+    @MainThread
     private fun postNotification() {
+        if (subscription.isClosed) return
         val notificationsManager = NotificationManagerCompat.from(this)
         if (Compatibility.isPostNotificationsPermissionGranted(this)) {
             if (mServiceNotification != null) {

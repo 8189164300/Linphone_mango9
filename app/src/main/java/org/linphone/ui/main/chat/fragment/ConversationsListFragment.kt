@@ -39,6 +39,10 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.tabs.TabLayout
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import android.widget.ArrayAdapter
+import android.widget.AdapterView
+import org.linphone.ui.main.crm.viewmodel.Mango9SocialViewModel
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.R
 import org.linphone.contacts.getListOfSipAddressesAndPhoneNumbers
@@ -50,6 +54,9 @@ import org.linphone.mango9.Mango9ChatState
 import org.linphone.mango9.Mango9ChatStore
 import org.linphone.mango9.Mango9ChatRouting
 import org.linphone.mango9.Mango9SessionStore
+import org.linphone.mango9.Mango9ExternalShare
+import org.linphone.mango9.Mango9NativeConversationRoute
+import org.linphone.mango9.Mango9NavigationSession
 import org.linphone.ui.fileviewer.FileViewerActivity
 import org.linphone.ui.fileviewer.MediaViewerActivity
 import org.linphone.ui.main.MainActivity.Companion.ARGUMENTS_CONVERSATION_ID
@@ -64,6 +71,7 @@ import org.linphone.ui.main.crm.adapter.Mango9MessagingListItem
 import org.linphone.ui.main.crm.adapter.Mango9MessagingListItems
 import org.linphone.ui.main.crm.adapter.Mango9MessagingTab
 import org.linphone.ui.main.crm.fragment.Mango9MessagingListFragment
+import org.linphone.ui.main.crm.fragment.showMango9ConversationMenu
 import org.linphone.ui.main.fragment.AbstractMainFragment
 import org.linphone.utils.ConfirmationDialogModel
 import org.linphone.utils.DialogUtils
@@ -88,6 +96,10 @@ class ConversationsListFragment : AbstractMainFragment() {
     private lateinit var mango9SmsMessagesAdapter: Mango9MessagingListAdapter
 
     private lateinit var mango9TeamMessagesAdapter: Mango9MessagingListAdapter
+    private lateinit var socialAdapter: Mango9MessagingListAdapter
+    private lateinit var social: Mango9SocialViewModel
+    private var socialAccountIds = emptyList<String>()
+    private var changingSocialFilters = false
 
     private var mango9Tab = Mango9MessagingTab.Sms
 
@@ -97,14 +109,14 @@ class ConversationsListFragment : AbstractMainFragment() {
     private val mango9Sessions by lazy { Mango9SessionStore(requireContext()) }
     private val mango9Moderation by lazy { Mango9ChatModerationStore(requireContext()) }
 
-    private val numberOrAddressClickListener = object : ContactNumberOrAddressClickListener {
+    private fun numberOrAddressClickListener(request: String?) = object : ContactNumberOrAddressClickListener {
         @UiThread
         override fun onClicked(model: ContactNumberOrAddressModel) {
             coreContext.postOnCoreThread {
                 val address = model.address
                 if (address != null) {
                     Log.i("$TAG Creating 1-1 conversation with to [${address.asStringUriOnly()}]")
-                    listViewModel.createOneToOneChatRoomWith(address)
+                    listViewModel.createOneToOneChatRoomWith(address, request)
                 }
             }
         }
@@ -148,14 +160,20 @@ class ConversationsListFragment : AbstractMainFragment() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        mango9Tab = savedInstanceState?.getString("mango9_message_tab")
+            ?.let { name -> Mango9MessagingTab.entries.firstOrNull { it.name == name } }
+            ?: Mango9MessagingTab.Sms
 
         adapter = ConversationsListAdapter()
-        mango9SmsMessagesAdapter = Mango9MessagingListAdapter { item ->
+        mango9SmsMessagesAdapter = Mango9MessagingListAdapter(onClick = { item ->
             openMango9Item(Mango9MessagingTab.Sms, item)
-        }
-        mango9TeamMessagesAdapter = Mango9MessagingListAdapter { item ->
+        }, onHold = ::holdMango9Conversation)
+        mango9TeamMessagesAdapter = Mango9MessagingListAdapter(onClick = { item ->
             openMango9Item(Mango9MessagingTab.Team, item)
-        }
+        }, onHold = ::holdMango9Conversation)
+        socialAdapter = Mango9MessagingListAdapter(onClick = {
+            openMango9Item(Mango9MessagingTab.Social, it)
+        }, onHold = ::holdMango9Conversation)
     }
 
     override fun onCreateView(
@@ -167,10 +185,18 @@ class ConversationsListFragment : AbstractMainFragment() {
         return binding.root
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString("mango9_message_tab", mango9Tab.name)
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
         listViewModel = ViewModelProvider(this)[ConversationsListViewModel::class.java]
+        social = ViewModelProvider(this)[Mango9SocialViewModel::class.java]
+        social.bind(mango9Sessions.captureSession())
+        adapter.onNearEnd = listViewModel::revealMoreContacts
 
         binding.lifecycleOwner = viewLifecycleOwner
         binding.viewModel = listViewModel
@@ -178,6 +204,9 @@ class ConversationsListFragment : AbstractMainFragment() {
 
         binding.conversationsList.setHasFixedSize(true)
         binding.conversationsList.layoutManager = LinearLayoutManager(requireContext())
+        // Attach even when there are no rooms. Preserve scroll restoration until rows arrive.
+        adapter.stateRestorationPolicy = RecyclerView.Adapter.StateRestorationPolicy.PREVENT_WHEN_EMPTY
+        binding.conversationsList.adapter = adapter
         binding.conversationsList.outlineProvider = outlineProvider
         binding.conversationsList.clipToOutline = true
 
@@ -189,6 +218,8 @@ class ConversationsListFragment : AbstractMainFragment() {
         binding.mango9MessagesTabs.addTab(
             binding.mango9MessagesTabs.newTab().setText(R.string.mango9_team_chat).setTag(Mango9MessagingTab.Team),
         )
+        binding.mango9MessagesTabs.addTab(binding.mango9MessagesTabs.newTab().setText(R.string.mango9_social).setTag(Mango9MessagingTab.Social))
+        binding.mango9MessagesTabs.selectTab(binding.mango9MessagesTabs.getTabAt(mango9Tab.ordinal))
         binding.mango9MessagesTabs.addOnTabSelectedListener(
             object : TabLayout.OnTabSelectedListener {
                 override fun onTabSelected(tab: TabLayout.Tab) {
@@ -196,7 +227,9 @@ class ConversationsListFragment : AbstractMainFragment() {
                     showMango9MessagesAdapter(mango9Tab)
                     renderMango9Messages(mango9ChatStore.state.value)
                     viewLifecycleOwner.lifecycleScope.launch {
-                        if (mango9Tab == Mango9MessagingTab.Sms) {
+                        if (mango9Tab == Mango9MessagingTab.Social) {
+                            social.inbox()
+                        } else if (mango9Tab == Mango9MessagingTab.Sms) {
                             mango9ChatStore.refreshSmsDirectory()
                         } else {
                             mango9ChatStore.refreshDirectory()
@@ -209,6 +242,40 @@ class ConversationsListFragment : AbstractMainFragment() {
                 override fun onTabReselected(tab: TabLayout.Tab) = Unit
             },
         )
+        val platforms = listOf("", "facebook", "instagram", "tiktok")
+        binding.socialPlatform.adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_dropdown_item, listOf(getString(R.string.mango9_all_platforms), "Facebook", "Instagram", "TikTok"))
+        binding.socialPlatform.setSelection(platforms.indexOf(social.current().platform).coerceAtLeast(0))
+
+        fun selected(block: (Int) -> Unit) = object : AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (!changingSocialFilters) block(position)
+            }
+        }
+        binding.socialPlatform.onItemSelectedListener = selected {
+            if (social.current().platform != platforms[it]) social.filters(platforms[it], "")
+        }
+        binding.socialAccount.onItemSelectedListener = selected { position ->
+            val id = socialAccountIds.getOrNull(position).orEmpty()
+            if (social.current().account != id) social.filters(social.current().platform, id)
+        }
+        social.state.observe(viewLifecycleOwner) { renderSocial() }
+        binding.mango9MessagesList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                val layout = recyclerView.layoutManager as? LinearLayoutManager ?: return
+                if (mango9Tab == Mango9MessagingTab.Social && dy > 0 && layout.findLastVisibleItemPosition() >= socialAdapter.itemCount - 5) social.inbox(more = true)
+            }
+        })
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (true) {
+                    social.bind(mango9Sessions.captureSession())
+                    if (mango9Tab == Mango9MessagingTab.Social) social.inbox()
+                    delay(15_000)
+                }
+            }
+        }
 
         val headerItemDecoration = RecyclerViewHeaderDecoration(requireContext(), adapter)
         binding.conversationsList.addItemDecoration(headerItemDecoration)
@@ -249,19 +316,19 @@ class ConversationsListFragment : AbstractMainFragment() {
 
         adapter.conversationClickedEvent.observe(viewLifecycleOwner) {
             it.consume { model ->
-                sharedViewModel.completePendingShareRecipientSelection()
                 Log.i("$TAG Show conversation with ID [${model.id}]")
                 sharedViewModel.displayedChatRoom = model.chatRoom
-                sharedViewModel.showConversationEvent.value = Event(model.id)
+                openNativeShare(Mango9NativeConversationRoute(model.id, sharedViewModel.externalShare.pendingRequestId()))
             }
         }
 
         adapter.createConversationWithFriendClickedEvent.observe(viewLifecycleOwner) {
             it.consume { friend ->
+                val request = sharedViewModel.externalShare.pendingRequestId()
+                val numberListener = numberOrAddressClickListener(request)
                 coreContext.postOnCoreThread {
                     coreContext.contactsManager.mango9ChatTarget(friend)?.let { target ->
-                        sharedViewModel.completePendingShareRecipientSelection()
-                        Mango9ChatRouting.open(target)
+                        Mango9ChatRouting.open(target, request)
                         return@postOnCoreThread
                     }
                     val singleAvailableAddress = LinphoneUtils.getSingleAvailableAddressForFriend(friend)
@@ -269,9 +336,9 @@ class ConversationsListFragment : AbstractMainFragment() {
                         Log.i(
                             "$TAG Only 1 SIP address or phone number found for contact [${friend.name}], using it"
                         )
-                        listViewModel.createOneToOneChatRoomWith(singleAvailableAddress)
+                        listViewModel.createOneToOneChatRoomWith(singleAvailableAddress, request)
                     } else {
-                        val list = friend.getListOfSipAddressesAndPhoneNumbers(numberOrAddressClickListener)
+                        val list = friend.getListOfSipAddressesAndPhoneNumbers(numberListener)
                         Log.i(
                             "$TAG [${list.size}] numbers or addresses found for contact [${friend.name}], showing selection dialog"
                         )
@@ -285,19 +352,36 @@ class ConversationsListFragment : AbstractMainFragment() {
 
         adapter.createConversationWithAddressClickedEvent.observe(viewLifecycleOwner) {
             it.consume { address ->
+                val request = sharedViewModel.externalShare.pendingRequestId()
                 Log.i("$TAG Creating 1-1 conversation with to [${address.asStringUriOnly()}]")
                 coreContext.postOnCoreThread {
-                    listViewModel.createOneToOneChatRoomWith(address)
+                    listViewModel.createOneToOneChatRoomWith(address, request)
                 }
             }
         }
 
         binding.setOnNewConversationClicked {
             if (findNavController().currentDestination?.id == R.id.conversationsListFragment) {
+                // The social API replies to existing provider threads; it cannot start an
+                // arbitrary new DM. Never route this button to a duplicate inbox or to SMS.
+                if (mango9Sessions.captureSession() != null && mango9Tab == Mango9MessagingTab.Social) return@setOnNewConversationClicked
+                if (mango9Sessions.captureSession() != null && mango9Tab != Mango9MessagingTab.Sms) {
+                    // Team creation must never fall through to the phone/SMS recipient picker.
+                    findNavController().navigate(
+                        R.id.action_global_mango9MessagingListFragment,
+                        Bundle().apply {
+                        putString(Mango9MessagingListFragment.ARG_INITIAL_TAB, if (mango9Tab == Mango9MessagingTab.Team) Mango9MessagingListFragment.TYPE_TEAM else Mango9MessagingListFragment.TYPE_SOCIAL)
+                    }
+                    )
+                    return@setOnNewConversationClicked
+                }
                 Log.i("$TAG Navigating to start conversation fragment")
                 val action =
                     ConversationsListFragmentDirections.actionConversationsListFragmentToStartConversationFragment()
-                findNavController().navigate(action)
+                val arguments = action.arguments.apply {
+                    putString(Mango9ExternalShare.ARG_REQUEST, sharedViewModel.externalShare.pendingRequestId())
+                }
+                findNavController().navigate(action.actionId, arguments)
             }
         }
 
@@ -322,12 +406,10 @@ class ConversationsListFragment : AbstractMainFragment() {
         }
 
         listViewModel.chatRoomCreatedEvent.observe(viewLifecycleOwner) {
-            it.consume { conversationId ->
-                sharedViewModel.completePendingShareRecipientSelection()
-                Log.i("$TAG Conversation [$conversationId] has been created, navigating to it")
-                val action = ConversationFragmentDirections.actionGlobalConversationFragment(conversationId)
-                binding.chatNavContainer.findNavController().navigate(action)
-            }
+            it.consume(::openNativeShare)
+        }
+        sharedViewModel.showSharedConversationEvent.observe(viewLifecycleOwner) {
+            it.consume(::openNativeShare)
         }
 
         sharedViewModel.showConversationEvent.observe(viewLifecycleOwner) {
@@ -468,14 +550,18 @@ class ConversationsListFragment : AbstractMainFragment() {
             Log.e("$TAG Failed to unregister data observer to adapter: $e")
         }
 
-        if (shouldRefreshDataInOnResume()) {
-            Log.i("$TAG Keep app alive setting is enabled, refreshing view just in case")
-            listViewModel.filter()
-        }
+        listViewModel.filter()
 
         if (mango9Sessions.load() != null) {
             viewLifecycleOwner.lifecycleScope.launch { mango9ChatStore.refreshDirectory() }
         }
+    }
+
+    override fun onDestroyView() {
+        adapter.onNearEnd = null
+        binding.conversationsList.adapter = null
+        listViewModel.cancelContactSearch()
+        super.onDestroyView()
     }
 
     override fun onPause() {
@@ -511,7 +597,11 @@ class ConversationsListFragment : AbstractMainFragment() {
     private fun renderMango9Messages(state: Mango9ChatState) {
         val visible = mango9Sessions.load() != null
         listViewModel.mango9MessagesAvailable.value = visible
+        binding.newConversation.visibility = if (visible && mango9Tab == Mango9MessagingTab.Social) View.GONE else View.VISIBLE
         if (!visible) return
+        listOf(mango9SmsMessagesAdapter, mango9TeamMessagesAdapter, socialAdapter).forEach {
+            it.notificationScope = mango9Sessions.captureSession()
+        }
         val teamUnread = mango9ChatStore.teamUnreadCount(state)
         val smsUnread = mango9ChatStore.smsUnreadCount(state)
         updateTabBadge(TEAM_TAB_POSITION, teamUnread)
@@ -520,11 +610,13 @@ class ConversationsListFragment : AbstractMainFragment() {
             state,
             mango9Moderation::isConversationDeleted,
             mango9ChatStore::roomTitle,
-        )
+        ).filterNot { it is Mango9MessagingListItem.User && it.room == null }
         val smsItems = Mango9MessagingListItems.sms(state, mango9Moderation::isSmsMuted)
         mango9TeamMessagesAdapter.submitList(teamItems)
         mango9SmsMessagesAdapter.submitList(smsItems)
         showMango9MessagesAdapter(mango9Tab)
+        binding.socialFilters.visibility = if (mango9Tab == Mango9MessagingTab.Social) View.VISIBLE else View.GONE
+        if (mango9Tab == Mango9MessagingTab.Social) { renderSocial(); return }
         val items = if (mango9Tab == Mango9MessagingTab.Team) teamItems else smsItems
         binding.mango9MessagesEmpty.text = getString(
             if (mango9Tab == Mango9MessagingTab.Team) R.string.mango9_chat_empty else R.string.mango9_sms_empty,
@@ -561,10 +653,10 @@ class ConversationsListFragment : AbstractMainFragment() {
     }
 
     private fun showMango9MessagesAdapter(tab: Mango9MessagingTab) {
-        val selected = if (tab == Mango9MessagingTab.Team) {
-            mango9TeamMessagesAdapter
-        } else {
-            mango9SmsMessagesAdapter
+        val selected = when (tab) {
+            Mango9MessagingTab.Team -> mango9TeamMessagesAdapter
+            Mango9MessagingTab.Social -> socialAdapter
+            Mango9MessagingTab.Sms -> mango9SmsMessagesAdapter
         }
         if (binding.mango9MessagesList.adapter !== selected) {
             // These adapters own different click routing callbacks. A compatible swap may reuse a
@@ -573,14 +665,75 @@ class ConversationsListFragment : AbstractMainFragment() {
         }
     }
 
+    private fun renderSocial() {
+        if (mango9Tab != Mango9MessagingTab.Social || view == null) return
+        val value = social.current()
+        showMango9MessagesAdapter(mango9Tab)
+        socialAdapter.submitList(value.threads.map(Mango9MessagingListItem::Social))
+        updateTabBadge(2, value.threads.count { it.unread })
+        binding.mango9MessagesStatus.text = value.error ?: if (value.loading) getString(R.string.mango9_chat_connecting) else getString(R.string.mango9_social)
+        binding.mango9MessagesEmpty.setText(R.string.mango9_social_empty)
+        binding.mango9MessagesEmpty.visibility = if (!value.loading && value.threads.isEmpty() && value.error == null) View.VISIBLE else View.GONE
+        val accounts = value.accounts.filter { value.platform.isBlank() || it.platform == value.platform }
+        val ids = listOf("") + accounts.map { it.id }
+        if (ids != socialAccountIds || binding.socialAccount.adapter == null) {
+            changingSocialFilters = true
+            socialAccountIds = ids
+            binding.socialAccount.adapter = ArrayAdapter(
+                requireContext(), android.R.layout.simple_spinner_dropdown_item,
+                listOf(getString(R.string.mango9_all_accounts)) + accounts.map {
+                it.name
+            }
+            )
+            binding.socialAccount.setSelection(ids.indexOf(value.account).coerceAtLeast(0))
+            changingSocialFilters = false
+        }
+        val platformPosition = listOf("", "facebook", "instagram", "tiktok").indexOf(value.platform).coerceAtLeast(0)
+        if (binding.socialPlatform.selectedItemPosition != platformPosition) binding.socialPlatform.setSelection(platformPosition)
+        val accountPosition = ids.indexOf(value.account).coerceAtLeast(0)
+        if (binding.socialAccount.selectedItemPosition != accountPosition) binding.socialAccount.setSelection(accountPosition)
+    }
+
+    private fun holdMango9Conversation(anchor: View, item: Mango9MessagingListItem) {
+        showMango9ConversationMenu(anchor, item) {
+            listOf(mango9SmsMessagesAdapter, mango9TeamMessagesAdapter, socialAdapter).forEach { it.notifyDataSetChanged() }
+            if (mango9Tab == Mango9MessagingTab.Social) {
+                social.inbox()
+            } else {
+                viewLifecycleOwner.lifecycleScope.launch { mango9ChatStore.refreshDirectory(); mango9ChatStore.refreshSmsDirectory() }
+            }
+        }
+    }
+
+    private fun openNativeShare(route: Mango9NativeConversationRoute) {
+        if (route.shareRequestId != null && sharedViewModel.externalShare.pendingRequestId() != route.shareRequestId) return
+        val action = ConversationFragmentDirections.actionGlobalConversationFragment(route.conversationId)
+        val arguments = action.arguments.apply {
+            putString(
+                Mango9ExternalShare.ARG_DELIVERY,
+                sharedViewModel.externalShare.bind(
+                route.shareRequestId, Mango9ExternalShare.nativeDestination(route.conversationId),
+            )
+            )
+        }
+        binding.chatNavContainer.findNavController().navigate(action.actionId, arguments)
+    }
+
+    /** Close only this existing pane; never replay a close event into the new recipient screen. */
+    fun showShareRecipientPicker() {
+        if (view == null) return
+        binding.bottomNavBar.root.visibility = View.VISIBLE
+        binding.slidingPaneLayout.closePane()
+    }
+
     private fun openMango9Item(sourceTab: Mango9MessagingTab, item: Mango9MessagingListItem) {
         if (sourceTab != mango9Tab || !sourceTab.accepts(item)) {
             Log.w("$TAG Ignoring stale Mango9 row from a different message tab")
             renderMango9Messages(mango9ChatStore.state.value)
             return
         }
-        sharedViewModel.completePendingShareRecipientSelection()
         when (item) {
+            is Mango9MessagingListItem.Social -> openMango9Conversation(Mango9MessagingListFragment.TYPE_SOCIAL, 0, item.thread.id, item.thread.title, null)
             is Mango9MessagingListItem.Group -> openMango9Conversation(
                 Mango9MessagingListFragment.TYPE_TEAM,
                 0,
@@ -613,7 +766,16 @@ class ConversationsListFragment : AbstractMainFragment() {
         phone: String?,
     ) {
         if (findNavController().currentDestination?.id != R.id.conversationsListFragment) return
+        val session = mango9Sessions.captureSession() ?: return
         val arguments = Bundle().apply {
+            Mango9NavigationSession.bind(this, session)
+            putString(
+                Mango9ExternalShare.ARG_DELIVERY,
+                sharedViewModel.externalShare.bind(
+                sharedViewModel.externalShare.pendingRequestId(),
+                Mango9ExternalShare.crmDestination(type, userId, roomId, phone),
+            )
+            )
             putString(Mango9MessagingListFragment.ARG_TYPE, type)
             putInt(Mango9MessagingListFragment.ARG_USER_ID, userId)
             putString(Mango9MessagingListFragment.ARG_ROOM_ID, roomId)

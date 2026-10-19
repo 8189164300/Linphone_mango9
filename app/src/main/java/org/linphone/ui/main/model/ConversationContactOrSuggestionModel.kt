@@ -23,6 +23,10 @@ import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
 import androidx.lifecycle.MutableLiveData
 import org.linphone.LinphoneApplication.Companion.corePreferences
+import org.linphone.LinphoneApplication.Companion.coreContext
+import org.linphone.contacts.NativeContactValue
+import org.linphone.contacts.NativeContactDirectory
+import org.linphone.contacts.sortName
 import org.linphone.core.Address
 import org.linphone.core.Friend
 import org.linphone.mango9.Mango9SipDisplay
@@ -33,38 +37,60 @@ import org.linphone.utils.LinphoneUtils
 class ConversationContactOrSuggestionModel
     @WorkerThread
     constructor(
-    val address: Address,
+    address: Address? = null,
     val conversationId: String = "",
     conversationSubject: String? = null,
-    val friend: Friend? = null,
+    friend: Friend? = null,
     val defaultAccountDomain: String? = null,
-    private val onClicked: ((Address) -> Unit)? = null
+    val nativeContact: NativeContactValue? = null,
+    private val nativeFavorite: Boolean? = null,
+    private val onClicked: ((Address) -> Unit)? = null,
 ) {
-    val id = friend?.refKey ?: address.asStringUriOnly().hashCode()
+    private val sdkAddress = address
+    private val sdkFriend = friend
+    val address: Address
+        @WorkerThread get() = sdkAddress ?: LinphoneUtils.getFirstAvailableAddressForFriend(this.friend!!)
+            ?: error("Native contact no longer has a callable destination")
+    val friend: Friend?
+        @WorkerThread get() = sdkFriend ?: nativeContact?.let { coreContext.contactsManager.resolveNativeFriend(id) }
 
-    val isFriend = friend != null
+    val isAvailable: Boolean
+        @WorkerThread get() = nativeContact == null || coreContext.contactsManager.nativeContactsSnapshot().find(id) != null
+    // Ref keys/names can collide across native, CardDAV and team directories.
+    // Full URIs avoid hash collisions for suggestions, and chat IDs stay distinct
+    // from the same recipient's contact row. The retained Friend owns its pointer.
+    val id = when {
+        conversationId.isNotEmpty() -> "conversation:$conversationId"
+        nativeContact != null -> NativeContactDirectory.REF_PREFIX + nativeContact.id
+        friend != null -> "friend:${friend.nativePointer}"
+        else -> "address:${address!!.asStringUriOnly()}"
+    }
 
-    val starred = friend?.starred == true
+    val isFriend = friend != null || nativeContact != null
 
-    val name = conversationSubject
+    val starred = nativeFavorite ?: (friend?.starred == true)
+
+    val name = conversationSubject ?: nativeContact?.displayName?.ifBlank { nativeContact.sortName(true) }
         ?: if (friend != null) {
-            friend.name ?: LinphoneUtils.getDisplayName(address)
+            friend.name ?: LinphoneUtils.getDisplayName(address!!)
         } else {
-            address.username ?: address.domain.orEmpty()
+            address!!.username ?: address.domain.orEmpty()
         }
 
-    val sipUri = if (corePreferences.onlyDisplaySipUriUsername) {
-        Mango9SipDisplay.friendlyUsername(address.username, address.asStringUriOnly())
+    val sipUri = if (nativeContact != null) {
+        nativeContact.phones.firstOrNull()?.number ?: nativeContact.sipAddresses.firstOrNull().orEmpty()
+    } else if (corePreferences.onlyDisplaySipUriUsername) {
+        Mango9SipDisplay.friendlyUsername(address!!.username, address.asStringUriOnly())
     } else if (!corePreferences.hideSipAddresses) {
         // Hide SIP address and only show username for suggestions
         // on the same domain as the currently selected account
-        if (!defaultAccountDomain.isNullOrEmpty() && defaultAccountDomain == address.domain) {
+        if (!defaultAccountDomain.isNullOrEmpty() && defaultAccountDomain == address!!.domain) {
             address.username
         } else {
-            address.asStringUriOnly()
+            address!!.asStringUriOnly()
         }
     } else {
-        address.username
+        address!!.username
     }
 
     val initials = AppUtils.getInitials(conversationSubject ?: name)
@@ -75,6 +101,6 @@ class ConversationContactOrSuggestionModel
 
     @UiThread
     fun onClicked() {
-        onClicked?.invoke(address)
+        onClicked?.let { callback -> coreContext.postOnCoreThread { callback(address) } }
     }
 }

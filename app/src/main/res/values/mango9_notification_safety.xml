@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mango9_logout_cleanup_storage_error">Account removal could not be completed. Please try again.</string>
+    <string name="mango9_push_sms_reply_check">Delivery not confirmed. Open the conversation to check before sending again.</string>
+</resources>

@@ -27,10 +27,12 @@ import androidx.lifecycle.viewModelScope
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.LinphoneApplication.Companion.corePreferences
 import org.linphone.R
 import org.linphone.contacts.ContactsManager
+import org.linphone.contacts.NativeContactDirectory
 import org.linphone.contacts.getListOfSipAddressesAndPhoneNumbers
 import org.linphone.core.Address
 import org.linphone.core.Call
@@ -92,6 +94,7 @@ class ContactViewModel
     val expandDevicesTrust = MutableLiveData<Boolean>()
 
     val contactFoundEvent = MutableLiveData<Event<Boolean>>()
+    val contactUnavailableEvent = MutableLiveData<Event<Boolean>>()
 
     val isStored = MutableLiveData<Boolean>()
 
@@ -199,6 +202,8 @@ class ContactViewModel
                 )
                 friend = found
                 refreshContactInfo()
+            } else if (refKey.startsWith(NativeContactDirectory.REF_PREFIX)) {
+                contactUnavailableEvent.postValue(Event(true))
             }
         }
 
@@ -303,6 +308,13 @@ class ContactViewModel
         this.refKey = refKey
 
         coreContext.postOnCoreThread {
+            if (refKey.startsWith(NativeContactDirectory.REF_PREFIX)) {
+                if (refreshNativeContactForAction()) {
+                    refreshContactInfo()
+                    contactFoundEvent.postValue(Event(true))
+                }
+                return@postOnCoreThread
+            }
             if (displayedFriend != null && ::friend.isInitialized && friend == displayedFriend) {
                 Log.i("$TAG Contact object already in memory, skipping")
 
@@ -334,6 +346,19 @@ class ContactViewModel
     }
 
     @WorkerThread
+    private fun refreshNativeContactForAction(): Boolean {
+        if (!refKey.startsWith(NativeContactDirectory.REF_PREFIX)) return ::friend.isInitialized
+        val current = coreContext.contactsManager.resolveNativeFriend(refKey)
+        if (current == null) {
+            showRedToast(R.string.mango9_contact_no_longer_available, R.drawable.warning_circle)
+            contactUnavailableEvent.postValue(Event(true))
+            return false
+        }
+        friend = current
+        return true
+    }
+
+    @WorkerThread
     fun refreshContactInfo() {
         isFavourite.postValue(friend.starred)
         // Do not show edit contact button for contacts not stored in a FriendList or
@@ -341,6 +366,7 @@ class ContactViewModel
         isStored.postValue(!coreContext.contactsManager.isContactTemporary(friend))
         isReadOnly.postValue(friend.isReadOnly)
         isNative.postValue(!friend.nativeUri.isNullOrEmpty())
+        if (!friend.nativeUri.isNullOrBlank()) showContactTrustAndDevices.postValue(false)
 
         contact.value?.destroy()
         contact.postValue(ContactAvatarModel(friend))
@@ -401,9 +427,10 @@ class ContactViewModel
     @UiThread
     fun editContact() {
         coreContext.postOnCoreThread {
+            if (!refreshNativeContactForAction()) return@postOnCoreThread
             if (::friend.isInitialized) {
                 val uri = friend.nativeUri
-                if (uri != null && !corePreferences.editNativeContactsInLinphone) {
+                if (!uri.isNullOrBlank()) {
                     Log.i(
                         "$TAG Contact [${friend.name}] is a native contact, opening native contact editor using URI [$uri]"
                     )
@@ -422,6 +449,7 @@ class ContactViewModel
     @UiThread
     fun exportContactAsVCard() {
         coreContext.postOnCoreThread {
+            if (!refreshNativeContactForAction()) return@postOnCoreThread
             if (::friend.isInitialized) {
                 val vCard = friend.dumpVcard()
                 if (!vCard.isNullOrEmpty()) {
@@ -433,10 +461,11 @@ class ContactViewModel
                         "$fileName.vcf",
                         overrideExisting = true
                     )
-                    viewModelScope.launch {
+                    val exportedName = friend.name.orEmpty()
+                    viewModelScope.launch(Dispatchers.IO) {
                         if (FileUtils.dumpStringToFile(vCard, file)) {
                             Log.i("$TAG vCard string saved as file in cache folder")
-                            vCardTerminatedEvent.postValue(Event(Pair(friend.name.orEmpty(), file)))
+                            vCardTerminatedEvent.postValue(Event(Pair(exportedName, file)))
                         } else {
                             Log.e("$TAG Failed to save vCard string as file in cache folder")
                         }
@@ -451,6 +480,7 @@ class ContactViewModel
     @UiThread
     fun deleteContact() {
         coreContext.postOnCoreThread {
+            if (!refreshNativeContactForAction() || !friend.nativeUri.isNullOrBlank()) return@postOnCoreThread
             if (::friend.isInitialized) {
                 Log.w("$TAG Deleting friend [${friend.name}]")
                 coreContext.contactsManager.contactRemoved(friend)
@@ -464,6 +494,11 @@ class ContactViewModel
     @UiThread
     fun toggleFavourite() {
         coreContext.postOnCoreThread {
+            if (!refreshNativeContactForAction()) return@postOnCoreThread
+            if (refKey.startsWith(NativeContactDirectory.REF_PREFIX)) {
+                coreContext.contactsManager.setNativeFavorite(refKey, !friend.starred)
+                return@postOnCoreThread
+            }
             val favourite = friend.starred
             Log.i(
                 "$TAG Flagging contact [${friend.name}] as ${if (favourite) "no longer favourite" else "favourite"}"
@@ -481,6 +516,7 @@ class ContactViewModel
     @UiThread
     fun startAudioCall() {
         coreContext.postOnCoreThread {
+            if (!refreshNativeContactForAction()) return@postOnCoreThread
             val singleAvailableAddress = LinphoneUtils.getSingleAvailableAddressForFriend(friend)
             if (singleAvailableAddress != null) {
                 Log.i(
@@ -501,6 +537,7 @@ class ContactViewModel
     @UiThread
     fun startVideoCall() {
         coreContext.postOnCoreThread {
+            if (!refreshNativeContactForAction()) return@postOnCoreThread
             val singleAvailableAddress = LinphoneUtils.getSingleAvailableAddressForFriend(friend)
             if (singleAvailableAddress != null) {
                 Log.i(
@@ -521,6 +558,7 @@ class ContactViewModel
     @UiThread
     fun goToConversation() {
         coreContext.postOnCoreThread {
+            if (!refreshNativeContactForAction()) return@postOnCoreThread
             coreContext.contactsManager.mango9ChatTarget(friend)?.let { target ->
                 Mango9ChatRouting.open(target)
                 return@postOnCoreThread

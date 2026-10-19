@@ -69,7 +69,6 @@ import org.linphone.core.CoreKeepAliveThirdPartyAccountsService
 import org.linphone.core.CoreListenerStub
 import org.linphone.core.Factory
 import org.linphone.core.Friend
-import org.linphone.core.MediaDirection
 import org.linphone.core.RegistrationState
 import org.linphone.core.tools.Log
 import org.linphone.mango9.Mango9PushCallerIdentityCache
@@ -124,7 +123,7 @@ class NotificationsManager
     private var currentInCallServiceNotificationId = -1
     private var currentKeepAliveThirdPartyAccountsForegroundServiceNotificationId = -1
 
-    private var currentlyRingingCallRemoteAddress: Address? = null
+    private val ringingCallKeys = HashSet<Long>()
 
     private val notificationManager: NotificationManagerCompat by lazy {
         NotificationManagerCompat.from(context)
@@ -136,7 +135,7 @@ class NotificationsManager
 
     private var keepAliveService: CoreKeepAliveThirdPartyAccountsService? = null
 
-    private val callNotificationsMap: HashMap<String, Notifiable> = HashMap()
+    private val callNotifications = CallNotificationRegistry { id, token -> Notifiable(id, token) }
     private val chatNotificationsMap: HashMap<String, Notifiable> = HashMap()
     private val previousChatNotifications: ArrayList<Int> = arrayListOf()
     private val accountsErrorNotificationsMap: HashMap<String, Int> = HashMap()
@@ -161,7 +160,8 @@ class NotificationsManager
                 "$TAG Found contact [${friend.name}] in remote directory with [${addresses.size}] addresses"
             )
 
-            for ((_, notifiable) in callNotificationsMap.entries) {
+            for (entry in callNotifications.entries) {
+                val notifiable = entry.value
                 val remoteAddress = notifiable.remoteAddress ?: continue
                 val parsedAddress = Factory.instance().createAddress(remoteAddress)
                 parsedAddress ?: continue
@@ -172,10 +172,10 @@ class NotificationsManager
                     Log.i(
                         "$TAG Found call [${addressMatch.asStringUriOnly()}] with contact in notifications, updating it"
                     )
-                    val call = coreContext.core.getCallByRemoteAddress2(addressMatch)
+                    val call = findCallForNotification(entry.token)
                     if (call == null) {
-                        Log.e("$TAG Failed to get Call from Core using remote address [${addressMatch.asStringUriOnly()}]")
-                        return
+                        Log.i("$TAG Contact lookup completed after its call ended")
+                        continue
                     }
                     updateCallNotification(notifiable, call, friend)
                 }
@@ -236,7 +236,7 @@ class NotificationsManager
                     Log.i(
                         "$TAG Updating incoming call notification to active call for [${call.remoteAddress.asStringUriOnly()}]"
                     )
-                    currentlyRingingCallRemoteAddress = null
+                    ringingCallKeys.remove(getCallKey(call))
                     showCallNotification(call, false)
                 }
                 Call.State.StreamsRunning -> {
@@ -250,10 +250,7 @@ class NotificationsManager
                 }
                 Call.State.End, Call.State.Error -> {
                     val remoteSipAddress = call.remoteAddress
-                    if (call.dir == Call.Dir.Incoming && currentlyRingingCallRemoteAddress?.weakEqual(
-                            remoteSipAddress
-                        ) == true
-                    ) {
+                    if (call.dir == Call.Dir.Incoming && getCallKey(call) in ringingCallKeys) {
                         Log.i(
                             "$TAG Incoming call has been declined, cancelling incoming call notification"
                         )
@@ -310,11 +307,10 @@ class NotificationsManager
         override fun onAudioDeviceChanged(core: Core, audioDevice: AudioDevice) {
             if (core.callsNb == 0) return
 
-            val call = core.currentCall ?: core.calls.firstOrNull()
-            if (call != null) {
-                Log.i("$TAG Audio device changed, updating call [${call.remoteAddress.asStringUriOnly()}] notification")
-                val notifiable = getNotifiableForCall(call)
-                updateCallNotification(notifiable, call, null)
+            // A notification can route a call other than Core.currentCall.
+            for (entry in callNotifications.entries) {
+                val call = findCallForNotification(entry.token) ?: continue
+                updateCallNotification(entry.value, call, null)
             }
         }
 
@@ -687,6 +683,10 @@ class NotificationsManager
         Log.i("$TAG Getting destroyed, clearing foreground Service & call notifications")
         core.removeListener(coreListener)
         coreContext.contactsManager.removeListener(contactsListener)
+        stopInCallForegroundService()
+        callNotifications.entries.forEach { cancelNotification(it.notificationId) }
+        callNotifications.clear()
+        ringingCallKeys.clear()
     }
 
     @WorkerThread
@@ -711,7 +711,7 @@ class NotificationsManager
 
     @WorkerThread
     fun removeIncomingCallNotificationIfAny(call: Call) {
-        val notifiable = getNotifiableForCall(call)
+        val notifiable = callNotifications[getCallKey(call)]?.value ?: return
         val notificationId = notifiable.notificationId
 
         if (currentInCallServiceNotificationId == notificationId) {
@@ -731,8 +731,8 @@ class NotificationsManager
         }
 
         cancelNotification(notificationId)
-        callNotificationsMap.remove(getCallKey(call))
-        currentlyRingingCallRemoteAddress = null
+        callNotifications.remove(getCallKey(call))
+        ringingCallKeys.remove(getCallKey(call))
     }
 
     @WorkerThread
@@ -740,6 +740,7 @@ class NotificationsManager
         val notifiable = getNotifiableForCall(call)
 
         val callNotificationIntent = Intent(context, CallActivity::class.java)
+        CallNotificationIntent.target(callNotificationIntent, notifiable.callTarget, CallNotificationIntent.OPEN)
         callNotificationIntent.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
         )
@@ -765,7 +766,7 @@ class NotificationsManager
             friend
         )
         if (isIncoming) {
-            currentlyRingingCallRemoteAddress = call.remoteAddress
+            ringingCallKeys.add(getCallKey(call))
             if (currentInCallServiceNotificationId == -1) {
                 Log.i("$TAG No current in-call foreground Service notification found, using this one")
                 showIncomingCallForegroundServiceNotification(notifiable.notificationId, notification)
@@ -938,22 +939,8 @@ class NotificationsManager
                     "$TAG RECORD_AUDIO permission has been granted, adding MICROPHONE to foreground Service types mask"
                 )
             }
-            val isSendingVideo = when (call.currentParams.videoDirection) {
-                MediaDirection.SendRecv, MediaDirection.SendOnly -> true
-                else -> false
-            }
-            if (call.currentParams.isVideoEnabled && isSendingVideo) {
-                if (ActivityCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.CAMERA
-                    ) == PackageManager.PERMISSION_GRANTED
-                ) {
-                    mask = mask or Compatibility.FOREGROUND_SERVICE_TYPE_CAMERA
-                    Log.i(
-                        "$TAG CAMERA permission has been granted, adding CAMERA to foreground Service types mask"
-                    )
-                }
-            }
+            // Mango9 calls are audio-only; camera access is reserved for message attachments.
+
         }
 
         if (Compatibility.isPostNotificationsPermissionGranted(context)) {
@@ -1370,28 +1357,22 @@ class NotificationsManager
     }
 
     @WorkerThread
-    private fun getNotificationIdForCall(call: Call): Int {
-        return call.hashCode()
-    }
-
-    @WorkerThread
     private fun getNotifiableForCall(call: Call): Notifiable {
-        val address = call.remoteAddress.asStringUriOnly()
-        val key = getCallKey(call)
-        var notifiable: Notifiable? = callNotificationsMap[key]
-        if (notifiable == null) {
-            notifiable = Notifiable(getNotificationIdForCall(call))
-            notifiable.remoteAddress = address
-
-            callNotificationsMap[key] = notifiable
+        return callNotifications.getOrCreate(getCallKey(call)).value.also {
+            it.remoteAddress = call.remoteAddress.asStringUriOnly()
         }
-        return notifiable
     }
 
     @WorkerThread
-    private fun getCallKey(call: Call): String =
-        call.callLog.callId?.takeIf(String::isNotBlank)
-            ?: call.remoteAddress.asStringUriOnly()
+    private fun getCallKey(call: Call): Long = call.nativePointer
+
+    @WorkerThread
+    internal fun findCallForNotification(token: String?): Call? {
+        val target = callNotifications.find(token) ?: return null
+        return coreContext.core.calls.find {
+            getCallKey(it) == target.callKey && !LinphoneUtils.isCallEnding(it.state, true)
+        }
+    }
 
     @WorkerThread
     private fun getNotifiableForChatMessage(message: ChatMessage): NotifiableMessage {
@@ -1711,7 +1692,7 @@ class NotificationsManager
     private fun dismissCallNotification(call: Call) {
         val address = call.remoteAddress.asStringUriOnly()
         val key = getCallKey(call)
-        val notifiable: Notifiable? = callNotificationsMap[key]
+        val notifiable: Notifiable? = callNotifications[key]?.value
         if (notifiable != null) {
             if (notificationsMap.containsKey(notifiable.notificationId)) {
                 cancelNotification(notifiable.notificationId)
@@ -1719,10 +1700,11 @@ class NotificationsManager
                 Log.i("$TAG Removing previous in-call foreground Service error notification")
                 cancelNotification(IN_CALL_FOREGROUND_SERVICE_ERROR_ID, IN_CALL_ERROR_TAG)
             }
-            callNotificationsMap.remove(key)
+            callNotifications.remove(key)
         } else {
             Log.w("$TAG No notification found for call with remote address [$address]")
         }
+        ringingCallKeys.remove(key)
     }
 
     @WorkerThread
@@ -1754,10 +1736,10 @@ class NotificationsManager
     @AnyThread
     fun getCallDeclinePendingIntent(notifiable: Notifiable): PendingIntent {
         val hangupIntent = Intent(context, NotificationBroadcastReceiver::class.java)
+        CallNotificationIntent.target(hangupIntent, notifiable.callTarget, CallNotificationIntent.HANGUP)
         hangupIntent.apply {
             action = INTENT_HANGUP_CALL_NOTIF_ACTION
             putExtra(INTENT_NOTIF_ID, notifiable.notificationId)
-            putExtra(INTENT_REMOTE_SIP_URI, notifiable.remoteAddress)
         }
 
         return PendingIntent.getBroadcast(
@@ -1773,10 +1755,9 @@ class NotificationsManager
         val pendingIntent = TaskStackBuilder.create(context).run {
             addNextIntentWithParentStack(
                 Intent(context, CallActivity::class.java).apply {
+                    CallNotificationIntent.target(this, notifiable.callTarget, CallNotificationIntent.ANSWER)
                     action = Intent.ACTION_MAIN // Needed as well
                     flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                    putExtra("AnswerIncomingCall", true)
-                    putExtra("Caller", notifiable.remoteAddress)
                 }
             )
             getPendingIntent(
@@ -1791,10 +1772,10 @@ class NotificationsManager
     @AnyThread
     fun getCallToggleSpeakerPendingIntent(notifiable: Notifiable): PendingIntent {
         val answerIntent = Intent(context, NotificationBroadcastReceiver::class.java)
+        CallNotificationIntent.target(answerIntent, notifiable.callTarget, CallNotificationIntent.SPEAKER)
         answerIntent.apply {
             action = INTENT_TOGGLE_SPEAKER_CALL_NOTIF_ACTION
             putExtra(INTENT_NOTIF_ID, notifiable.notificationId)
-            putExtra(INTENT_REMOTE_SIP_URI, notifiable.remoteAddress)
         }
 
         return PendingIntent.getBroadcast(
@@ -2191,7 +2172,7 @@ class NotificationsManager
         return stringBuilder.toString()
     }
 
-    class Notifiable(val notificationId: Int) {
+    class Notifiable(val notificationId: Int, val callTarget: String? = null) {
         var myself: String? = null
 
         var localIdentity: String? = null

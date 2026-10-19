@@ -17,6 +17,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:keepScreenOn="true"
+        android:background="@color/mango9_call_canvas"
         tools:context=".ui.call.CallActivity">
 
         <include

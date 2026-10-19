@@ -13,6 +13,9 @@
         <exclude domain="sharedpref" path="mango9_line_identity.xml"/>
         <exclude domain="sharedpref" path="mango9_chat_moderation.xml"/>
         <exclude domain="sharedpref" path="mango9_message_push.xml"/>
+        <exclude domain="sharedpref" path="mango9_message_commands.xml"/>
+        <exclude domain="sharedpref" path="mango9_social_send_intents.xml"/>
+        <exclude domain="sharedpref" path="mango9_conversation_notifications.xml"/>
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="encrypted.pref.xml"/>
@@ -23,5 +26,8 @@
         <exclude domain="sharedpref" path="mango9_line_identity.xml"/>
         <exclude domain="sharedpref" path="mango9_chat_moderation.xml"/>
         <exclude domain="sharedpref" path="mango9_message_push.xml"/>
+        <exclude domain="sharedpref" path="mango9_message_commands.xml"/>
+        <exclude domain="sharedpref" path="mango9_social_send_intents.xml"/>
+        <exclude domain="sharedpref" path="mango9_conversation_notifications.xml"/>
     </device-transfer>
 </data-extraction-rules>

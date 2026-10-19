@@ -23,12 +23,6 @@
     </fragment>
 
     <fragment
-        android:id="@+id/qrCodeScannerFragment"
-        android:name="org.linphone.ui.assistant.fragment.QrCodeScannerFragment"
-        android:label="QrCodeScannerFragment"
-        tools:layout="@layout/assistant_qr_code_scanner_fragment" />
-
-    <fragment
         android:id="@+id/thirdPartySipAccountLoginFragment"
         android:name="org.linphone.ui.assistant.fragment.ThirdPartySipAccountLoginFragment"
         android:label="ThirdPartySipAccountLoginFragment"
@@ -107,15 +101,6 @@
         android:name="org.linphone.ui.assistant.fragment.LandingFragment"
         android:label="LandingFragment"
         tools:layout="@layout/assistant_landing_fragment" >
-
-        <action
-            android:id="@+id/action_landingFragment_to_qrCodeScannerFragment"
-            app:destination="@id/qrCodeScannerFragment"
-            app:enterAnim="@anim/slide_in_right"
-            app:exitAnim="@anim/slide_out_left"
-            app:popEnterAnim="@anim/slide_in_left"
-            app:popExitAnim="@anim/slide_out_right"
-            app:launchSingleTop="true" />
 
         <action
             android:id="@+id/action_landingFragment_to_thirdPartySipAccountLoginFragment"

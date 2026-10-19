@@ -22,6 +22,8 @@ package org.linphone.ui.main.viewmodel
 import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
 import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.LinphoneApplication.Companion.corePreferences
 import org.linphone.core.Account
@@ -30,6 +32,8 @@ import org.linphone.core.CoreListenerStub
 import org.linphone.core.GlobalState
 import org.linphone.core.tools.Log
 import org.linphone.mango9.Mango9SessionStore
+import org.linphone.mango9.Mango9LineIdentityStore
+import org.linphone.mango9.Mango9LineIdentityRefresh
 import org.linphone.ui.GenericViewModel
 import org.linphone.ui.main.model.AccountModel
 import org.linphone.ui.main.model.ShortcutModel
@@ -77,24 +81,28 @@ class DrawerMenuViewModel
     }
 
     private val mango9Sessions = Mango9SessionStore(coreContext.context)
+    private val lineRefresh = Mango9LineIdentityRefresh(coreContext.context, viewModelScope)
+    private var foreground = false
+
+    @Volatile private var cleared = false
+    // This queue-owned list is authoritative; LiveData.postValue may still be pending.
+    private var currentAccounts = arrayListOf<AccountModel>()
 
     private val coreListener = object : CoreListenerStub() {
         @WorkerThread
         override fun onDefaultAccountChanged(core: Core, account: Account?) {
+            if (cleared) return
+            for (model in currentAccounts) model.isDefault.postValue(model.account === account)
+            mango9Sessions.activate(account?.params?.identityAddress?.asStringUriOnly())
             if (account == null) {
                 Log.w("$TAG Default account is now null!")
             } else {
                 Log.i(
                     "$TAG Account [${account.params.identityAddress?.asStringUriOnly()}] has been set as default"
                 )
-                for (model in accounts.value.orEmpty()) {
-                    model.isDefault.postValue(model.account == account)
-                }
                 defaultAccountChangedEvent.postValue(
                     Event(account.params.identityAddress?.asStringUriOnly() ?: "")
                 )
-                mango9Sessions.activate(account.params.identityAddress?.asStringUriOnly())
-                hasMango9Session.postValue(mango9Sessions.load() != null)
             }
         }
 
@@ -117,8 +125,6 @@ class DrawerMenuViewModel
         @WorkerThread
         override fun onGlobalStateChanged(core: Core, state: GlobalState?, message: String) {
             if (core.globalState == GlobalState.On) {
-                accounts.value.orEmpty().forEach(AccountModel::destroy)
-
                 Log.i("$TAG Global state is [${core.globalState}], reload accounts & shortcuts")
                 computeAccountsList()
                 computeShortcuts()
@@ -127,7 +133,18 @@ class DrawerMenuViewModel
     }
 
     init {
+        viewModelScope.launch {
+            Mango9SessionStore.contextChanges.collect {
+                hasMango9Session.value = mango9Sessions.load() != null
+                refreshAccountLabels()
+                if (foreground) lineRefresh.refresh()
+            }
+        }
+        viewModelScope.launch {
+            Mango9LineIdentityStore.changes.collect { refreshAccountLabels() }
+        }
         coreContext.postOnCoreThread { core ->
+            if (cleared) return@postOnCoreThread
             core.addListener(coreListener)
 
             hideRecordings.postValue(corePreferences.disableCallRecordings)
@@ -142,9 +159,12 @@ class DrawerMenuViewModel
 
     @UiThread
     override fun onCleared() {
+        cleared = true
+        lineRefresh.cancel()
         coreContext.postOnCoreThread { core ->
             core.removeListener(coreListener)
-            accounts.value.orEmpty().forEach(AccountModel::destroy)
+            currentAccounts.forEach(AccountModel::destroy)
+            currentAccounts = arrayListOf()
         }
 
         super.onCleared()
@@ -169,10 +189,31 @@ class DrawerMenuViewModel
 
     @UiThread
     fun refreshAccountsNotificationsCount() {
+        if (foreground) lineRefresh.refresh()
         coreContext.postOnCoreThread {
-            for (model in accounts.value.orEmpty()) {
+            if (cleared) return@postOnCoreThread
+            for (model in currentAccounts) {
                 model.computeNotificationsCount()
             }
+        }
+    }
+
+    @UiThread
+    fun resume() {
+        foreground = true
+        lineRefresh.refresh()
+    }
+
+    @UiThread
+    fun pause() {
+        foreground = false
+        lineRefresh.cancel()
+    }
+
+    @UiThread
+    private fun refreshAccountLabels() {
+        coreContext.postOnCoreThread {
+            if (!cleared) currentAccounts.forEach(AccountModel::refreshMango9Identity)
         }
     }
 
@@ -187,7 +228,8 @@ class DrawerMenuViewModel
 
     @WorkerThread
     private fun computeAccountsList() {
-        accounts.value.orEmpty().forEach(AccountModel::destroy)
+        if (cleared) return
+        currentAccounts.forEach(AccountModel::destroy)
 
         val list = arrayListOf<AccountModel>()
         for (account in coreContext.core.accountList) {
@@ -204,8 +246,8 @@ class DrawerMenuViewModel
                 )
             }
         }
+        currentAccounts = list
         accounts.postValue(list)
-        hasMango9Session.postValue(mango9Sessions.load() != null)
 
         val maxAccount = corePreferences.maxAccountsCount
         val accountsCount = list.size

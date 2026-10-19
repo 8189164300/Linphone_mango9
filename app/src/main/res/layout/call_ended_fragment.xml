@@ -13,10 +13,10 @@
     <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/gray_900">
+        android:background="@color/mango9_call_canvas">
 
         <androidx.appcompat.widget.AppCompatTextView
-            style="@style/call_header_style"
+            style="@style/Mango9CallHeader"
             android:id="@+id/call_direction_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -59,7 +59,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="15dp"
             android:text="@{viewModel.displayedName, default=`John Doe`}"
-            android:textColor="@color/bc_white"
+            android:textColor="@color/mango9_call_ink"
             android:textSize="22sp"
             app:layout_constraintTop_toBottomOf="@id/avatar"
             app:layout_constraintBottom_toTopOf="@id/address"
@@ -73,7 +73,7 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="5dp"
             android:text="@{viewModel.displayedAddress, default=`sip:johndoe@proxy.mango9.com`}"
-            android:textColor="@color/bc_white"
+            android:textColor="@color/mango9_call_ink"
             android:textSize="14sp"
             android:visibility="@{viewModel.hideSipAddresses || viewModel.conferenceModel.isCurrentCallInConference ? View.GONE : View.VISIBLE}"
             app:layout_constraintTop_toBottomOf="@id/name"

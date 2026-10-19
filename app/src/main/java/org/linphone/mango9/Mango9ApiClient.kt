@@ -8,14 +8,17 @@ package org.linphone.mango9
 
 import android.content.Context
 import androidx.core.content.edit
-import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.UUID
-import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaType
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
 import org.linphone.core.tools.Log
@@ -41,6 +44,8 @@ sealed class Mango9ApiException(val userMessage: String) : Exception(userMessage
 
     data object Unauthorized : Mango9ApiException("Your saved Mango9 session has expired. Enter your password to connect again.")
 
+    data object Forbidden : Mango9ApiException("Your CRM account does not have permission to perform this action.")
+
     data object InvalidForwardingDestination : Mango9ApiException(
         "Enter a valid forwarding number. Call forwarding cannot be enabled without one.",
     )
@@ -58,9 +63,7 @@ internal class Mango9ApiClient(context: Context) {
     private companion object {
         private const val TAG = "[Mango9 API]"
         private const val KEY_DEVICE_ID = "login_device_uuid"
-        private const val CONNECT_TIMEOUT_MS = 15_000
-        private const val READ_TIMEOUT_MS = 30_000
-        private const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+        private val transport = Mango9ApiHttpTransport()
     }
 
     private val devicePreferences = context.applicationContext.getSharedPreferences(
@@ -325,6 +328,9 @@ internal class Mango9ApiClient(context: Context) {
         return parseCallSettings(authorizedCrmData(session, listOf("mobile", "call-settings")))
     }
 
+    suspend fun lineIdentity(session: Mango9Session): Mango9LineIdentity =
+        Mango9LineIdentity.fromProvisioning(authorizedCrmData(session, listOf("provisioning")).requiredObject("sip"))
+
     suspend fun updateCallForwarding(
         session: Mango9Session,
         enabled: Boolean,
@@ -373,6 +379,7 @@ internal class Mango9ApiClient(context: Context) {
             method,
             body?.toString()?.toByteArray(),
             bearerToken = session.accessToken,
+            purpose = RequestPurpose.Crm,
         )
         val envelope = try {
             JSONObject(response.body.toString(Charsets.UTF_8))
@@ -480,40 +487,18 @@ internal class Mango9ApiClient(context: Context) {
     ): HttpResponse = withContext(Dispatchers.IO) {
         val verifiedUrl = Mango9Configuration.verifiedHttpsUrl(url.toString())
             ?: throw Mango9ApiException.InvalidResponse
-        val connection = (verifiedUrl.openConnection() as? HttpsURLConnection)
-            ?: throw Mango9ApiException.InvalidResponse
-        try {
-            connection.instanceFollowRedirects = false
-            connection.requestMethod = method
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
-            connection.setRequestProperty("Accept", accept)
-            connection.setRequestProperty("User-Agent", "Mango9Android/1.0")
-            if (bearerToken != null) connection.setRequestProperty("Authorization", "Bearer $bearerToken")
-            if (body != null) {
-                connection.doOutput = true
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.outputStream.use { it.write(body) }
-            }
-
-            val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val responseBody = stream?.use(::readLimited) ?: ByteArray(0)
-            if (status !in 200..299) {
-                throw mapHttpError(status, responseBody, verifiedUrl, purpose)
-            }
-            HttpResponse(status, responseBody)
-        } catch (error: Mango9ApiException) {
-            throw error
-        } catch (error: Exception) {
-            Log.e(
-                "$TAG Network failure for ${verifiedUrl.host}${verifiedUrl.path}: " +
-                    error.javaClass.simpleName,
-            )
-            throw Mango9ApiException.Network
-        } finally {
-            connection.disconnect()
-        }
+        val payload = body ?: if (method in setOf("POST", "PUT", "PATCH")) ByteArray(0) else null
+        val request = Request.Builder().url(verifiedUrl).header("Accept", accept)
+            .header("User-Agent", "Mango9Android/1.0")
+            .apply { if (bearerToken != null) header("Authorization", "Bearer $bearerToken") }
+            .method(method, payload?.toRequestBody("application/json".toMediaType())).build()
+        val result = try {
+            transport.execute(request)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Mango9ApiException) { throw error } catch (_: IOException) { throw Mango9ApiException.Network }
+        if (result.status !in 200..299) throw mapHttpError(result.status, result.body, verifiedUrl, purpose)
+        HttpResponse(result.status, result.body)
     }
 
     private fun mapHttpError(
@@ -543,6 +528,7 @@ internal class Mango9ApiClient(context: Context) {
                 ) -> Mango9ApiException.EnrollmentUnavailable
             status == HttpURLConnection.HTTP_UNAUTHORIZED && serverError == "invalid_or_expired_code" ->
                 Mango9ApiException.InvalidOrExpiredCode
+            status == HttpURLConnection.HTTP_FORBIDDEN && purpose == RequestPurpose.Crm -> Mango9ApiException.Forbidden
             status == HttpURLConnection.HTTP_UNAUTHORIZED || status == HttpURLConnection.HTTP_FORBIDDEN ->
                 Mango9ApiException.InvalidCredentials
             status == HttpURLConnection.HTTP_BAD_REQUEST && serverError == "invalid_email" ->
@@ -557,20 +543,6 @@ internal class Mango9ApiClient(context: Context) {
                 Mango9ApiException.CrmUnavailable
             else -> Mango9ApiException.InvalidResponse
         }
-    }
-
-    private fun readLimited(stream: java.io.InputStream): ByteArray {
-        val output = ByteArrayOutputStream()
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        var total = 0
-        while (true) {
-            val count = stream.read(buffer)
-            if (count < 0) break
-            total += count
-            if (total > MAX_RESPONSE_BYTES) throw Mango9ApiException.InvalidResponse
-            output.write(buffer, 0, count)
-        }
-        return output.toByteArray()
     }
 
     private val deviceId: String
@@ -596,6 +568,7 @@ internal class Mango9ApiClient(context: Context) {
     private enum class RequestPurpose(val logName: String) {
         Json("json"),
         Enrollment("enrollment"),
+        Crm("crm"),
     }
 
 }

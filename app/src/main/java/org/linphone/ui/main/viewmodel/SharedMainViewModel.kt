@@ -24,6 +24,13 @@ import android.os.Bundle
 import androidx.annotation.UiThread
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
+import org.linphone.LinphoneApplication.Companion.coreContext
+import org.linphone.mango9.Mango9AttachmentPreparer
+import org.linphone.mango9.Mango9ExternalShare
+import org.linphone.mango9.Mango9NativeConversationRoute
+import org.linphone.mango9.Mango9SessionStore
 import org.linphone.core.ChatRoom
 import org.linphone.core.ConferenceInfo
 import org.linphone.core.Friend
@@ -117,20 +124,21 @@ class SharedMainViewModel
 
     // Conversation related
 
-    val textToShareFromIntent = MutableLiveData<String>()
-
-    val filesToShareFromIntent = MutableLiveData<ArrayList<String>>()
-
-    @Volatile
-    var pendingShareNeedsRecipientSelection: Boolean = false
-        private set
-
-    fun beginPendingShareRecipientSelection() {
-        pendingShareNeedsRecipientSelection = true
+    private val shareDelegate = lazy {
+        val context = coreContext.context.applicationContext
+        Mango9ExternalShare(
+            viewModelScope, Mango9SessionStore(context)::selectionStamp,
+            Mango9AttachmentPreparer(context)::prepare
+        ).also { share ->
+            viewModelScope.launch { Mango9SessionStore.contextChanges.collect { share.accountChanged() } }
+        }
     }
+    internal val externalShare by shareDelegate
+    val showSharedConversationEvent = MutableLiveData<Event<Mango9NativeConversationRoute>>()
 
-    fun completePendingShareRecipientSelection() {
-        pendingShareNeedsRecipientSelection = false
+    override fun onCleared() {
+        if (shareDelegate.isInitialized()) externalShare.dispose()
+        super.onCleared()
     }
 
     val messageToForwardEvent: MutableLiveData<Event<MessageModel>> by lazy {

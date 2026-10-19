@@ -94,8 +94,6 @@
     <string name="assistant_dialog_confirm_phone_number_title">Підтвердьте номер телефону</string>
     <string name="assistant_dialog_confirm_phone_number_message">Ви впевнені, що ваш номер телефону %s?</string>
     <string name="assistant_account_login">Логін</string>
-    <string name="assistant_scan_qr_code">Відскануйте QR-код</string>
-    <string name="assistant_qr_code_invalid_toast">Недійсний QR-код!</string>
     <string name="assistant_login_using_single_sign_on">Єдиний вхід</string>
     <string name="assistant_login_cant_parse_address_toast">SIP-адреса недійсна!</string>
     <string name="assistant_login_address_without_username_toast">SIP-адреса не містить імені користувача!</string>

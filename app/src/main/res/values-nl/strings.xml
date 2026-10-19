@@ -65,7 +65,6 @@
     <string name="assistant_dialog_general_terms_and_privacy_policy_message">Door verder te gaan, accepteert u onze %1$s en %2$s.</string>
     <string name="assistant_dialog_confirm_phone_number_title">Bevestig telefoonnummer</string>
     <string name="assistant_dialog_confirm_phone_number_message">Weet u zeker dat uw telefoonnummer %s is?</string>
-    <string name="assistant_scan_qr_code">Scan de QR-code</string>
     <string name="assistant_login_third_party_sip_account_title">SIP-account van derden</string>
     <string name="assistant_login_third_party_sip_account">Gebruik een SIP-account van derden</string>
     <string name="assistant_login_using_single_sign_on">Eenmalige aanmelding</string>
@@ -256,7 +255,6 @@
     <string name="assistant_recover_phone_number_account_label">Een telefoonnummer</string>
     <string name="assistant_recover_phone_number_account_unavailable_no_push_warning">Pushmeldingen lijken niet beschikbaar te zijn op uw apparaat, maar ze zijn verplicht om een telefoonnummeraccount in de mobiele app te herstellen.</string>
     <string name="remote_provisioning_config_failed_toast">Fout bij het proberen om de externe configuratie te downloaden en toe te passen</string>
-    <string name="assistant_qr_code_invalid_toast">Ongeldige QR-code!</string>
     <string name="assistant_permissions_read_contacts_title"><b>Contacten lezen:</b> Hiermee geeft u uw contactpersonen weer en kunt u achterhalen wie &appName; gebruikt.</string>
     <string name="assistant_permissions_record_audio_title"><b>Audio opnemen:</b> Zodat uw gesprekspartner u kan horen en om spraakberichten op te nemen.</string>
     <string name="help_about_privacy_policy_subtitle">Welke informatie &appName; verzamelt en gebruikt</string>

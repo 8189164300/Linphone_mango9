@@ -16,9 +16,6 @@
             name="manualSipClickListener"
             type="View.OnClickListener" />
         <variable
-            name="qrCodeClickListener"
-            type="View.OnClickListener" />
-        <variable
             name="viewModel"
             type="org.linphone.ui.assistant.viewmodel.Mango9LoginViewModel" />
     </data>
@@ -80,16 +77,6 @@
                             android:onClick="@{manualSipClickListener}"
                             android:padding="11dp"
                             android:src="@drawable/gear"
-                            app:tint="@color/gray_main2_600" />
-
-                        <ImageView
-                            style="@style/icon_top_bar_button_style"
-                            android:layout_width="44dp"
-                            android:layout_height="44dp"
-                            android:contentDescription="@string/assistant_scan_qr_code"
-                            android:onClick="@{qrCodeClickListener}"
-                            android:padding="11dp"
-                            android:src="@drawable/qr_code"
                             app:tint="@color/gray_main2_600" />
 
                         <ImageView

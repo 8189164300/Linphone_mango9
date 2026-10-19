@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mango9_activities_title">Events &amp; tasks</string>
+    <string name="mango9_calendar_standalone">Calendar</string>
+    <string name="mango9_social">Social</string>
+    <string name="mango9_social_platform">Platform</string>
+    <string name="mango9_social_account">Connected account</string>
+    <string name="mango9_social_empty">No social conversations match these filters.</string>
+    <string name="mango9_all_platforms">All platforms</string>
+    <string name="mango9_all_accounts">All accounts</string>
+    <string name="mango9_more_messages">Load earlier messages</string>
+    <string name="mango9_social_draft_only">Replies unavailable · you can prepare a draft</string>
+    <string name="mango9_social_attachment_limit">Social supports one attachment per message. Remove the current attachment to choose another.</string>
+    <string name="mango9_reply">Reply</string>
+    <string name="mango9_forward">Forward</string>
+    <string name="mango9_select">Select</string>
+    <string name="mango9_delete_for_me">Delete for me</string>
+    <string name="mango9_delete_for_me_info">Hide this history only for you, across your devices. Other people keep their messages. A new message brings the conversation back.</string>
+    <string name="mango9_reactions_local">SMS reactions are visible only to authorized Mango9 staff. No SMS or tapback is sent to the recipient.</string>
+    <string name="mango9_reaction_more">More emoji reactions</string>
+    <string name="mango9_reaction_add">Add %1$s reaction</string>
+    <string name="mango9_reaction_remove">Remove %1$s reaction</string>
+    <string name="mango9_reaction_choose">Choose a reaction</string>
+    <string name="mango9_reaction_keyboard">Choose one emoji using the emoji key on your keyboard.</string>
+    <string name="mango9_reaction_loading">Loading reactions…</string>
+    <string name="mango9_reaction_unavailable">Reactions are unavailable for this message.</string>
+    <string name="mango9_reaction_failed_load">Could not load reactions. Hold the message again to retry.</string>
+    <string name="mango9_reaction_pending">The previous reaction is unconfirmed. Check its saved receipt before adding another.</string>
+    <string name="mango9_reaction_check">Check saved reaction</string>
+    <string name="mango9_reaction_busy">Saving reaction…</string>
+    <string name="mango9_reaction_shared">Recipient-visible · Shared account reaction</string>
+    <string name="mango9_rename_group">Rename group</string>
+</resources>

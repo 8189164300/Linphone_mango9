@@ -36,11 +36,11 @@
     <string name="mango9_crm_workspace">CRM workspace</string>
     <string name="mango9_crm_leads">Leads</string>
     <string name="mango9_crm_clients">Clients</string>
-    <string name="mango9_crm_team_chat">Team Chat</string>
+    <string name="mango9_crm_team_chat">Conversations</string>
     <string name="mango9_crm_leads_subtitle">Pipeline with dynamic CRM fields</string>
     <string name="mango9_crm_clients_subtitle">Customer records in your CRM scope</string>
     <string name="content_description_open_chat_room">Open conversation</string>
-    <string name="mango9_crm_team_chat_subtitle">Private and group CRM chat with presence</string>
+    <string name="mango9_crm_team_chat_subtitle">SMS, Team and Social conversations</string>
     <string name="mango9_crm_sign_in_required">CRM sign-in required</string>
     <string name="mango9_crm_sign_in_explanation">Connect with a Mango9 CRM login to load the correct tenant, permissions, dashboard, messaging services, and SIP assignment.</string>
     <string name="mango9_crm_connect_account">Connect Mango9 account</string>
@@ -130,10 +130,10 @@
     <string name="mango9_licensing_upstream_app_title">Linphone Android upstream source</string>
     <string name="mango9_licensing_upstream_app_subtitle" translatable="false">Original Linphone Android 6.2.6 source and attribution</string>
     <string name="mango9_licensing_sdk_section">Communication SDK</string>
-    <string name="mango9_licensing_sdk_license_title" translatable="false">GNU General Public License v3.0</string>
-    <string name="mango9_licensing_sdk_license_subtitle" translatable="false">License declared by Linphone SDK Android 5.5.17-pre.1+3896ec0681</string>
+    <string name="mango9_licensing_sdk_license_title" translatable="false">GNU Affero General Public License v3.0</string>
+    <string name="mango9_licensing_sdk_license_subtitle" translatable="false">License included in the Linphone SDK 5.5.32 source</string>
     <string name="mango9_licensing_sdk_source_title">Linphone SDK source</string>
-    <string name="mango9_licensing_sdk_source_subtitle" translatable="false">Exact SDK source commit 3896ec0681</string>
+    <string name="mango9_licensing_sdk_source_subtitle" translatable="false">Exact SDK source commit 5eaa11cfd2 (5.5.32)</string>
     <string name="mango9_licensing_third_party_title">Linphone third-party components</string>
     <string name="mango9_licensing_third_party_subtitle">Licenses for native SDK dependencies</string>
     <string name="mango9_licensing_android_section">Direct Android libraries</string>
@@ -146,7 +146,7 @@
     <string name="website_download_url" translatable="false">https://www.mango9.com</string>
     <string name="website_user_guide_url" translatable="false">https://www.mango9.com/support</string>
     <string name="website_privacy_policy_url" translatable="false">https://www.mango9.com/privacy</string>
-    <string name="website_terms_and_conditions_url" translatable="false">https://www.mango9.com</string>
+    <string name="website_terms_and_conditions_url" translatable="false">https://www.mango9.com/terms-of-service</string>
     <string name="web_platform_register_email_url" translatable="false">https://www.mango9.com/support</string>
     <string name="web_platform_forgotten_password_url" translatable="false">https://www.mango9.com/support</string>
     <string name="website_translate_weblate_url" translatable="false">https://www.mango9.com/support</string>
@@ -273,8 +273,6 @@
     <string name="assistant_dialog_phone_number_validation_not_available_message">Phone number validation is not available, please use email account creation process.</string>
     <string name="assistant_dialog_phone_number_validation_not_available_register_button_label">Register with an email</string>
     <string name="assistant_account_login">Login</string>
-    <string name="assistant_scan_qr_code">Scan QR code</string>
-    <string name="assistant_qr_code_invalid_toast">Invalid QR code!</string>
     <string name="assistant_login_third_party_sip_account">Use a third party SIP account</string>
     <string name="assistant_login_third_party_sip_account_title">Third party SIP account</string>
     <string name="assistant_login_using_single_sign_on">Single sign on</string>
@@ -304,7 +302,7 @@
     <string name="assistant_permissions_grant_all_of_them">OK</string>
     <string name="assistant_permissions_skip_permissions">Do it later</string>
     <string name="assistant_permissions_subtitle">To fully enjoy &appName; we need you to grant us the following permissions :</string>
-    <string name="assistant_permissions_read_contacts_title"><b>Read contacts:</b> To display your contacts and find whom is using &appName;.</string>
+    <string name="assistant_permissions_read_contacts_title"><b>Contacts:</b> Show contacts saved on your phone so you can call or message them in &appName;.</string>
     <string name="assistant_permissions_post_notifications_title"><b>Post notifications:</b> To be informed when you receive a message or a call.</string>
     <string name="assistant_permissions_record_audio_title"><b>Record audio:</b> So your correspondent can hear you and to record voice messages.</string>
     <string name="assistant_permissions_access_camera_title"><b>Access camera:</b> To capture video during video calls and conferences.</string>
@@ -1190,6 +1188,7 @@
     <string name="mango9_chat_attach">Attach photo, video, or file</string>
     <string name="mango9_chat_record_voice">Record a voice message</string>
     <string name="mango9_chat_recording">Recording voice message — tap the microphone to attach</string>
+    <string name="mango9_chat_preparing_attachments">Preparing attachments…</string>
     <string name="mango9_chat_write_message">Write a message</string>
     <string name="mango9_chat_send">Send message</string>
     <string name="mango9_chat_online">Online</string>

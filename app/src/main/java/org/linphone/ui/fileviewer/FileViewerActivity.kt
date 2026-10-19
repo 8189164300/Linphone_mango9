@@ -1,5 +1,7 @@
 package org.linphone.ui.fileviewer
 
+import org.linphone.mango9.Mango9NativeAttachment
+
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
@@ -49,11 +51,25 @@ class FileViewerActivity : GenericActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
+        val nativeLease = ViewModelProvider(this)[org.linphone.ui.fileviewer.viewmodel.Mango9NativeViewerLease::class.java]
+        if (intent.extras?.let(nativeLease::accept) != true) {
+            nativeLease.release()
+            finish()
+            return
+        }
+
+        lifecycleScope.launch {
+            org.linphone.mango9.Mango9SessionStore.contextChanges.collect {
+                if (!nativeLease.isCurrent()) finish()
+            }
+        }
+
         binding = DataBindingUtil.setContentView(this, R.layout.file_viewer_activity)
         binding.lifecycleOwner = this
         setUpToastsArea(binding.toastsArea)
 
         viewModel = ViewModelProvider(this)[FileViewModel::class.java]
+        viewModel.retainNativeFile(nativeLease.retainFile())
         binding.viewModel = viewModel
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, windowInsets ->
@@ -87,7 +103,10 @@ class FileViewerActivity : GenericActivity() {
             "$TAG Path argument is [$path], pre loaded text content is ${if (preLoadedContent.isNullOrEmpty()) "not available" else "available, using it"}"
         )
         viewModel.isFromEphemeralMessage.value = isFromEphemeralMessage
-        viewModel.loadFile(path, timestamp, preLoadedContent)
+        viewModel.loadFile(
+            path, timestamp, preLoadedContent,
+            args.getString(Mango9NativeAttachment.MIME), args.getString(Mango9NativeAttachment.NAME)
+        )
 
         binding.setBackClickListener {
             finish()

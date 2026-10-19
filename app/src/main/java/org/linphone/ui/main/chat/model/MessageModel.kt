@@ -19,6 +19,8 @@
  */
 package org.linphone.ui.main.chat.model
 
+import org.linphone.mango9.attachmentMimeType
+
 import android.graphics.Typeface
 import android.os.CountDownTimer
 import android.text.Spannable
@@ -498,7 +500,9 @@ class MessageModel
                             isFileEncrypted,
                             originalPath,
                             chatMessage.isEphemeral,
-                            flexboxLayoutWrapBefore = wrapBefore
+                            flexboxLayoutWrapBefore = wrapBefore,
+                            mimeTypeOverride = content.attachmentMimeType(),
+                            relatedMessageId = chatMessage.messageId
                         ) { model ->
                             onContentClicked?.invoke(model)
                         }
@@ -532,7 +536,8 @@ class MessageModel
                                 isFileEncrypted,
                                 path,
                                 chatMessage.isEphemeral,
-                                flexboxLayoutWrapBefore = wrapBefore
+                                flexboxLayoutWrapBefore = wrapBefore,
+                                mimeTypeOverride = content.attachmentMimeType()
                             ) { model ->
                                 onContentClicked?.invoke(model)
                             }

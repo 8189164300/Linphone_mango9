@@ -251,7 +251,9 @@ class MeetingWaitingRoomViewModel
                 }
                 params.account = core.defaultAccount
                 joining.postValue(true)
-                coreContext.startCall(conferenceUri, params)
+                coreContext.startCall(conferenceUri, params, onResult = { started ->
+                    if (!started) joining.postValue(false)
+                })
             }
         }
     }

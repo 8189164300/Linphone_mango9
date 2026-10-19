@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mango9_crm_select_status">Select status</string>
+    <string name="mango9_crm_change_status">Change status: %1$s</string>
+    <string name="mango9_crm_status_not_confirmed">The status change could not be confirmed. Reopen this record from the correct CRM account and try again.</string>
+</resources>

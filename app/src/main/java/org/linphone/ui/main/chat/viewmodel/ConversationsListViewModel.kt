@@ -19,6 +19,15 @@
  */
 package org.linphone.ui.main.chat.viewmodel
 
+import androidx.annotation.AnyThread
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
+import org.linphone.contacts.ContactSearch
+import org.linphone.core.Account
+import org.linphone.core.GlobalState
+import org.linphone.ui.main.model.ContactSuggestionRows
 import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
 import androidx.lifecycle.MutableLiveData
@@ -29,26 +38,22 @@ import org.linphone.contacts.ContactsManager
 import org.linphone.core.Address
 import org.linphone.core.ChatMessage
 import org.linphone.core.ChatRoom
-import org.linphone.core.ChatRoomListenerStub
 import org.linphone.core.Conference
 import org.linphone.core.Core
 import org.linphone.core.CoreListenerStub
 import org.linphone.core.Friend
-import org.linphone.core.MagicSearch
-import org.linphone.core.MagicSearchListenerStub
-import org.linphone.core.SearchResult
 import org.linphone.core.tools.Log
 import org.linphone.mango9.Mango9ChatRouting
+import org.linphone.mango9.Mango9ChatRoomNavigation
+import org.linphone.mango9.Mango9NativeConversationRoute
+import org.linphone.mango9.Mango9SmsRouting
 import org.linphone.ui.main.chat.model.ConversationModel
 import org.linphone.ui.main.chat.model.ConversationModelWrapper
-import org.linphone.ui.main.contacts.model.ContactAvatarModel
 import org.linphone.ui.main.model.ConversationContactOrSuggestionModel
 import org.linphone.ui.main.viewmodel.AbstractMainViewModel
 import org.linphone.utils.AppUtils
 import org.linphone.utils.Event
 import org.linphone.utils.LinphoneUtils
-import java.text.Collator
-import java.util.Locale
 
 class ConversationsListViewModel
     @UiThread
@@ -63,48 +68,47 @@ class ConversationsListViewModel
 
     val mango9MessagesAvailable = MutableLiveData(false)
 
-    val chatRoomCreatedEvent: MutableLiveData<Event<String>> by lazy {
+    val chatRoomCreatedEvent: MutableLiveData<Event<Mango9NativeConversationRoute>> by lazy {
         MutableLiveData()
     }
 
     private val tempConversationsList = ArrayList<ConversationModelWrapper>()
 
-    private val magicSearch = coreContext.core.createMagicSearch()
+    private val revision = AtomicLong()
+    private var searchRevision = -1L
+    private var primaryRevision = -1L
 
-    private val magicSearchListener = object : MagicSearchListenerStub() {
-        @WorkerThread
-        override fun onSearchResultsReceived(magicSearch: MagicSearch) {
-            Log.i("$TAG Magic search contacts available")
-            val results = magicSearch.lastSearch
-            processMagicSearchResults(results)
-            fetchInProgress.postValue(false)
+    @Volatile private var suspended = false
+
+    @Volatile private var closed = false
+    private val suggestionRows = ContactSuggestionRows()
+    private var visibleSuggestions = emptyList<ConversationContactOrSuggestionModel>()
+    val showResultsLimitReached = MutableLiveData(false)
+    private val contactSearch: ContactSearch = ContactSearch(viewModelScope) { token, candidates, limited ->
+        if (isCurrent(searchRevision) && contactSearchCurrent(token)) {
+            visibleSuggestions = suggestionRows.replace(candidates)
+            publish(searchRevision, limited)
         }
     }
 
-    private val chatRoomListener = object : ChatRoomListenerStub() {
-        @WorkerThread
-        override fun onStateChanged(chatRoom: ChatRoom, newState: ChatRoom.State?) {
-            val state = chatRoom.state
-            if (state == ChatRoom.State.Instantiated) return
+    private fun contactSearchCurrent(token: Long): Boolean = contactSearch.isCurrent(token)
 
-            val id = LinphoneUtils.getConversationId(chatRoom)
-            Log.i("$TAG Conversation [$id] (${chatRoom.subjectUtf8}) state changed: [$state]")
-
-            if (state == ChatRoom.State.Created) {
-                Log.i("$TAG Conversation [$id] successfully created")
-                chatRoom.removeListener(this)
-                fetchInProgress.postValue(false)
-                chatRoomCreatedEvent.postValue(Event(LinphoneUtils.getConversationId(chatRoom)))
-            } else if (state == ChatRoom.State.CreationFailed) {
-                Log.e("$TAG Conversation [$id] creation has failed!")
-                chatRoom.removeListener(this)
-                fetchInProgress.postValue(false)
-                showRedToast(R.string.conversation_failed_to_create_toast, R.drawable.warning_circle)
-            }
+    private val roomNavigation = Mango9ChatRoomNavigation { route ->
+        fetchInProgress.postValue(false)
+        if (route != null) {
+            chatRoomCreatedEvent.postValue(Event(route))
+        } else {
+            showRedToast(R.string.conversation_failed_to_create_toast, R.drawable.warning_circle)
         }
     }
 
     private val coreListener = object : CoreListenerStub() {
+        override fun onDefaultAccountChanged(core: Core, defaultAccount: Account?) { refresh() }
+
+        override fun onGlobalStateChanged(core: Core, state: GlobalState?, message: String) {
+            if (state == GlobalState.On) refresh()
+        }
+
         @WorkerThread
         override fun onChatRoomStateChanged(
             core: Core,
@@ -125,7 +129,7 @@ class ConversationsListViewModel
         @WorkerThread
         override fun onMessageSent(core: Core, chatRoom: ChatRoom, message: ChatMessage) {
             val id = LinphoneUtils.getConversationId(chatRoom)
-            val found = conversations.value.orEmpty().find {
+            val found = tempConversationsList.find {
                 it.conversationModel?.id == id
             }
             if (found == null) {
@@ -144,7 +148,7 @@ class ConversationsListViewModel
             messages: Array<out ChatMessage>
         ) {
             val id = LinphoneUtils.getConversationId(chatRoom)
-            val found = conversations.value.orEmpty().find {
+            val found = tempConversationsList.find {
                 it.conversationModel?.id == id
             }
             if (found == null) {
@@ -161,12 +165,7 @@ class ConversationsListViewModel
         @WorkerThread
         override fun onContactsLoaded() {
             Log.i("$TAG Contacts have been (re)loaded, updating list")
-            for (model in conversations.value.orEmpty()) {
-                if (model.isConversation) {
-                    model.conversationModel?.computeParticipants()
-                    model.conversationModel?.updateLastMessage()
-                }
-            }
+            refresh()
         }
 
         @WorkerThread
@@ -179,49 +178,95 @@ class ConversationsListViewModel
         coreContext.postOnCoreThread { core ->
             coreContext.contactsManager.addListener(contactsListener)
             core.addListener(coreListener)
-            magicSearch.addListener(magicSearchListener)
 
-            computeChatRoomsList(currentFilter)
+            refresh()
         }
     }
 
     @UiThread
     override fun onCleared() {
+        closed = true
+        roomNavigation.dispose()
+        cancelContactSearch()
         super.onCleared()
 
         coreContext.postOnCoreThread { core ->
-            conversations.value.orEmpty().forEach(ConversationModelWrapper::destroy)
+            tempConversationsList.forEach(ConversationModelWrapper::destroy)
+            tempConversationsList.clear()
             coreContext.contactsManager.removeListener(contactsListener)
             core.removeListener(coreListener)
-            magicSearch.removeListener(magicSearchListener)
         }
     }
 
     @UiThread
     override fun filter() {
+        suspended = false
+        refresh(debounce = true)
+    }
+
+    @UiThread
+    fun cancelContactSearch() {
+        suspended = true
+        revision.incrementAndGet()
+        contactSearch.cancel()
         coreContext.postOnCoreThread {
-            computeChatRoomsList(currentFilter)
+            suggestionRows.clear()
+            visibleSuggestions = emptyList()
+        }
+    }
+
+    @AnyThread
+    private fun refresh(debounce: Boolean = false) {
+        if (suspended || closed) return
+        val token = revision.incrementAndGet()
+        val filter = currentFilter
+        contactSearch.cancel()
+        viewModelScope.launch {
+            if (debounce && filter.isNotEmpty()) delay(250)
+            coreContext.postOnCoreThread {
+                if (isCurrent(token)) computeChatRoomsList(filter, token)
+            }
+        }
+    }
+
+    private fun isCurrent(token: Long) = !closed && !suspended && revision.get() == token
+
+    @UiThread
+    fun revealMoreContacts(near: Int) {
+        val token = revision.get()
+        coreContext.postOnCoreThread {
+            if (isCurrent(token) && searchRevision == token) {
+                suggestionRows.reveal(near - tempConversationsList.size)?.let {
+                    visibleSuggestions = it
+                    publish(token, showResultsLimitReached.value == true)
+                }
+            }
         }
     }
 
     @WorkerThread
-    private fun computeChatRoomsList(filter: String) {
-        conversations.value.orEmpty().forEach(ConversationModelWrapper::destroy)
+    private fun publish(token: Long, limited: Boolean = false) {
+        val list = ArrayList(tempConversationsList)
+        list.addAll(visibleSuggestions.map { ConversationModelWrapper(null, it) })
+        coreContext.postOnMainThread {
+            if (isCurrent(token)) {
+                showResultsLimitReached.value = limited
+                conversations.value = list
+                fetchInProgress.value = false
+            }
+        }
+    }
+
+    @WorkerThread
+    private fun computeChatRoomsList(filter: String, token: Long) {
+        if (coreContext.core.globalState != GlobalState.On) return
+        tempConversationsList.forEach(ConversationModelWrapper::destroy)
 
         if (conversations.value.orEmpty().isEmpty()) {
             fetchInProgress.postValue(true)
         }
 
         val isFilterEmpty = filter.isEmpty()
-        if (!isFilterEmpty) {
-            magicSearch.getContactsListAsync(
-                filter,
-                corePreferences.contactsFilter,
-                MagicSearch.Source.All.toInt(),
-                MagicSearch.Aggregation.Friend
-            )
-        }
-
         val list = arrayListOf<ConversationModelWrapper>()
 
         val account = LinphoneUtils.getDefaultAccount()
@@ -235,17 +280,22 @@ class ConversationsListViewModel
             list.add(ConversationModelWrapper(model))
         }
 
-        if (isFilterEmpty) {
-            conversations.postValue(list)
-        } else {
+        primaryRevision = token
+        tempConversationsList.clear()
+        tempConversationsList.addAll(list)
+        suggestionRows.clear()
+        visibleSuggestions = emptyList()
+        publish(token)
+        if (!isFilterEmpty) {
+            searchRevision = token
             fetchInProgress.postValue(true)
-            tempConversationsList.clear()
-            tempConversationsList.addAll(list)
+            contactSearch.search(filter, corePreferences.contactsFilter)
         }
     }
 
     @WorkerThread
     private fun addChatRoom(chatRoom: ChatRoom) {
+        if (suspended || closed || primaryRevision != revision.get()) return
         val identifier = chatRoom.identifier
         val chatRoomAccount = chatRoom.account
         val defaultAccount = LinphoneUtils.getDefaultAccount()
@@ -271,7 +321,7 @@ class ConversationsListViewModel
             return
         }
 
-        val currentList = conversations.value.orEmpty()
+        val currentList = tempConversationsList
         val found = currentList.find {
             it.conversationModel?.chatRoom?.identifier == identifier
         }
@@ -293,12 +343,15 @@ class ConversationsListViewModel
         newList.add(ConversationModelWrapper(model))
         newList.addAll(currentList)
         Log.i("$TAG Adding chat room with identifier [$identifier] to list")
-        conversations.postValue(newList)
+        tempConversationsList.clear()
+            tempConversationsList.addAll(newList)
+            publish(revision.get(), showResultsLimitReached.value == true)
     }
 
     @WorkerThread
     private fun removeChatRoom(chatRoom: ChatRoom) {
-        val currentList = conversations.value.orEmpty()
+        if (suspended || closed || primaryRevision != revision.get()) return
+        val currentList = tempConversationsList
         val identifier = chatRoom.identifier
         val found = currentList.find {
             it.conversationModel?.chatRoom?.identifier == identifier
@@ -309,7 +362,9 @@ class ConversationsListViewModel
             newList.remove(found)
             found.destroy()
             Log.i("$TAG Removing chat room with identifier [$identifier] from list")
-            conversations.postValue(newList)
+            tempConversationsList.clear()
+            tempConversationsList.addAll(newList)
+            publish(revision.get(), showResultsLimitReached.value == true)
         } else {
             Log.w(
                 "$TAG Failed to find item in list matching deleted chat room identifier [$identifier]"
@@ -321,6 +376,7 @@ class ConversationsListViewModel
 
     @WorkerThread
     private fun reorderChatRooms() {
+        if (suspended || closed || primaryRevision != revision.get()) return
         if (currentFilter.isNotEmpty()) {
             Log.w("$TAG List filter isn't empty, do not re-order list")
             return
@@ -328,99 +384,22 @@ class ConversationsListViewModel
 
         Log.i("$TAG Re-ordering conversations")
         val sortedList = arrayListOf<ConversationModelWrapper>()
-        sortedList.addAll(conversations.value.orEmpty())
+        sortedList.addAll(tempConversationsList)
         sortedList.sortByDescending {
             it.conversationModel?.chatRoom?.lastUpdateTime
         }
-        conversations.postValue(sortedList)
+        tempConversationsList.clear()
+        tempConversationsList.addAll(sortedList)
+        publish(revision.get())
     }
 
     @WorkerThread
-    private fun processMagicSearchResults(results: Array<SearchResult>) {
-        Log.i("$TAG Processing [${results.size}] results")
-
-        val contactsList = arrayListOf<ConversationModelWrapper>()
-        val suggestionsList = arrayListOf<ConversationModelWrapper>()
-        val requestList = arrayListOf<ConversationModelWrapper>()
-
-        val defaultAccountDomain = LinphoneUtils.getDefaultAccount()?.params?.domain
-        for (result in results) {
-            val address = result.address
-            val friend = result.friend
-            if (friend != null) {
-                val found = contactsList.find { it.contactModel?.friend == friend }
-                if (found != null) continue
-
-                val mainAddress = address ?: LinphoneUtils.getFirstAvailableAddressForFriend(friend)
-                if (mainAddress != null) {
-                    val model = ConversationContactOrSuggestionModel(mainAddress, friend = friend)
-                    val avatarModel = coreContext.contactsManager.getContactAvatarModelForFriend(
-                        friend
-                    )
-                    model.avatarModel.postValue(avatarModel)
-                    contactsList.add(ConversationModelWrapper(null, model))
-                } else {
-                    Log.w("$TAG Found friend [${friend.name}] in search results but no Address could be found, skipping it")
-                }
-            } else if (address != null) {
-                if (result.sourceFlags == MagicSearch.Source.Request.toInt()) {
-                    val model = ConversationContactOrSuggestionModel(address) {
-                        coreContext.startAudioCall(address)
-                    }
-                    val avatarModel = getContactAvatarModelForAddress(address)
-                    model.avatarModel.postValue(avatarModel)
-                    requestList.add(ConversationModelWrapper(null, model))
-                    continue
-                }
-
-                val defaultAccountAddress = coreContext.core.defaultAccount?.params?.identityAddress
-                if (defaultAccountAddress != null && address.weakEqual(defaultAccountAddress)) {
-                    Log.i("$TAG Removing from suggestions current default account address")
-                    continue
-                }
-
-                val model = ConversationContactOrSuggestionModel(address, defaultAccountDomain = defaultAccountDomain) {
-                    coreContext.startAudioCall(address)
-                }
-                val avatarModel = getContactAvatarModelForAddress(address)
-                model.avatarModel.postValue(avatarModel)
-                suggestionsList.add(ConversationModelWrapper(null, model))
-            }
-        }
-
-        val collator = Collator.getInstance(Locale.getDefault())
-        contactsList.sortWith { model1, model2 ->
-            collator.compare(model1.contactModel?.name, model2.contactModel?.name)
-        }
-        suggestionsList.sortWith { model1, model2 ->
-            collator.compare(model1.contactModel?.name, model2.contactModel?.name)
-        }
-
-        val list = arrayListOf<ConversationModelWrapper>()
-        list.addAll(tempConversationsList)
-        list.addAll(contactsList)
-        list.addAll(suggestionsList)
-        list.addAll(requestList)
-        conversations.postValue(list)
-        Log.i(
-            "$TAG Processed [${results.size}] results: [${contactsList.size}] contacts and [${suggestionsList.size}] suggestions"
-        )
-    }
-
-    @WorkerThread
-    private fun getContactAvatarModelForAddress(address: Address): ContactAvatarModel {
-        val fakeFriend = coreContext.core.createFriend()
-        fakeFriend.name = LinphoneUtils.getDisplayName(address)
-        fakeFriend.address = address
-        return ContactAvatarModel(fakeFriend)
-    }
-
-    @WorkerThread
-    fun createOneToOneChatRoomWith(remote: Address) {
-        if (Mango9ChatRouting.openIfNeeded(remote)) return
+    fun createOneToOneChatRoomWith(remote: Address, shareRequestId: String? = null) {
+        if (Mango9ChatRouting.openIfNeeded(remote, shareRequestId)) return
+        if (Mango9SmsRouting.openIfNeeded(remote, shareRequestId = shareRequestId)) return
         val core = coreContext.core
         val account = core.defaultAccount
-        if (account == null) {
+        if (account == null || core.globalState != GlobalState.On) {
             Log.e(
                 "$TAG No default account found, can't create conversation with [${remote.asStringUriOnly()}]!"
             )
@@ -481,16 +460,16 @@ class ConversationsListViewModel
                         val id = LinphoneUtils.getConversationId(chatRoom)
                         Log.i("$TAG 1-1 conversation [$id] has been created")
                         fetchInProgress.postValue(false)
-                        chatRoomCreatedEvent.postValue(Event(LinphoneUtils.getConversationId(chatRoom)))
+                        roomNavigation.watch(chatRoom, shareRequestId)
                     } else {
                         Log.i("$TAG Conversation isn't in Created state yet (state is [$state]), wait for it")
-                        chatRoom.addListener(chatRoomListener)
+                        roomNavigation.watch(chatRoom, shareRequestId)
                     }
                 } else {
                     val id = LinphoneUtils.getConversationId(chatRoom)
                     Log.i("$TAG Conversation successfully created [$id]")
                     fetchInProgress.postValue(false)
-                    chatRoomCreatedEvent.postValue(Event(LinphoneUtils.getConversationId(chatRoom)))
+                    roomNavigation.watch(chatRoom, shareRequestId)
                 }
             } else {
                 Log.e("$TAG Failed to create 1-1 conversation with [${remote.asStringUriOnly()}]!")
@@ -502,7 +481,7 @@ class ConversationsListViewModel
                 "$TAG A 1-1 conversation between local account [${localAddress?.asStringUriOnly()}] and remote [${remote.asStringUriOnly()}] for given parameters already exists!"
             )
             fetchInProgress.postValue(false)
-            chatRoomCreatedEvent.postValue(Event(LinphoneUtils.getConversationId(existingChatRoom)))
+            roomNavigation.watch(existingChatRoom, shareRequestId)
         }
     }
 }

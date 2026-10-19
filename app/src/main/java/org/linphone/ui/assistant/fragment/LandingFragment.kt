@@ -46,19 +46,19 @@ class LandingFragment : GenericFragment() {
         binding.viewModel = viewModel
         observeToastEvents(viewModel)
 
-        binding.setBackClickListener { requireActivity().finish() }
+        binding.setBackClickListener {
+            viewModel.cancelPendingActions()
+            requireActivity().finish()
+        }
         binding.setHelpClickListener {
             if (findNavController().currentDestination?.id == R.id.landingFragment) {
+                viewModel.cancelPendingActions()
                 findNavController().navigate(LandingFragmentDirections.actionLandingFragmentToHelpFragment())
-            }
-        }
-        binding.setQrCodeClickListener {
-            if (findNavController().currentDestination?.id == R.id.landingFragment) {
-                findNavController().navigate(LandingFragmentDirections.actionLandingFragmentToQrCodeScannerFragment())
             }
         }
         binding.setManualSipClickListener {
             if (findNavController().currentDestination?.id == R.id.landingFragment) {
+                viewModel.cancelPendingActions()
                 findNavController().navigate(
                     LandingFragmentDirections.actionLandingFragmentToThirdPartySipAccountLoginFragment(),
                 )
@@ -66,17 +66,28 @@ class LandingFragment : GenericFragment() {
         }
 
         viewModel.showPassword.observe(viewLifecycleOwner) {
-            lifecycleScope.launch {
+            viewLifecycleOwner.lifecycleScope.launch {
                 delay(50)
                 binding.password.setSelection(binding.password.text?.length ?: 0)
             }
         }
         viewModel.accountLoggedInEvent.observe(viewLifecycleOwner) { event ->
-            event.consume {
+            event?.consume {
                 Log.i("$TAG Mango9 account connected, leaving assistant")
                 requireActivity().finish()
             }
         }
         viewModel.restoreSavedSessionIfNeeded()
+    }
+
+    override fun onStop() {
+        viewModel.cancelPendingActions()
+        super.onStop()
+    }
+
+    override fun onDestroyView() {
+        viewModel.cancelPendingActions()
+        binding.unbind()
+        super.onDestroyView()
     }
 }

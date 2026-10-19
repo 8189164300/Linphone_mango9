@@ -221,10 +221,8 @@
     <style name="in_call_extra_action_label_style">
         <item name="android:fontFamily">@font/noto_sans</item>
         <item name="android:textSize">14sp</item>
-        <item name="android:textColor">@color/in_call_label_color</item>
+        <item name="android:textColor">@color/mango9_call_label</item>
         <item name="android:gravity">center</item>
-        <item name="android:maxLines">1</item>
-        <item name="android:ellipsize">end</item>
     </style>
     <style name="material_switch_style">
         <item name="thumbTint">?attr/color_main2_000</item>

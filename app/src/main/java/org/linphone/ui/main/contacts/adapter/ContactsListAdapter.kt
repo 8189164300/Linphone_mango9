@@ -29,6 +29,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import org.linphone.R
+import org.linphone.mango9.Mango9ContactHeading
 import org.linphone.databinding.ContactFavouriteListCellBinding
 import org.linphone.databinding.ContactListCellBinding
 import org.linphone.ui.main.contacts.model.ContactAvatarModel
@@ -39,6 +40,7 @@ class ContactsListAdapter(
     private val disableLongClick: Boolean = false
 ) : ListAdapter<ContactAvatarModel, RecyclerView.ViewHolder>(ContactDiffCallback()) {
     var selectedAdapterPosition = -1
+    var onNearEnd: ((Int) -> Unit)? = null
 
     val contactClickedEvent: MutableLiveData<Event<ContactAvatarModel>> by lazy {
         MutableLiveData()
@@ -106,10 +108,11 @@ class ContactsListAdapter(
         } else {
             (holder as ViewHolder).bind(getItem(position))
         }
+        if (position >= itemCount - 10) onNearEnd?.invoke(position)
     }
 
     fun resetSelection() {
-        notifyItemChanged(selectedAdapterPosition)
+        if (selectedAdapterPosition in currentList.indices) notifyItemChanged(selectedAdapterPosition)
         selectedAdapterPosition = -1
     }
 
@@ -124,13 +127,13 @@ class ContactsListAdapter(
                 binding.root.isSelected = bindingAdapterPosition == selectedAdapterPosition
 
                 val previousItem = bindingAdapterPosition - 1
-                val previousLetter = if (previousItem >= 0) {
-                    getItem(previousItem).sortingName?.get(0).toString()
+                val previousLetter = if (previousItem in currentList.indices) {
+                    Mango9ContactHeading.of(getItem(previousItem).sortingName)
                 } else {
                     ""
                 }
 
-                val currentLetter = contactModel.sortingName?.get(0).toString()
+                val currentLetter = Mango9ContactHeading.of(contactModel.sortingName)
                 val displayLetter = previousLetter.isEmpty() || currentLetter != previousLetter
                 firstContactStartingByThatLetter = displayLetter
 
@@ -156,7 +159,7 @@ class ContactsListAdapter(
 
     private class ContactDiffCallback : DiffUtil.ItemCallback<ContactAvatarModel>() {
         override fun areItemsTheSame(oldItem: ContactAvatarModel, newItem: ContactAvatarModel): Boolean {
-            return oldItem.id == newItem.id
+            return oldItem.rowKey == newItem.rowKey
         }
 
         override fun areContentsTheSame(oldItem: ContactAvatarModel, newItem: ContactAvatarModel): Boolean {

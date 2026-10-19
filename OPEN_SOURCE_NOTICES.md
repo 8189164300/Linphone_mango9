@@ -1,7 +1,7 @@
 # Mango9 Android Open-Source Notices
 
 This file identifies the principal open-source components used by Mango9
-Android 6.2.8 (version code 602027). Copyright notices in the source remain with
+Android 6.2.8 (version code 602037). Copyright notices in the source remain with
 their respective owners.
 
 ## Mango9 application and Linphone Android
@@ -11,7 +11,7 @@ their respective owners.
   Communications SARL.
 - Upstream release: [`6.2.6`](https://github.com/BelledonneCommunications/linphone-android/tree/6.2.6).
 - Upstream commit: [`42b1fcce3c8037e6f5a891cf8d108eb47e308386`](https://github.com/BelledonneCommunications/linphone-android/commit/42b1fcce3c8037e6f5a891cf8d108eb47e308386).
-- Mango9 corresponding source: [`android-6.2.8-build-602027`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.8-build-602027).
+- Mango9 corresponding source: [`android-6.2.8-build-602037`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.8-build-602037).
 - License text: [`LICENSE.txt`](LICENSE.txt).
 
 Mango9 modified the upstream application in 2026. Mango9 is not affiliated with
@@ -19,10 +19,13 @@ or endorsed by Belledonne Communications SARL.
 
 ## Linphone SDK Android
 
-- Maven coordinate: `org.linphone:linphone-sdk-android:5.5.17-pre.1+3896ec0681`.
-- The published POM for this exact artifact declares GNU General Public License
-  version 3.0.
-- Exact native SDK source commit: [`3896ec0681`](https://github.com/BelledonneCommunications/linphone-sdk/commit/3896ec0681).
+- Maven coordinate: `org.linphone:linphone-sdk-android:5.5.32`.
+- The exact SDK source revision includes the [GNU Affero General Public License
+  version 3.0](https://github.com/BelledonneCommunications/linphone-sdk/blob/5eaa11cfd2b052d9a9c71989faa0d55a8a8c57aa/LICENSE.txt).
+- The published Maven POM labels the artifact GPL 3.0. That metadata differs from
+  the license included with the source; it is not used here to replace or reduce
+  the source license terms. SDK components retain their own license notices.
+- Exact native SDK source commit (tag `5.5.32`): [`5eaa11cfd2`](https://github.com/BelledonneCommunications/linphone-sdk/commit/5eaa11cfd2b052d9a9c71989faa0d55a8a8c57aa).
 - Native SDK and submodule build manifests are available from the source tree at
   that commit.
 - Third-party component inventory: [Linphone third-party components](https://wiki.linphone.org/xwiki/wiki/public/view/Linphone/Third%20party%20components/).
@@ -36,6 +39,7 @@ build can use the published AAR or a locally built SDK supplied through
 Exact versions and coordinates are pinned in `gradle/libs.versions.toml`.
 
 - AndroidX libraries: Apache License 2.0.
+- AndroidX Media3 Transformer and Effects: [Apache License 2.0](https://github.com/androidx/media/blob/1.11.1/LICENSE).
 - Kotlin and Kotlin Gradle tooling: Apache License 2.0.
 - Google Material Components and Flexbox Layout: Apache License 2.0.
 - Firebase Android SDK/Cloud Messaging: Apache License 2.0.
@@ -61,6 +65,10 @@ key, or FCM server credential. Server credentials are intentionally excluded
 from this repository.
 
 ## No warranty
+
+The Facebook, Instagram and TikTok glyphs are from Simple Icons (CC0-1.0).
+Brand names and logos remain the property of their respective owners. The glyphs
+identify the connected messaging service and do not imply endorsement.
 
 The covered software is distributed in the hope that it will be useful, but
 without any warranty; without even the implied warranty of merchantability or

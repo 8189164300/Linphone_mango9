@@ -1,0 +1,4 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="26dp" android:height="26dp" android:viewportWidth="26" android:viewportHeight="26">
+    <path android:fillColor="@color/mango9_calendar_accent" android:pathData="M13,1a12,12 0,1 0,0 24a12,12 0,1 0,0 -24" />
+    <path android:fillColor="@android:color/transparent" android:strokeColor="#FFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M7,13l4,4l8,-8" />
+</vector>

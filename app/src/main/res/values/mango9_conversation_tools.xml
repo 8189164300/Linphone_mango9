@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mango9_chat_search_hint">Search messages</string>
+    <string name="mango9_chat_search_scope">Searches loaded messages in this conversation</string>
+    <string name="mango9_chat_search_count">%1$d of %2$d</string>
+    <string name="mango9_chat_search_working">Searching…</string>
+    <string name="mango9_chat_search_close">Close search</string>
+    <string name="mango9_chat_options">Conversation options</string>
+    <string name="mango9_chat_attachment_scope">Attachments from loaded messages · newest first</string>
+</resources>

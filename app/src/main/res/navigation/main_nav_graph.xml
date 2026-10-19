@@ -235,6 +235,19 @@
     </fragment>
 
     <fragment
+        android:id="@+id/mango9CalendarFragment"
+        android:name="org.linphone.ui.main.crm.fragment.Mango9CalendarFragment"
+        android:label="@string/mango9_calendar_title" />
+
+    <action
+        android:id="@+id/action_global_mango9CalendarFragment"
+        app:destination="@id/mango9CalendarFragment"
+        app:enterAnim="@anim/slide_in_right"
+        app:exitAnim="@anim/slide_out_left"
+        app:popEnterAnim="@anim/slide_in_left"
+        app:popExitAnim="@anim/slide_out_right" />
+
+    <fragment
         android:id="@+id/mango9MessagingListFragment"
         android:name="org.linphone.ui.main.crm.fragment.Mango9MessagingListFragment"
         android:label="@string/mango9_messages_title"

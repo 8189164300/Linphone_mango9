@@ -65,17 +65,39 @@
                 android:text="@string/conversation_no_document_found"
                 android:textColor="?attr/color_main2_600"
                 android:textSize="16sp"
-                android:visibility="@{viewModel.documentsList.empty ? View.VISIBLE : View.GONE}"
+                android:visibility="@{viewModel.documentsList.empty &amp;&amp; !viewModel.operationInProgress &amp;&amp; !viewModel.loadFailed ? View.VISIBLE : View.GONE}"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/title"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"/>
 
+            <Button
+                android:id="@+id/contents_retry"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_margin="16dp"
+                android:text="@string/mango9_attachment_list_retry"
+                android:onClick="@{() -> viewModel.loadMoreData()}"
+                android:visibility="@{viewModel.loadFailed ? View.VISIBLE : View.GONE}"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+            <ProgressBar
+                android:id="@+id/contents_page_progress"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_margin="12dp"
+                android:visibility="@{viewModel.operationInProgress &amp;&amp; !viewModel.documentsList.empty ? View.VISIBLE : View.GONE}"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
+
         </androidx.constraintlayout.widget.ConstraintLayout>
 
         <include
             layout="@layout/operation_in_progress"
-            bind:visibility="@{viewModel.operationInProgress}" />
+            bind:visibility="@{viewModel.operationInProgress &amp;&amp; viewModel.documentsList.empty}" />
 
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
 

@@ -83,43 +83,36 @@ class Mango9MessageReplyReceiver : BroadcastReceiver() {
         }
 
         val appContext = context.applicationContext
-        Mango9MessagePushCoordinator.updateSmsReplyNotification(
-            appContext,
-            push,
-            notificationId,
-            Mango9SmsReplyState.Sending,
-        )
+        val sessions = Mango9SessionStore(appContext)
         val pendingResult = goAsync()
         scope.launch {
-            try {
-                val sessions = Mango9SessionStore(appContext)
-                val sent = if (
+            runMango9NotificationReply(
+                finish = pendingResult::finish,
+                publish = { state ->
+                    Mango9MessagePushCoordinator.updateSmsReplyNotification(appContext, push, notificationId, state)
+                },
+                onFailure = { Log.e("$TAG Failed to complete the Mango9 SMS notification reply") },
+            ) {
+                val login = sessions.resolveNotificationLogin(push) ?: return@runMango9NotificationReply null
+                val replySession = sessions.captureSession()?.takeIf {
+                    it.session.sipIdentity == login.session.sipIdentity && it.loginGeneration == login.loginGeneration
+                } ?: return@runMango9NotificationReply null
+                Mango9MessagePushCoordinator.updateSmsReplyNotification(
+                    appContext, push, notificationId, Mango9SmsReplyState.Sending,
+                )
+                if (
+                    sessions.resolveNotificationLogin(push) != null && sessions.currentSession(replySession) != null &&
                     Mango9SmsNotificationReplyPolicy.canReply(sessions.activeIdentity, push.sipIdentity)
                 ) {
                     Mango9ChatStore.get(appContext).sendSmsFromNotification(
                         push.target.phone,
                         reply,
+                        replySession,
                     )
                 } else {
                     Log.w("$TAG Refusing to switch Mango9 accounts while replying from a notification")
                     false
                 }
-                Mango9MessagePushCoordinator.updateSmsReplyNotification(
-                    appContext,
-                    push,
-                    notificationId,
-                    if (sent) Mango9SmsReplyState.Sent else Mango9SmsReplyState.Failed,
-                )
-            } catch (error: Exception) {
-                Log.e("$TAG Failed to send the Mango9 SMS notification reply: $error")
-                Mango9MessagePushCoordinator.updateSmsReplyNotification(
-                    appContext,
-                    push,
-                    notificationId,
-                    Mango9SmsReplyState.Failed,
-                )
-            } finally {
-                pendingResult.finish()
             }
         }
     }
@@ -134,4 +127,5 @@ internal enum class Mango9SmsReplyState {
     Sending,
     Sent,
     Failed,
+    CheckDelivery,
 }

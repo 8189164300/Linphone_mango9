@@ -21,13 +21,13 @@
         android:onClick="@{toggleFullScreenModeClickListener}"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:keepScreenOn="true"
+        android:keepScreenOn="@{viewModel.isMediaPlaying}"
         android:background="@color/bc_black">
 
         <androidx.constraintlayout.widget.Group
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:visibility="@{viewModel.fullScreenMode ? View.GONE : viewModel.isAudio || viewModel.isVideo ? View.VISIBLE : View.GONE}"
+            android:visibility="@{viewModel.isAudio || (viewModel.isVideo &amp;&amp; !viewModel.fullScreenMode) ? View.VISIBLE : View.GONE}"
             app:constraint_referenced_ids="play_pause_audio_playback, progress, duration" />
 
         <org.linphone.ui.fileviewer.view.RatioTextureView
@@ -65,13 +65,15 @@
 
         <ImageView
             android:id="@+id/play_pause_audio_playback"
+            android:enabled="@{viewModel.isPrepared || viewModel.isPreparing}"
+            android:alpha="@{viewModel.isPrepared || viewModel.isPreparing ? 1f : 0.4f}"
             android:onClick="@{() -> viewModel.togglePlayPause()}"
             android:layout_width="@dimen/big_icon_size"
             android:layout_height="@dimen/big_icon_size"
             android:layout_marginStart="16dp"
             android:layout_marginBottom="@dimen/screen_bottom_margin"
             android:padding="10dp"
-            android:src="@{viewModel.isMediaPlaying ? @drawable/pause_fill : @drawable/play_fill, default=@drawable/play_fill}"
+            android:src="@{viewModel.isPlaybackRequested ? @drawable/pause_fill : @drawable/play_fill, default=@drawable/play_fill}"
             android:adjustViewBounds="true"
             android:contentDescription="@string/content_description_play_pause_video_playback"
             android:background="@drawable/circle_transparent_dark_button_background"
@@ -84,6 +86,7 @@
         <SeekBar
             seekBarListener="@{seekBarListener}"
             android:id="@+id/progress"
+            android:enabled="@{viewModel.isPrepared}"
             android:layout_width="0dp"
             android:layout_height="0dp"
             android:splitTrack="false"
@@ -112,6 +115,49 @@
             app:layout_constraintBottom_toBottomOf="@id/play_pause_audio_playback"
             app:layout_constraintStart_toEndOf="@id/progress"
             app:layout_constraintEnd_toEndOf="parent" />
+
+        <ProgressBar
+            android:id="@+id/media_preparing"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:contentDescription="@string/mango9_media_preparing"
+            android:visibility="@{viewModel.isPreparing || viewModel.isSeeking ? View.VISIBLE : View.GONE}"
+            app:layout_constraintBottom_toTopOf="@id/play_pause_audio_playback"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            android:layout_marginBottom="24dp" />
+
+        <LinearLayout
+            android:id="@+id/media_playback_error"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="24dp"
+            android:background="@color/bc_black"
+            android:visibility="@{viewModel.hasPlaybackError ? View.VISIBLE : View.GONE}"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/mango9_media_playback_error"
+                android:textColor="@color/bc_white"
+                android:textSize="16sp"
+                android:gravity="center"
+                android:accessibilityLiveRegion="polite" />
+
+            <Button
+                android:id="@+id/media_playback_retry"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/mango9_media_retry"
+                android:onClick="@{() -> viewModel.retryPlayback()}" />
+        </LinearLayout>
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 

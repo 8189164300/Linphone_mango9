@@ -5,7 +5,9 @@
     <LinearLayout
         android:id="@+id/root"
         android:layout_width="match_parent"
-        android:layout_height="74dp"
+        android:layout_height="wrap_content"
+        android:minHeight="74dp"
+        android:paddingVertical="8dp"
         android:background="?attr/selectableItemBackground"
         android:gravity="center_vertical"
         android:orientation="horizontal"
@@ -32,6 +34,7 @@
                 android:layout_height="14dp"
                 android:layout_gravity="bottom|end"
                 android:background="@drawable/mango9_chat_online_background" />
+            <ImageView android:id="@+id/brand" android:layout_width="46dp" android:layout_height="46dp" android:padding="9dp" android:visibility="gone" android:contentDescription="@null" />
         </FrameLayout>
 
         <LinearLayout
@@ -63,6 +66,9 @@
                 android:textColor="?attr/color_main2_500"
                 android:textSize="12sp"
                 tools:text="Last message preview" />
+            <TextView android:id="@+id/date" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:layout_gravity="end"
+                android:textSize="11sp" android:textColor="?attr/color_main2_500" />
         </LinearLayout>
 
         <ImageView

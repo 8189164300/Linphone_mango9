@@ -108,8 +108,6 @@
     <string name="assistant_dialog_phone_number_validation_not_available_message">L\'inscription par numéro de téléphone n\'est pas disponible, veuillez utiliser l\'inscription par adresse email.</string>
     <string name="assistant_dialog_phone_number_validation_not_available_register_button_label">S\'inscrire avec un email</string>
     <string name="assistant_account_login">Connexion</string>
-    <string name="assistant_scan_qr_code">Scanner un QR code</string>
-    <string name="assistant_qr_code_invalid_toast">Ce QR code est invalide !</string>
     <string name="assistant_login_third_party_sip_account">J\'ai un compte SIP tiers</string>
     <string name="assistant_login_third_party_sip_account_title">Compte SIP tiers</string>
     <string name="assistant_login_using_single_sign_on">Single sign on</string>

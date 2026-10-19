@@ -55,6 +55,10 @@ open class GenericActivity : AppCompatActivity() {
 
     private var mainColor: String = "orange"
 
+    private val callMicrophonePermission = Mango9CallMicrophonePermission(this)
+
+    fun requestOutgoingCallMicrophone(id: Long) = callMicrophonePermission.request(id)
+
     override fun getTheme(): Resources.Theme {
         mainColor = corePreferences.themeMainColor
         val theme = super.theme
@@ -96,6 +100,22 @@ open class GenericActivity : AppCompatActivity() {
         }
 
         super.onCreate(savedInstanceState)
+        callMicrophonePermission.restore(savedInstanceState)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        callMicrophonePermission.save(outState)
+        super.onSaveInstanceState(outState)
+    }
+
+    override fun onStop() {
+        callMicrophonePermission.stop()
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        callMicrophonePermission.destroy()
+        super.onDestroy()
     }
 
     protected fun checkMainColorTheme() {

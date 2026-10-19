@@ -19,6 +19,15 @@
  */
 package org.linphone.ui.main.chat.viewmodel
 
+import org.linphone.mango9.Mango9SharedDraft
+import java.io.File
+import java.util.UUID
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import org.linphone.core.GlobalState
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.text.Spannable
@@ -27,10 +36,16 @@ import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.Observer
 import androidx.lifecycle.viewModelScope
 import androidx.media.AudioFocusRequestCompat
 import java.text.SimpleDateFormat
 import java.util.Locale
+import android.os.Handler
+import android.os.Looper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.launchIn
@@ -40,6 +55,7 @@ import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.LinphoneApplication.Companion.corePreferences
 import org.linphone.R
 import org.linphone.core.ChatMessage
+import org.linphone.core.Account
 import org.linphone.core.ChatRoom
 import org.linphone.core.ChatRoomListenerStub
 import org.linphone.core.EventLog
@@ -57,17 +73,42 @@ import org.linphone.utils.AudioUtils
 import org.linphone.utils.Event
 import org.linphone.utils.FileUtils
 import org.linphone.utils.LinphoneUtils
+import org.linphone.mango9.Mango9DraftFileLease
+import org.linphone.mango9.Mango9SessionStore
+import org.linphone.mango9.Mango9PendingShare
 
 class SendMessageInConversationViewModel
     @UiThread
-    constructor() : GenericViewModel() {
+    internal constructor(private val sendToSdk: (ChatMessage) -> Unit) : GenericViewModel() {
+    @UiThread
+        constructor() : this({ it.send() })
+
     companion object {
         private const val TAG = "[Send Message In Conversation ViewModel]"
 
         const val MAX_FILES_TO_ATTACH = 12
+        private val fileCleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     }
 
     val textToSend = MutableLiveData<String>()
+
+    private val main = Handler(Looper.getMainLooper())
+    private val draftFiles = LinkedHashMap<FileModel, Mango9DraftFileLease>()
+    private var textRevision = 0L
+    private var messageActionRevision = 0L
+    private val textObserver = Observer<String> { textRevision++ }
+
+    @Volatile private var disposed = false
+
+    @Volatile private var roomGeneration = 0L
+    private var sending = false
+
+    @Volatile private var voiceGeneration = 0L
+    private var voiceFileLease: Mango9DraftFileLease? = null
+    // These are only resolved/read on the SDK thread, never by querying an SDK object on UI.
+    private var roomAccount: Account? = null
+    private var roomLease: Mango9SessionStore.CallLease? = null
+    private val sessions by lazy { Mango9SessionStore(coreContext.context) }
 
     val isFileTransferServerAvailable = MutableLiveData<Boolean>()
 
@@ -169,6 +210,7 @@ class SendMessageInConversationViewModel
     }
 
     init {
+        textToSend.observeForever(textObserver)
         coreContext.postOnCoreThread { core ->
             isFileTransferServerAvailable.postValue(!core.fileTransferServer.isNullOrEmpty())
         }
@@ -184,27 +226,19 @@ class SendMessageInConversationViewModel
     }
 
     override fun onCleared() {
+        disposed = true
+        roomGeneration++
+        textToSend.removeObserver(textObserver)
+        releaseDraftFiles(attachments.value.orEmpty())
         super.onCleared()
-
-        viewModelScope.launch {
-            for (file in attachments.value.orEmpty()) {
-                file.deleteFile()
-                file.destroy()
-            }
-        }
-
-        if (::voiceMessageRecorder.isInitialized) {
-            if (voiceMessageRecorder.state != Recorder.State.Closed) {
-                voiceMessageRecorder.close()
-            }
-        }
-
-        if (::voiceRecordPlayer.isInitialized) {
-            stopVoiceRecordPlayer()
-            voiceRecordPlayer.removeListener(playerListener)
-        }
-
         coreContext.postOnCoreThread {
+            if (::voiceMessageRecorder.isInitialized) stopVoiceRecorder()
+            voiceFileLease?.close()
+            voiceFileLease = null
+            if (::voiceRecordPlayer.isInitialized) {
+                stopVoiceRecordPlayer()
+                voiceRecordPlayer.removeListener(playerListener)
+            }
             if (::chatRoom.isInitialized) {
                 chatRoom.removeListener(chatRoomListener)
             }
@@ -213,12 +247,25 @@ class SendMessageInConversationViewModel
 
     @UiThread
     fun configureChatRoom(room: ChatRoom) {
+        if (disposed || (::chatRoom.isInitialized && chatRoom === room)) return
+        val oldRoom = if (::chatRoom.isInitialized) chatRoom else null
+        val generation = ++roomGeneration
+        if (oldRoom != null) {
+            closeFileAttachmentsList()
+            textToSend.value = ""
+            cancelReply()
+            cancelEdit()
+        }
         Log.i("$TAG Chat room configured")
         chatRoom = room
         coreContext.postOnCoreThread {
-            chatRoom.addListener(chatRoomListener)
+            oldRoom?.removeListener(chatRoomListener)
+            if (disposed || generation != roomGeneration) return@postOnCoreThread
+            roomAccount = room.account
+            roomLease = sessions.captureCallLease(roomAccount?.params?.identityAddress?.asStringUriOnly())
+            room.addListener(chatRoomListener)
 
-            val ime = if (chatRoom.hasCapability(ChatRoom.Capabilities.Encrypted.toInt())) {
+            val ime = if (room.hasCapability(ChatRoom.Capabilities.Encrypted.toInt())) {
                 EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
             } else {
                 EditorInfo.IME_NULL
@@ -267,18 +314,22 @@ class SendMessageInConversationViewModel
 
         val newValue = model.text.value?.toString() ?: ""
         textToSend.value = newValue
-
+        val generation = roomGeneration
+        val action = ++messageActionRevision
+        val message = model.chatMessage // Reference only; SDK properties stay on the core thread.
+        chatMessageToEdit = message
+        isEditing.value = true
         coreContext.postOnCoreThread {
-            val message = model.chatMessage
-            Log.i("$TAG Pending message edit [${message.messageId}]")
-            chatMessageToEdit = message
-            isEditingMessage.postValue(LinphoneUtils.getFormattedTextDescribingMessage(message))
-            isEditing.postValue(true)
+            val description = LinphoneUtils.getFormattedTextDescribingMessage(message)
+            main.post {
+                if (!disposed && generation == roomGeneration && action == messageActionRevision) isEditingMessage.value = description
+            }
         }
     }
 
     @UiThread
     fun cancelEdit() {
+        messageActionRevision++
         Log.i("$TAG Cancelling edit")
         isEditing.value = false
         chatMessageToEdit = null
@@ -291,123 +342,157 @@ class SendMessageInConversationViewModel
             cancelEdit()
         }
 
+        val generation = roomGeneration
+        val action = ++messageActionRevision
+        val message = model.chatMessage
+        chatMessageToReplyTo = message
+        isReplying.value = true
         coreContext.postOnCoreThread {
-            val message = model.chatMessage
-            Log.i("$TAG Pending reply to message [${message.messageId}]")
-            chatMessageToReplyTo = message
-            isReplyingTo.postValue(model.avatarModel.value?.friend?.name)
-            isReplyingToMessage.postValue(LinphoneUtils.getFormattedTextDescribingMessage(message))
-            isReplying.postValue(true)
+            val name = model.avatarModel.value?.friend?.name
+            val description = LinphoneUtils.getFormattedTextDescribingMessage(message)
+            main.post {
+                if (!disposed && generation == roomGeneration && action == messageActionRevision) {
+                    isReplyingTo.value = name.orEmpty()
+                    isReplyingToMessage.value = description
+                }
+            }
         }
     }
 
     @UiThread
     fun cancelReply() {
+        messageActionRevision++
         Log.i("$TAG Cancelling reply")
         isReplying.value = false
         chatMessageToReplyTo = null
     }
 
+    @UiThread fun appendSharedText(text: String) {
+        if (!disposed) textToSend.value = Mango9PendingShare.mergeText(textToSend.value.orEmpty(), text)
+    }
+
     @UiThread
     fun sendMessage() {
-        coreContext.postOnCoreThread {
-            val isBasicChatRoom: Boolean = chatRoom.hasCapability(ChatRoom.Capabilities.Basic.toInt())
+        if (disposed || sending || !::chatRoom.isInitialized) return
+        val room = chatRoom
+        val generation = roomGeneration
+        val revision = textRevision
+        val text = textToSend.value.orEmpty().trim()
+        val reply = chatMessageToReplyTo
+        val edit = chatMessageToEdit
+        val voice = isVoiceRecording.value == true
+        val voiceRevision = voiceGeneration
+        val files = if (voice) emptyList() else attachments.value.orEmpty().toList()
+        if (text.isEmpty() && files.isEmpty() && !voice) return
+        val pins = files.associateWith { requireNotNull(draftFiles[it]).retain() }
+        sending = true
+        coreContext.postOnCoreThread { core ->
+            val accepted = mutableSetOf<FileModel>()
+            var acceptedText = false
+            var acceptedVoice = false
+            var failed = false
+            var voicePin: Mango9DraftFileLease? = null
+            try {
+                check(core.globalState == org.linphone.core.GlobalState.On)
+                val account = roomAccount
+                val lease = roomLease
+                check(!disposed && generation == roomGeneration && lease != null && account != null)
+                check(core.accountList.any { it.nativePointer == account.nativePointer })
+                check(core.defaultAccount?.nativePointer == account.nativePointer && room.account?.nativePointer == account.nativePointer)
+                check(account.params.identityAddress?.asStringUriOnly() == lease.identity)
+                check(!room.isReadOnly)
+                check(files.all { java.io.File(it.path).let { file -> file.isFile && file.length() > 0 } })
+                val dispatched = sessions.withCurrentCallLease(lease) {
+                    check(!disposed && generation == roomGeneration)
+                    val basic = room.hasCapability(ChatRoom.Capabilities.Basic.toInt())
+                    var message = when {
+                        reply != null -> room.createReplyMessage(reply)
+                        edit != null -> room.createReplacesMessage(edit)
+                        else -> room.createEmptyMessage()
+                    }
+                    var messageHasText = false
+                    var messageHasVoice = false
+                    val messageFiles = mutableListOf<FileModel>()
 
-            val messageToReplyTo = chatMessageToReplyTo
-            val messageToEdit = chatMessageToEdit
-            val message = if (messageToReplyTo != null) {
-                Log.i("$TAG Sending message as reply to [${messageToReplyTo.messageId}]")
-                chatRoom.createReplyMessage(messageToReplyTo)
-            } else if (messageToEdit != null) {
-                chatRoom.createReplacesMessage(messageToEdit)
-            } else {
-                chatRoom.createEmptyMessage()
-            }
-            var contentAdded = false
-
-            val toSend = textToSend.value.orEmpty().trim()
-            if (toSend.isNotEmpty()) {
-                message.addUtf8TextContent(toSend)
-                contentAdded = true
-            }
-
-            if (isVoiceRecording.value == true && voiceMessageRecorder.file != null) {
-                stopVoiceRecorder()
-                val content = voiceMessageRecorder.createContent()
-                if (content != null) {
-                    Log.i(
-                        "$TAG Voice recording content created, file name is ${content.name} and duration is ${content.fileDuration}"
-                    )
-                    if (isBasicChatRoom && contentAdded) {
-                        val voiceMessage = chatRoom.createEmptyMessage()
-                        voiceMessage.addContent(content)
-                        voiceMessage.send()
-                        messageSentEvent.postValue(Event(voiceMessage))
-                    } else {
+                    fun dispatch() {
+                        if (message.contents.isEmpty()) return
+                        var submitted = false
+                        try {
+                            sendToSdk(message)
+                            submitted = true
+                        } finally {
+                            // Pins protect the file during send(). If it failed before the SDK
+                            // accepted anything, the draft still owns/removes it. Once accepted,
+                            // retain its durable path for upload/retry/history, including a
+                            // synchronous SDK state transition followed by an exception.
+                            if (submitted || message.state != ChatMessage.State.Idle || message.isFileTransferInProgress) {
+                                messageFiles.forEach { pins.getValue(it).keepForHistory() }
+                                if (messageHasVoice) voicePin?.keepForHistory()
+                                accepted.addAll(messageFiles)
+                                acceptedText = acceptedText || messageHasText
+                                acceptedVoice = acceptedVoice || messageHasVoice
+                                val sent = message
+                                main.post { if (!disposed && generation == roomGeneration) messageSentEvent.value = Event(sent) }
+                            }
+                        }
+                        message = room.createEmptyMessage()
+                        messageFiles.clear()
+                        messageHasText = false
+                        messageHasVoice = false
+                    }
+                    if (text.isNotEmpty()) { message.addUtf8TextContent(text); messageHasText = true }
+                    if (voice) {
+                        check(voiceRevision == voiceGeneration && ::voiceMessageRecorder.isInitialized)
+                        stopVoiceRecorder()
+                        val content = requireNotNull(voiceMessageRecorder.createContent())
+                        voicePin = requireNotNull(voiceFileLease).retain()
+                        if (basic) dispatch()
                         message.addContent(content)
-                    }
-                } else {
-                    Log.e("$TAG Voice recording content couldn't be created!")
-                }
-            } else {
-                for (attachment in attachments.value.orEmpty()) {
-                    val content = Factory.instance().createContent()
-
-                    content.type = when (attachment.mimeType) {
-                        FileUtils.MimeType.Image -> "image"
-                        FileUtils.MimeType.Audio -> "audio"
-                        FileUtils.MimeType.Video -> "video"
-                        FileUtils.MimeType.Pdf -> "application"
-                        FileUtils.MimeType.PlainText -> "text"
-                        else -> "file"
-                    }
-                    content.subtype = if (attachment.mimeType == FileUtils.MimeType.PlainText) {
-                        "plain"
+                        messageHasVoice = true
                     } else {
-                        FileUtils.getExtensionFromFileName(attachment.fileName)
+                        for (file in files) {
+                            if (basic) dispatch()
+                            val content = Factory.instance().createContent()
+                            content.type = file.mimeTypeString.substringBefore('/')
+                            content.subtype = file.mimeTypeString.substringAfter('/')
+                            content.name = file.fileName
+                            content.filePath = file.path
+                            message.addFileContent(content)
+                            messageFiles.add(file)
+                        }
                     }
-                    content.name = attachment.fileName
-                    // Let the file body handler take care of the upload
-                    content.filePath = attachment.path
-
-                    if (isBasicChatRoom && contentAdded) {
-                        val fileMessage = chatRoom.createEmptyMessage()
-                        fileMessage.addFileContent(content)
-                        fileMessage.send()
-                        messageSentEvent.postValue(Event(fileMessage))
-                    } else {
-                        message.addFileContent(content)
-                        contentAdded = true
+                    dispatch()
+                    true
+                }
+                check(dispatched == true)
+            } catch (_: Exception) {
+                failed = true
+            } finally {
+                pins.values.forEach { it.close() }
+                voicePin?.close()
+                if (acceptedVoice && voiceRevision == voiceGeneration) {
+                    voiceFileLease?.close()
+                    voiceFileLease = null
+                }
+                main.post {
+                    sending = false
+                    if (!disposed && generation == roomGeneration) {
+                        val unchanged = revision == textRevision
+                        if (acceptedText && unchanged) textToSend.value = ""
+                        releaseDraftFiles(accepted)
+                        publishAttachments(attachments.value.orEmpty().filterNot { it in accepted })
+                        if (acceptedVoice && voiceRevision == voiceGeneration) isVoiceRecording.value = false
+                        if ((acceptedText || accepted.isNotEmpty() || acceptedVoice) && unchanged) {
+                            if (chatMessageToReplyTo === reply) cancelReply()
+                            if (chatMessageToEdit === edit) {
+                                chatMessageToEdit = null
+                                isEditing.value = false
+                            }
+                        }
+                        if (failed) showRedToast(R.string.mango9_native_draft_send_failed, R.drawable.warning_circle)
                     }
                 }
             }
-
-            if (message.contents.isNotEmpty()) {
-                Log.i("$TAG Sending message")
-                message.send()
-                messageSentEvent.postValue(Event(message))
-            }
-
-            Log.i("$TAG Message sent, re-setting defaults")
-            textToSend.postValue("")
-            isReplying.postValue(false)
-            isEditing.postValue(false)
-            isFileAttachmentsListOpen.postValue(false)
-            isParticipantsListOpen.postValue(false)
-            isEmojiPickerOpen.postValue(false)
-
-            if (::voiceMessageRecorder.isInitialized) {
-                stopVoiceRecorder()
-            }
-            isVoiceRecording.postValue(false)
-
-            // Warning: do not delete files
-            val attachmentsList = arrayListOf<FileModel>()
-            attachments.postValue(attachmentsList)
-
-            chatMessageToReplyTo = null
-            chatMessageToEdit = null
-            maxNumberOfAttachmentsReached.postValue(false)
         }
     }
 
@@ -442,37 +527,36 @@ class SendMessageInConversationViewModel
 
     @UiThread
     fun closeFileAttachmentsList() {
-        viewModelScope.launch {
-            for (file in attachments.value.orEmpty()) {
-                file.deleteFile()
-            }
-        }
-        val list = arrayListOf<FileModel>()
-        attachments.value = list
-        maxNumberOfAttachmentsReached.value = false
+        releaseDraftFiles(attachments.value.orEmpty())
+        publishAttachments(emptyList())
+    }
 
-        isFileAttachmentsListOpen.value = false
+    private fun releaseDraftFiles(files: Collection<FileModel>) {
+        files.forEach { file -> draftFiles.remove(file)?.close(); file.destroy() }
+    }
+
+    private fun publishAttachments(files: List<FileModel>) {
+        attachments.value = ArrayList(files)
+        maxNumberOfAttachmentsReached.value = files.size >= MAX_FILES_TO_ATTACH
+        isFileAttachmentsListOpen.value = files.isNotEmpty()
+    }
+
+    private fun ownDraftFile(path: String): Mango9DraftFileLease = Mango9DraftFileLease {
+        fileCleanup.launch { FileUtils.deleteFile(path) }
     }
 
     @UiThread
     fun addAttachments(files: ArrayList<String>) {
         val list = arrayListOf<FileModel>()
         list.addAll(attachments.value.orEmpty())
-
+        var rejected = false
         for (file in files) {
-            if (list.size >= MAX_FILES_TO_ATTACH) {
-                Log.w(
-                    "$TAG Max number of attachments [$MAX_FILES_TO_ATTACH] reached, file [$file] won't be attached"
-                )
-                showRedToast(
-                    R.string.conversation_maximum_number_of_attachments_reached,
-                    R.drawable.warning_circle
-                )
-                viewModelScope.launch {
-                    Log.i("$TAG Deleting temporary file [$file]")
-                    FileUtils.deleteFile(file)
-                }
-                return
+            // Receiving the same owned path twice must not schedule deletion of its first row.
+            if (list.any { it.path == file }) continue
+            if (disposed || list.size >= MAX_FILES_TO_ATTACH) {
+                rejected = true
+                ownDraftFile(file).close()
+                continue
             }
 
             val fileName = FileUtils.getNameFromFilePath(file)
@@ -481,17 +565,90 @@ class SendMessageInConversationViewModel
             val model = FileModel(file, fileName, size, timestamp, false, file, false) { model ->
                 removeAttachment(model.path)
             }
-
+            draftFiles[model] = ownDraftFile(file)
             list.add(model)
         }
-        attachments.value = list
-        maxNumberOfAttachmentsReached.value = list.size >= MAX_FILES_TO_ATTACH
+        if (!disposed) {
+            publishAttachments(list)
+            if (rejected) showRedToast(R.string.conversation_maximum_number_of_attachments_reached, R.drawable.warning_circle)
+        }
+    }
 
-        if (list.isNotEmpty()) {
-            isFileAttachmentsListOpen.value = true
-            Log.i("$TAG [${files.size}] attachment(s) added, in total ${list.size}] file(s) are attached")
-        } else {
-            Log.w("$TAG No attachment to display!")
+    /** SIP owns durable copies: deleting the external-share snapshot cannot break SDK upload/retry. */
+    @UiThread
+    internal fun adoptSharedDraft(share: Mango9SharedDraft, expectedConversationId: String? = null) {
+        if (disposed || !::chatRoom.isInitialized || !share.isCurrent()) { share.close(); return }
+        val generation = roomGeneration
+        viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            val promoted = mutableListOf<File>()
+            try {
+                val allowed = suspendCancellableCoroutine<Boolean> { continuation ->
+                    coreContext.postOnCoreThread { core ->
+                        if (!continuation.isActive) return@postOnCoreThread
+                        val account = chatRoom.account
+                        continuation.resume(
+                            !disposed && generation == roomGeneration && share.isCurrent() &&
+                            core.globalState == GlobalState.On && account != null &&
+                            core.defaultAccount?.nativePointer == account.nativePointer &&
+                                core.accountList.any { it.nativePointer == account.nativePointer } &&
+                                (expectedConversationId == null || LinphoneUtils.getConversationId(chatRoom) == expectedConversationId)
+                        )
+                    }
+                }
+                if (!allowed) return@launch
+                val remaining = (MAX_FILES_TO_ATTACH - attachments.value.orEmpty().size).coerceAtLeast(0)
+                val selected = share.files.take(remaining)
+                withContext(Dispatchers.IO) {
+                    for (prepared in selected) {
+                        ensureActive()
+                        val name = org.linphone.mango9.Mango9AttachmentPreparer.safeName(prepared.attachment.name)
+                        val destination = FileUtils.getFileStoragePath("${UUID.randomUUID()}_$name")
+                        check(destination.createNewFile())
+                        promoted.add(destination)
+                        File(requireNotNull(prepared.attachment.uri.path)).inputStream().use { input ->
+                            destination.outputStream().use { output ->
+                                val buffer = ByteArray(64 * 1024)
+                                while (true) {
+                                    ensureActive()
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    output.write(buffer, 0, count)
+                                }
+                            }
+                        }
+                    }
+                }
+                ensureActive()
+                if (disposed || generation != roomGeneration || !share.isCurrent()) return@launch
+                val list = ArrayList(attachments.value.orEmpty())
+                for ((index, file) in promoted.withIndex()) {
+                    if (list.size >= MAX_FILES_TO_ATTACH) break
+                    val attachment = selected[index].attachment
+                    val model = FileModel(
+                        file.path, attachment.name, attachment.size,
+                        System.currentTimeMillis() / 1000, false, file.path, false,
+                        mimeTypeOverride = attachment.mimeType
+                    ) { removeAttachment(it.path) }
+                    draftFiles[model] = ownDraftFile(file.path)
+                    list.add(model)
+                }
+                val accepted = list.map { it.path }.toSet()
+                promoted.removeAll { it.path in accepted }
+                publishAttachments(list)
+                appendSharedText(share.text)
+                if (share.error != null) showRedToast(R.string.mango9_share_failed, R.drawable.warning_circle)
+                if (selected.size < share.files.size || promoted.isNotEmpty()) {
+                    showRedToast(R.string.conversation_maximum_number_of_attachments_reached, R.drawable.warning_circle)
+                }
+            } catch (cancel: kotlinx.coroutines.CancellationException) {
+                throw cancel
+            } catch (_: Exception) {
+                if (!disposed) showRedToast(R.string.mango9_share_failed, R.drawable.warning_circle)
+            } finally {
+                share.close()
+                val abandoned = promoted.toList()
+                fileCleanup.launch { abandoned.forEach { FileUtils.deleteFile(it.path) } }
+            }
         }
     }
 
@@ -503,21 +660,13 @@ class SendMessageInConversationViewModel
             it.path == file
         }
         if (found != null) {
-            if (delete) {
-                viewModelScope.launch {
-                    found.deleteFile()
-                }
-            }
+            if (!delete) draftFiles[found]?.keepForHistory()
+            releaseDraftFiles(listOf(found))
             list.remove(found)
         } else {
             Log.w("$TAG Failed to find file attachment matching [$file]")
         }
-        attachments.value = list
-        maxNumberOfAttachmentsReached.value = list.size >= MAX_FILES_TO_ATTACH
-
-        if (list.isEmpty()) {
-            isFileAttachmentsListOpen.value = false
-        }
+        publishAttachments(list)
     }
 
     @UiThread
@@ -537,6 +686,9 @@ class SendMessageInConversationViewModel
 
     @UiThread
     fun startVoiceMessageRecording() {
+        if (disposed || sending || !::chatRoom.isInitialized) return
+        val generation = roomGeneration
+        val voiceRevision = ++voiceGeneration
         if (ActivityCompat.checkSelfPermission(
                 coreContext.context,
                 Manifest.permission.RECORD_AUDIO
@@ -554,6 +706,7 @@ class SendMessageInConversationViewModel
         closeParticipantsList()
 
         coreContext.postOnCoreThread {
+            if (disposed || generation != roomGeneration || voiceRevision != voiceGeneration) return@postOnCoreThread
             requestKeyboardHidingEvent.postValue(Event(true))
             isVoiceRecording.postValue(true)
             initVoiceRecorder()
@@ -573,18 +726,13 @@ class SendMessageInConversationViewModel
 
     @UiThread
     fun cancelVoiceMessageRecording() {
+        val voiceRevision = ++voiceGeneration
         coreContext.postOnCoreThread {
+            if (voiceRevision != voiceGeneration || !::voiceMessageRecorder.isInitialized) return@postOnCoreThread
             chatRoom.stopComposing()
             stopVoiceRecorder()
-
-            val path = voiceMessageRecorder.file
-            if (path != null) {
-                viewModelScope.launch {
-                    Log.i("$TAG Deleting voice recording file: $path")
-                    FileUtils.deleteFile(path)
-                }
-            }
-
+            voiceFileLease?.close()
+            voiceFileLease = null
             isVoiceRecording.postValue(false)
         }
     }
@@ -672,6 +820,9 @@ class SendMessageInConversationViewModel
 
     @WorkerThread
     private fun initVoiceRecorder() {
+        if (::voiceMessageRecorder.isInitialized) stopVoiceRecorder()
+        voiceFileLease?.close()
+        voiceFileLease = null
         val core = coreContext.core
         Log.i("$TAG Creating voice message recorder")
         val recorderParams = core.createRecorderParams()
@@ -710,6 +861,7 @@ class SendMessageInConversationViewModel
                 }
                 val tempFileName = "voice-recording-${System.currentTimeMillis()}.$extension"
                 val file = FileUtils.getFileStoragePath(tempFileName)
+                voiceFileLease = ownDraftFile(file.absolutePath)
                 Log.w(
                     "$TAG Recorder is closed, starting recording in ${file.absoluteFile}"
                 )

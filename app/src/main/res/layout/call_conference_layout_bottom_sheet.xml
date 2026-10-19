@@ -35,15 +35,15 @@
             android:layout_marginStart="16dp"
             android:layout_marginEnd="16dp"
             android:text="@string/conference_layout_grid"
-            android:textColor="@color/in_call_label_color"
+            android:textColor="@color/mango9_call_label"
             android:gravity="center_vertical"
             android:layout_marginBottom="1dp"
             android:drawableEnd="@drawable/squares_four"
-            android:drawableTint="@color/in_call_label_color"
+            android:drawableTint="@color/mango9_call_label"
             android:enabled="@{viewModel.participantDevices.size() &lt; 7 &amp;&amp; !viewModel.isScreenSharing, default=false}"
             android:checked="@{viewModel.conferenceLayout == ConferenceViewModel.GRID_LAYOUT}"
             app:useMaterialThemeColors="false"
-            app:buttonTint="@color/in_call_label_color"/>
+            app:buttonTint="@color/mango9_call_label"/>
 
         <com.google.android.material.radiobutton.MaterialRadioButton
             style="@style/context_menu_action_label_style"
@@ -53,14 +53,14 @@
             android:layout_marginStart="16dp"
             android:layout_marginEnd="16dp"
             android:text="@string/conference_layout_active_speaker"
-            android:textColor="@color/bc_white"
+            android:textColor="@color/mango9_call_label"
             android:gravity="center_vertical"
             android:layout_marginBottom="1dp"
             android:drawableEnd="@drawable/picture_in_picture"
-            android:drawableTint="@color/bc_white"
+            android:drawableTint="@color/mango9_call_label"
             android:checked="@{viewModel.conferenceLayout == ConferenceViewModel.ACTIVE_SPEAKER_LAYOUT}"
             app:useMaterialThemeColors="false"
-            app:buttonTint="@color/bc_white"/>
+            app:buttonTint="@color/mango9_call_label"/>
 
         <com.google.android.material.radiobutton.MaterialRadioButton
             style="@style/context_menu_action_label_style"
@@ -70,14 +70,14 @@
             android:layout_marginStart="16dp"
             android:layout_marginEnd="16dp"
             android:text="@string/conference_layout_audio_only"
-            android:textColor="@color/bc_white"
+            android:textColor="@color/mango9_call_label"
             android:gravity="center_vertical"
             android:layout_marginBottom="1dp"
             android:drawableEnd="@drawable/waveform"
-            android:drawableTint="@color/bc_white"
+            android:drawableTint="@color/mango9_call_label"
             android:checked="@{viewModel.conferenceLayout == ConferenceViewModel.AUDIO_ONLY_LAYOUT}"
             app:useMaterialThemeColors="false"
-            app:buttonTint="@color/bc_white"/>
+            app:buttonTint="@color/mango9_call_label"/>
 
     </LinearLayout>
 

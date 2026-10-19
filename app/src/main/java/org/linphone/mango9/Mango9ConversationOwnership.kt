@@ -23,4 +23,6 @@ internal class Mango9ConversationOwnership {
     }
 
     @Synchronized fun invalidate() { current = null }
+
+    @Synchronized fun snapshot(): Lease? = current
 }

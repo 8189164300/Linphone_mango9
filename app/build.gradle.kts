@@ -18,7 +18,7 @@ plugins {
 val packageName = "com.mango9.phone"
 val useDifferentPackageNameForDebugBuild = false
 val mango9VersionName = "6.2.8"
-val mango9VersionCode = 602027
+val mango9VersionCode = 602037
 val mango9ReleaseTag = "android-$mango9VersionName-build-$mango9VersionCode"
 
 val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
@@ -313,6 +313,9 @@ dependencies {
     implementation(libs.androidx.splashscreen)
     implementation(libs.androidx.telecom)
     implementation(libs.androidx.media)
+    // https://github.com/androidx/media/blob/1.11.1/LICENSE Apache v2.0
+    implementation(libs.androidx.media3.transformer)
+    implementation(libs.androidx.media3.effect)
     implementation(libs.androidx.recyclerview)
     implementation(libs.androidx.swiperefreshlayout)
     implementation(libs.androidx.slidingpanelayout)
@@ -368,6 +371,10 @@ dependencies {
     testImplementation(libs.json.java)
     testImplementation(libs.okhttp.mockwebserver)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.car.testing) {
+        // Native instrumentation uses the real Android looper, not JVM shadows.
+        exclude(group = "org.robolectric")
+    }
     androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.espresso.core)
@@ -467,6 +474,7 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         runtimeResources,
     )
     inputs.file(file("build.gradle.kts"))
+    inputs.file(file("src/main/java/org/linphone/mango9/Mango9MessagePushLifecycle.kt"))
     if (mango9GoogleServices.exists()) inputs.file(mango9GoogleServices)
 
     doLast {
@@ -495,6 +503,7 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         val loginRepositoryText = loginRepository.readText()
         val crmViewModelText = crmViewModel.readText()
         val chatStoreText = chatStore.readText()
+        val pushLifecycleText = file("src/main/java/org/linphone/mango9/Mango9MessagePushLifecycle.kt").readText()
         val messagePushText = messagePush.readText()
         val messageReplyReceiverText = messageReplyReceiver.readText()
         val accountProfileText = accountProfile.readText()
@@ -512,6 +521,16 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         fun requirePolicy(condition: Boolean, message: String) {
             if (!condition) failures += message
         }
+
+        requirePolicy(
+            !Regex("qr.?code|enrollFromQr", RegexOption.IGNORE_CASE).containsMatchIn(
+                loginLayoutText + assistantNavigationText + loginRepositoryText +
+                    playShortDescriptionText + playFullDescriptionText,
+            ) &&
+                !file("src/main/java/org/linphone/ui/assistant/fragment/QrCodeScannerFragment.kt").exists() &&
+                !file("src/main/java/org/linphone/ui/assistant/viewmodel/QrCodeViewModel.kt").exists(),
+            "QR-code account setup is not supported and must not be reintroduced",
+        )
 
         requirePolicy(
             buildText.contains("val packageName = \"com.mango9.phone\""),
@@ -636,8 +655,8 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
             "Mango9 landing must not expose upstream Linphone account creation or recovery",
         )
         requirePolicy(
-            versionCatalogText.contains("linphone = \"5.5.17-pre.1+3896ec0681\""),
-            "Linphone SDK must remain pinned to the audited exact artifact",
+            versionCatalogText.contains("linphone = \"5.5.32\""),
+            "Linphone SDK must remain pinned to the approved stable artifact",
         )
         requirePolicy(
             versionCatalogText.contains("coil-network-okhttp") &&
@@ -703,9 +722,15 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
         )
         requirePolicy(
             chatStoreText.contains("registerRemotePushTokenIfAvailable") &&
-                chatStoreText.contains("unregisterRemotePushToken") &&
-                accountProfileText.contains("unregisterRemotePushToken(identity, session)"),
-            "Mango9 message-push registration lifecycle is missing",
+                chatStoreText.contains("Mango9MessagePushSync.get(appContext).retire(sessionValue)") &&
+                pushLifecycleText.contains("unregisterRemotePushToken") &&
+                pushLifecycleText.contains("pushOperations.enqueue(owner)") &&
+                pushLifecycleText.contains("sessions.captureLogins()") &&
+                pushLifecycleText.contains("return register(retained, currentToken)") &&
+                accountProfileText.contains("mango9Sessions.removeIfCurrent(lease, journalPushCleanup = true)") &&
+                accountProfileText.contains("mango9ChatStore.retireRemotePushToken(removedIdentity, current)") &&
+                !accountProfileText.contains("viewModelScope.launch"),
+            "Mango9 logout must remove locally and reserve account-ordered push cleanup independently of the screen",
         )
         val privatePreferenceFiles = listOf(
             "encrypted.pref.xml",

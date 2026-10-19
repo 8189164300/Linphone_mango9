@@ -54,6 +54,12 @@
                     android:visibility="@{viewModel.atLeastOneCall ? View.VISIBLE : View.GONE, default=gone}"
                     app:viewModel="@{viewModel}"/>
 
+                <org.linphone.ui.main.crm.fragment.Mango9ReminderBanner
+                    android:id="@+id/mango9_reminder_banner"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:visibility="gone" />
+
             </LinearLayout>
 
             <androidx.fragment.app.FragmentContainerView

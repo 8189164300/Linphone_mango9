@@ -82,7 +82,7 @@ class CallModel
         contact.postValue(avatarModel)
         displayName.postValue(
             pushedIdentity?.displayName
-                ?: avatarModel.friend.name
+                ?: avatarModel.contactName
                 ?: LinphoneUtils.getDisplayName(remoteAddress)
         )
 

@@ -43,6 +43,7 @@ import org.linphone.mango9.Mango9CallForwardingPolicy
 import org.linphone.ui.GenericActivity
 import org.linphone.ui.main.fragment.GenericMainFragment
 import org.linphone.ui.main.settings.viewmodel.Mango9CallSettingsViewModel
+import org.linphone.ui.main.settings.viewmodel.Mango9CrmSettingsViewModel
 import org.linphone.utils.ConfirmationDialogModel
 import org.linphone.ui.main.settings.viewmodel.SettingsViewModel
 import org.linphone.utils.AppUtils
@@ -65,6 +66,7 @@ class SettingsFragment : GenericMainFragment() {
     )
 
     private val mango9CallSettingsViewModel: Mango9CallSettingsViewModel by viewModels()
+    private val mango9CrmSettingsViewModel: Mango9CrmSettingsViewModel by viewModels()
 
     private var renderingMango9CallSettings = false
 
@@ -154,6 +156,7 @@ class SettingsFragment : GenericMainFragment() {
         binding.viewModel = viewModel
         observeToastEvents(viewModel)
         setupMango9CallSettings()
+        binding.mango9CrmSettings.bind(mango9CrmSettingsViewModel.screen, viewLifecycleOwner)
 
         binding.setBackClickListener {
             goBack()
@@ -408,8 +411,8 @@ class SettingsFragment : GenericMainFragment() {
             section.destination.setSelection(destination.length)
         }
         renderingMango9CallSettings = false
-        section.forwardingSwitch.isEnabled = !saving && (enabled || validDestination)
-        section.destination.isEnabled = !saving
+        section.forwardingSwitch.isEnabled = !loading && !saving && (enabled || validDestination)
+        section.destination.isEnabled = !loading && !saving
         section.destinationLayout.error = if (destination.isNotBlank() && !validDestination) {
             getString(R.string.mango9_call_forwarding_invalid_number)
         } else {
@@ -452,10 +455,11 @@ class SettingsFragment : GenericMainFragment() {
         viewModel.reloadLdapServers()
         viewModel.reloadConfiguredCardDavServers()
         viewModel.reloadShowDeveloperSettings()
-        mango9CallSettingsViewModel.reload()
+        mango9CallSettingsViewModel.resume()
     }
 
     override fun onPause() {
+        mango9CallSettingsViewModel.pause()
         if (viewModel.isTunnelAvailable.value == true) {
             viewModel.saveTunnelConfig()
         }

@@ -35,6 +35,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.linphone.R
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9NativeAttachment
 import org.linphone.ui.GenericViewModel
 import org.linphone.utils.Event
 import org.linphone.utils.FileUtils
@@ -93,7 +94,16 @@ class FileViewModel
     private var currentPdfPage: PdfRenderer.Page? = null
     // End of PDF viewer required variables
 
+    private var nativeFile: org.linphone.mango9.Mango9NativeFileLease? = null
+
+    fun retainNativeFile(lease: org.linphone.mango9.Mango9NativeFileLease?) {
+        if (nativeFile == null) nativeFile = lease else lease?.close()
+    }
+
     override fun onCleared() {
+        val lease = nativeFile
+        nativeFile = null
+        viewModelScope.coroutineContext[kotlinx.coroutines.Job]?.invokeOnCompletion { lease?.close() }
         if (::pdfRenderer.isInitialized) {
             try {
                 pdfRenderer.close()
@@ -105,10 +115,13 @@ class FileViewModel
     }
 
     @UiThread
-    fun loadFile(file: String, timestamp: Long, content: String? = null) {
+    fun loadFile(
+        file: String, timestamp: Long, content: String? = null,
+        declaredMimeType: String? = null, displayName: String? = null
+    ) {
         fullScreenMode.value = true
 
-        val name = FileUtils.getNameFromFilePath(file)
+        val name = displayName?.takeIf { it.isNotBlank() } ?: FileUtils.getNameFromFilePath(file)
         fileName.value = name
 
         dateTime.value = TimestampUtils.toString(
@@ -128,7 +141,7 @@ class FileViewModel
 
         filePath = file
         val extension = FileUtils.getExtensionFromFileName(file)
-        val mime = FileUtils.getMimeTypeFromExtension(extension)
+        val mime = Mango9NativeAttachment.mimeType(file, name, declaredMimeType)
         mimeType.postValue(mime)
         when (val mimeType = FileUtils.getMimeType(mime)) {
             FileUtils.MimeType.Pdf -> {

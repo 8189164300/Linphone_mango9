@@ -29,6 +29,7 @@ import org.linphone.core.ParticipantDeviceListenerStub
 import org.linphone.core.StreamType
 import org.linphone.core.tools.Log
 import org.linphone.utils.LinphoneUtils
+import java.util.concurrent.atomic.AtomicLong
 
 class ConferenceParticipantDeviceModel
     @WorkerThread
@@ -62,7 +63,12 @@ class ConferenceParticipantDeviceModel
 
     val isInConference = MutableLiveData<Boolean>()
 
-    private lateinit var textureView: TextureView
+    private var textureView: TextureView? = null
+    private var boundWindow: TextureView? = null
+    private var boundListener: TextureView.SurfaceTextureListener? = null
+    private val windowGeneration = AtomicLong()
+
+    @Volatile private var destroyed = false
 
     private val deviceListener = object : ParticipantDeviceListenerStub() {
         @WorkerThread
@@ -127,6 +133,7 @@ class ConferenceParticipantDeviceModel
                 "$TAG Participant device [${participantDevice.address.asStringUriOnly()}] thumbnail availability changed to ${if (available) "available" else "not available"}"
             )
             isThumbnailAvailable.postValue(available)
+            if (available) updateWindowId()
         }
 
         @WorkerThread
@@ -140,6 +147,7 @@ class ConferenceParticipantDeviceModel
                     "$TAG Participant device [${participantDevice.address.asStringUriOnly()}] video stream availability changed to ${if (available) "available" else "not available"}"
                 )
                 isVideoAvailable.postValue(available)
+                if (available) updateWindowId()
             }
         }
     }
@@ -192,50 +200,58 @@ class ConferenceParticipantDeviceModel
 
     @WorkerThread
     fun destroy() {
+        if (destroyed) return
+        destroyed = true
         clearWindowId()
         device.removeListener(deviceListener)
     }
 
     @WorkerThread
     fun clearWindowId() {
-        Log.i("$TAG Clearing participant [${device.address.asStringUriOnly()}] device window ID")
-        device.nativeVideoWindowId = null
+        windowGeneration.incrementAndGet()
+        textureView = null
+        val owned = boundWindow ?: return
+        boundWindow = null
+        // Even setting null enters the SDK's thumbnail negotiation. Never touch
+        // a window this model did not attach (audio-only/joining devices), or a
+        // newer model's replacement surface during layout/Activity recreation.
+        val listener = boundListener
+        boundListener = null
+        // Android's SDK registers the TextureView listener immediately, but
+        // remote nativeWindowId becomes its SurfaceTexture only when available.
+        // Comparing nativeWindowId to the TextureView alone would leak bindings.
+        val stillOwned = if (listener != null) {
+            owned.surfaceTextureListener === listener
+        } else {
+            val current = if (isMe) coreContext.core.nativePreviewWindowId else device.nativeVideoWindowId
+            current === owned || (owned.surfaceTexture != null && current === owned.surfaceTexture)
+        }
+        if (stillOwned) {
+            if (isMe) coreContext.core.nativePreviewWindowId = null else device.nativeVideoWindowId = null
+        }
     }
 
     @UiThread
     fun setTextureView(view: TextureView) {
-        Log.i(
-            "$TAG TextureView for participant [${device.address.asStringUriOnly()}] available from UI [$view]"
-        )
-        textureView = view
+        val generation = windowGeneration.incrementAndGet()
         coreContext.postOnCoreThread {
+            if (destroyed || generation != windowGeneration.get()) return@postOnCoreThread
+            textureView = view
             updateWindowId()
         }
     }
 
     @WorkerThread
     private fun updateWindowId() {
-        if (::textureView.isInitialized) {
-            // SDK does it but it's a bit better this way, prevents going to participants map in PlatformHelper for nothing
-            if (isMe) {
-                Log.i(
-                    "$TAG Setting our own video preview window ID [$textureView]"
-                )
-                coreContext.core.nativePreviewWindowId = textureView
-            } else {
-                Log.i(
-                    "$TAG Setting participant [${device.address.asStringUriOnly()}] window ID [$textureView]"
-                )
-                device.nativeVideoWindowId = textureView
-            }
-        } else {
-            if (isMe) {
-                Log.e("$TAG Our TextureView wasn't initialized yet!")
-            } else {
-                Log.e(
-                    "$TAG TextureView for participant [${device.address.asStringUriOnly()}] wasn't initialized yet!"
-                )
-            }
-        }
+        if (destroyed) return
+        val view = textureView ?: return
+        if (boundWindow === view) return
+        // Retain the desired view while negotiation finishes. Availability
+        // callbacks attach it later; audio-only participants need no video JNI.
+        val available = device.getStreamAvailability(StreamType.Video) || (!isMe && device.thumbnailStreamAvailability)
+        if (!available) return
+        if (isMe) coreContext.core.nativePreviewWindowId = view else device.nativeVideoWindowId = view
+        boundWindow = view
+        boundListener = view.surfaceTextureListener
     }
 }

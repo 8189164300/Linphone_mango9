@@ -31,6 +31,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import org.linphone.R
+import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.core.Address
 import org.linphone.core.Friend
 import org.linphone.databinding.GenericAddressPickerListDecorationBinding
@@ -106,7 +107,7 @@ class HistoryListAdapter :
             val model = getItem(position)
             return if (model.isCallLog) {
                 CALL_LOG_TYPE
-            } else if (model.contactModel?.friend != null) {
+            } else if (model.contactModel?.isFriend == true) {
                 CONTACT_TYPE
             } else {
                 SUGGESTION_TYPE
@@ -158,11 +159,18 @@ class HistoryListAdapter :
                     lifecycleOwner = parent.findViewTreeLifecycleOwner()
 
                     setOnCallClickListener {
-                        val friend = model?.friend
-                        if (friend != null) {
-                            callFriendClickedEvent.value = Event(friend)
-                        } else {
-                            callAddressClickedEvent.value = Event(model!!.address)
+                        val selected = model ?: return@setOnCallClickListener
+                        coreContext.postOnCoreThread {
+                            if (!selected.isAvailable) {
+                                coreContext.showRedToastEvent.postValue(Event(Pair(R.string.mango9_contact_no_longer_available, R.drawable.warning_circle)))
+                                return@postOnCoreThread
+                            }
+                            val friend = selected.friend
+                            if (friend != null) {
+                                callFriendClickedEvent.postValue(Event(friend))
+                            } else {
+                                callAddressClickedEvent.postValue(Event(selected.address))
+                            }
                         }
                     }
                 }
@@ -172,11 +180,14 @@ class HistoryListAdapter :
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        onNearEnd?.invoke(position)
         when (getItemViewType(position)) {
             CALL_LOG_TYPE -> (holder as CallLogViewHolder).bind(getItem(position).callLogModel!!)
             else -> (holder as ContactSuggestionViewHolder).bind(getItem(position).contactModel!!)
         }
     }
+
+    var onNearEnd: ((Int) -> Unit)? = null
 
     fun resetSelection() {
         notifyItemChanged(selectedAdapterPosition)

@@ -19,31 +19,32 @@
  */
 package org.linphone.ui.main.history.viewmodel
 
+import androidx.annotation.AnyThread
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
+import org.linphone.contacts.ContactSearch
+import org.linphone.core.Account
+import org.linphone.ui.main.model.ContactSuggestionRows
 import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
 import androidx.lifecycle.MutableLiveData
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.LinphoneApplication.Companion.corePreferences
 import org.linphone.contacts.ContactsManager
-import org.linphone.core.Address
 import org.linphone.core.CallLog
 import org.linphone.core.Core
 import org.linphone.core.CoreListenerStub
 import org.linphone.core.Friend
 import org.linphone.core.GlobalState
-import org.linphone.core.MagicSearch
-import org.linphone.core.MagicSearchListenerStub
-import org.linphone.core.SearchResult
 import org.linphone.core.tools.Log
-import org.linphone.ui.main.contacts.model.ContactAvatarModel
 import org.linphone.ui.main.history.model.CallLogModel
 import org.linphone.ui.main.history.model.CallLogModelWrapper
 import org.linphone.ui.main.model.ConversationContactOrSuggestionModel
 import org.linphone.ui.main.viewmodel.AbstractMainViewModel
 import org.linphone.utils.Event
 import org.linphone.utils.LinphoneUtils
-import java.text.Collator
-import java.util.Locale
 
 class HistoryListViewModel
     @UiThread
@@ -66,31 +67,40 @@ class HistoryListViewModel
 
     private val tempCallLogsList = ArrayList<CallLogModelWrapper>()
 
-    private val magicSearch = coreContext.core.createMagicSearch()
+    private val revision = AtomicLong()
+    private var searchRevision = -1L
+    private var primaryRevision = -1L
 
-    private val magicSearchListener = object : MagicSearchListenerStub() {
-        @WorkerThread
-        override fun onSearchResultsReceived(magicSearch: MagicSearch) {
-            Log.i("$TAG Magic search contacts available")
-            val results = magicSearch.lastSearch
-            processMagicSearchResults(results)
-            fetchInProgress.postValue(false)
+    @Volatile private var suspended = false
+
+    @Volatile private var closed = false
+    private val suggestionRows = ContactSuggestionRows()
+    private var visibleSuggestions = emptyList<ConversationContactOrSuggestionModel>()
+    val showResultsLimitReached = MutableLiveData(false)
+    private val contactSearch: ContactSearch = ContactSearch(viewModelScope) { token, candidates, limited ->
+        if (isCurrent(searchRevision) && contactSearchCurrent(token)) {
+            visibleSuggestions = suggestionRows.replace(candidates)
+            publish(searchRevision, limited)
         }
     }
 
+    private fun contactSearchCurrent(token: Long): Boolean = contactSearch.isCurrent(token)
+
     private val coreListener = object : CoreListenerStub() {
+        override fun onDefaultAccountChanged(core: Core, defaultAccount: Account?) { refresh() }
+
         @WorkerThread
         override fun onGlobalStateChanged(core: Core, state: GlobalState?, message: String) {
             if (state == GlobalState.On) {
                 Log.i("$TAG Core just started, fetching history")
-                computeCallLogsList(currentFilter)
+                refresh()
             }
         }
 
         @WorkerThread
         override fun onCallLogUpdated(core: Core, callLog: CallLog) {
             Log.i("$TAG A call log was created, updating list")
-            computeCallLogsList(currentFilter)
+            refresh()
             historyInsertedEvent.postValue(Event(true))
         }
     }
@@ -99,7 +109,7 @@ class HistoryListViewModel
         @WorkerThread
         override fun onContactsLoaded() {
             Log.i("$TAG Contacts have been (re)loaded, updating list")
-            computeCallLogsList(currentFilter)
+            refresh()
         }
 
         @WorkerThread
@@ -112,20 +122,20 @@ class HistoryListViewModel
         coreContext.postOnCoreThread { core ->
             coreContext.contactsManager.addListener(contactsListener)
             core.addListener(coreListener)
-            magicSearch.addListener(magicSearchListener)
 
-            computeCallLogsList(currentFilter)
+            refresh()
         }
     }
 
     @UiThread
     override fun onCleared() {
+        closed = true
+        cancelContactSearch()
         super.onCleared()
 
         coreContext.postOnCoreThread { core ->
             coreContext.contactsManager.removeListener(contactsListener)
             core.removeListener(coreListener)
-            magicSearch.removeListener(magicSearchListener)
         }
     }
 
@@ -145,19 +155,71 @@ class HistoryListViewModel
             }
 
             historyDeletedEvent.postValue(Event(true))
-            computeCallLogsList(currentFilter)
+            refresh()
         }
     }
 
     @UiThread
     override fun filter() {
+        suspended = false
+        refresh(debounce = true)
+    }
+
+    @UiThread
+    fun cancelContactSearch() {
+        suspended = true
+        revision.incrementAndGet()
+        contactSearch.cancel()
         coreContext.postOnCoreThread {
-            computeCallLogsList(currentFilter)
+            suggestionRows.clear()
+            visibleSuggestions = emptyList()
+        }
+    }
+
+    @AnyThread
+    private fun refresh(debounce: Boolean = false) {
+        if (suspended || closed) return
+        val token = revision.incrementAndGet()
+        val filter = currentFilter
+        contactSearch.cancel()
+        viewModelScope.launch {
+            if (debounce && filter.isNotEmpty()) delay(250)
+            coreContext.postOnCoreThread {
+                if (isCurrent(token)) computeCallLogsList(filter, token)
+            }
+        }
+    }
+
+    private fun isCurrent(token: Long) = !closed && !suspended && revision.get() == token
+
+    @UiThread
+    fun revealMoreContacts(near: Int) {
+        val token = revision.get()
+        coreContext.postOnCoreThread {
+            if (isCurrent(token) && searchRevision == token) {
+                suggestionRows.reveal(near - tempCallLogsList.size)?.let {
+                    visibleSuggestions = it
+                    publish(token, showResultsLimitReached.value == true)
+                }
+            }
         }
     }
 
     @WorkerThread
-    private fun computeCallLogsList(filter: String) {
+    private fun publish(token: Long, limited: Boolean = false) {
+        val list = ArrayList(tempCallLogsList)
+        list.addAll(visibleSuggestions.map { CallLogModelWrapper(null, it) })
+        coreContext.postOnMainThread {
+            if (isCurrent(token)) {
+                showResultsLimitReached.value = limited
+                callLogs.value = list
+                fetchInProgress.value = false
+            }
+        }
+    }
+
+    @WorkerThread
+    private fun computeCallLogsList(filter: String, token: Long) {
         if (coreContext.core.globalState != GlobalState.On) {
             Log.e("$TAG Core isn't ON yet, do not attempt to get calls history")
             return
@@ -168,15 +230,6 @@ class HistoryListViewModel
         }
 
         val isFilterEmpty = filter.isEmpty()
-        if (!isFilterEmpty) {
-            magicSearch.getContactsListAsync(
-                filter,
-                corePreferences.contactsFilter,
-                MagicSearch.Source.All.toInt(),
-                MagicSearch.Aggregation.Friend
-            )
-        }
-
         val list = arrayListOf<CallLogModelWrapper>()
 
         val account = LinphoneUtils.getDefaultAccount()
@@ -195,13 +248,16 @@ class HistoryListViewModel
             }
         }
 
-        Log.i("$TAG Fetched [${list.size}] call log(s)")
-        if (isFilterEmpty) {
-            callLogs.postValue(list)
-        } else {
+        primaryRevision = token
+        tempCallLogsList.clear()
+        tempCallLogsList.addAll(list)
+        suggestionRows.clear()
+        visibleSuggestions = emptyList()
+        publish(token)
+        if (!isFilterEmpty) {
+            searchRevision = token
             fetchInProgress.postValue(true)
-            tempCallLogsList.clear()
-            tempCallLogsList.addAll(list)
+            contactSearch.search(filter, corePreferences.contactsFilter)
         }
     }
 
@@ -209,87 +265,8 @@ class HistoryListViewModel
     private fun isCallLogMatchingFilter(model: CallLogModel, filter: String): Boolean {
         if (filter.isEmpty()) return true
 
-        val friendName = model.avatarModel.friend.name ?: LinphoneUtils.getDisplayName(model.address)
+        val friendName = model.avatarModel.contactName ?: LinphoneUtils.getDisplayName(model.address)
         return friendName.contains(filter, ignoreCase = true) || model.address.asStringUriOnly().contains(filter, ignoreCase = true)
     }
 
-    @WorkerThread
-    private fun processMagicSearchResults(results: Array<SearchResult>) {
-        Log.i("$TAG Processing [${results.size}] results")
-
-        val contactsList = arrayListOf<CallLogModelWrapper>()
-        val suggestionsList = arrayListOf<CallLogModelWrapper>()
-        val requestList = arrayListOf<CallLogModelWrapper>()
-
-        val defaultAccountDomain = LinphoneUtils.getDefaultAccount()?.params?.domain
-        for (result in results) {
-            val address = result.address
-            val friend = result.friend
-            if (friend != null) {
-                val found = contactsList.find { it.contactModel?.friend == friend }
-                if (found != null) continue
-
-                val mainAddress = address ?: LinphoneUtils.getFirstAvailableAddressForFriend(friend)
-                if (mainAddress != null) {
-                    val model = ConversationContactOrSuggestionModel(mainAddress, friend = friend)
-                    val avatarModel = coreContext.contactsManager.getContactAvatarModelForFriend(
-                        friend
-                    )
-                    model.avatarModel.postValue(avatarModel)
-                    contactsList.add(CallLogModelWrapper(null, model))
-                } else {
-                    Log.w("$TAG Found friend [${friend.name}] in search results but no Address could be found, skipping it")
-                }
-            } else if (address != null) {
-                if (result.sourceFlags == MagicSearch.Source.Request.toInt()) {
-                    val model = ConversationContactOrSuggestionModel(address) {
-                        coreContext.startAudioCall(address)
-                    }
-                    val avatarModel = getContactAvatarModelForAddress(address)
-                    model.avatarModel.postValue(avatarModel)
-                    requestList.add(CallLogModelWrapper(null, model))
-                    continue
-                }
-
-                val defaultAccountAddress = coreContext.core.defaultAccount?.params?.identityAddress
-                if (defaultAccountAddress != null && address.weakEqual(defaultAccountAddress)) {
-                    Log.i("$TAG Removing from suggestions current default account address")
-                    continue
-                }
-
-                val model = ConversationContactOrSuggestionModel(address, defaultAccountDomain = defaultAccountDomain) {
-                    coreContext.startAudioCall(address)
-                }
-                val avatarModel = getContactAvatarModelForAddress(address)
-                model.avatarModel.postValue(avatarModel)
-                suggestionsList.add(CallLogModelWrapper(null, model))
-            }
-        }
-
-        val collator = Collator.getInstance(Locale.getDefault())
-        contactsList.sortWith { model1, model2 ->
-            collator.compare(model1.contactModel?.name, model2.contactModel?.name)
-        }
-        suggestionsList.sortWith { model1, model2 ->
-            collator.compare(model1.contactModel?.name, model2.contactModel?.name)
-        }
-
-        val list = arrayListOf<CallLogModelWrapper>()
-        list.addAll(tempCallLogsList)
-        list.addAll(contactsList)
-        list.addAll(suggestionsList)
-        list.addAll(requestList)
-        callLogs.postValue(list)
-        Log.i(
-            "$TAG Processed [${results.size}] results: [${contactsList.size}] contacts and [${suggestionsList.size}] suggestions"
-        )
-    }
-
-    @WorkerThread
-    private fun getContactAvatarModelForAddress(address: Address): ContactAvatarModel {
-        val fakeFriend = coreContext.core.createFriend()
-        fakeFriend.name = LinphoneUtils.getDisplayName(address)
-        fakeFriend.address = address
-        return ContactAvatarModel(fakeFriend)
-    }
 }

@@ -68,8 +68,6 @@
     <string name="assistant_dialog_confirm_phone_number_title">Подтвердите номер телефона</string>
     <string name="assistant_dialog_confirm_phone_number_message">Вы уверены, что ваш номер телефона %s?</string>
     <string name="assistant_account_login">Логин</string>
-    <string name="assistant_scan_qr_code">Сканировать QR-код</string>
-    <string name="assistant_qr_code_invalid_toast">Неверный QR-код!</string>
     <string name="assistant_login_third_party_sip_account">Использовать сторонний SIP-аккаунт</string>
     <string name="assistant_login_using_single_sign_on">Единый вход</string>
     <string name="assistant_login_address_without_username_toast">SIP-адрес не содержит имя пользователя!</string>

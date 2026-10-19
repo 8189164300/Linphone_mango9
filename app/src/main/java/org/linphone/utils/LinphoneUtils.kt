@@ -377,6 +377,12 @@ class LinphoneUtils {
         @WorkerThread
         fun createGroupCall(account: Account?, subject: String): Conference? {
             val core = coreContext.core
+            // The SDK's local-conference initialization dereferences its account
+            // identity. Never fall back to another account or enter JNI after logout.
+            if (account == null || core.accountList.none { it === account } || account.params.identityAddress == null) {
+                Log.w("$TAG Can't create a group call without its live account")
+                return null
+            }
             val conferenceParams = core.createConferenceParams(null)
             conferenceParams.isVideoEnabled = true
             conferenceParams.account = account

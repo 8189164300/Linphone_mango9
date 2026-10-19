@@ -47,6 +47,8 @@ import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
 import androidx.window.layout.WindowLayoutInfo
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import org.linphone.core.Call
 import kotlin.math.max
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -57,6 +59,7 @@ import org.linphone.compatibility.Api28Compatibility
 import org.linphone.compatibility.Compatibility
 import org.linphone.core.tools.Log
 import org.linphone.databinding.CallActivityBinding
+import org.linphone.notifications.CallNotificationIntent
 import org.linphone.ui.GenericActivity
 import org.linphone.ui.call.conference.fragment.ActiveConferenceCallFragmentDirections
 import org.linphone.ui.call.conference.fragment.ConferenceLayoutMenuDialogFragment
@@ -76,6 +79,7 @@ import org.linphone.utils.AppUtils
 class CallActivity : GenericActivity() {
     companion object {
         private const val TAG = "[Call Activity]"
+        private const val HANDLED_NOTIFICATION = "handledCallNotification"
     }
 
     private lateinit var binding: CallActivityBinding
@@ -87,6 +91,8 @@ class CallActivity : GenericActivity() {
     private var bottomSheetDialog: BottomSheetDialogFragment? = null
 
     private var isPipSupported = false
+    private var pendingMicrophoneCall: Call? = null
+    private var handledNotificationIdentity: String? = null
 
     private val requestCameraPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -102,11 +108,19 @@ class CallActivity : GenericActivity() {
     private val requestRecordAudioPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
+        val call = pendingMicrophoneCall
+        pendingMicrophoneCall = null
         if (isGranted) {
             Log.i("$TAG RECORD_AUDIO permission has been granted, un-muting microphone")
-            callViewModel.toggleMuteMicrophone()
-        } else {
+            if (call != null) callViewModel.unmuteAfterMicrophonePermission(call)
+        } else if (call != null) {
             Log.e("$TAG RECORD_AUDIO permission has been denied")
+            MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.mango9_call_microphone_off)
+                .setMessage(R.string.mango9_call_microphone_in_call_denied)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(R.string.mango9_call_open_settings) { _, _ -> goToAndroidPermissionSettings() }
+                .show()
         }
     }
 
@@ -125,12 +139,13 @@ class CallActivity : GenericActivity() {
             "mineral_blue" -> theme.applyStyle(R.style.Theme_LinphoneInCallMineralBlue, true)
             else -> theme.applyStyle(R.style.Theme_LinphoneInCall, true)
         }
+        theme.applyStyle(R.style.Mango9CallPalette, true)
         return theme
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val style = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) {
-            true // Force dark mode
+            false // Light call chrome; fullscreen video switches to light system-bar symbols.
         }
         enableEdgeToEdge(style, style)
         super.onCreate(savedInstanceState)
@@ -239,14 +254,10 @@ class CallActivity : GenericActivity() {
         }
 
         callViewModel.requestRecordAudioPermission.observe(this) {
-            it.consume {
-                if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
-                    Log.w("$TAG Asking for RECORD_AUDIO permission")
-                    requestRecordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                } else {
-                    Log.i("$TAG Permission request for RECORD_AUDIO will be automatically denied, go to android app settings instead")
-                    goToAndroidPermissionSettings()
-                }
+            it.consume { call ->
+                if (pendingMicrophoneCall != null) return@consume
+                pendingMicrophoneCall = call
+                requestRecordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             }
         }
 
@@ -283,6 +294,23 @@ class CallActivity : GenericActivity() {
             it.consume {
                 val action = IncomingCallFragmentDirections.actionGlobalIncomingCallFragment()
                 findNavController(R.id.call_nav_container).navigate(action)
+            }
+        }
+
+        callViewModel.notificationScreenEvent.observe(this) {
+            it.consume { screen ->
+                when (screen) {
+                    CurrentCallViewModel.NotificationScreen.INCOMING -> {
+                        val action = IncomingCallFragmentDirections.actionGlobalIncomingCallFragment()
+                        findNavController(R.id.call_nav_container).navigate(action)
+                    }
+                    CurrentCallViewModel.NotificationScreen.OUTGOING -> {
+                        val action = OutgoingCallFragmentDirections.actionGlobalOutgoingCallFragment()
+                        findNavController(R.id.call_nav_container).navigate(action)
+                    }
+                    CurrentCallViewModel.NotificationScreen.ACTIVE -> navigateToActiveCall(true)
+                    CurrentCallViewModel.NotificationScreen.CONFERENCE -> navigateToActiveCall(false)
+                }
             }
         }
 
@@ -335,11 +363,17 @@ class CallActivity : GenericActivity() {
             }
         }
 
-        if (intent.extras?.getBoolean("AnswerIncomingCall", false) == true) {
-            val caller = intent.extras?.getString("Caller")
-            Log.i("$TAG Answering incoming call from [$caller]")
-            callViewModel.answer()
+        handledNotificationIdentity = savedInstanceState?.getString(HANDLED_NOTIFICATION)
+        val notificationTarget = CallNotificationIntent.consumeActivityTarget(intent, handledNotificationIdentity)
+        if (notificationTarget != null) {
+            handledNotificationIdentity = notificationTarget.identity
+            callViewModel.handleNotification(notificationTarget)
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(HANDLED_NOTIFICATION, handledNotificationIdentity)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onStart() {
@@ -418,6 +452,14 @@ class CallActivity : GenericActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
+
+        val notificationTarget = CallNotificationIntent.consumeActivityTarget(intent)
+        if (notificationTarget != null) {
+            handledNotificationIdentity = notificationTarget.identity
+            callViewModel.handleNotification(notificationTarget)
+            return
+        }
 
         if (intent.extras?.getBoolean("ActiveCall", false) == true) {
             navigateToActiveCall(
@@ -594,6 +636,8 @@ class CallActivity : GenericActivity() {
     private fun hideUI(hide: Boolean) {
         Log.i("$TAG Switching full screen mode to [${if (hide) "ON" else "OFF"}]")
         val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
+        windowInsetsController.isAppearanceLightStatusBars = !hide
+        windowInsetsController.isAppearanceLightNavigationBars = !hide
         if (hide) {
             windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
         } else {

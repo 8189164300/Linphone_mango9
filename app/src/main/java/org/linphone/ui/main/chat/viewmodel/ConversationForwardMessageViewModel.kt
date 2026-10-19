@@ -103,6 +103,10 @@ class ConversationForwardMessageViewModel
     @UiThread
     fun handleClickOnModel(model: ConversationContactOrSuggestionModel) {
         coreContext.postOnCoreThread { core ->
+            if (!model.isAvailable) {
+                showRedToast(R.string.mango9_contact_no_longer_available, R.drawable.warning_circle)
+                return@postOnCoreThread
+            }
             if (model.conversationId.isNotEmpty()) {
                 Log.i("$TAG User clicked on an existing conversation")
                 chatRoomCreatedEvent.postValue(Event(model.conversationId))

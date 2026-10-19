@@ -7,6 +7,10 @@
 package org.linphone.ui.main.crm.adapter
 
 import android.graphics.Color
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.BackgroundColorSpan
+import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -19,7 +23,6 @@ import androidx.core.view.setPadding
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import coil3.load
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -33,8 +36,23 @@ import org.linphone.mango9.Mango9ChatMessage
 import org.linphone.mango9.Mango9SmsDeliveryPolicy
 import org.linphone.mango9.Mango9SmsDeliveryState
 import org.linphone.mango9.Mango9SmsMessage
+import org.linphone.mango9.Mango9ConversationSearch
+import org.linphone.mango9.Mango9SocialMessage
+import org.linphone.ui.main.crm.viewmodel.Mango9AudioClip
+import org.linphone.ui.main.crm.viewmodel.Mango9InlineAudioController
 
 sealed class Mango9MessageListItem(val stableId: String) {
+    val text: String get() = when (this) {
+        is Team -> message.text
+        is Sms -> message.text
+        is Social -> if (message.deleted) "Message unavailable" else message.text
+    }
+    val files: String get() = when (this) {
+        is Team -> message.files
+        is Sms -> message.files
+        is Social -> media.joinToString(",") { it.source }
+    }
+
     data class Team(
         val message: Mango9ChatMessage,
         val outgoing: Boolean,
@@ -42,12 +60,55 @@ sealed class Mango9MessageListItem(val stableId: String) {
     ) : Mango9MessageListItem("team:${message.id}")
 
     data class Sms(val message: Mango9SmsMessage) : Mango9MessageListItem("sms:${message.id}")
+
+    data class Social(val message: Mango9SocialMessage, val media: List<Mango9ChatMedia>) : Mango9MessageListItem("social:${message.id}")
 }
 
 class Mango9MessageAdapter(
     private val onMediaClick: (Mango9ChatMedia) -> Unit,
     private val onLongClick: (Mango9MessageListItem) -> Unit,
 ) : ListAdapter<Mango9MessageListItem, Mango9MessageAdapter.ViewHolder>(DiffCallback) {
+    private var searchQuery = ""
+    private var searchMessageId: String? = null
+    private var audioController: Mango9InlineAudioController? = null
+    private var thumbnails: Mango9ThumbnailLoader? = null
+    var heldAnchor: View? = null
+        private set
+    var selectionMode = false
+        private set
+    var selected = emptySet<String>()
+        private set
+    var onSelection: ((Set<String>) -> Unit)? = null
+
+    fun select(ids: Set<String>?, notify: Boolean = true) {
+        selectionMode = ids != null; selected = ids.orEmpty()
+        notifyDataSetChanged()
+        if (notify) onSelection?.invoke(selected)
+    }
+
+    internal fun setThumbnailLoader(loader: Mango9ThumbnailLoader) { thumbnails = loader }
+
+    internal fun setAudioController(controller: Mango9InlineAudioController) { audioController = controller }
+
+    override fun onCurrentListChanged(previousList: MutableList<Mango9MessageListItem>, currentList: MutableList<Mango9MessageListItem>) {
+        super.onCurrentListChanged(previousList, currentList)
+        audioController?.reconcile(currentList)
+        if (selectionMode) {
+            val remaining = selected.intersect(currentList.map { it.stableId }.toSet())
+            if (remaining != selected) { selected = remaining; onSelection?.invoke(selected) }
+        }
+    }
+
+    fun highlight(query: String, messageId: String?) {
+        if (query == searchQuery && messageId == searchMessageId) return
+        val previous = searchMessageId
+        searchQuery = query
+        searchMessageId = messageId
+        currentList.forEachIndexed { index, item ->
+            if (item.stableId == previous || item.stableId == messageId) notifyItemChanged(index, SEARCH_PAYLOAD)
+        }
+    }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         val binding = Mango9MessageCellBinding.inflate(LayoutInflater.from(parent.context), parent, false)
         return ViewHolder(binding)
@@ -55,8 +116,17 @@ class Mango9MessageAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) = holder.bind(getItem(position))
 
+    override fun onBindViewHolder(holder: ViewHolder, position: Int, payloads: MutableList<Any>) {
+        if (payloads.isNotEmpty() && payloads.all { it == SEARCH_PAYLOAD }) {
+            holder.bindText(getItem(position))
+        } else {
+            holder.bind(getItem(position))
+        }
+    }
+
     inner class ViewHolder(private val binding: Mango9MessageCellBinding) : RecyclerView.ViewHolder(binding.root) {
         private var boundMedia: List<Mango9ChatMedia>? = null
+        private var boundMessageId: String? = null
 
         fun bind(item: Mango9MessageListItem) {
             val outgoing: Boolean
@@ -66,6 +136,21 @@ class Mango9MessageAdapter(
             val status: String?
             val files: String
             when (item) {
+                is Mango9MessageListItem.Social -> {
+                    outgoing = item.message.outgoing; sender = if (outgoing) null else item.message.sender
+                    text = item.text; time = item.message.time; files = item.files
+                    status = if (!outgoing) {
+                        null
+                    } else {
+                        when (item.message.status) {
+                        "sent", "confirmed_sent", "succeeded" -> "Sent"
+                        "delivered" -> "Delivered"
+                        "read" -> "Read"
+                        "failed", "confirmed_unsent" -> "Not sent"
+                        else -> "Delivery unconfirmed"
+                    }
+                    }
+                }
                 is Mango9MessageListItem.Team -> {
                     outgoing = item.outgoing
                     sender = item.senderName
@@ -106,34 +191,96 @@ class Mango9MessageAdapter(
             val params = binding.messageContainer.layoutParams as FrameLayout.LayoutParams
             params.gravity = if (outgoing) Gravity.END else Gravity.START
             binding.messageContainer.layoutParams = params
+            binding.bubble.setBackgroundResource(if (outgoing) R.drawable.mango9_chat_bubble_background else R.drawable.mango9_chat_incoming_background)
+            binding.message.setTextColor(if (outgoing) Color.WHITE else com.google.android.material.color.MaterialColors.getColor(binding.message, R.attr.color_main2_800))
+            binding.root.setPadding(dp(12), dp(4), dp(12), dp(4))
+            params.marginStart = dp(if (selectionMode) 44 else 0)
+            binding.messageContainer.layoutParams = params
+            binding.selected.visibility = if (selectionMode) View.VISIBLE else View.GONE
+            binding.selected.isChecked = item.stableId in selected
+            binding.selected.setOnClickListener { toggleSelection(item) }
             binding.sender.visibility = if (sender.isNullOrBlank()) View.GONE else View.VISIBLE
             binding.sender.text = sender.orEmpty()
             binding.message.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
-            binding.message.text = text
-            binding.footer.text = listOfNotNull(shortTime(time), status).filter(String::isNotBlank).joinToString(" · ")
-            bindMedia(Mango9ChatMedia.parse(files))
-            binding.root.setOnLongClickListener {
+            bindText(item)
+            binding.footer.text = listOfNotNull(dateText(time, true), status).filter(String::isNotBlank).joinToString(" · ")
+            val reactions = when (item) {
+                is Mango9MessageListItem.Team -> item.message.reactions.values.map { "${it.key} ${it.value.size}" }
+                is Mango9MessageListItem.Sms -> item.message.reactions.values.map { "${it.key} ${it.value.size}" }
+                is Mango9MessageListItem.Social -> listOfNotNull(item.message.reactions.self, item.message.reactions.participant)
+            }
+            binding.reactions.text = reactions.joinToString("  ")
+            binding.reactions.visibility = if (reactions.isEmpty()) View.GONE else View.VISIBLE
+            bindMedia(item.stableId, if (item is Mango9MessageListItem.Social) item.media else Mango9ChatMedia.parse(files))
+            for (index in 0 until binding.media.childCount) {
+                (binding.media.getChildAt(index) as? Mango9AudioMessageView)?.apply {
+                    setInk(binding.message.currentTextColor)
+                    selection(if (selectionMode) ({ toggleSelection(item) }) else null)
+                }
+            }
+            val hold = View.OnLongClickListener {
+                heldAnchor = binding.bubble
+                if (selectionMode) { toggleSelection(item); return@OnLongClickListener true }
                 onLongClick(item)
                 true
             }
+            // TextView resets longClickable when selectable changes. Configure text first,
+            // then attach the hold listener, including on a freshly inflated first row.
+            binding.message.setTextIsSelectable(false)
+            binding.bubble.setOnLongClickListener(hold)
+            binding.message.setOnLongClickListener(hold)
+            binding.reactions.setOnLongClickListener(hold)
+            binding.reactions.contentDescription = if (reactions.isEmpty()) null else "${reactions.joinToString(", ")}. Hold the message to change your reaction."
+            binding.root.setOnClickListener { if (selectionMode) toggleSelection(item) }
+            binding.bubble.setOnClickListener { if (selectionMode) toggleSelection(item) }
+            binding.message.setOnClickListener { if (selectionMode) toggleSelection(item) }
+            binding.reactions.setOnClickListener { if (selectionMode) toggleSelection(item) }
+            binding.footer.setOnClickListener { if (selectionMode) toggleSelection(item) }
         }
 
-        private fun bindMedia(media: List<Mango9ChatMedia>) {
-            if (media == boundMedia) return
+        private fun toggleSelection(item: Mango9MessageListItem) {
+            if (!selectionMode) return
+            select(if (item.stableId in selected) selected - item.stableId else selected + item.stableId)
+        }
+
+        fun bindText(item: Mango9MessageListItem) {
+            binding.message.text = if (item.stableId == searchMessageId && searchQuery.isNotEmpty()) {
+                SpannableString(item.text).apply {
+                    Mango9ConversationSearch.ranges(item.text, searchQuery).forEach { range ->
+                        setSpan(BackgroundColorSpan(Color.rgb(255, 224, 130)), range.first, range.last + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        setSpan(ForegroundColorSpan(Color.BLACK), range.first, range.last + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                }
+            } else {
+                item.text
+            }
+        }
+
+        private fun bindMedia(messageId: String, media: List<Mango9ChatMedia>) {
+            if (messageId == boundMessageId && media == boundMedia) return
+            boundMessageId = messageId
             boundMedia = media
             binding.media.removeAllViews()
             binding.media.visibility = if (media.isEmpty()) View.GONE else View.VISIBLE
             media.forEachIndexed { index, item ->
-                val view = if (item.kind == Mango9ChatMedia.Kind.Image || item.kind == Mango9ChatMedia.Kind.Video) {
+                val owner = audioController
+                val view = if (item.kind == Mango9ChatMedia.Kind.Audio && owner != null) {
+                    Mango9AudioMessageView(binding.root.context).apply {
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                            if (index > 0) topMargin = dp(7)
+                        }
+                        bind(Mango9AudioClip(messageId, index, item), owner)
+                    }
+                } else if (item.kind == Mango9ChatMedia.Kind.Image || item.kind == Mango9ChatMedia.Kind.Video) {
                     FrameLayout(binding.root.context).apply {
                         contentDescription = item.name
                         layoutParams = LinearLayout.LayoutParams(dp(230), dp(150)).apply {
                             if (index > 0) topMargin = dp(7)
                         }
                         addView(
-                            ImageView(context).apply {
+                            Mango9ThumbnailView(context).apply {
                             scaleType = ImageView.ScaleType.CENTER_CROP
-                            load(item.url)
+                            bind(item, thumbnails)
                         },
                             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                         )
@@ -156,7 +303,7 @@ class Mango9MessageAdapter(
                             Mango9ChatMedia.Kind.Audio -> "▶  ${item.name}"
                             else -> "▣  ${item.name}"
                         }
-                        setTextColor(Color.WHITE)
+                        setTextColor(binding.message.currentTextColor)
                         textSize = 12f
                         maxWidth = dp(230)
                         compoundDrawablePadding = dp(7)
@@ -165,7 +312,18 @@ class Mango9MessageAdapter(
                             .apply { if (index > 0) topMargin = dp(6) }
                     }
                 }
-                view.setOnClickListener { onMediaClick(item) }
+                if (view !is Mango9AudioMessageView) {
+                    view.setOnClickListener {
+                    val message = currentList.firstOrNull { it.stableId == boundMessageId }
+                    if (selectionMode && message != null) toggleSelection(message) else onMediaClick(item)
+                }
+                }
+                view.setOnLongClickListener {
+                    val message = currentList.firstOrNull { it.stableId == boundMessageId } ?: return@setOnLongClickListener false
+                    heldAnchor = binding.bubble
+                    if (selectionMode) toggleSelection(message) else onLongClick(message)
+                    true
+                }
                 binding.media.addView(view)
             }
         }
@@ -174,6 +332,14 @@ class Mango9MessageAdapter(
     }
 
     companion object {
+        private const val SEARCH_PAYLOAD = "message-search"
+        private val localFormats = listOf(
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"),
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS"),
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"),
+        )
+        private val displayTimeFormat = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
         private val DiffCallback = object : DiffUtil.ItemCallback<Mango9MessageListItem>() {
             override fun areItemsTheSame(oldItem: Mango9MessageListItem, newItem: Mango9MessageListItem) =
                 oldItem.stableId == newItem.stableId
@@ -182,23 +348,25 @@ class Mango9MessageAdapter(
                 oldItem == newItem
         }
 
-        private fun shortTime(value: String): String {
+        fun dateText(value: String, conversation: Boolean = false): String {
             if (value.isBlank()) return ""
             val zone = ZoneId.systemDefault()
             val time = try {
                 Instant.parse(value).atZone(zone)
             } catch (_: DateTimeParseException) {
-                val formats = listOf(
-                    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"),
-                    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
-                    DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS"),
-                    DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"),
-                )
-                formats.firstNotNullOfOrNull { formatter ->
+                localFormats.firstNotNullOfOrNull { formatter ->
                     runCatching { LocalDateTime.parse(value, formatter).atZone(ZoneId.of("UTC")) }.getOrNull()
                 } ?: return ""
             }
-            return time.withZoneSameInstant(zone).format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
+            val local = time.withZoneSameInstant(zone)
+            val formatter = if (conversation) {
+                DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
+            } else if (local.toLocalDate() == java.time.LocalDate.now(zone)) {
+                displayTimeFormat
+            } else {
+                DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)
+            }
+            return local.format(formatter.withLocale(java.util.Locale.getDefault()))
         }
     }
 }

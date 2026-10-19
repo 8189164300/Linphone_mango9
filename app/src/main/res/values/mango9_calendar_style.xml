@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mango9_calendar_surface">#FFFFFF</color>
+    <color name="mango9_calendar_background">#F5F6F9</color>
+    <color name="mango9_calendar_ink">#232C3A</color>
+    <color name="mango9_calendar_secondary">#5E6978</color>
+    <color name="mango9_calendar_accent">#444DCD</color>
+    <color name="mango9_calendar_separator">#E7E9EE</color>
+    <color name="mango9_calendar_closed">#F5F6F9</color>
+    <color name="mango9_calendar_closed_shade">#64DCE1E9</color>
+    <color name="mango9_calendar_badge">#E7E9FE</color>
+    <color name="mango9_calendar_error">#B3261E</color>
+</resources>

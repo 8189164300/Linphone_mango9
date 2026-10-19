@@ -38,11 +38,14 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.annotation.AnyThread
 import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
-import androidx.core.text.isDigitsOnly
+import android.widget.Toast
 import androidx.lifecycle.MutableLiveData
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlin.system.exitProcess
 import org.linphone.BuildConfig
@@ -56,10 +59,13 @@ import org.linphone.core.tools.AndroidPlatformHelper
 import org.linphone.mango9.Mango9MessagePushTokenStore
 import org.linphone.mango9.Mango9AccountProvisioner
 import org.linphone.mango9.Mango9Configuration
+import org.linphone.mango9.Mango9OutgoingCalls
+import org.linphone.mango9.Mango9SessionStore
 import org.linphone.mango9.Mango9PushCallerIdentityCache
 import org.linphone.notifications.NotificationsManager
 import org.linphone.telecom.TelecomManager
 import org.linphone.ui.call.CallActivity
+import org.linphone.ui.GenericActivity
 import org.linphone.utils.ActivityMonitor
 import org.linphone.utils.AppUtils
 import org.linphone.utils.AudioUtils
@@ -74,7 +80,7 @@ class CoreContext
         private const val TAG = "[Core Context]"
     }
 
-    lateinit var core: Core
+    @Volatile lateinit var core: Core
 
     fun isCoreAvailable(): Boolean {
         return ::core.isInitialized
@@ -97,6 +103,42 @@ class CoreContext
     private val activityMonitor = ActivityMonitor()
 
     private val mainThread = Handler(Looper.getMainLooper())
+
+    private val outgoingCallsDelegate = lazy {
+        Mango9OutgoingCalls(
+            core, Mango9SessionStore(context),
+            microphoneGranted = { Mango9OutgoingCalls.hasMicrophone(context) },
+            requestMicrophone = { id ->
+                postOnMainThread {
+                    val host = activityMonitor.foregroundActivity() as? GenericActivity
+                    if (host != null) {
+                        host.requestOutgoingCallMicrophone(id)
+                    } else {
+                        // Android Auto/background callers cannot open a runtime sheet themselves.
+                        completeOutgoingCallPermission(id, false)
+                        Toast.makeText(context, org.linphone.R.string.mango9_call_open_app_for_microphone, Toast.LENGTH_LONG).show()
+                    }
+                }
+                postOnCoreThreadDelayed({ completeOutgoingCallPermission(id, false) }, 120_000L)
+            },
+            cannotStart = {
+                postOnMainThread {
+                    Toast.makeText(context, org.linphone.R.string.mango9_call_request_changed, Toast.LENGTH_LONG).show()
+                }
+            },
+        )
+    }
+    private val outgoingCalls by outgoingCallsDelegate
+
+    // Restored Activity state can arrive before the asynchronous Core has started.
+    // Looking up an old ticket must never initialize a controller (or access Core).
+    @AnyThread fun isOutgoingCallPermissionPending(id: Long): Boolean =
+        outgoingCallsDelegate.isInitialized() && outgoingCalls.isPending(id)
+
+    @AnyThread fun completeOutgoingCallPermission(id: Long, granted: Boolean) {
+        if (!outgoingCallsDelegate.isInitialized()) return
+        postOnCoreThread { outgoingCalls.complete(id, granted) }
+    }
 
     var defaultAccountHasVideoConferenceFactoryUri: Boolean = false
 
@@ -148,6 +190,8 @@ class CoreContext
 
     @SuppressLint("HandlerLeak")
     private lateinit var coreThread: Handler
+
+    private val coreTasks = CoreTaskDispatcher(SystemClock::uptimeMillis)
 
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         @WorkerThread
@@ -238,6 +282,15 @@ class CoreContext
 
         @WorkerThread
         override fun onDefaultAccountChanged(core: Core, account: Account?) {
+            if (core.globalState == GlobalState.On) {
+                // Invalidate account-scoped work at the native selection boundary, not after
+                // a delayed Activity observer. This also covers non-CRM/manual SIP accounts.
+                val identity = org.linphone.mango9.Mango9SessionStore.normalizedIdentity(
+                    account?.params?.identityAddress?.asStringUriOnly(),
+                )
+                org.linphone.mango9.Mango9SessionStore(context).activate(identity)
+                contactsManager.activateMango9TeamIdentity(identity)
+            }
             defaultAccountHasVideoConferenceFactoryUri = account?.params?.audioVideoConferenceFactoryAddress != null
 
             val defaultDomain = corePreferences.defaultDomain
@@ -641,7 +694,10 @@ class CoreContext
                     Log.i("$TAG New default account will be [${newDefaultAccount.params.identityAddress?.asStringUriOnly()}]")
                     // Delay changing default account to allow for other onAccountRemoved listeners to trigger first
                     postOnCoreThread {
-                        core.defaultAccount = newDefaultAccount
+                        // A new login/explicit selection may have won before this queued callback.
+                        if (core.defaultAccount == null && core.accountList.contains(newDefaultAccount)) {
+                            core.defaultAccount = newDefaultAccount
+                        }
                     }
                 }
             }
@@ -737,6 +793,14 @@ class CoreContext
 
         coreThread.postDelayed({ startCore() }, 50)
 
+        // Publish only after Core/listeners exist. Calls queued by restored UI,
+        // receivers or lifecycle callbacks must not disappear during startup.
+        coreTasks.start { task, dueAt ->
+            coreThread.postAtTime(task, dueAt).also { accepted ->
+                if (!accepted) Log.e("$TAG Core looper rejected queued work")
+            }
+        }
+
         Looper.loop()
     }
 
@@ -756,6 +820,7 @@ class CoreContext
 
         enforceMango9RuntimeDefaults()
         managedConfigurationManager.applyBeforeCoreStart(core)
+        enforceMango9VoiceOnlyCalls()
 
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, coreThread)
@@ -844,6 +909,7 @@ class CoreContext
             Log.i("$TAG No configuration migration required")
         }
 
+        enforceMango9VoiceOnlyCalls() // Upstream configuration migration must not enable video.
         contactsManager.onCoreStarted(core)
         telecomManager.onCoreStarted(core)
         notificationsManager.onCoreStarted(core, oldVersion < 600000) // Re-create channels when migrating from a non 6.0 version
@@ -877,6 +943,7 @@ class CoreContext
 
     @WorkerThread
     private fun onCoreStopped() {
+        if (outgoingCallsDelegate.isInitialized()) outgoingCalls.cancelAll()
         Log.w("$TAG Core is being shut down, notifying managers so they can remove their listeners and do some cleanup if needed")
         val sensorManager = context.getSystemService(SENSOR_SERVICE) as SensorManager
         sensorManager.unregisterListener(proximitySensorListener)
@@ -922,13 +989,18 @@ class CoreContext
     fun postOnCoreThread(
         @WorkerThread lambda: (core: Core) -> Unit
     ) {
-        if (::coreThread.isInitialized) {
-            coreThread.post {
-                lambda.invoke(core)
-            }
-        } else {
-            Log.e("$TAG Core's thread not initialized yet!")
-        }
+        coreTasks.post { lambda.invoke(core) }
+    }
+
+    @AnyThread
+    internal fun postOnCoreThreadCancellable(
+        @WorkerThread lambda: (core: Core) -> Unit
+    ): CoreTaskDispatcher.Ticket = coreTasks.post { lambda.invoke(core) }
+
+    /** A lifecycle can await the ready queue without blocking Android's main looper. */
+    internal suspend fun awaitReady() = suspendCancellableCoroutine<Unit> { continuation ->
+        val ticket = postOnCoreThreadCancellable { continuation.resume(Unit) }
+        continuation.invokeOnCancellation { ticket.cancel() }
     }
 
     @AnyThread
@@ -936,13 +1008,7 @@ class CoreContext
         @WorkerThread lambda: (core: Core) -> Unit,
         delay: Long
     ) {
-        if (::coreThread.isInitialized) {
-            coreThread.postDelayed({
-                lambda.invoke(core)
-            }, delay)
-        } else {
-            Log.e("$TAG Core's thread not initialized yet!")
-        }
+        coreTasks.post(delay) { lambda.invoke(core) }
     }
 
     @AnyThread
@@ -1045,11 +1111,12 @@ class CoreContext
         address: Address,
         forceZRTP: Boolean = false,
         localAddress: Address? = null,
-        skipNetworkReachabilityTest: Boolean = false
+        skipNetworkReachabilityTest: Boolean = false,
+        onResult: (Boolean) -> Unit = {},
     ) {
         val params = core.createCallParams(null)
         params?.isVideoEnabled = false
-        startCall(address, params, forceZRTP, localAddress, skipNetworkReachabilityTest)
+        startCall(address, params, forceZRTP, localAddress, skipNetworkReachabilityTest, onResult)
     }
 
     @WorkerThread
@@ -1057,12 +1124,13 @@ class CoreContext
         address: Address,
         forceZRTP: Boolean = false,
         localAddress: Address? = null,
-        skipNetworkReachabilityTest: Boolean = false
+        skipNetworkReachabilityTest: Boolean = false,
+        onResult: (Boolean) -> Unit = {},
     ) {
         val params = core.createCallParams(null)
         params?.isVideoEnabled = true
         params?.videoDirection = MediaDirection.SendRecv
-        startCall(address, params, forceZRTP, localAddress, skipNetworkReachabilityTest)
+        startCall(address, params, forceZRTP, localAddress, skipNetworkReachabilityTest, onResult)
     }
 
     @WorkerThread
@@ -1071,78 +1139,16 @@ class CoreContext
         callParams: CallParams? = null,
         forceZRTP: Boolean = false,
         localAddress: Address? = null,
-        skipNetworkReachabilityTest: Boolean = false
-    ) {
-        if (!skipNetworkReachabilityTest && !core.isNetworkReachable) {
-            Log.e("$TAG Network unreachable, abort outgoing call")
-            return
-        }
+        skipNetworkReachabilityTest: Boolean = false,
+        onResult: (Boolean) -> Unit = {},
+    ) = outgoingCalls.start(address, callParams, forceZRTP, localAddress, skipNetworkReachabilityTest, onResult)
 
-        val currentCall = core.currentCall
-        if (currentCall != null) {
-            Log.w(
-                "$TAG Found current call [${currentCall.remoteAddress.asStringUriOnly()}], pausing it first"
-            )
-            currentCall.pause()
-        }
-
-        val params = callParams ?: core.createCallParams(null)
-        if (params == null) {
-            val call = core.inviteAddress(address)
-            Log.w("$TAG Starting call $call without params")
-            return
-        }
-
-        if (forceZRTP) {
-            params.mediaEncryption = MediaEncryption.ZRTP
-        }
-
-        params.recordFile = LinphoneUtils.getRecordingFilePathForAddress(address)
-
-        if (localAddress != null) {
-            val account = core.accountList.find { account ->
-                account.params.identityAddress?.weakEqual(localAddress) == true
-            }
-            if (account != null) {
-                params.account = account
-                Log.i(
-                    "$TAG Using account matching address ${localAddress.asStringUriOnly()} as From"
-                )
-            } else {
-                val defaultAccount = core.defaultAccount
-                params.account = defaultAccount
-                Log.e(
-                    "$TAG Failed to find account matching address ${localAddress.asStringUriOnly()}, using default one [${defaultAccount?.params?.identityAddress?.asStringUriOnly()}]"
-                )
-            }
-        } else {
-            val defaultAccount = core.defaultAccount
-            params.account = defaultAccount
-            Log.i("$TAG No local address given, using default account [${defaultAccount?.params?.identityAddress?.asStringUriOnly()}]")
-        }
-
-        val username = address.username.orEmpty()
-        val domain = address.domain.orEmpty()
-        val account = params.account ?: core.defaultAccount
-        if (account != null && Compatibility.isIpAddress(domain)) {
-            Log.i("$TAG SIP URI [${address.asStringUriOnly()}] seems to have an IP address as domain")
-            if (username.isNotEmpty() && (username.startsWith("+") || username.isDigitsOnly())) {
-                val identityDomain = account.params.identityAddress?.domain
-                Log.w("$TAG Username [$username] looks like a phone number, replacing domain [$domain] by the local account one [$identityDomain]")
-                if (identityDomain != null) {
-                    val newAddress = address.clone()
-                    newAddress.domain = identityDomain
-
-                    core.inviteAddressWithParams(newAddress, params)
-                    Log.i("$TAG Starting call to [${newAddress.asStringUriOnly()}]")
-                    return
-                }
-            }
-        }
-
-        core.inviteAddressWithParams(address, params)
-        Log.i("$TAG Starting call to [${address.asStringUriOnly()}]")
-    }
+    @WorkerThread
+    fun withOutgoingCallMicrophone(
+        account: Account?,
+        onResult: (Boolean) -> Unit = {},
+        action: () -> Boolean,
+    ) = outgoingCalls.withMicrophone(account, onResult = onResult, action = action)
 
     @WorkerThread
     fun switchCamera() {
@@ -1171,12 +1177,13 @@ class CoreContext
     }
 
     @WorkerThread
-    fun answerCall(call: Call, autoAnswer: Boolean = false) {
+    fun answerCall(call: Call, autoAnswer: Boolean = false, requestedVideo: Boolean? = null) {
         Log.i(
             "$TAG Answering call with remote address [${call.remoteAddress.asStringUriOnly()}] and to address [${call.toAddress.asStringUriOnly()}]"
         )
         val params = core.createCallParams(call)
         if (params == null) {
+            check(requestedVideo == null) { "Cannot honor requested answer media without call parameters" }
             Log.w("$TAG Answering call without params!")
             call.accept()
             return
@@ -1205,6 +1212,10 @@ class CoreContext
             }
         }
 
+        // A system audio-only answer must not silently enable the offered camera.
+        // A video request may preserve offered video, never add an unoffered stream.
+        requestedVideo?.let { params.isVideoEnabled = it && params.isVideoEnabled }
+        params.isVideoEnabled = false // Mango9 supports voice calls and media attachments, not video calls.
         call.acceptWithParams(params)
     }
 
@@ -1395,6 +1406,16 @@ class CoreContext
      * Linphone endpoint. This runs before managed-app configuration so an
      * administrator's xmlConfig values remain authoritative afterward.
      */
+    private fun enforceMango9VoiceOnlyCalls() {
+        // Product policy is independent of camera permission used for message attachments.
+        core.isVideoCaptureEnabled = false
+        core.isVideoDisplayEnabled = false
+        val audioOnlyPolicy = core.videoActivationPolicy.clone()
+        audioOnlyPolicy.automaticallyInitiate = false
+        audioOnlyPolicy.automaticallyAccept = false
+        core.videoActivationPolicy = audioOnlyPolicy
+    }
+
     private fun enforceMango9RuntimeDefaults() {
         corePreferences.checkForUpdateServerUrl = ""
         core.fileTransferServer = ""

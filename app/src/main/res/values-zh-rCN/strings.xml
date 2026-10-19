@@ -115,13 +115,11 @@
     <string name="remote_provisioning_config_failed_toast">尝试下载和应用远程配置时出错</string>
     <string name="media_player_generic_error_toast">尝试创建媒体播放器时出错</string>
     <string name="assistant_dialog_general_terms_label">通用条款</string>
-    <string name="assistant_qr_code_invalid_toast">无效二维码！</string>
     <string name="assistant_permissions_subtitle">充分享受&appName;我们需要您授予我们以下权限：</string>
     <string name="assistant_third_party_sip_account_create_linphone_account">我更喜欢创建一个&appName;账户</string>
     <string name="assistant_dialog_confirm_phone_number_title">确认电话号码</string>
     <string name="assistant_dialog_confirm_phone_number_message">您确定您的电话号码是%s吗？</string>
     <string name="assistant_account_login">登录</string>
-    <string name="assistant_scan_qr_code">扫描二维码</string>
     <string name="assistant_login_third_party_sip_account">使用第三方SIP账户</string>
     <string name="assistant_login_third_party_sip_account_title">第三方SIP账户</string>
     <string name="assistant_login_using_single_sign_on">单点登录</string>

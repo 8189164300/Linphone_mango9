@@ -20,6 +20,7 @@
 package org.linphone.ui.main.contacts.viewmodel
 
 import androidx.annotation.UiThread
+import androidx.annotation.AnyThread
 import androidx.annotation.WorkerThread
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
@@ -27,18 +28,28 @@ import java.io.File
 import java.text.Collator
 import java.util.ArrayList
 import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import org.linphone.contacts.NativeContactValue
+import org.linphone.contacts.sortName
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.LinphoneApplication.Companion.corePreferences
 import org.linphone.R
 import org.linphone.contacts.ContactsManager.ContactsListener
 import org.linphone.core.Friend
+import org.linphone.core.Address
 import org.linphone.core.FriendList
 import org.linphone.core.FriendListListenerStub
 import org.linphone.core.MagicSearch
 import org.linphone.core.MagicSearchListenerStub
 import org.linphone.core.SearchResult
 import org.linphone.core.tools.Log
+import org.linphone.mango9.Mango9ContactPage
+import org.linphone.mango9.Mango9ContactSearchLimits
 import org.linphone.ui.main.contacts.model.ContactAvatarModel
 import org.linphone.ui.main.viewmodel.AbstractMainViewModel
 import org.linphone.utils.Event
@@ -81,38 +92,31 @@ class ContactsListViewModel
         MutableLiveData()
     }
 
-    private var previousFilter = "NotSet"
     private var domainFilter = ""
+    private val searchGeneration = AtomicLong()
 
-    private lateinit var magicSearch: MagicSearch
+    @Volatile private var searchSuspended = false
+    private var searchJob: Job? = null
+    // SDK searches, descriptors and owned avatar listeners live on the SIP queue.
+    private var searches: List<Pair<MagicSearch, MagicSearchListenerStub>> = emptyList()
 
-    private lateinit var favouritesMagicSearch: MagicSearch
+    private data class ContactCandidate(val friend: Friend?, val address: Address?, val sortName: String, val native: NativeContactValue? = null)
 
-    private var firstLoad = true
+    private class ContactRows {
+        val page = Mango9ContactPage<ContactCandidate>()
+        val models = arrayListOf<ContactAvatarModel>()
+        var generation = -1L
+        var sortRequest = 0L
 
-    private val magicSearchListener = object : MagicSearchListenerStub() {
-        @WorkerThread
-        override fun onSearchResultsReceived(magicSearch: MagicSearch) {
-            Log.i("$TAG Magic search contacts available")
-            processMagicSearchResults(magicSearch.lastSearch, favourites = false)
-        }
-
-        @WorkerThread
-        override fun onResultsLimitReached(magicSearch: MagicSearch, sourcesFlag: Int) {
-            Log.w("$TAG Results limit reached (configured limit is [${magicSearch.searchLimit}]) for source(s) [$sourcesFlag], user should refine it's search")
-            if (searchFilter.value.orEmpty().isNotEmpty()) {
-                showResultsLimitReached.postValue(true)
-            }
-        }
-    }
-
-    private val favouritesMagicSearchListener = object : MagicSearchListenerStub() {
-        @WorkerThread
-        override fun onSearchResultsReceived(magicSearch: MagicSearch) {
-            Log.i("$TAG Magic search favourites contacts available")
-            processMagicSearchResults(magicSearch.lastSearch, favourites = true)
+        fun clear() {
+            models.forEach(ContactAvatarModel::destroy)
+            models.clear()
+            page.clear()
         }
     }
+
+    private val regularRows = ContactRows()
+    private val favoriteRows = ContactRows()
 
     private val friendListListener = object : FriendListListenerStub() {
         @WorkerThread
@@ -133,15 +137,9 @@ class ContactsListViewModel
     private val contactsListener = object : ContactsListener {
         @WorkerThread
         override fun onContactsLoaded() {
-            Log.i("$TAG Contacts have been (re)loaded, updating list")
-            magicSearch.resetSearchCache()
-            favouritesMagicSearch.resetSearchCache()
-
-            applyFilter(
-                currentFilter,
-                domainFilter,
-                true
-            )
+            coreContext.postOnMainThread {
+                if (!searchSuspended) refreshContacts()
+            }
         }
 
         @WorkerThread
@@ -161,25 +159,16 @@ class ContactsListViewModel
             checkIfDefaultAccountOnDefaultDomain()
 
             coreContext.contactsManager.addListener(contactsListener)
-            magicSearch = core.createMagicSearch()
-            magicSearch.limitedSearch = true
-            magicSearch.searchLimit = corePreferences.magicSearchResultsLimit
-            magicSearch.addListener(magicSearchListener)
-
-            favouritesMagicSearch = core.createMagicSearch()
-            favouritesMagicSearch.limitedSearch = false
-            favouritesMagicSearch.addListener(favouritesMagicSearchListener)
-
-            applyFilter(currentFilter, domainFilter)
         }
+        refreshContacts()
     }
 
     @UiThread
     override fun onCleared() {
+        cancelContactSearch()
         coreContext.postOnCoreThread {
-            magicSearch.removeListener(magicSearchListener)
-            favouritesMagicSearch.removeListener(favouritesMagicSearchListener)
             coreContext.contactsManager.removeListener(contactsListener)
+            coreContext.core.friendsLists.forEach { it.removeListener(friendListListener) }
         }
         super.onCleared()
     }
@@ -187,24 +176,18 @@ class ContactsListViewModel
     @UiThread
     override fun filter() {
         isListFiltered.value = currentFilter.isNotEmpty()
-        coreContext.postOnCoreThread {
-            applyFilter(currentFilter, domainFilter)
-        }
+        requestSearch(immediately = currentFilter.isEmpty())
     }
 
     @UiThread
     fun applyCurrentDefaultAccountFilter() {
-        coreContext.postOnCoreThread {
-            domainFilter = corePreferences.contactsFilter
-            areAllContactsDisplayed.postValue(domainFilter.isEmpty())
-            checkIfDefaultAccountOnDefaultDomain()
-
-            applyFilter(currentFilter, domainFilter)
-        }
+        refreshContacts()
     }
 
     @UiThread
     fun changeContactsFilter(onlyLinphoneContacts: Boolean, onlySipContacts: Boolean) {
+        // Invalidate queued callbacks before the new domain reaches the SIP queue.
+        searchGeneration.incrementAndGet()
         coreContext.postOnCoreThread {
             domainFilter = if (onlyLinphoneContacts) {
                 corePreferences.defaultDomain
@@ -217,8 +200,8 @@ class ContactsListViewModel
             corePreferences.contactsFilter = domainFilter
             Log.i("$TAG Newly set filter is [${corePreferences.contactsFilter}]")
 
-            coreContext.postOnCoreThread {
-                applyFilter(currentFilter, domainFilter, filterChanged = true)
+            coreContext.postOnMainThread {
+                if (!searchSuspended) refreshContacts()
             }
         }
     }
@@ -233,7 +216,7 @@ class ContactsListViewModel
         }
     }
 
-    @UiThread
+    @AnyThread
     fun exportContactAsVCard(friend: Friend) {
         coreContext.postOnCoreThread {
             val vCard = friend.dumpVcard()
@@ -246,10 +229,11 @@ class ContactsListViewModel
                     "$fileName.vcf",
                     overrideExisting = true
                 )
-                viewModelScope.launch {
+                val exportedName = friend.name.orEmpty()
+                viewModelScope.launch(Dispatchers.IO) {
                     if (FileUtils.dumpStringToFile(vCard, file)) {
                         Log.i("$TAG vCard string saved as file in cache folder")
-                        vCardTerminatedEvent.postValue(Event(Pair(friend.name.orEmpty(), file)))
+                        vCardTerminatedEvent.postValue(Event(Pair(exportedName, file)))
                     } else {
                         Log.e("$TAG Failed to save vCard string as file in cache folder")
                     }
@@ -261,8 +245,20 @@ class ContactsListViewModel
     }
 
     @UiThread
+    fun exportContactAsVCard(model: ContactAvatarModel) {
+        coreContext.postOnCoreThread {
+            val friend = if (model.nativeContact != null) coreContext.contactsManager.resolveNativeFriend(model.id) else model.friend
+            if (friend != null) exportContactAsVCard(friend)
+        }
+    }
+
+    @UiThread
     fun toggleContactFavoriteFlag(contactModel: ContactAvatarModel) {
         coreContext.postOnCoreThread {
+            if (contactModel.nativeContact != null) {
+                coreContext.contactsManager.setNativeFavorite(contactModel.id, contactModel.isFavourite.value != true)
+                return@postOnCoreThread
+            }
             contactModel.friend.edit()
             val starred = !contactModel.friend.starred
             Log.i(
@@ -277,6 +273,7 @@ class ContactsListViewModel
     @UiThread
     fun deleteContact(contactModel: ContactAvatarModel) {
         coreContext.postOnCoreThread {
+            if (contactModel.isNative) return@postOnCoreThread
             Log.w("$TAG Removing friend [${contactModel.contactName}]")
             coreContext.contactsManager.contactRemoved(contactModel.friend)
             contactModel.friend.remove()
@@ -298,104 +295,197 @@ class ContactsListViewModel
         }
     }
 
+    @UiThread
+    fun refreshContacts() = requestSearch(immediately = true)
+
+    @UiThread
+    private fun requestSearch(immediately: Boolean) {
+        searchSuspended = false
+        val token = searchGeneration.incrementAndGet()
+        val filter = currentFilter
+        searchJob?.cancel()
+        searchInProgress.value = true
+        fetchInProgress.value = contactsList.value.isNullOrEmpty()
+        showResultsLimitReached.value = false
+        searchJob = viewModelScope.launch {
+            if (!immediately) delay(250)
+            coreContext.postOnCoreThread {
+                if (isCurrent(token)) startSearch(filter, token)
+            }
+        }
+    }
+
+    @UiThread
+    fun cancelContactSearch() {
+        searchSuspended = true
+        searchGeneration.incrementAndGet()
+        searchJob?.cancel()
+        coreContext.postOnCoreThread {
+            retireSearches()
+            regularRows.clear()
+            favoriteRows.clear()
+        }
+    }
+
+    private fun isCurrent(token: Long) = !searchSuspended && token == searchGeneration.get()
+
     @WorkerThread
-    private fun applyFilter(
-        filter: String,
-        domain: String,
-        filterChanged: Boolean = false
-    ) {
-        if (contactsList.value.orEmpty().isEmpty()) {
-            fetchInProgress.postValue(true)
-        }
-
-        if (previousFilter.isNotEmpty() && (
-            previousFilter.length > filter.length ||
-                (previousFilter.length == filter.length && previousFilter != filter)
-            )
-        ) {
-            magicSearch.resetSearchCache()
-        }
-        currentFilter = filter
-        previousFilter = filter
-
-        Log.i(
-            "$TAG Asking Magic search for contacts matching filter [$filter], domain [$domain] and in sources Friends/LDAP/CardDAV"
-        )
-        searchInProgress.postValue(filter.isNotEmpty())
-        showResultsLimitReached.postValue(false)
-
-        if (filter.isEmpty() && (favouritesList.value.orEmpty().isEmpty() || filterChanged)) {
-            favouritesMagicSearch.getContactsListAsync(
-                filter,
-                domain,
-                MagicSearch.Source.FavoriteFriends.toInt(),
-                MagicSearch.Aggregation.Friend
-            )
-        }
-
-        magicSearch.getContactsListAsync(
-            filter,
-            domain,
-            MagicSearch.Source.Friends.toInt() or MagicSearch.Source.LdapServers.toInt() or MagicSearch.Source.RemoteCardDAV.toInt(),
-            MagicSearch.Aggregation.Friend
-        )
+    private fun retireSearches() {
+        searches.forEach { (search, listener) -> search.removeListener(listener) }
+        searches = emptyList()
     }
 
     @WorkerThread
-    private fun processMagicSearchResults(results: Array<SearchResult>, favourites: Boolean) {
-        // Do not call destroy() on previous list items as they are cached and will be re-used
-        Log.i("$TAG Processing [${results.size}] results, favourites is [$favourites]")
+    private fun startSearch(filter: String, token: Long) {
+        retireSearches()
+        domainFilter = corePreferences.contactsFilter
+        areAllContactsDisplayed.postValue(domainFilter.isEmpty())
+        checkIfDefaultAccountOnDefaultDomain()
+        val directory = coreContext.contactsManager.nativeContactsSnapshot()
+        val domain = domainFilter
+        val hideEmpty = corePreferences.hideContactsWithoutPhoneNumberOrSipAddress
+        val firstName = corePreferences.sortContactsByFirstName
+        var nativeMatches: List<NativeContactValue>? = null
+        var regularResults: Array<SearchResult>? = null
+        var favoriteResults: Array<SearchResult>? = if (filter.isEmpty()) null else emptyArray()
 
-        val list = arrayListOf<ContactAvatarModel>()
-        val collator = Collator.getInstance(Locale.getDefault())
-        val hideEmptyContacts = corePreferences.hideContactsWithoutPhoneNumberOrSipAddress
+        fun publishAvailable() {
+            val native = nativeMatches ?: return
+            regularResults?.let { processMagicSearchResults(it, false, token, native) }
+            favoriteResults?.let { processMagicSearchResults(it, true, token, if (filter.isEmpty()) native else emptyList()) }
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            val matches = directory.search(filter, domain, hideEmpty, firstName) { !isCurrent(token) }
+            coreContext.postOnCoreThread {
+                if (isCurrent(token) && directory === coreContext.contactsManager.nativeContactsSnapshot()) {
+                    nativeMatches = matches
+                    publishAvailable()
+                }
+            }
+        }
 
-        for (result in results) {
-            val friend = result.friend
-            if (friend != null) {
-                if (hideEmptyContacts && friend.addresses.isEmpty() && friend.phoneNumbers.isEmpty()) {
-                    Log.i("$TAG Friend [${friend.name}] has no SIP address nor phone number, do not show it")
-                    continue
+        fun query(sources: Int, favorites: Boolean) {
+            val search = coreContext.core.createMagicSearch()
+            search.limitedSearch = true
+            search.searchLimit = Mango9ContactSearchLimits.SDK_RESULTS
+            val listener = object : MagicSearchListenerStub() {
+                override fun onSearchResultsReceived(magicSearch: MagicSearch) {
+                    if (isCurrent(token) && search.nativePointer == magicSearch.nativePointer) {
+                        if (favorites) favoriteResults = magicSearch.lastSearch else regularResults = magicSearch.lastSearch
+                        publishAvailable()
+                    }
                 }
 
-                if (friend.refKey.orEmpty().isEmpty()) {
-                    if (friend.vcard != null) {
-                        friend.vcard?.generateUniqueId()
-                        friend.refKey = friend.vcard?.uid
-                    } else {
-                        Log.w(
-                            "$TAG Friend [${friend.name}] found in SearchResults doesn't have a refKey, using name instead"
-                        )
-                        friend.refKey = friend.name
+                override fun onResultsLimitReached(magicSearch: MagicSearch, sourcesFlag: Int) {
+                    coreContext.postOnMainThread {
+                        if (isCurrent(token)) showResultsLimitReached.value = true
                     }
                 }
             }
-
-            val model = if (friend != null) {
-                coreContext.contactsManager.getContactAvatarModelForFriend(friend)
-            } else {
-                coreContext.contactsManager.getContactAvatarModelForAddress(result.address)
-            }
-            model.refreshSortingName()
-            val starred = friend?.starred == true
-            model.isFavourite.postValue(starred)
-
-            list.add(model)
+            searches = searches + (search to listener)
+            search.addListener(listener)
+            search.getContactsListAsync(filter, domainFilter, sources, MagicSearch.Aggregation.Friend)
         }
-
-        list.sortWith { model1, model2 ->
-            collator.compare(model1.getNameToUseForSorting(), model2.getNameToUseForSorting())
-        }
-
-        searchInProgress.postValue(false)
-        if (favourites) {
-            favouritesList.postValue(list)
+        query(MagicSearch.Source.Friends.toInt() or MagicSearch.Source.LdapServers.toInt() or MagicSearch.Source.RemoteCardDAV.toInt(), false)
+        if (filter.isEmpty()) {
+            query(MagicSearch.Source.FavoriteFriends.toInt(), true)
         } else {
-            contactsList.postValue(list)
-            firstLoad = false
+            publishAvailable()
         }
+    }
 
-        Log.i("$TAG Processed [${results.size}] results into [${list.size} contacts]")
+    @WorkerThread
+    private fun processMagicSearchResults(results: Array<SearchResult>, favorites: Boolean, token: Long, nativeResults: List<NativeContactValue>) {
+        if (!isCurrent(token)) return
+        val hideEmpty = corePreferences.hideContactsWithoutPhoneNumberOrSipAddress
+        val seen = hashSetOf<String>()
+        val firstName = corePreferences.sortContactsByFirstName
+        val candidates = results.mapNotNull { result ->
+            val friend = result.friend
+            val address = if (friend == null) result.address else null
+            if (friend != null && hideEmpty && friend.phoneNumbers.isEmpty() && friend.address == null) return@mapNotNull null
+            val key = friend?.let { "friend:${it.nativePointer}" } ?: address?.asStringUriOnly() ?: return@mapNotNull null
+            if (!seen.add(key)) return@mapNotNull null
+            val preferredName = if (corePreferences.sortContactsByFirstName) friend?.firstName else friend?.lastName
+            // Elvis operands are lazy; sequenceOf(...) would eagerly allocate
+            // a JNI Vcard/Address wrapper for every contact just to sort names.
+            val name = preferredName?.takeIf { it.isNotBlank() }
+                ?: friend?.name?.takeIf { it.isNotBlank() }
+                ?: friend?.organization?.takeIf { it.isNotBlank() }
+                ?: address?.displayName?.takeIf { it.isNotBlank() }
+                ?: address?.username.orEmpty()
+            ContactCandidate(friend, address, name)
+        }
+        val rows = if (favorites) favoriteRows else regularRows
+        val request = ++rows.sortRequest
+        viewModelScope.launch(Dispatchers.Default) {
+            val native = nativeResults.asSequence().filter { !favorites || coreContext.contactsManager.nativeFavorite(it) }
+                .map { ContactCandidate(null, null, it.sortName(firstName), it) }.toList()
+            val collator = Collator.getInstance(Locale.getDefault())
+            // Only captured strings are compared off the core thread, never SDK properties.
+            val ordered = (native + candidates).sortedWith { a, b -> collator.compare(a.sortName, b.sortName) }
+            coreContext.postOnCoreThread {
+                if (isCurrent(token) && request == rows.sortRequest) {
+                    rows.clear()
+                    rows.generation = token
+                    appendCandidates(rows, rows.page.replace(ordered))
+                    publishRows(rows, favorites, token)
+                }
+            }
+        }
+    }
+
+    @WorkerThread
+    private fun appendCandidates(rows: ContactRows, candidates: List<ContactCandidate>) {
+        candidates.forEach { candidate ->
+            if (candidate.native != null) {
+                rows.models.add(ContactAvatarModel(candidate.native, coreContext.contactsManager.nativeFavorite(candidate.native)))
+                return@forEach
+            }
+            // Own these models explicitly; address-cache avatars belong to ContactsManager.
+            val friend = candidate.friend ?: coreContext.core.createFriend().apply {
+                address = candidate.address
+                name = candidate.sortName
+            }
+            // The existing detail/editor route uses a ref key. Assign it lazily
+            // for displayed directory rows, never use a potentially duplicate name.
+            if (friend.refKey.isNullOrBlank()) {
+                friend.vcard?.generateUniqueId()
+                friend.refKey = friend.vcard?.uid?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+            }
+            rows.models.add(ContactAvatarModel(friend))
+        }
+    }
+
+    @UiThread
+    fun revealMoreContacts(near: Int, favorites: Boolean = false) {
+        val token = searchGeneration.get()
+        coreContext.postOnCoreThread {
+            val rows = if (favorites) favoriteRows else regularRows
+            if (isCurrent(token) && rows.generation == token) {
+                val additional = rows.page.reveal(near)
+                if (additional.isNotEmpty()) {
+                    appendCandidates(rows, additional)
+                    publishRows(rows, favorites, token)
+                }
+            }
+        }
+    }
+
+    @WorkerThread
+    private fun publishRows(rows: ContactRows, favorites: Boolean, token: Long) {
+        val snapshot = ArrayList(rows.models)
+        coreContext.postOnMainThread {
+            if (isCurrent(token)) {
+                if (favorites) {
+                    favouritesList.value = snapshot
+                } else {
+                    contactsList.value = snapshot
+                    searchInProgress.value = false
+                    fetchInProgress.value = false
+                }
+            }
+        }
     }
 
     @WorkerThread

@@ -17,7 +17,6 @@
         <item quantity="few">%s soubory se nahrávají</item>
         <item quantity="other">%s souborů se nahrává</item>
     </plurals>
-    <string name="assistant_qr_code_invalid_toast">Neplatný QR kód!</string>
     <string name="assistant_login_address_without_username_toast">SIP adrese neobsahuje uživatelské jméno!</string>
     <string name="help_about_contribute_translations_title">Příspět do překladu &appName;</string>
     <string name="help_troubleshooting_print_logs_in_logcat">Zapisovat logy do Logcatu</string>
@@ -201,7 +200,6 @@
     <string name="assistant_dialog_confirm_phone_number_title">Potvrdit telefonní číslo</string>
     <string name="assistant_dialog_confirm_phone_number_message">Jste si jistý(á), že vaše telefonní číslo je %s?</string>
     <string name="assistant_account_login">Přihlásit se</string>
-    <string name="assistant_scan_qr_code">Naskenovat QR kód</string>
     <string name="assistant_login_third_party_sip_account">Použít SIP účet třetí strany</string>
     <string name="assistant_login_third_party_sip_account_title">SIP účet třetí strany</string>
     <string name="assistant_login_using_single_sign_on">Jednotné přihlášení (SSO)</string>

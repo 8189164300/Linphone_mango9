@@ -31,6 +31,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import org.linphone.R
+import org.linphone.mango9.Mango9ContactHeading
 import org.linphone.databinding.GenericAddressPickerContactListCellBinding
 import org.linphone.databinding.GenericAddressPickerConversationListCellBinding
 import org.linphone.databinding.GenericAddressPickerListDecorationBinding
@@ -55,6 +56,8 @@ class ConversationsContactsAndSuggestionsListAdapter :
     val onClickedEvent: MutableLiveData<Event<ConversationContactOrSuggestionModel>> by lazy {
         MutableLiveData()
     }
+
+    var onNearEnd: ((Int) -> Unit)? = null
 
     override fun displayHeaderForPosition(position: Int): Boolean {
         if (position == 0) { // Always start by a header
@@ -89,7 +92,7 @@ class ConversationsContactsAndSuggestionsListAdapter :
         val model = getItem(position)
         return if (model.conversationId.isNotEmpty()) {
             CONVERSATION_TYPE
-        } else if (model.friend != null) {
+        } else if (model.isFriend) {
             if (model.starred) {
                 FAVORITE_TYPE
             } else {
@@ -159,6 +162,7 @@ class ConversationsContactsAndSuggestionsListAdapter :
             CONTACT_TYPE, FAVORITE_TYPE -> (holder as ContactViewHolder).bind(getItem(position))
             else -> (holder as SuggestionViewHolder).bind(getItem(position))
         }
+        if (position >= itemCount - 10) onNearEnd?.invoke(position)
     }
 
     class ConversationViewHolder(
@@ -183,13 +187,13 @@ class ConversationsContactsAndSuggestionsListAdapter :
                 model = conversationContactOrSuggestionModel
 
                 val previousItem = bindingAdapterPosition - 1
-                val previousLetter = if (previousItem >= 0) {
-                    getItem(previousItem).name[0].toString()
+                val previousLetter = if (previousItem in currentList.indices) {
+                    Mango9ContactHeading.of(getItem(previousItem).name)
                 } else {
                     ""
                 }
 
-                val currentLetter = conversationContactOrSuggestionModel.name[0].toString()
+                val currentLetter = Mango9ContactHeading.of(conversationContactOrSuggestionModel.name)
                 val displayLetter = previousLetter.isEmpty() || currentLetter != previousLetter
                 firstContactStartingByThatLetter = displayLetter
 

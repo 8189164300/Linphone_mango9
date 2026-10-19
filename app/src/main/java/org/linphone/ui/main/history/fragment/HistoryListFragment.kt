@@ -118,6 +118,7 @@ class HistoryListFragment : AbstractMainFragment() {
         super.onViewCreated(view, savedInstanceState)
 
         listViewModel = ViewModelProvider(this)[HistoryListViewModel::class.java]
+        adapter.onNearEnd = listViewModel::revealMoreContacts
 
         binding.lifecycleOwner = viewLifecycleOwner
         binding.viewModel = listViewModel
@@ -311,6 +312,13 @@ class HistoryListFragment : AbstractMainFragment() {
         )
     }
 
+    override fun onDestroyView() {
+        adapter.onNearEnd = null
+        binding.historyList.adapter = null
+        listViewModel.cancelContactSearch()
+        super.onDestroyView()
+    }
+
     override fun onPause() {
         super.onPause()
 
@@ -325,10 +333,7 @@ class HistoryListFragment : AbstractMainFragment() {
         sharedViewModel.resetMissedCallsCountEvent.value = Event(true)
         sharedViewModel.refreshDrawerMenuAccountsListEvent.value = Event(false)
 
-        if (shouldRefreshDataInOnResume()) {
-            Log.i("$TAG Keep app alive setting is enabled, refreshing view just in case")
-            listViewModel.filter()
-        }
+        listViewModel.filter()
     }
 
     private fun copyNumberOrAddressToClipboard(address: Address?) {

@@ -21,6 +21,7 @@ package org.linphone.utils
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.PorterDuff
 import android.graphics.drawable.AnimatedVectorDrawable
 import android.text.Editable
@@ -36,9 +37,7 @@ import android.widget.ImageView
 import android.widget.SeekBar
 import androidx.annotation.ColorInt
 import androidx.annotation.ColorRes
-import androidx.annotation.DimenRes
 import androidx.annotation.UiThread
-import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatEditText
 import androidx.appcompat.widget.AppCompatTextView
 import androidx.constraintlayout.widget.ConstraintLayout
@@ -53,10 +52,12 @@ import androidx.databinding.ViewDataBinding
 import androidx.emoji2.emojipicker.EmojiPickerView
 import androidx.emoji2.emojipicker.EmojiViewItem
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.findViewTreeLifecycleOwner
 import androidx.vectordrawable.graphics.drawable.AnimatedVectorDrawableCompat
 import coil3.dispose
 import coil3.load
 import coil3.request.placeholder
+import coil3.request.error
 import coil3.request.transformations
 import coil3.size.Dimension
 import coil3.transform.CircleCropTransformation
@@ -67,6 +68,7 @@ import org.linphone.BR
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.R
 import org.linphone.contacts.AbstractAvatarModel
+import org.linphone.contacts.ContactAvatarDrawable
 import org.linphone.core.ConsolidatedPresence
 import org.linphone.core.tools.Log
 import org.linphone.ui.NotoSansFont
@@ -82,9 +84,17 @@ private const val TAG = "[Data Binding Utils]"
 
 @BindingAdapter("inflatedLifecycleOwner")
 fun setInflatedViewStubLifecycleOwner(view: View, enable: Boolean) {
-    val binding = DataBindingUtil.bind<ViewDataBinding>(view)
-    // This is a bit hacky...
-    binding?.lifecycleOwner = view.context as AppCompatActivity
+    val binding = DataBindingUtil.bind<ViewDataBinding>(view) ?: return
+    if (!enable) { binding.lifecycleOwner = null; return }
+    view.findViewTreeLifecycleOwner()?.let { binding.lifecycleOwner = it; return }
+    // Stubs may inflate before attachment, and themed contexts are not Activities.
+    var context: Context? = view.context
+    val visited = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Context, Boolean>())
+    while (context != null && visited.add(context)) {
+        if (context is LifecycleOwner) { binding.lifecycleOwner = context; return }
+        context = (context as? ContextWrapper)?.baseContext
+    }
+    binding.lifecycleOwner = null
 }
 
 @UiThread
@@ -424,87 +434,54 @@ fun ImageView.loadCircleFileWithCoil(file: String?) {
 }
 
 @UiThread
-@BindingAdapter("coilAvatar")
-fun ImageView.loadAvatarWithCoil(model: AbstractAvatarModel?) {
-    loadContactPictureWithCoil(this, model)
-}
-
-@UiThread
-@BindingAdapter("coilBubbleAvatar")
-fun ImageView.loadBubbleAvatarWithCoil(model: AbstractAvatarModel?) {
-    val size = R.dimen.avatar_bubble_size
-    val initialsSize = R.dimen.avatar_initials_bubble_text_size
-    loadContactPictureWithCoil(this, model, size = size, textSize = initialsSize)
-}
-
-@UiThread
-@BindingAdapter("coilBigAvatar")
-fun ImageView.loadBigAvatarWithCoil(model: AbstractAvatarModel?) {
-    val size = R.dimen.avatar_big_size
-    val initialsSize = R.dimen.avatar_initials_big_text_size
-    loadContactPictureWithCoil(this, model, size = size, textSize = initialsSize)
-}
-
-@UiThread
-@BindingAdapter("coilHugeAvatar")
-fun ImageView.loadCallAvatarWithCoil(model: AbstractAvatarModel?) {
-    val size = R.dimen.avatar_in_call_size
-    val initialsSize = R.dimen.avatar_initials_call_text_size
-    loadContactPictureWithCoil(this, model, size = size, textSize = initialsSize)
-}
-
-@SuppressLint("ResourceType")
-private fun loadContactPictureWithCoil(
-    imageView: ImageView,
+@BindingAdapter(
+    value = [
+        "coilAvatar", "avatarInitials", "avatarPicture", "avatarSkipInitials", "avatarConference", "avatarConversation",
+        "avatarDefaultConference", "avatarDefaultConversation", "avatarSize", "avatarTextSize"
+    ],
+    requireAll = false,
+)
+fun ImageView.loadAvatarWithCoil(
     model: AbstractAvatarModel?,
-    @DimenRes size: Int = 0,
-    @DimenRes textSize: Int = 0
+    initials: String? = model?.initials?.value,
+    picture: String? = model?.picturePath?.value,
+    skipInitials: Boolean? = model?.skipInitials?.value,
+    conference: Boolean? = model?.forceConferenceIcon?.value,
+    conversation: Boolean? = model?.forceConversationIcon?.value,
+    defaultConference: Boolean? = model?.defaultToConferenceIcon?.value,
+    defaultConversation: Boolean? = model?.defaultToConversationIcon?.value,
+    size: Float = 0f,
+    textSize: Float = 0f,
 ) {
-    imageView.dispose()
-
-    val context = imageView.context
-    if (model != null) {
-        if (model.forceConferenceIcon.value == true) {
-            imageView.load(R.drawable.inset_video_conference)
-            return
-        } else if (model.forceConversationIcon.value == true) {
-            imageView.load(R.drawable.inset_users_three)
-            return
-        }
-
-        val image = model.picturePath.value.orEmpty()
-        if (image.isNotEmpty()) {
-            imageView.load(image) {
-                transformations(CircleCropTransformation())
-                listener(
-                    onError = { _, _ ->
-                        imageView.load(getErrorImageLoader(context, model, size, textSize))
-                    }
-                )
-            }
-        } else {
-            imageView.load(getErrorImageLoader(context, model, size, textSize))
-        }
+    dispose()
+    setImageDrawable(null)
+    if (model == null) return
+    if (conference == true || conversation == true) {
+        setImageResource(if (conference == true) R.drawable.inset_video_conference else R.drawable.inset_users_three)
+        return
     }
-}
-
-private fun getErrorImageLoader(
-    context: Context,
-    model: AbstractAvatarModel,
-    size: Int,
-    textSize: Int
-): Any {
-    val initials = model.initials.value.orEmpty()
-    return if (initials.isEmpty() || initials == "+" || model.skipInitials.value == true) {
-        if (model.defaultToConferenceIcon.value == true) {
-            R.drawable.inset_video_conference
-        } else if (model.defaultToConversationIcon.value == true) {
-            R.drawable.inset_users_three
-        } else {
-            R.drawable.inset_user_circle
-        }
+    val edge = (size.takeIf { it.isFinite() && it > 0 } ?: resources.getDimension(R.dimen.avatar_list_cell_size))
+        .toInt().coerceIn(1, 1024)
+    val font = textSize.takeIf { it.isFinite() && it > 0 } ?: resources.getDimension(R.dimen.avatar_initials_text_size)
+    val label = initials.orEmpty().takeUnless { skipInitials == true || it == "+" }.orEmpty()
+    val fallback = if (label.isBlank() && (defaultConference == true || defaultConversation == true)) {
+        androidx.core.content.ContextCompat.getDrawable(
+            context, if (defaultConference == true) R.drawable.inset_video_conference else R.drawable.inset_users_three,
+        )
     } else {
-        ImageUtils.generatedAvatarIfNeededAndReturnPath(context, initials)
+        ContactAvatarDrawable(context, label, edge, font)
+    }
+    if (picture.isNullOrBlank()) {
+        setImageDrawable(fallback)
+    } else {
+        // Keep the fallback in the same Coil request. A late failure must never
+        // start a second request against a view rebound to a different contact.
+        load(picture) {
+            size(edge)
+            placeholder(fallback)
+            error(fallback)
+            transformations(CircleCropTransformation())
+        }
     }
 }
 
@@ -656,7 +633,13 @@ interface EmojiPickedListener {
 
 @SuppressLint("ClickableViewAccessibility")
 @BindingAdapter("onTouchListener")
-fun View.setTouchListener(listener: TouchListener) {
+fun View.setTouchListener(listener: TouchListener?) {
+    // Binding expressions are initially null before their model is assigned,
+    // and can become null again when a recycled view loses its model.
+    if (listener == null) {
+        setOnTouchListener(null)
+        return
+    }
     setOnTouchListener { view, event ->
         return@setOnTouchListener when (event.action) {
             MotionEvent.ACTION_DOWN -> listener.onPressed(view)

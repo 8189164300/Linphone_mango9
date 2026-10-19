@@ -19,7 +19,9 @@
         android:tag="@{digit}"
         onTouchListener="@{model.touchListener}"
         android:layout_width="@dimen/call_dtmf_button_size"
-        android:layout_height="@dimen/call_dtmf_button_size"
+        android:layout_height="wrap_content"
+        android:minHeight="@dimen/call_dtmf_button_size"
+        android:paddingVertical="6dp"
         android:background="@drawable/in_call_numpad_button_background">
 
         <androidx.appcompat.widget.AppCompatTextView
@@ -30,7 +32,7 @@
             android:layout_height="wrap_content"
             android:textSize="25sp"
             android:includeFontPadding="false"
-            android:textColor="@color/bc_white"
+            android:textColor="@color/mango9_call_ink"
             app:layout_constraintVertical_chainStyle="packed"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toTopOf="@id/letters_label"
@@ -45,7 +47,7 @@
             android:layout_height="wrap_content"
             android:textSize="14sp"
             android:includeFontPadding="false"
-            android:textColor="@color/bc_white"
+            android:textColor="@color/mango9_call_ink"
             app:layout_constraintTop_toBottomOf="@id/digit_label"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"

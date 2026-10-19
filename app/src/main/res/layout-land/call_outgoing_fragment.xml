@@ -20,7 +20,7 @@
         <androidx.constraintlayout.widget.ConstraintLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="@color/gray_900">
+            android:background="@color/mango9_call_canvas">
 
             <ImageView
                 android:id="@+id/call_direction_icon"
@@ -35,7 +35,7 @@
                 app:layout_constraintBottom_toBottomOf="@id/call_direction_label"/>
 
             <androidx.appcompat.widget.AppCompatTextView
-                style="@style/call_header_style"
+                style="@style/Mango9CallHeader"
                 android:id="@+id/call_direction_label"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -75,7 +75,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="15dp"
                     android:text="@{viewModel.displayedName, default=`John Doe`}"
-                    android:textColor="@color/bc_white"
+                    android:textColor="@color/mango9_call_ink"
                     android:textSize="22sp" />
 
                 <androidx.appcompat.widget.AppCompatTextView
@@ -84,7 +84,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@{viewModel.displayedAddress, default=`sip:johndoe@proxy.mango9.com`}"
-                    android:textColor="@color/bc_white"
+                    android:textColor="@color/mango9_call_ink"
                     android:textSize="14sp"
                     android:visibility="@{viewModel.hideSipAddresses ? View.GONE : View.VISIBLE}" />
 
@@ -101,7 +101,7 @@
                 android:src="@drawable/camera_rotate"
                 android:contentDescription="@string/content_description_change_camera"
                 android:visibility="gone"
-                app:tint="@color/bc_white"
+                app:tint="@color/mango9_call_ink"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintEnd_toEndOf="parent" />
 
@@ -110,7 +110,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:indeterminate="true"
-                app:indicatorColor="@color/bc_white"
+                app:indicatorColor="@color/mango9_call_ink"
                 app:indicatorSize="28dp"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toStartOf="@id/avatar"
@@ -152,8 +152,8 @@
                 android:src="@drawable/numpad"
                 android:contentDescription="@string/content_description_show_numpad"
                 android:visibility="@{viewModel.isOutgoingEarlyMedia ? View.VISIBLE : View.GONE, default=gone}"
-                app:tint="@color/in_call_button_tint_color"
-                app:backgroundTint="@color/in_call_button_background_tint_color"
+                app:tint="@color/mango9_call_control_tint"
+                app:backgroundTint="@color/mango9_call_control"
                 app:shapeAppearanceOverlay="@style/rounded"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintBottom_toTopOf="@id/bottom_bar" />

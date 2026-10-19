@@ -116,6 +116,8 @@ class AccountModel
     private val lineIdentities = Mango9LineIdentityStore(coreContext.context)
     private val mango9Sessions = Mango9SessionStore(coreContext.context)
 
+    @Volatile private var destroyed = false
+
     private val coreListener = object : CoreListenerStub() {
         @WorkerThread
         override fun onChatRoomRead(core: Core, chatRoom: ChatRoom) {
@@ -151,6 +153,8 @@ class AccountModel
 
     @WorkerThread
     fun destroy() {
+        if (destroyed) return
+        destroyed = true
         coreContext.core.removeListener(coreListener)
         account.removeListener(accountListener)
     }
@@ -158,6 +162,7 @@ class AccountModel
     @UiThread
     fun setAsDefault() {
         coreContext.postOnCoreThread { core ->
+            if (destroyed || core.accountList.none { it === account }) return@postOnCoreThread
             if (core.defaultAccount != account) {
                 core.defaultAccount = account
 
@@ -172,41 +177,45 @@ class AccountModel
                     }
                 }
             }
+            isDefault.postValue(core.defaultAccount === account)
         }
 
-        isDefault.value = true
     }
 
     @UiThread
     fun openMenu() {
-        onMenuClicked?.invoke(this)
+        if (!destroyed) onMenuClicked?.invoke(this)
     }
 
     @UiThread
     fun refreshRegister() {
         coreContext.postOnCoreThread { core ->
+            if (destroyed || core.accountList.none { it === account }) return@postOnCoreThread
             core.refreshRegisters()
         }
     }
 
     @UiThread
     fun callVoicemailUri() {
-        coreContext.postOnCoreThread {
+        coreContext.postOnCoreThread { core ->
+            if (destroyed || core.accountList.none { it === account }) return@postOnCoreThread
             val voicemail = account.params.voicemailAddress
             if (voicemail != null) {
                 Log.i("$TAG Calling voicemail address [${voicemail.asStringUriOnly()}]")
-                coreContext.startAudioCall(voicemail)
+                coreContext.startAudioCall(voicemail, localAddress = account.params.identityAddress)
             }
         }
     }
 
     @WorkerThread
     fun computeNotificationsCount() {
+        if (destroyed) return
         notificationsCount.postValue(account.unreadChatMessageCount + account.missedCallsCount)
     }
 
     @WorkerThread
     fun updateRegistrationState() {
+        if (destroyed) return
         val state = if (account.state == RegistrationState.None) {
             // If the account has been disabled manually, use the Cleared status instead of None
             if (!account.params.isRegisterEnabled) {
@@ -277,6 +286,7 @@ class AccountModel
 
     @WorkerThread
     private fun update() {
+        if (destroyed) return
         Log.i(
             "$TAG Refreshing info for account [${account.params.identityAddress?.asStringUriOnly()}]"
         )
@@ -286,6 +296,25 @@ class AccountModel
 
         val name = LinphoneUtils.getDisplayName(account.params.identityAddress)
         displayName.postValue(name)
+        refreshMango9Identity()
+
+        initials.postValue(AppUtils.getInitials(name))
+
+        val pictureUri = account.params.pictureUri.orEmpty()
+        if (pictureUri != picturePath.value.orEmpty()) {
+            picturePath.postValue(pictureUri)
+            Log.d("$TAG Account picture URI is [$pictureUri]")
+        }
+
+        isDefault.postValue(coreContext.core.defaultAccount == account)
+        computeNotificationsCount()
+
+        updateRegistrationState()
+    }
+
+    @WorkerThread
+    fun refreshMango9Identity() {
+        if (destroyed) return
         val storedLine = lineIdentities.load(identity)
         lineIdentityLabel.postValue(
             Mango9LineIdentityStore.accountLineLabel(
@@ -302,18 +331,6 @@ class AccountModel
             )
         )
 
-        initials.postValue(AppUtils.getInitials(name))
-
-        val pictureUri = account.params.pictureUri.orEmpty()
-        if (pictureUri != picturePath.value.orEmpty()) {
-            picturePath.postValue(pictureUri)
-            Log.d("$TAG Account picture URI is [$pictureUri]")
-        }
-
-        isDefault.postValue(coreContext.core.defaultAccount == account)
-        computeNotificationsCount()
-
-        updateRegistrationState()
     }
 }
 

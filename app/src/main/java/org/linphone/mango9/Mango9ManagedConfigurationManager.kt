@@ -14,12 +14,13 @@ import android.content.RestrictionsManager
 import android.content.SharedPreferences
 import android.os.UserManager
 import androidx.core.content.ContextCompat
-import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import java.io.StringReader
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import javax.xml.parsers.SAXParserFactory
 import org.linphone.core.Config
 import org.linphone.core.Core
@@ -184,7 +185,7 @@ internal object Mango9ManagedConfigBackupCodec {
 
     fun decode(rawValue: String): Mango9ManagedConfigEntryBackup? {
         val fields = rawValue.split('.', limit = 6)
-        if (fields.size != 6) return null
+        if (fields.size != 6 || listOf(2, 4, 5).any { fields[it] !in setOf("0", "1") }) return null
         return try {
             val section = decodeText(fields[0])
             val key = decodeText(fields[1])
@@ -226,7 +227,42 @@ internal object Mango9ManagedConfigBackupCodec {
     private fun Boolean.flag(): String = if (this) "1" else "0"
 }
 
-class Mango9ManagedConfigurationManager(context: Context) {
+/** Cache successful crypto opens only; never treat an unavailable key as an empty store. */
+internal class Mango9ManagedPreferenceStore(
+    private val raw: SharedPreferences,
+    private val openEncrypted: () -> SharedPreferences?,
+) {
+    private var opened: SharedPreferences? = null
+
+    @Synchronized
+    fun isEmpty(): Boolean = opened?.all?.isEmpty()
+        ?: raw.all.keys.none { it !in KEYSETS }
+
+    @Synchronized
+    fun open(): SharedPreferences? = opened ?: openEncrypted()?.also { opened = it }
+
+    private companion object {
+        // Pinned AndroidX security-crypto metadata, not user settings. Do not delete it.
+        val KEYSETS = setOf(
+            "__androidx_security_crypto_encrypted_prefs_key_keyset__",
+            "__androidx_security_crypto_encrypted_prefs_value_keyset__",
+        )
+    }
+}
+
+private enum class ManagedTransition { Unchanged, Changed, Failed }
+
+class Mango9ManagedConfigurationManager internal constructor(
+    context: Context,
+    private val preferenceStore: Mango9ManagedPreferenceStore,
+    private val snapshotSource: () -> Mango9ManagedConfigurationSnapshot?,
+) {
+    constructor(context: Context) : this(
+        context,
+        createPreferenceStore(context.applicationContext),
+        { readSnapshot(context.applicationContext) },
+    )
+
     companion object {
         private const val TAG = "[Mango9 Managed Configuration]"
         private const val PREFERENCES_FILE = "mango9_managed_configuration_secrets"
@@ -240,30 +276,49 @@ class Mango9ManagedConfigurationManager(context: Context) {
         private const val KEY_BASELINE_ROOT_CA = "core.baseline_root_ca"
         private const val KEY_BASELINE_CONFIG_URI_PRESENT = "core.baseline_config_uri_present"
         private const val KEY_BASELINE_CONFIG_URI = "core.baseline_config_uri"
-    }
 
-    private val appContext = context.applicationContext
-    private val restrictionsManager =
-        appContext.getSystemService(Context.RESTRICTIONS_SERVICE) as RestrictionsManager
-    private val lock = Any()
-
-    private val securePreferences: SharedPreferences? by lazy {
-        try {
-            val masterKey = MasterKey.Builder(appContext, MASTER_KEY_ALIAS)
+        private fun createPreferenceStore(context: Context) = Mango9ManagedPreferenceStore(
+            context.getSharedPreferences(PREFERENCES_FILE, Context.MODE_PRIVATE),
+        ) {
+            val masterKey = MasterKey.Builder(context, MASTER_KEY_ALIAS)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
             EncryptedSharedPreferences.create(
-                appContext,
-                PREFERENCES_FILE,
-                masterKey,
+                context, PREFERENCES_FILE, masterKey,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
             )
-        } catch (error: Exception) {
-            Log.e("$TAG Secure state unavailable; managed configuration will not be applied: $error")
-            null
+        }
+
+        private fun readSnapshot(context: Context): Mango9ManagedConfigurationSnapshot? {
+            val restrictions = (context.getSystemService(Context.RESTRICTIONS_SERVICE) as RestrictionsManager)
+                .applicationRestrictions
+            if (restrictions.getBoolean(UserManager.KEY_RESTRICTIONS_PENDING, false)) {
+                Log.w("$TAG Managed restrictions are pending; keeping the last known configuration")
+                return null
+            }
+            return Mango9ManagedConfigurationSnapshot.from(
+                mapOf(
+                    Mango9ManagedConfigurationSnapshot.XML_CONFIG_KEY to
+                        restrictions.getString(Mango9ManagedConfigurationSnapshot.XML_CONFIG_KEY),
+                    Mango9ManagedConfigurationSnapshot.ROOT_CA_KEY to
+                        restrictions.getString(Mango9ManagedConfigurationSnapshot.ROOT_CA_KEY),
+                    Mango9ManagedConfigurationSnapshot.CONFIG_URI_KEY to
+                        restrictions.getString(Mango9ManagedConfigurationSnapshot.CONFIG_URI_KEY),
+                ),
+            )
         }
     }
+
+    private val appContext = context.applicationContext
+    private val lock = Any()
+    private val receiverLock = Any()
+    private val refreshQueued = AtomicBoolean(false)
+    private val refreshRevision = AtomicLong()
+    private var restartRequired = false
+    private var appliedCore: Core? = null
+    private var appliedCoreSignature: String? = null
+    private var xmlNeedsRetry = false
 
     @Volatile
     private var coreContext: CoreContext? = null
@@ -287,28 +342,32 @@ class Mango9ManagedConfigurationManager(context: Context) {
     }
 
     fun prepareConfiguration(config: Config) {
-        val snapshot = readSnapshot() ?: return
+        val snapshot = readCurrentSnapshot() ?: return
         synchronized(lock) {
-            applyXmlTransition(config, snapshot)
-            currentSnapshotSignature = snapshot.signature
+            if (transition { applyXmlTransition(config, snapshot) } == ManagedTransition.Failed) {
+                currentSnapshotSignature = null
+            }
+            // Preparing XML does not mean rootCa/configUri were applied to a Core.
         }
     }
 
     fun applyBeforeCoreStart(core: Core) {
-        val snapshot = readSnapshot() ?: return
+        val snapshot = readCurrentSnapshot() ?: return
         synchronized(lock) {
-            if (currentSnapshotSignature != snapshot.signature) {
-                applyXmlTransition(core.config, snapshot)
+            val xml = transition { applyXmlTransition(core.config, snapshot) }
+            val settings = transition { applyCoreTransition(core, snapshot) }
+            if (xml != ManagedTransition.Failed && settings != ManagedTransition.Failed) {
+                currentSnapshotSignature = snapshot.signature
+            } else {
+                currentSnapshotSignature = null
             }
-            applyCoreTransition(core, snapshot)
-            currentSnapshotSignature = snapshot.signature
         }
     }
 
     fun onForeground() {
         refreshFromRestrictions()
         if (receiverRegistered) return
-        synchronized(lock) {
+        synchronized(receiverLock) {
             if (receiverRegistered) return
             ContextCompat.registerReceiver(
                 appContext,
@@ -323,7 +382,7 @@ class Mango9ManagedConfigurationManager(context: Context) {
 
     fun onBackground() {
         if (!receiverRegistered) return
-        synchronized(lock) {
+        synchronized(receiverLock) {
             if (!receiverRegistered) return
             try {
                 appContext.unregisterReceiver(restrictionsReceiver)
@@ -336,147 +395,241 @@ class Mango9ManagedConfigurationManager(context: Context) {
     }
 
     private fun refreshFromRestrictions() {
-        val snapshot = readSnapshot() ?: return
-        if (snapshot.signature == currentSnapshotSignature) return
         val context = coreContext ?: return
-        context.postOnCoreThreadWhenAvailableForHeavyTask(
-            { core ->
-                synchronized(lock) {
-                    if (snapshot.signature == currentSnapshotSignature) return@synchronized
-                    val xmlChanged = applyXmlTransition(core.config, snapshot)
-                    val coreChanged = applyCoreTransition(core, snapshot)
-                    currentSnapshotSignature = snapshot.signature
-                    if ((xmlChanged || coreChanged) && core.globalState == GlobalState.On) {
-                        Log.i("$TAG Restarting Core after a managed configuration change")
-                        core.stop()
-                        val result = core.start()
-                        if (result != 0) {
-                            Log.e("$TAG Core restart failed with status [$result]")
-                        }
-                    }
-                }
-            },
-            "apply Mango9 managed configuration",
-        )
+        requestRefresh { action ->
+            context.postOnCoreThreadWhenAvailableForHeavyTask(action, "apply Mango9 managed configuration")
+        }
     }
 
-    private fun readSnapshot(): Mango9ManagedConfigurationSnapshot? {
-        val restrictions = restrictionsManager.applicationRestrictions
-        if (restrictions.getBoolean(UserManager.KEY_RESTRICTIONS_PENDING, false)) {
-            Log.w("$TAG Managed restrictions are pending; keeping the last known configuration")
-            return null
+    internal fun requestRefresh(enqueue: ((Core) -> Unit) -> Unit) {
+        // Foreground/broadcast callbacks must never wait behind crypto or SDK work.
+        refreshRevision.incrementAndGet()
+        if (!refreshQueued.compareAndSet(false, true)) return
+        try {
+            enqueue { core ->
+                val revision = refreshRevision.get()
+                try {
+                synchronized(lock) {
+                    try {
+                        // Calls can defer this task. Read restrictions now, not the stale queued payload.
+                        val snapshot = readCurrentSnapshot() ?: return@synchronized
+                        if (snapshot.signature == currentSnapshotSignature && !restartRequired) return@synchronized
+                        val xml = transition { applyXmlTransition(core.config, snapshot) }
+                        val settings = transition { applyCoreTransition(core, snapshot) }
+                        if ((xml == ManagedTransition.Changed || settings == ManagedTransition.Changed) &&
+                            core.globalState == GlobalState.On
+                        ) {
+                            restartRequired = true
+                        }
+                        if (restartRequired) {
+                            Log.i("$TAG Restarting Core after a managed configuration change")
+                            if (core.globalState == GlobalState.On) core.stop()
+                            restartRequired = core.start() != 0
+                            if (restartRequired) Log.e("$TAG Core restart failed; retry remains pending")
+                        }
+                        if (xml != ManagedTransition.Failed && settings != ManagedTransition.Failed && !restartRequired) {
+                            currentSnapshotSignature = snapshot.signature
+                        } else {
+                            currentSnapshotSignature = null
+                        }
+                    } catch (error: Exception) {
+                        currentSnapshotSignature = null
+                        Log.e("$TAG Managed refresh failed: ${error.javaClass.simpleName}")
+                    }
+                }
+                } finally {
+                    refreshQueued.set(false)
+                    // A restriction notification arriving during the transaction
+                    // must get another latest-state read after that transaction.
+                    if (refreshRevision.get() != revision) requestRefresh(enqueue)
+                }
+            }
+        } catch (error: Exception) {
+            refreshQueued.set(false)
+            Log.e("$TAG Managed refresh could not be queued: ${error.javaClass.simpleName}")
         }
-        return Mango9ManagedConfigurationSnapshot.from(
-            mapOf(
-                Mango9ManagedConfigurationSnapshot.XML_CONFIG_KEY to
-                    restrictions.getString(Mango9ManagedConfigurationSnapshot.XML_CONFIG_KEY),
-                Mango9ManagedConfigurationSnapshot.ROOT_CA_KEY to
-                    restrictions.getString(Mango9ManagedConfigurationSnapshot.ROOT_CA_KEY),
-                Mango9ManagedConfigurationSnapshot.CONFIG_URI_KEY to
-                    restrictions.getString(Mango9ManagedConfigurationSnapshot.CONFIG_URI_KEY),
-            ),
-        )
+    }
+
+    private fun readCurrentSnapshot(): Mango9ManagedConfigurationSnapshot? = try {
+        snapshotSource()
+    } catch (error: Exception) {
+        Log.e("$TAG Restrictions unavailable; retaining prior policy: ${error.javaClass.simpleName}")
+        null
+    }
+
+    private fun transition(action: () -> ManagedTransition): ManagedTransition = try {
+        action()
+    } catch (error: Exception) {
+        // No payloads or credentials in errors; failed opens and writes must remain retryable.
+        Log.e("$TAG Managed state transition failed: ${error.javaClass.simpleName}")
+        ManagedTransition.Failed
+    }
+
+    private fun commit(preferences: SharedPreferences, change: SharedPreferences.Editor.() -> Unit) {
+        check(preferences.edit().apply(change).commit()) { "Managed state could not be persisted" }
+    }
+
+    private fun sync(config: Config) {
+        check(config.sync() == 0) { "Managed configuration could not be persisted" }
+    }
+
+    private fun securePreferences(): SharedPreferences {
+        return checkNotNull(preferenceStore.open()) { "Secure managed state is unavailable" }
+    }
+
+    private fun requireCompleteBackups(
+        keys: Set<Mango9ManagedConfigEntryKey>,
+        backups: Map<Mango9ManagedConfigEntryKey, Mango9ManagedConfigEntryBackup>,
+    ) {
+        check(keys.all { it in backups }) { "Managed rollback state is incomplete" }
     }
 
     private fun applyXmlTransition(
         config: Config,
         snapshot: Mango9ManagedConfigurationSnapshot,
-    ): Boolean {
-        val preferences = securePreferences ?: return false
+    ): ManagedTransition {
+        if (snapshot.xmlConfig == null && !xmlNeedsRetry && preferenceStore.isEmpty()) return ManagedTransition.Unchanged
+        val preferences = securePreferences()
         val xml = snapshot.xmlConfig
         val lastSignature = preferences.getString(KEY_LAST_XML_SIGNATURE, null)
         val nextSignature = snapshot.xmlSignature
-        if (nextSignature != null && nextSignature == lastSignature) return false
+        if (!xmlNeedsRetry && nextSignature != null && nextSignature == lastSignature) return ManagedTransition.Unchanged
 
         val activeKeys = loadActiveKeys(preferences)
         if (xml == null) {
-            if (activeKeys.isEmpty() && lastSignature == null) return false
+            if (!xmlNeedsRetry && activeKeys.isEmpty() && lastSignature == null) return ManagedTransition.Unchanged
             val backups = loadBackups(preferences)
+            requireCompleteBackups(activeKeys, backups)
+            xmlNeedsRetry = true
             activeKeys.forEach { key -> restoreEntry(config, backups[key], key) }
-            config.sync()
-            preferences.edit(commit = true) {
+            sync(config)
+            commit(preferences) {
                 remove(KEY_XML_BACKUPS)
                 remove(KEY_XML_ACTIVE_ENTRIES)
                 remove(KEY_LAST_XML_SIGNATURE)
             }
+            xmlNeedsRetry = false
             Log.i("$TAG Removed managed XML overlay and restored [${activeKeys.size}] entries")
-            return activeKeys.isNotEmpty()
+            return if (activeKeys.isNotEmpty()) ManagedTransition.Changed else ManagedTransition.Unchanged
         }
 
         val nextKeys = try {
             Mango9ManagedConfigXmlParser.entryKeys(xml)
         } catch (error: Exception) {
             Log.e("$TAG Rejected invalid managed xmlConfig: ${error.javaClass.simpleName}")
-            return false
+            return ManagedTransition.Failed
         }
 
         val backups = loadBackups(preferences).toMutableMap()
+        requireCompleteBackups(activeKeys, backups)
         nextKeys.forEach { key ->
             if (key !in backups) backups[key] = captureEntry(config, key)
         }
-        saveBackups(preferences, backups.values)
-
-        val result = config.loadFromXmlString(xml)
-        if (result != 0) {
-            Log.e("$TAG Linphone rejected managed xmlConfig with status [$result]")
-            return false
+        val before = (activeKeys + nextKeys).associateWith { captureEntry(config, it) }
+        xmlNeedsRetry = true
+        // Write rollback coverage before native mutations. If interrupted, removal
+        // must restore newly introduced entries too, not just the previous overlay.
+        commit(preferences) {
+            putStringSet(KEY_XML_BACKUPS, backups.values.mapTo(linkedSetOf(), Mango9ManagedConfigBackupCodec::encode))
+            putStringSet(KEY_XML_ACTIVE_ENTRIES, (activeKeys + nextKeys).mapTo(linkedSetOf(), Mango9ManagedConfigBackupCodec::encodeKey))
+            remove(KEY_LAST_XML_SIGNATURE)
         }
 
-        (activeKeys - nextKeys).forEach { key -> restoreEntry(config, backups[key], key) }
-        config.sync()
-        preferences.edit(commit = true) {
+        try {
+            check(config.loadFromXmlString(xml) == 0) { "SDK rejected managed XML" }
+            (activeKeys - nextKeys).forEach { key -> restoreEntry(config, backups[key], key) }
+            sync(config)
+        } catch (error: Exception) {
+            // SDK rejection (including a thrown error) or failed sync must not
+            // leave a partially modified in-memory configuration in use.
+            before.forEach { (key, backup) -> restoreEntry(config, backup, key) }
+            try { sync(config) } catch (_: Exception) { /* Durable rollback coverage remains for retry. */ }
+            throw error
+        }
+        commit(preferences) {
             putStringSet(
                 KEY_XML_ACTIVE_ENTRIES,
                 nextKeys.mapTo(linkedSetOf(), Mango9ManagedConfigBackupCodec::encodeKey),
             )
             putString(KEY_LAST_XML_SIGNATURE, nextSignature)
-            if (nextKeys.isEmpty()) remove(KEY_XML_BACKUPS)
+            if (nextKeys.isEmpty()) {
+                remove(KEY_XML_BACKUPS)
+            } else {
+                putStringSet(
+                    KEY_XML_BACKUPS,
+                    backups.filterKeys {
+                    it in nextKeys
+                }.values.mapTo(linkedSetOf(), Mango9ManagedConfigBackupCodec::encode)
+                )
+            }
         }
+        xmlNeedsRetry = false
         Log.i("$TAG Applied managed xmlConfig containing [${nextKeys.size}] entries")
-        return true
+        return ManagedTransition.Changed
     }
 
     private fun applyCoreTransition(
         core: Core,
         snapshot: Mango9ManagedConfigurationSnapshot,
-    ): Boolean {
-        val preferences = securePreferences ?: return false
+    ): ManagedTransition {
+        if (snapshot.coreSignature == null && preferenceStore.isEmpty()) return ManagedTransition.Unchanged
+        val preferences = securePreferences()
         val nextSignature = snapshot.coreSignature
         val lastSignature = preferences.getString(KEY_LAST_CORE_SIGNATURE, null)
         val coreWasManaged = preferences.getBoolean(KEY_CORE_ACTIVE, false)
+        if (coreWasManaged || lastSignature != null) {
+            check(preferences.contains(KEY_BASELINE_ROOT_CA_PRESENT) && preferences.contains(KEY_BASELINE_CONFIG_URI_PRESENT)) {
+                "Managed Core rollback state is incomplete"
+            }
+            check(!preferences.getBoolean(KEY_BASELINE_ROOT_CA_PRESENT, false) || preferences.contains(KEY_BASELINE_ROOT_CA))
+            check(!preferences.getBoolean(KEY_BASELINE_CONFIG_URI_PRESENT, false) || preferences.contains(KEY_BASELINE_CONFIG_URI))
+        }
 
         if (nextSignature == null) {
-            if (!coreWasManaged && lastSignature == null) return false
+            if (!coreWasManaged && lastSignature == null) return ManagedTransition.Unchanged
             restoreCoreBaseline(core, preferences)
+            sync(core.config)
             clearCoreState(preferences)
+            appliedCore = null
+            appliedCoreSignature = null
             Log.i("$TAG Removed managed rootCa/configUri and restored the prior Core settings")
-            return true
+            return ManagedTransition.Changed
         }
-        if (nextSignature == lastSignature && coreWasManaged) return false
+        if (nextSignature == lastSignature && coreWasManaged &&
+            appliedCore === core && appliedCoreSignature == nextSignature
+        ) {
+            return ManagedTransition.Unchanged
+        }
 
         val verifiedConfigUri = snapshot.configUri?.let { rawValue ->
             Mango9Configuration.verifiedProvisioningUrl(rawValue)?.toString().also { verified ->
                 if (verified == null) Log.w("$TAG Rejected configUri outside the Mango9 allowlist")
             }
         }
-        if (snapshot.configUri != null && verifiedConfigUri == null) return false
+        if (snapshot.configUri != null && verifiedConfigUri == null) return ManagedTransition.Failed
 
         if (!coreWasManaged) captureCoreBaseline(core, preferences)
+        appliedCoreSignature = null
+        check(core.setProvisioningUri(verifiedConfigUri ?: baselineConfigUri(preferences)) == 0) {
+            "SDK rejected managed provisioning URI"
+        }
         if (snapshot.rootCa == null) {
             restoreRootCaBaseline(core, preferences)
         } else {
             core.setRootCaData(snapshot.rootCa)
         }
-        core.provisioningUri = verifiedConfigUri ?: baselineConfigUri(preferences)
-        preferences.edit(commit = true) {
+        sync(core.config)
+        commit(preferences) {
             putBoolean(KEY_CORE_ACTIVE, true)
             putString(KEY_LAST_CORE_SIGNATURE, nextSignature)
         }
+        appliedCore = core
+        appliedCoreSignature = nextSignature
         Log.i(
             "$TAG Applied managed Core settings " +
                 "[rootCa=${snapshot.rootCa != null}, configUri=${verifiedConfigUri != null}]",
         )
-        return true
+        return ManagedTransition.Changed
     }
 
     private fun captureEntry(config: Config, key: Mango9ManagedConfigEntryKey): Mango9ManagedConfigEntryBackup {
@@ -507,32 +660,26 @@ class Mango9ManagedConfigurationManager(context: Context) {
 
     private fun loadBackups(
         preferences: SharedPreferences,
-    ): Map<Mango9ManagedConfigEntryKey, Mango9ManagedConfigEntryBackup> =
-        preferences.getStringSet(KEY_XML_BACKUPS, emptySet()).orEmpty().mapNotNull { encoded ->
-            Mango9ManagedConfigBackupCodec.decode(encoded)
-        }.associateBy(Mango9ManagedConfigEntryBackup::entryKey)
-
-    private fun saveBackups(
-        preferences: SharedPreferences,
-        backups: Collection<Mango9ManagedConfigEntryBackup>,
-    ) {
-        preferences.edit(commit = true) {
-            putStringSet(
-                KEY_XML_BACKUPS,
-                backups.mapTo(linkedSetOf(), Mango9ManagedConfigBackupCodec::encode),
-            )
+    ): Map<Mango9ManagedConfigEntryKey, Mango9ManagedConfigEntryBackup> {
+        val entries = preferences.getStringSet(KEY_XML_BACKUPS, emptySet()).orEmpty().map { encoded ->
+            checkNotNull(Mango9ManagedConfigBackupCodec.decode(encoded)) { "Invalid managed rollback entry" }
+        }
+        return entries.associateBy(Mango9ManagedConfigEntryBackup::entryKey).also {
+            check(it.size == entries.size) { "Duplicate managed rollback entries" }
         }
     }
 
     private fun loadActiveKeys(preferences: SharedPreferences): Set<Mango9ManagedConfigEntryKey> =
-        preferences.getStringSet(KEY_XML_ACTIVE_ENTRIES, emptySet()).orEmpty().mapNotNullTo(linkedSetOf()) {
-            Mango9ManagedConfigBackupCodec.decodeKey(it)
+        preferences.getStringSet(KEY_XML_ACTIVE_ENTRIES, emptySet()).orEmpty().mapTo(linkedSetOf()) {
+            checkNotNull(Mango9ManagedConfigBackupCodec.decodeKey(it)) { "Invalid managed entry key" }
         }
 
     private fun captureCoreBaseline(core: Core, preferences: SharedPreferences) {
         val rootCa = core.rootCa
         val configUri = core.provisioningUri
-        preferences.edit(commit = true) {
+        commit(preferences) {
+            // Durable before any native setter, so retry never captures an overlay as baseline.
+            putBoolean(KEY_CORE_ACTIVE, true)
             putBoolean(KEY_BASELINE_ROOT_CA_PRESENT, rootCa != null)
             if (rootCa == null) remove(KEY_BASELINE_ROOT_CA) else putString(KEY_BASELINE_ROOT_CA, rootCa)
             putBoolean(KEY_BASELINE_CONFIG_URI_PRESENT, configUri != null)
@@ -546,7 +693,9 @@ class Mango9ManagedConfigurationManager(context: Context) {
 
     private fun restoreCoreBaseline(core: Core, preferences: SharedPreferences) {
         restoreRootCaBaseline(core, preferences)
-        core.provisioningUri = baselineConfigUri(preferences)
+        check(core.setProvisioningUri(baselineConfigUri(preferences)) == 0) {
+            "SDK rejected baseline provisioning URI"
+        }
     }
 
     private fun restoreRootCaBaseline(core: Core, preferences: SharedPreferences) {
@@ -566,7 +715,7 @@ class Mango9ManagedConfigurationManager(context: Context) {
         }
 
     private fun clearCoreState(preferences: SharedPreferences) {
-        preferences.edit(commit = true) {
+        commit(preferences) {
             remove(KEY_CORE_ACTIVE)
             remove(KEY_LAST_CORE_SIGNATURE)
             remove(KEY_BASELINE_ROOT_CA_PRESENT)

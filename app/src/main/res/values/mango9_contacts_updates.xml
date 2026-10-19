@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mango9_contact_label">Contact</string>
+    <string name="mango9_previous_favorites">Previous favorites</string>
+    <string name="mango9_next_favorites">Next favorites</string>
+    <string name="mango9_contacts_reload_failed">Contacts could not be fully refreshed. Your saved contacts have not been changed. Please try again.</string>
+    <string name="mango9_contact_no_longer_available">This contact is no longer available. Check Contacts access in Settings or refresh your contacts.</string>
+    <string name="mango9_contact_editor_unavailable">The device contact editor could not be opened. Please edit this contact in your Contacts app.</string>
+    <string name="mango9_native_contact_editor_info">Device contacts open in your Contacts app for editing. Changes and deletions refresh automatically in Mango9.</string>
+</resources>

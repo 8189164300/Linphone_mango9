@@ -8,12 +8,22 @@ package org.linphone.mango9
 
 import android.content.Context
 import androidx.core.content.edit
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.json.JSONObject
 
 data class Mango9LineIdentity(
     val extensionNumber: String,
     val activeNumber: String?,
-)
+) {
+    companion object {
+        internal fun fromProvisioning(sip: JSONObject) = Mango9LineIdentity(
+            sip.requiredString("username"),
+            sip.optionalString("active_number") ?: sip.optionalString("activeNumber"),
+        )
+    }
+}
 
 /** Keeps the non-secret, user-visible line label isolated by normalized SIP identity. */
 class Mango9LineIdentityStore(context: Context) {
@@ -27,14 +37,10 @@ class Mango9LineIdentityStore(context: Context) {
         val extension = identity.extensionNumber.trim()
         val activeNumber = formatPhoneNumber(identity.activeNumber.orEmpty())
         if (account != null) {
-            preferences.edit(commit = true) {
-                putString(
-                    storageKey(account),
-                    JSONObject()
-                        .put("extension", extension)
-                        .put("active_number", activeNumber)
-                        .toString(),
-                )
+            val value = JSONObject().put("extension", extension).put("active_number", activeNumber).toString()
+            if (preferences.getString(storageKey(account), null) != value) {
+                preferences.edit(commit = true) { putString(storageKey(account), value) }
+                changeVersion.update { it + 1 }
             }
             if (account == activeIdentity) setActiveValues(extension, activeNumber)
         } else {
@@ -73,7 +79,10 @@ class Mango9LineIdentityStore(context: Context) {
             clearActiveValues()
             return
         }
-        preferences.edit(commit = true) { remove(storageKey(account)) }
+        if (preferences.contains(storageKey(account))) {
+            preferences.edit(commit = true) { remove(storageKey(account)) }
+            changeVersion.update { it + 1 }
+        }
         if (account == activeIdentity) clearActiveValues(clearIdentity = true)
     }
 
@@ -100,6 +109,8 @@ class Mango9LineIdentityStore(context: Context) {
     private fun storageKey(identity: String) = "$PER_ACCOUNT_PREFIX$identity"
 
     companion object {
+        private val changeVersion = MutableStateFlow(0L)
+        val changes = changeVersion.asStateFlow()
         const val PREFERENCES_FILE = "mango9_line_identity"
         const val KEY_ACTIVE_EXTENSION = "mango9_active_extension"
         const val KEY_ACTIVE_NUMBER = "mango9_active_number"

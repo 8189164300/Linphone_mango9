@@ -20,7 +20,6 @@
 package org.linphone.utils
 
 import android.content.Context
-import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.ImageDecoder
@@ -31,36 +30,14 @@ import android.graphics.Rect
 import androidx.annotation.AnyThread
 import androidx.annotation.WorkerThread
 import java.io.FileNotFoundException
-import org.linphone.contacts.AvatarGenerator
+import java.io.File
 import org.linphone.core.tools.Log
 import androidx.core.net.toUri
 import androidx.core.graphics.createBitmap
-import org.linphone.R
 
 class ImageUtils {
     companion object {
         private const val TAG = "[Image Utils]"
-
-        @AnyThread
-        fun generatedAvatarIfNeededAndReturnPath(context: Context, initials: String): String {
-            val darkMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-            val suffix = if (darkMode) "_dark" else "_light"
-
-            val generatedAvatarPath = FileUtils.getFileStorageCacheDir("$initials$suffix.png", overrideExisting = true)
-            if (generatedAvatarPath.exists()) {
-                val path = generatedAvatarPath.absolutePath
-                return path
-            }
-
-            val builder = AvatarGenerator(context)
-            builder.setInitials(initials)
-            builder.setAvatarSize(AppUtils.getDimension(R.dimen.avatar_big_size).toInt())
-            builder.setTextSize(AppUtils.getDimension(R.dimen.avatar_initials_call_text_size))
-
-            val bitmap = builder.buildBitmap(false)
-            val path = FileUtils.storeBitmap(bitmap, generatedAvatarPath)
-            return path
-        }
 
         @WorkerThread
         fun getBitmap(
@@ -68,54 +45,67 @@ class ImageUtils {
             path: String?,
             round: Boolean = false
         ): Bitmap? {
-            Log.d("$TAG Trying to create Bitmap from path [$path]")
-            if (path != null) {
+            if (!path.isNullOrBlank()) {
                 try {
                     val fromPictureUri = path.toUri()
-                    // We make a copy to ensure Bitmap will be Software and not Hardware, required for shortcuts
-                    val bitmap = ImageDecoder.decodeBitmap(
+                    val source = if (fromPictureUri.scheme == null) {
+                        ImageDecoder.createSource(File(path))
+                    } else {
                         ImageDecoder.createSource(context.contentResolver, fromPictureUri)
-                    ).copy(
-                        Bitmap.Config.ARGB_8888,
-                        true
-                    )
+                    }
+                    // Only notification/contact icons use this helper. Decode
+                    // small software pixels directly, not a full photo plus a copy.
+                    val bitmap = ImageDecoder.decodeBitmap(
+                        source
+                    ) { decoder, info, _ ->
+                        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                        val longest = maxOf(info.size.width, info.size.height)
+                        if (longest > 256) {
+                            decoder.setTargetSize(
+                                (info.size.width * (256.0 / longest)).toInt().coerceAtLeast(1),
+                                (info.size.height * (256.0 / longest)).toInt().coerceAtLeast(1),
+                            )
+                        }
+                    }
                     return if (round) {
-                        getRoundBitmap(bitmap)
+                        try { getRoundBitmap(bitmap) } finally { bitmap.recycle() }
                     } else {
                         bitmap
                     }
                 } catch (fnfe: FileNotFoundException) {
-                    Log.e("$TAG File [$path] not found: $fnfe")
+                    Log.w("$TAG Contact photo is no longer available")
                     return null
                 } catch (e: Exception) {
-                    Log.e("$TAG Failed to get bitmap using path [$path]: $e")
+                    Log.w("$TAG Could not decode contact photo: ${e.javaClass.simpleName}")
                     return null
                 }
             }
 
-            Log.e("$TAG Can't get bitmap from null URI")
             return null
         }
 
         @AnyThread
         private fun getRoundBitmap(bitmap: Bitmap): Bitmap {
-            val output = createBitmap(bitmap.width, bitmap.height)
+            val edge = minOf(bitmap.width, bitmap.height)
+            val output = createBitmap(edge, edge)
             val canvas = Canvas(output)
             val color = -0xbdbdbe
             val paint = Paint()
-            val rect =
-                Rect(0, 0, bitmap.width, bitmap.height)
+            val rect = Rect(0, 0, edge, edge)
+            val left = (bitmap.width - edge) / 2
+            val top = (bitmap.height - edge) / 2
+            val source = Rect(left, top, left + edge, top + edge)
             paint.isAntiAlias = true
             canvas.drawARGB(0, 0, 0, 0)
             paint.color = color
             canvas.drawCircle(
-                bitmap.width / 2.toFloat(),
-                bitmap.height / 2.toFloat(),
-                bitmap.width / 2.toFloat(),
+                edge / 2f,
+                edge / 2f,
+                edge / 2f,
                 paint
             )
             paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
-            canvas.drawBitmap(bitmap, rect, rect, paint)
+            canvas.drawBitmap(bitmap, source, rect, paint)
             return output
         }
     }

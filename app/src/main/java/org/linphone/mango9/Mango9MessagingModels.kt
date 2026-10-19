@@ -38,6 +38,7 @@ data class Mango9ChatRoom(
     val lastMessage: String,
     val unread: Int,
     val isDirect: Boolean,
+    val groupName: String = "",
 )
 
 data class Mango9ChatMessage(
@@ -48,6 +49,7 @@ data class Mango9ChatMessage(
     val time: String,
     val status: Int,
     val files: String,
+    val reactions: Mango9StaffReactions = Mango9StaffReactions(),
 )
 
 data class Mango9SmsParty(
@@ -67,6 +69,7 @@ data class Mango9SmsMessage(
     val status: Int,
     val isIncoming: Boolean,
     val files: String,
+    val reactions: Mango9StaffReactions = Mango9StaffReactions(),
 )
 
 data class Mango9SmsSender(val id: Int, val senderId: String)
@@ -189,11 +192,11 @@ data class Mango9ChatMedia(
                 ?: downloadUri.path.substringAfterLast('/').takeIf(String::isNotBlank)?.let(::decodeComponent)
                 ?: "Attachment"
             val extension = (query["ffExt"] ?: name.substringAfterLast('.', "")).lowercase()
-            val mime = query["ffType"].orEmpty().ifBlank { mimeFromExtension(extension) }
+            val mime = Mango9MediaType.explicit(query["ffType"]) ?: Mango9MediaType.fromExtension(extension)
             val kind = when {
-                mime.startsWith("image/") || extension in setOf("jpg", "jpeg", "png", "gif", "webp") -> Kind.Image
-                mime.startsWith("video/") || extension in setOf("mp4", "mov", "webm") -> Kind.Video
-                mime.startsWith("audio/") || extension in setOf("m4a", "mka", "mp3", "ogg", "wav") -> Kind.Audio
+                mime.startsWith("image/") -> Kind.Image
+                mime.startsWith("video/") -> Kind.Video
+                mime.startsWith("audio/") -> Kind.Audio
                 else -> Kind.File
             }
             return Mango9ChatMedia(raw, verifiedDownload, name, mime, kind)
@@ -210,21 +213,5 @@ data class Mango9ChatMedia(
             URLDecoder.decode(value, Charsets.UTF_8.name())
         }.getOrDefault(value)
 
-        private fun mimeFromExtension(extension: String): String = when (extension) {
-            "jpg", "jpeg" -> "image/jpeg"
-            "png" -> "image/png"
-            "gif" -> "image/gif"
-            "webp" -> "image/webp"
-            "mp4" -> "video/mp4"
-            "mov" -> "video/quicktime"
-            "webm" -> "video/webm"
-            "m4a" -> "audio/mp4"
-            "mp3" -> "audio/mpeg"
-            "ogg" -> "audio/ogg"
-            "wav" -> "audio/wav"
-            "pdf" -> "application/pdf"
-            "txt" -> "text/plain"
-            else -> "application/octet-stream"
-        }
     }
 }

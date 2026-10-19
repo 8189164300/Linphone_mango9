@@ -9,6 +9,10 @@
         android:paddingHorizontal="12dp"
         android:paddingVertical="4dp">
 
+        <CheckBox android:button="@drawable/mango9_message_selection" android:buttonTint="@null" android:gravity="center" android:id="@+id/selected" android:layout_width="44dp" android:layout_height="48dp"
+            android:layout_gravity="start|center_vertical" android:layout_marginStart="0dp"
+            android:visibility="gone" android:contentDescription="@string/mango9_select" />
+
         <LinearLayout
             android:id="@+id/message_container"
             android:layout_width="wrap_content"
@@ -54,6 +58,9 @@
                     tools:text="This is a Mango9 message." />
             </LinearLayout>
 
+            <TextView
+                android:id="@+id/reactions" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:textSize="14sp" android:textColor="?attr/color_main2_800" android:visibility="gone" />
             <TextView
                 android:id="@+id/footer"
                 android:layout_width="wrap_content"

@@ -23,9 +23,7 @@ import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
 import androidx.lifecycle.MediatorLiveData
 import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.viewModelScope
 import java.util.Locale
-import kotlinx.coroutines.launch
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.LinphoneApplication.Companion.corePreferences
 import org.linphone.R
@@ -41,6 +39,8 @@ import org.linphone.core.Factory
 import org.linphone.core.tools.Log
 import org.linphone.mango9.Mango9SessionStore
 import org.linphone.mango9.Mango9ChatStore
+import org.linphone.mango9.Mango9LoginLease
+import org.linphone.mango9.Mango9AccountRemoval
 import org.linphone.ui.GenericViewModel
 import org.linphone.ui.main.model.AccountModel
 import org.linphone.ui.main.model.isEndToEndEncryptionMandatory
@@ -215,6 +215,7 @@ class AccountProfileViewModel
             if (found != null) {
                 Log.i("$TAG Found matching account [$found]")
                 account = found
+                accountLogin = mango9Sessions.captureLogin(identity)
                 val isManagedMango9Account = mango9Sessions.hasSession(identity)
                 if (isManagedMango9Account) {
                     hideAccountSettings.postValue(true)
@@ -273,30 +274,39 @@ class AccountProfileViewModel
 
     @UiThread
     fun deleteAccount() {
-        if (!::account.isInitialized) return
-        val accountToRemove = account
-        val identity = accountToRemove.params.identityAddress?.asStringUriOnly()
-        val session = identity?.let(mango9Sessions::load)
-        if (identity == null || session == null) {
-            removeAccount(accountToRemove, identity)
-            return
-        }
-        viewModelScope.launch {
-            try {
-                mango9ChatStore.unregisterRemotePushToken(identity, session)
-            } finally {
-                mango9ChatStore.disconnectIfConnected(identity)
-                removeAccount(accountToRemove, identity)
-            }
-        }
-    }
-
-    private fun removeAccount(accountToRemove: Account, identity: String?) {
         coreContext.postOnCoreThread { core ->
-            if (!core.accountList.contains(accountToRemove)) return@postOnCoreThread
-            Log.w("$TAG Removing account [$identity] and all related data (auth info, conferences, conversations, call logs)")
-            identity?.let(mango9Sessions::remove)
-            core.removeAccountWithData(accountToRemove)
+            if (!::account.isInitialized || removalPending) return@postOnCoreThread
+            if (core.accountList.none { it.nativePointer == account.nativePointer }) return@postOnCoreThread
+            val identity = account.params.identityAddress?.asStringUriOnly()
+            val lease = accountLogin
+            removalPending = true
+            if (lease != null) {
+                val removed = try {
+                    mango9Sessions.removeIfCurrent(lease, journalPushCleanup = true) { current ->
+                        val removedIdentity = current.sipIdentity ?: return@removeIfCurrent
+                        mango9ChatStore.disconnectIfConnected(removedIdentity)
+                        // The encrypted journal already guarantees a later cleanup attempt.
+                        runCatching { mango9ChatStore.retireRemotePushToken(removedIdentity, current) }
+                        Mango9AccountRemoval.remove(core, account)
+                    }
+                } catch (_: Exception) {
+                    removalPending = false
+                    showRedToast(R.string.mango9_logout_cleanup_storage_error, R.drawable.warning_circle)
+                    return@postOnCoreThread
+                }
+                if (!removed) {
+                    // An old profile must not remove a re-provisioned account with the same URI.
+                    accountFoundEvent.postValue(Event(false))
+                    return@postOnCoreThread
+                }
+            } else {
+                if (identity != null && mango9Sessions.hasSession(identity)) {
+                    accountFoundEvent.postValue(Event(false))
+                    return@postOnCoreThread
+                }
+                identity?.let(mango9ChatStore::disconnectIfConnected)
+                Mango9AccountRemoval.remove(core, account)
+            }
             accountRemovedEvent.postValue(Event(true))
 
             if (core.accountList.isEmpty()) {
@@ -308,6 +318,10 @@ class AccountProfileViewModel
             }
         }
     }
+
+    // Read and mutated only on the Core thread, including capture when the profile is loaded.
+    private var accountLogin: Mango9LoginLease? = null
+    private var removalPending = false
 
     @UiThread
     fun setNewPicturePath(path: String) {
