@@ -566,11 +566,19 @@ private struct Mango9CRMErrorPayload: Decodable {
 	let message: String?
 }
 
-enum Mango9CRMAPIError: Error {
+enum Mango9CRMAPIError: LocalizedError {
 	case unauthorized
 	case invalidConfiguration
 	case server
 	case serverMessage(String)
+	var errorDescription: String? {
+		switch self {
+		case .unauthorized: return "Your Mango9 session has expired. Sign in again to continue."
+		case .invalidConfiguration: return "Your Mango9 connection needs to be set up again. Reconnect your account in Settings."
+		case .server: return "Mango9 is temporarily unavailable. Please try again shortly."
+		case .serverMessage(let message): return message
+		}
+	}
 }
 
 #Preview {

@@ -1,7 +1,4 @@
-• SMS, Team and Social messages are together in Conversations, with more consistent composers and attachment controls.
-• Touch and hold a message for reactions, copy, reply, selection and forwarding, where supported. SMS reactions are Mango9-only and do not send an SMS or a tapback to the recipient.
-• Delete messages and conversations for yourself across devices, and mute supported conversations without losing incoming messages.
-• Social conversations include platform and account filters, attachment previews and clearer message dates.
-• Open Calendar directly, or use Events & Tasks to switch between appointments, events and tasks.
-• New notification controls for social messages, new leads, bulk-import summaries and appointment bookings. Supported alerts open the related item.
-• Improved account-scoped refresh, saved-history reconciliation and messaging reliability.
+• Social conversation previews now respect messages deleted for you.
+• Restored messages reappear when conversation history refreshes.
+• Clearer messages for slow connections, expired sessions and unavailable social replies.
+• Improved retry behavior while preserving saved conversation history and drafts.

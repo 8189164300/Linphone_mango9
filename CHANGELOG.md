@@ -1,6 +1,14 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [Mango9 6.2.18 (52)] - 2026-10-19
+
+### Fixed
+- Social previews respect personal message deletion and restored history.
+- Connection and session errors use clear recovery messages.
+- Social provider retries preserve saved history and drafts.
+- Unavailable replies explain the conversation status.
+
 ## [6.2.10] - 2026-09-04
 
 ### Fixed

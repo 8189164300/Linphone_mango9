@@ -197,6 +197,67 @@ final class Mango9ReactionTests: XCTestCase {
 			if channel == .social { XCTAssertFalse(second.isHidden("1", channel: channel, thread: "other")) }
 		}
 	}
+	@MainActor func testPersonalRestorationReconcilesOnlyRequestedMessagesAndPersists() async throws {
+		try await withSocialStore { store, _ in
+			let suite = "visibility-restore-" + UUID().uuidString
+			let defaults = UserDefaults(suiteName: suite)!
+			defer { defaults.removePersistentDomain(forName: suite) }
+			let visibility = Mango9PersonalMessageVisibility(api: store.api, defaults: defaults)
+			var restored = false, offline = false
+			ReactionMockProtocol.handler = { request in
+				if offline { throw URLError(.notConnectedToInternet) }
+				let body = try ReactionMockProtocol.body(request)
+				let ids = (body["messageIds"] as! [Int]).map(String.init)
+				return Self.envelope(["scope": "user", "channel": "social", "state": "succeeded",
+					"hiddenIds": restored ? [] : ids])
+			}
+			try await visibility.update(session: store.session, channel: .social, thread: "one", ids: ["1", "2"], hide: true)
+			try await visibility.update(session: store.session, channel: .social, thread: "two", ids: ["1"], hide: true)
+			restored = true; offline = true
+			do { try await visibility.update(session: store.session, channel: .social, thread: "one", ids: ["1"], hide: false); XCTFail("Offline") } catch {}
+			XCTAssertTrue(visibility.isHidden("1", channel: .social, thread: "one"))
+			offline = false
+			try await visibility.update(session: store.session, channel: .social, thread: "one", ids: ["1"], hide: false)
+			XCTAssertFalse(visibility.isHidden("1", channel: .social, thread: "one"))
+			XCTAssertTrue(visibility.isHidden("2", channel: .social, thread: "one"))
+			XCTAssertTrue(visibility.isHidden("1", channel: .social, thread: "two"))
+			let restarted = Mango9PersonalMessageVisibility(api: store.api, defaults: defaults)
+			XCTAssertFalse(restarted.isHidden("1", channel: .social, thread: "one"))
+			XCTAssertTrue(restarted.isHidden("2", channel: .social, thread: "one"))
+		}
+	}
+	@MainActor func testSocialPreviewUsesVisibleHistoryAndRecoversAfterRestoration() async throws {
+		try await withSocialStore { store, _ in
+			let suite = "preview-visibility-" + UUID().uuidString
+			let defaults = UserDefaults(suiteName: suite)!
+			defer { defaults.removePersistentDomain(forName: suite) }
+			let visibility = Mango9PersonalMessageVisibility(api: store.api, defaults: defaults)
+			var hidden = ["2"], offline = false
+			ReactionMockProtocol.handler = { request in
+				if offline { throw URLError(.notConnectedToInternet) }
+				if request.url!.lastPathComponent == "inbox-messages" {
+					return Self.envelope(["items": [
+						["id": 2, "text": "Hidden newest", "direction": "incoming", "deleted": false],
+						["id": 1, "text": "Visible older", "direction": "incoming", "deleted": false]], "next": NSNull()])
+				}
+				XCTAssertEqual(request.url!.lastPathComponent, "inbox-message-visibility")
+				let body = try ReactionMockProtocol.body(request)
+				XCTAssertEqual(body["hide"] as? Bool, false, "Preview must never delete or send")
+				return Self.envelope(["scope": "user", "channel": "social", "state": "succeeded", "hiddenIds": hidden])
+			}
+			let thread = try JSONDecoder().decode(Mango9SocialThread.self, from: JSONSerialization.data(withJSONObject: Self.socialThreadJSON))
+			let partial = try await Mango9SocialPreview.load(thread: thread, session: store.session, api: store.api, visibility: visibility)
+			XCTAssertEqual(partial, "Visible older")
+			hidden = ["1", "2"]
+			let empty = try await Mango9SocialPreview.load(thread: thread, session: store.session, api: store.api, visibility: visibility)
+			XCTAssertEqual(empty, "No visible messages")
+			hidden = []
+			let restored = try await Mango9SocialPreview.load(thread: thread, session: store.session, api: store.api, visibility: visibility)
+			XCTAssertEqual(restored, "Hidden newest")
+			offline = true
+			do { _ = try await Mango9SocialPreview.load(thread: thread, session: store.session, api: store.api, visibility: visibility); XCTFail("Must not expose an unverified summary") } catch {}
+		}
+	}
 	@MainActor func testPersonalDeletionFailureAndMalformedReceiptNeverHideLocally() async throws {
 		let active = session(); let prior = Mango9SessionStore.load()
 		try Mango9SessionStore.save(active, persist: false, makeActive: true)
@@ -607,7 +668,86 @@ final class Mango9ReactionTests: XCTestCase {
 			await store.loadInbox()
 			XCTAssertEqual(store.threads.count, 1)
 			offline = true; await store.loadInbox()
-			XCTAssertEqual(store.threads.count, 1); XCTAssertNotNil(store.error)
+			XCTAssertEqual(store.threads.count, 1)
+			XCTAssertEqual(store.error, "Couldn’t connect to Mango9. Check your internet connection and try again.")
+		}
+	}
+	func testSocialReadErrorsDistinguishConnectionSessionAndServerWithoutLeakingCodes() {
+		XCTAssertTrue(Mango9SocialReadError.message(URLError(.timedOut)).contains("taking too long"))
+		XCTAssertTrue(Mango9SocialReadError.message(URLError(.networkConnectionLost)).contains("internet connection"))
+		XCTAssertTrue(Mango9SocialReadError.message(Mango9CRMAPIError.unauthorized).contains("Sign in again"))
+		XCTAssertTrue(Mango9SocialReadError.message(Mango9CRMAPIError.invalidConfiguration).contains("Settings"))
+		XCTAssertTrue(Mango9SocialReadError.message(Mango9MessagingError.rejected(429, "internal_rate_code")).contains("Wait a moment"))
+		for error: Error in [Mango9CRMAPIError.server, Mango9CRMAPIError.serverMessage("private upstream diagnostic"),
+			Mango9MessagingError.rejected(503, "private_provider_code"), NSError(domain: "InternalImplementation", code: 1)] {
+			let message = Mango9SocialReadError.message(error)
+			XCTAssertFalse(message.contains("private")); XCTAssertFalse(message.contains("InternalImplementation"))
+			XCTAssertFalse(message.contains("Mango9CRMAPIError")); XCTAssertTrue(message.contains("try again"))
+		}
+		for error in [Mango9CRMAPIError.unauthorized, .invalidConfiguration, .server] {
+			XCTAssertFalse(error.localizedDescription.contains("Mango9CRMAPIError"))
+		}
+	}
+	func testSocialReplyReasonsUseServerStateAndPreserveReplyGates() throws {
+		func decode(_ values: [String: Any]) throws -> Mango9SocialThread {
+			try JSONDecoder().decode(Mango9SocialThread.self, from: JSONSerialization.data(withJSONObject: values))
+		}
+		let active = try decode(Self.socialThreadJSON)
+		XCTAssertTrue(active.permitsSending); XCTAssertNil(active.replyUnavailableReason)
+		var row = Self.socialThreadJSON
+		row["canReply"] = false; row["source"] = ["providerStatus": "archived"]
+		let archived = try decode(row)
+		XCTAssertFalse(archived.permitsSending); XCTAssertTrue(archived.replyUnavailableReason?.contains("archived") == true)
+		row["connectionCurrent"] = false
+		XCTAssertTrue(try decode(row).replyUnavailableReason?.contains("Reconnect") == true)
+		row["connectionCurrent"] = true; row["source"] = [:]; row.removeValue(forKey: "canReply")
+		let unknown = try decode(row)
+		XCTAssertFalse(unknown.permitsSending); XCTAssertFalse(unknown.replyUnavailableReason!.contains("reply window"))
+		row["canReply"] = true; row["deleted"] = true
+		XCTAssertFalse(try decode(row).permitsSending)
+		XCTAssertTrue(try decode(row).replyUnavailableReason?.contains("deleted") == true)
+	}
+	@MainActor func testSocialProviderRetryRecoversAndSavedPollingDoesNotHideFailure() async throws {
+		try await withSocialStore { store, _ in
+			var providerRequests = 0, offline = true
+			ReactionMockProtocol.handler = { request in
+				if request.url!.lastPathComponent == "inbox-refresh-messages" {
+					providerRequests += 1
+					if offline { throw URLError(.timedOut) }
+				}
+				return Self.socialRead(request)
+			}
+			await store.loadThread(id: "thread", refreshProvider: true)
+			store.draft = "Keep this draft"
+			XCTAssertTrue(store.error?.contains("taking too long") == true)
+			XCTAssertEqual(store.messages.first?.text, "Saved content")
+			await store.loadThread(id: "thread")
+			XCTAssertTrue(store.error?.contains("saved history") == true)
+			XCTAssertEqual(providerRequests, 1)
+			offline = false
+			await store.loadThread(id: "thread", refreshProvider: true)
+			XCTAssertEqual(providerRequests, 2); XCTAssertNil(store.error)
+			XCTAssertEqual(store.draft, "Keep this draft"); XCTAssertTrue(store.canSend)
+		}
+	}
+	@MainActor func testSocialRefreshServiceFailureKeepsInboxAndDraftUntilRetryRecovers() async throws {
+		try await withSocialStore { store, _ in
+			var expired = false, refreshAvailable = false
+			ReactionMockProtocol.handler = { request in
+				if request.url!.lastPathComponent == "refresh" {
+					if !refreshAvailable { return (503, Data("{}".utf8)) }
+					expired = false
+					return (200, Data(#"{"success":true,"message":"","data":{"tokens":{"accessToken":"new-access","refreshToken":"new-refresh"}}}"#.utf8))
+				}
+				if expired { return (401, Data("{}".utf8)) }
+				return Self.envelope(["items": [Self.socialThreadJSON], "next": NSNull()])
+			}
+			await store.loadInbox(); store.draft = "Keep this draft"
+			expired = true; await store.loadInbox()
+			XCTAssertEqual(store.threads.count, 1); XCTAssertEqual(store.draft, "Keep this draft")
+			XCTAssertFalse(store.error!.contains("Mango9CRMAPIError"))
+			refreshAvailable = true; await store.loadInbox()
+			XCTAssertNil(store.error); XCTAssertEqual(store.threads.count, 1)
 		}
 	}
 	func testSocialPushRequiresExactConversationAndAccountScope() throws {

@@ -122,8 +122,8 @@ extension View {
 }
 
 /// Server-confirmed, per-login visibility. Deliberately separate from local
-/// moderation and from provider deletion/unsending. Hides are monotonic and safe
-/// to retry after a lost response; no message is removed before acknowledgement.
+/// moderation and from provider deletion/unsending. Confirmed reads reconcile
+/// restorations too; a read started before a delete cannot undo that delete.
 @MainActor final class Mango9PersonalMessageVisibility: ObservableObject {
 	static let shared = Mango9PersonalMessageVisibility()
 	enum Channel: String { case team, sms, social }
@@ -138,6 +138,7 @@ extension View {
 	private let defaults: UserDefaults
 	private var account: String?
 	private var observer: NSObjectProtocol?
+	private var revision = 0
 	init(api: Mango9MessagingAPI? = nil, defaults: UserDefaults = .standard) {
 		self.api = api ?? .shared; self.defaults = defaults
 		reload()
@@ -148,6 +149,7 @@ extension View {
 	deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
 	private var cacheKey: String { "mango9.personal-message-visibility.v1." + (account ?? "none") }
 	private func reload() {
+		revision += 1
 		account = Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey)
 		hidden = account == nil ? [] : Set(defaults.stringArray(forKey: cacheKey) ?? [])
 	}
@@ -158,12 +160,19 @@ extension View {
 		guard account == Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey) else { return false }
 		return hidden.contains(key(channel, thread, id))
 	}
+	func socialHiddenKeys(thread: String) -> Set<String> {
+		guard account == Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey) else { return [] }
+		let prefix = ["social", thread].map { "\($0.utf8.count):\($0)" }.joined()
+		return Set(hidden.filter { $0.hasPrefix(prefix) })
+	}
 	func update(session: Mango9Session, channel: Channel, thread: String? = nil, ids: [String], hide: Bool) async throws {
 		guard Mango9SessionStore.isActive(session) else { throw Mango9MessagingError.scopeChanged }
 		let expectedAccount = Mango9ReactionTarget.accountKey(session)
 		if account != expectedAccount { reload() }
 		let unique = Array(Set(ids)).sorted()
 		for start in stride(from: 0, to: unique.count, by: 200) {
+			if hide { revision += 1 }
+			let requestedRevision = revision
 			let chunk = Array(unique[start..<min(start + 200, unique.count)])
 			var body: [String: Any] = ["messageIds": chunk, "hide": hide]
 			let path: [String]
@@ -178,8 +187,13 @@ extension View {
 			let returned = Set(receipt.hiddenIds)
 			guard receipt.scope == "user", receipt.channel == channel.rawValue, receipt.state == "succeeded",
 				returned.isSubset(of: Set(chunk)), !hide || returned == Set(chunk) else { throw Mango9MessagingError.invalidResponse }
-			let updated = hidden.union(returned.map { key(channel, thread, $0) })
-			if updated != hidden { hidden = updated; defaults.set(hidden.sorted(), forKey: cacheKey) }
+			if hide { revision += 1 }
+			else if revision != requestedRevision { throw Mango9MessagingError.pending }
+			// Only the requested IDs are authoritative. Leave other pages, threads,
+			// channels and accounts alone, including after an offline read fails.
+			let queried = Set(chunk.map { key(channel, thread, $0) })
+			let updated = hidden.subtracting(queried).union(returned.map { key(channel, thread, $0) })
+			if updated != hidden { revision += 1; hidden = updated; defaults.set(hidden.sorted(), forKey: cacheKey) }
 		}
 	}
 }

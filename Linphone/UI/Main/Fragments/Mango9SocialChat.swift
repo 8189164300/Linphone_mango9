@@ -157,7 +157,7 @@ struct Mango9SocialPushConversation: View {
 					path: ["inbox-detail"], query: [URLQueryItem(name: "id", value: target.id)])
 				guard !Task.isCancelled, result.id == target.id, Mango9SessionStore.isActive(active) else { return }
 				session = active; thread = result
-			} catch { self.error = error.localizedDescription }
+			} catch { if !Task.isCancelled { self.error = Mango9SocialReadError.message(error) } }
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in onClose() }
 	}
@@ -237,6 +237,41 @@ extension Mango9MessagingAPI {
 	}
 }
 
+/// Present read failures without exposing implementation names or provider codes.
+/// Sending has separate uncertain-delivery handling and must never be auto-retried.
+enum Mango9SocialReadError {
+	static func message(_ error: Error) -> String {
+		if (error as NSError).domain == NSURLErrorDomain {
+			switch (error as NSError).code {
+			case NSURLErrorTimedOut:
+				return "The connection is taking too long. Please try again."
+			case NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost, NSURLErrorCannotFindHost,
+				 NSURLErrorCannotConnectToHost, NSURLErrorDNSLookupFailed, NSURLErrorDataNotAllowed:
+				return "Couldn’t connect to Mango9. Check your internet connection and try again."
+			default: return "Couldn’t refresh Social conversations. Please try again."
+			}
+		}
+		switch error {
+		case Mango9CRMAPIError.unauthorized, Mango9CRMAPIError.invalidConfiguration:
+			return error.localizedDescription
+		case Mango9MessagingError.scopeChanged:
+			return "Your active account changed. Reopen Social conversations."
+		case Mango9MessagingError.rejected(let status, let code):
+			if code == "posting_session_required" { return error.localizedDescription }
+			if code == "posting_connection_changed" { return "Reconnect the social account in Mango9’s web inbox, then try again." }
+			switch status {
+			case 401: return "Your Mango9 session has expired. Sign in again to continue."
+			case 403: return "This account no longer has access to this Social conversation."
+			case 404: return "This Social conversation is no longer available. Return to the inbox and refresh."
+			case 429: return "Social conversations are refreshing too frequently. Wait a moment and try again."
+			case 500...599: return "Social conversations are temporarily unavailable. Please try again shortly."
+			default: return "Couldn’t refresh Social conversations. Please try again."
+			}
+		default: return "Couldn’t refresh Social conversations. Please try again shortly."
+		}
+	}
+}
+
 struct Mango9SocialThread: Decodable, Identifiable, Equatable {
 	let id: String
 	let version: Int
@@ -256,9 +291,17 @@ struct Mango9SocialThread: Decodable, Identifiable, Equatable {
 	var activityAt: String? = nil
 	var readThrough: Int? = nil
 	var source: Source? = nil
-	struct Source: Decodable, Equatable { let accountName: String?; let summary: String? }
+	struct Source: Decodable, Equatable { let accountName: String?; let summary: String?; var providerStatus: String? = nil }
 	struct OpenSend: Decodable, Equatable { let sendId: String; let state: String }
 	var permitsSending: Bool { connectionCurrent && canReply == true && deleted != true && ["facebook", "instagram", "tiktok"].contains(platform) }
+	var replyUnavailableReason: String? {
+		guard !permitsSending else { return nil }
+		if deleted == true { return "This conversation has been deleted. Replies are unavailable." }
+		if !connectionCurrent { return "Reconnect this social account in Mango9’s web inbox to reply." }
+		if !Mango9SocialPlatform.all.contains(platform) { return "Replies to this platform aren’t supported in the app." }
+		if source?.providerStatus == "archived" { return "This conversation is archived and replies are disabled. Open an active conversation to reply." }
+		return "Replies aren’t currently enabled for this conversation. Check its status in Mango9’s web inbox, then retry."
+	}
 	var title: String { [name, participantHandle].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first(where: { !$0.isEmpty }) ?? "Social conversation" }
 	var preview: String { [summary, source?.summary].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first(where: { !$0.isEmpty }) ?? "View conversation" }
 	var accountName: String { accountHandle ?? source?.accountName ?? "Connected account" }
@@ -470,6 +513,7 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 	var hasOlderInboxPages: Bool { !consumedCursors.isEmpty }
 	private var lifetime = UUID()
 	private var threadGeneration = 0
+	private var providerRefreshWarning: String?
 	init(session: Mango9Session, api: Mango9MessagingAPI? = nil, journal: Mango9SocialSendJournal? = nil) {
 		self.session = session; self.api = api ?? .shared; self.journal = journal ?? .shared
 	}
@@ -480,6 +524,7 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 		outgoingText.unicodeScalars.count <= (thread?.platform == "tiktok" ? 6000 : 10000)
 	}
 	func clearPrivateState() {
+		providerRefreshWarning = nil
 		lifetime = UUID()
 		inboxGeneration += 1; threadGeneration += 1; threads = []; messages = []; thread = nil
 		draft = ""; sends = []; nextThread = nil; nextMessage = nil; loadedQuery = nil; consumedCursors = []
@@ -520,7 +565,7 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 		} catch {
 			if Task.isCancelled || life != lifetime { return }
 			accountError = "Account filters unavailable. Pull to refresh to try again."
-			if Self.requiresClearing(error) { clearPrivateState(); self.error = error.localizedDescription }
+			if Self.requiresClearing(error) { clearPrivateState(); self.error = Mango9SocialReadError.message(error) }
 		}
 	}
 	private func query(_ fields: [String: String]) -> [URLQueryItem] {
@@ -552,12 +597,13 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 		} catch {
 			guard generation == inboxGeneration else { return }
 			if Task.isCancelled { return }
-			self.error = error.localizedDescription
+			self.error = Mango9SocialReadError.message(error)
 			if Self.requiresClearing(error) { clearPrivateState() }
 		}
 	}
 	func loadThread(id: String, more: Bool = false, refreshProvider: Bool = false, markRead: Bool = false) async {
 		guard !busy, !more || nextMessage != nil else { return }
+		if thread?.id != id { providerRefreshWarning = nil }
 		threadGeneration += 1; let generation = threadGeneration
 		busy = true; defer { if generation == threadGeneration { busy = false } }
 		do {
@@ -565,13 +611,13 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 				path: ["inbox-detail"], query: query(["id": id]))
 			guard detail.id == id else { throw Mango9MessagingError.invalidResponse }
 			guard generation == threadGeneration else { return }
+			if !detail.connectionCurrent { providerRefreshWarning = nil }
 			// Show the saved inbox before the potentially slow provider request.
 			try await loadSavedMessages(detail: detail, more: more, generation: generation)
 			guard generation == threadGeneration else { return }
 			await loadSends(id: id)
 			await loadNotifications(id: id)
 			guard generation == threadGeneration else { return }
-			var refreshWarning: String?
 			if refreshProvider && detail.connectionCurrent {
 				// Existing inbox reconciliation, not a new reaction WebSocket contract.
 				do {
@@ -580,10 +626,14 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 					guard generation == threadGeneration else { return }
 					let fresh = try await api.request(Mango9SocialThread.self, session: session, social: true,
 						path: ["inbox-detail"], query: query(["id": id]))
+					guard fresh.id == id else { throw Mango9MessagingError.invalidResponse }
 					try await loadSavedMessages(detail: fresh, more: false, generation: generation)
+					guard generation == threadGeneration else { return }
+					providerRefreshWarning = nil
 				} catch {
+					if Task.isCancelled || generation != threadGeneration { return }
 					if Self.requiresClearing(error) { throw error }
-					refreshWarning = "Provider refresh is unavailable. Showing saved history."
+					providerRefreshWarning = Mango9SocialReadError.message(error) + " Showing saved history."
 				}
 			}
 			guard generation == threadGeneration else { return }
@@ -598,10 +648,11 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 					if Self.requiresClearing(error) { throw error }
 				}
 			}
-			error = refreshWarning
+			// Reading our saved copy does not prove that a failed provider refresh recovered.
+			error = providerRefreshWarning
 		} catch {
 			if Task.isCancelled || generation != threadGeneration { return }
-			self.error = error.localizedDescription
+			self.error = Mango9SocialReadError.message(error)
 			if Self.requiresClearing(error) || thread?.id != id { clearPrivateState() }
 		}
 	}
@@ -763,7 +814,7 @@ struct SocialInboxListContent: View {
 			if let error = store.error { Section { Text(error); Button("Try again") { Task { await store.loadInbox(search: search) } } } }
 			ForEach(visibleThreads) { thread in
 				NavigationLink(destination: Mango9SocialConversation(thread: thread, session: store.session).id(thread.id)) {
-					Mango9SocialInboxRow(thread: thread)
+					Mango9SocialInboxRow(thread: thread, session: store.session, api: store.api)
 				}
 				.accessibilityIdentifier("social.thread." + thread.id)
 				.mango9ConversationActions(id: "social:" + thread.id, title: thread.title, session: store.session,
@@ -844,8 +895,50 @@ struct Mango9SocialInboxFilters: View {
 	}
 }
 
+/// The provider's summary is shared by all staff. A personal preview must first
+/// reconcile the same saved-message visibility used inside the conversation.
+enum Mango9SocialPreview {
+	static func text(thread: Mango9SocialThread, messages: [Mango9SocialMessage], hidden: Set<String>, hasOlder: Bool) -> String {
+		if let message = messages.first(where: { !$0.deleted && !hidden.contains(String($0.id)) }) {
+			if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return message.text }
+			if !(message.attachments ?? []).isEmpty { return "Attachment" }
+			return "Content unavailable"
+		}
+		// Personal deletion retains saved rows. With no saved history or markers,
+		// the provider summary remains useful until the first history refresh.
+		if messages.isEmpty && hidden.isEmpty && !hasOlder && thread.deleted != true { return thread.preview }
+		return hasOlder ? "Open conversation for earlier messages" : "No visible messages"
+	}
+	@MainActor static func load(thread: Mango9SocialThread, session: Mango9Session, api: Mango9MessagingAPI,
+		visibility: Mango9PersonalMessageVisibility) async throws -> String {
+		let page = try await api.request(Mango9SocialPage<Mango9SocialMessage, Int>.self, session: session, social: true,
+			path: ["inbox-messages"], query: [URLQueryItem(name: "id", value: thread.id), URLQueryItem(name: "limit", value: "50")])
+		try await visibility.update(session: session, channel: .social, thread: thread.id, ids: page.items.map { String($0.id) }, hide: false)
+		guard !Task.isCancelled, Mango9SessionStore.isActive(session) else { throw Mango9MessagingError.scopeChanged }
+		let hidden = Set(page.items.filter { visibility.isHidden(String($0.id), channel: .social, thread: thread.id) }.map { String($0.id) })
+		if page.items.isEmpty && !visibility.socialHiddenKeys(thread: thread.id).isEmpty { return "No visible messages" }
+		return text(thread: thread, messages: page.items, hidden: hidden, hasOlder: page.next != nil)
+	}
+}
+
 struct Mango9SocialInboxRow: View {
 	let thread: Mango9SocialThread
+	let session: Mango9Session
+	let api: Mango9MessagingAPI
+	@ObservedObject private var visibility = Mango9PersonalMessageVisibility.shared
+	@Environment(\.scenePhase) private var phase
+	@State private var preview = "Loading preview…"
+	@State private var resolvedKey: PreviewKey?
+	private struct PreviewKey: Equatable {
+		let thread: Mango9SocialThread
+		let account: String
+		let hidden: Set<String>
+		let active: Bool
+	}
+	private var previewKey: PreviewKey {
+		.init(thread: thread, account: Mango9ReactionTarget.accountKey(session),
+			hidden: visibility.socialHiddenKeys(thread: thread.id), active: phase == .active)
+	}
 	var body: some View {
 		HStack(spacing: 12) {
 			Mango9SocialPlatformLogo(platform: thread.platform).frame(width: 46, height: 46)
@@ -855,7 +948,8 @@ struct Mango9SocialInboxRow: View {
 					Spacer(minLength: 4)
 					if thread.unread { Circle().fill(Color.orangeMain500).frame(width: 7, height: 7).accessibilityLabel("Unread") }
 				}
-				Text(thread.preview).font(.custom("NotoSans-Regular", size: 13)).foregroundStyle(.secondary).lineLimit(2)
+				Text(resolvedKey == previewKey ? preview : "Loading preview…")
+					.font(.custom("NotoSans-Regular", size: 13)).foregroundStyle(.secondary).lineLimit(2)
 				HStack(alignment: .lastTextBaseline, spacing: 8) {
 					Text(thread.connectionCurrent ? thread.accountName : "Disconnected · " + thread.accountName)
 						.lineLimit(1)
@@ -865,11 +959,31 @@ struct Mango9SocialInboxRow: View {
 				}.font(.custom("NotoSans-Regular", size: 11)).foregroundStyle(.secondary)
 			}.frame(maxWidth: .infinity, alignment: .leading)
 		}.frame(minHeight: 56).contentShape(Rectangle()).accessibilityElement(children: .combine)
+		.task(id: previewKey) {
+			let requested = previewKey
+			guard requested.active else { return }
+			while !Task.isCancelled {
+				do {
+					let text = try await Mango9SocialPreview.load(thread: thread, session: session, api: api, visibility: visibility)
+					guard !Task.isCancelled, requested == previewKey else { return }
+					preview = text; resolvedKey = requested
+				} catch {
+					guard !Task.isCancelled, requested == previewKey else { return }
+					// An unverified provider summary could expose a deleted message.
+					preview = "Preview unavailable"; resolvedKey = requested
+				}
+				do { try await Task.sleep(nanoseconds: 20_000_000_000) } catch { return }
+			}
+		}
 	}
 }
 
 struct Mango9SocialConversation: View {
 	let original: Mango9SocialThread
+	private var visibleMessages: [Mango9SocialMessage] {
+		store.messages.filter { !moderation.isHidden(socialHiddenID($0.id)) &&
+			!visibility.isHidden(String($0.id), channel: .social, thread: original.id) }
+	}
 	@StateObject private var store: Mango9SocialInboxStore
 	@StateObject private var reactionActions: Mango9ReactionActions
 	@StateObject private var visibility: Mango9PersonalMessageVisibility
@@ -904,9 +1018,13 @@ struct Mango9SocialConversation: View {
 					Mango9SocialPlatformLogo(platform: original.platform, size: 18)
 					Text(Mango9SocialPlatform.title(original.platform)).font(.subheadline).foregroundStyle(.secondary)
 				}
-				if let error = store.error { Text(error).font(.subheadline); Button("Retry") { Task { await refresh() } } }
+				if let error = store.error { Text(error).font(.subheadline); Button("Retry") { Task { await refresh(provider: true) } }.disabled(store.busy) }
 				if store.nextMessage != nil { Button("Earlier messages") { Task { await store.loadThread(id: original.id, more: true) } }.disabled(store.busy) }
-				ForEach(store.messages.filter { !moderation.isHidden(socialHiddenID($0.id)) && !visibility.isHidden(String($0.id), channel: .social, thread: original.id) }) { message in
+				if !store.messages.isEmpty && visibleMessages.isEmpty {
+					Text("These messages were deleted for you. Other participants keep their copies.")
+						.font(.subheadline).foregroundStyle(.secondary)
+				}
+				ForEach(visibleMessages) { message in
 					HStack {
 						if message.outgoing { Spacer(minLength: 52) }
 						VStack(alignment: .trailing, spacing: 4) {
@@ -1047,8 +1165,8 @@ struct Mango9SocialConversation: View {
 		if store.draft.unicodeScalars.count > 10000 { Text("Messages can contain up to 10,000 characters.").font(.footnote).foregroundStyle(.red).padding(.horizontal) }
 		if store.unresolvedSend || store.thread?.openSend != nil {
 			Button("Check delivery") { Task { await store.checkSend() } }.disabled(store.sending).padding(8)
-		} else if let thread = store.thread, !thread.permitsSending {
-			Text("Replies aren’t available for this conversation. Check the connection or reply window in the web inbox.")
+		} else if let reason = store.thread?.replyUnavailableReason {
+			Text(reason)
 				.font(.footnote).foregroundStyle(.secondary).padding(.horizontal)
 		}
 		Mango9MessageComposer(text: $store.draft, focus: $composerFocused, placeholder: "Message",
