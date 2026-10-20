@@ -183,6 +183,24 @@ class Mango9MessageCommandsTest {
         }
     }
 
+    @Test fun restoredSocialVisibilityDoesNotRetainOldHiddenIds() = runBlocking {
+        val sessions = Mango9CalendarTestFixtures.Sessions()
+        var hidden = "[\"7\"]"
+        val commands = Mango9MessageCommands(
+            MemoryPreferences(),
+            api(sessions) { request ->
+            val input = body(request)
+            assertFalse(input.getBoolean("hide"))
+            assertEquals("fixture-thread", input.getString("id"))
+            response(JSONObject("""{"scope":"user","channel":"social","state":"succeeded","hiddenIds":$hidden}"""))
+        }
+        )
+        val lease = sessions.captureSession()!!
+        assertEquals(setOf("7"), commands.visibility(lease, Mango9MessageChannel.social, "fixture-thread", listOf("7"), false))
+        hidden = "[]"
+        assertTrue(commands.visibility(lease, Mango9MessageChannel.social, "fixture-thread", listOf("7"), false).isEmpty())
+    }
+
     @Test fun conversationDeletionReplaysTheSameSnapshotReceiptAfterLostResponse() = runBlocking {
         val sessions = Mango9CalendarTestFixtures.Sessions(); val prefs = MemoryPreferences()
         val bodies = mutableListOf<JSONObject>(); var failure = true

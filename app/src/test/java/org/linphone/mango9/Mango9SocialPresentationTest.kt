@@ -63,4 +63,32 @@ class Mango9SocialPresentationTest {
         for (value in listOf("unknown", "pending", "sending", "unexpected", "")) assertEquals(Mango9SocialSendOutcome.Unknown, Mango9SocialSendOutcome.of(value))
         assertNotEquals(Mango9SocialSendOutcome.Failed.notice, Mango9SocialSendOutcome.Unknown.notice)
     }
+
+    private fun message(id: Int, text: String) = Mango9SocialMessage.parse(
+        JSONObject().put("id", id).put("text", text).put("createdAt", "2026-10-17T12:00:00Z")
+    )
+
+    @Test fun previewUsesVisibleHistoryAndRestorationIsAuthoritative() {
+        val messages = listOf(message(2, "Newest"), message(1, "Earlier"))
+        assertEquals("Newest", Mango9SocialPreview.text(messages, emptySet(), false))
+        assertEquals("Earlier", Mango9SocialPreview.text(messages, setOf("2"), false))
+        assertEquals("No visible messages", Mango9SocialPreview.text(messages, setOf("1", "2"), false))
+        assertEquals("Newest", Mango9SocialPreview.text(messages, emptySet(), false))
+        assertEquals("Earlier", Mango9SocialPreview.text(listOf(messages[0].copy(deleted = true), messages[1]), emptySet(), false))
+    }
+
+    @Test fun previewNeverLeaksUnavailableTextAndHandlesAttachmentOnlyHistory() {
+        val media = message(1, "").copy(attachments = listOf(Mango9SocialMessage.Media(0, "image", "photo.jpg")))
+        assertEquals("Attachment", Mango9SocialPreview.text(listOf(media), emptySet(), false))
+        assertEquals("Content unavailable", Mango9SocialPreview.text(listOf(message(2, "Removed").copy(unavailable = true)), emptySet(), false))
+        assertEquals("Open conversation for earlier messages", Mango9SocialPreview.text(listOf(media), setOf("1"), true))
+        assertEquals("No visible messages", Mango9SocialPreview.text(emptyList(), emptySet(), false))
+    }
+
+    @Test fun unverifiedListRowNeverExposesProviderSummary() {
+        val row = org.linphone.ui.main.crm.adapter.Mango9MessagingListItem.Social(thread(1).copy(summary = "Hidden text"))
+        assertEquals("Loading preview…", row.preview)
+        assertNotEquals(row.thread.summary, row.preview)
+    }
+
 }

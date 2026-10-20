@@ -6,6 +6,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.mango9.*
 
@@ -16,6 +19,7 @@ internal data class Mango9SocialState(
     val media: Map<String, Mango9ChatMedia> = emptyMap(), val muted: Boolean? = null,
     val loading: Boolean = false, val error: String? = null, val pending: Boolean = false,
     val sendNotice: String? = null,
+    val previews: Map<String, String> = emptyMap(), val previewEpoch: Long = 0,
 )
 
 /** Native inbox state survives rotation. Every completion is fenced to its navigation/login. */
@@ -29,6 +33,41 @@ internal class Mango9SocialViewModel : ViewModel() {
     val confirmedSend = MutableLiveData<org.linphone.utils.Event<String>>()
     private var lastProviderRefresh = 0L
     private var draft = ""
+    private val previewJobs = mutableMapOf<String, Job>()
+    private val previewSlots = Semaphore(4)
+
+    private fun cancelPreviews() {
+        previewJobs.values.forEach { it.cancel() }
+        previewJobs.clear()
+    }
+
+    /** Resolve only rows on screen; never render the provider's unfiltered summary. */
+    fun preview(id: String) {
+        val owner = activeLease() ?: return
+        if (id in current().previews || id in previewJobs || current().threads.none { it.id == id }) return
+        val request = generation
+        previewJobs[id] = viewModelScope.launch {
+            val text = try {
+                previewSlots.withPermit {
+                    val page = repository.messages(owner, id)
+                    val hidden = if (page.items.isEmpty()) {
+                        emptySet()
+                    } else {
+                        commands.visibility(
+                        owner, Mango9MessageChannel.social, id, page.items.map { it.id.toString() }, false
+                    )
+                    }
+                    Mango9SocialPreview.text(page.items, hidden, page.next != null)
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                "Preview unavailable"
+            }
+            if (valid(owner, request) && current().threads.any { it.id == id }) {
+                state.value = current().copy(previews = current().previews + (id to text))
+            }
+        }
+    }
 
     init {
         viewModelScope.launch {
@@ -41,7 +80,7 @@ internal class Mango9SocialViewModel : ViewModel() {
         viewModelScope.launch {
             Mango9SessionStore.contextChanges.collect {
                 if (lease != null && activeLease() == null) {
-                    generation++; lease = null; state.value = Mango9SocialState(); cached.clear(); draft = ""
+                    cancelPreviews(); generation++; lease = null; state.value = Mango9SocialState(); cached.clear(); draft = ""
                 }
             }
         }
@@ -51,7 +90,7 @@ internal class Mango9SocialViewModel : ViewModel() {
 
     fun bind(value: Mango9SessionLease?) {
         if (value == lease) return
-        lease = value; generation++; state.value = Mango9SocialState(); draft = ""; lastProviderRefresh = 0L
+        cancelPreviews(); lease = value; generation++; state.value = Mango9SocialState(); draft = ""; lastProviderRefresh = 0L
     }
 
     fun activeLease() = lease?.takeIf { repository.isCurrent(it) }
@@ -78,6 +117,7 @@ internal class Mango9SocialViewModel : ViewModel() {
     private fun valid(owner: Mango9SessionLease, request: Long) = activeLease() == owner && generation == request
 
     fun filters(platform: String, account: String) {
+        cancelPreviews()
         generation++
         state.value = current().copy(platform = platform, account = account, threads = emptyList(), nextThread = null, loading = false)
         inbox()
@@ -88,7 +128,8 @@ internal class Mango9SocialViewModel : ViewModel() {
         val previous = current()
         if (previous.loading || (more && previous.nextThread == null)) return
         val request = ++generation
-        state.value = previous.copy(loading = true, error = null)
+        cancelPreviews()
+        state.value = previous.copy(loading = true, error = null, previews = emptyMap(), previewEpoch = request)
         viewModelScope.launch {
             try {
                 val accounts = if (previous.accounts.isEmpty()) repository.accounts(owner) else previous.accounts
@@ -147,17 +188,19 @@ internal class Mango9SocialViewModel : ViewModel() {
                 } catch (e: Mango9MessagingFailure) { if (e.status == 404) null else throw e }
                 val confirmed = if (repository.hasPending(owner, id)) repository.reconcile(owner, id) else null
                 if (!valid(owner, request)) return@launch
-                val latest = all.maxByOrNull { Mango9ConversationRecency.time(it.time) }
+                val visible = all.filterNot { it.id.toString() in hidden }
+                val preview = Mango9SocialPreview.text(all, hidden, page.next != null)
+                val latest = visible.filterNot { it.deleted }.maxByOrNull { Mango9ConversationRecency.time(it.time) }
                 val activity = if (latest != null && Mango9ConversationRecency.newer(latest.time, detail.activityAt)) {
-                    detail.copy(activityAt = latest.time, summary = latest.text)
+                    detail.copy(activityAt = latest.time, summary = preview)
                 } else {
-                    detail
+                    detail.copy(summary = preview)
                 }
                 Mango9SocialRecency.record(owner, activity)
                 confirmed?.takeIf { Mango9SocialSendOutcome.of(it.getString("state")) == Mango9SocialSendOutcome.Sent }
                     ?.let { confirmedSend.value = org.linphone.utils.Event(it.getString("message")) }
                 state.value = current().copy(
-                    thread = detail, messages = all.filterNot { it.id.toString() in hidden }.takeLast(2000),
+                    thread = detail, messages = visible.takeLast(2000),
                     // Cached rows are bounded. Restart pagination from the fresh page so
                     // an older retained cursor cannot skip messages dropped from the cache.
                     muted = muted, nextMessage = if (more || restoring || prior.thread?.id != id) page.next else prior.nextMessage,
@@ -176,6 +219,15 @@ internal class Mango9SocialViewModel : ViewModel() {
                 }
             } catch (e: Exception) { failure(owner, request, e) }
         }
+    }
+
+    fun deletedMessages(ids: Set<String>) {
+        // Fence reads started before the deletion receipt so they cannot briefly resurrect rows.
+        generation++
+        val id = current().thread?.id ?: return
+        state.value = current().copy(messages = current().messages.filterNot { it.id.toString() in ids }, loading = false)
+        cacheKey(id)?.let { cached.remove(it) }
+        open(id)
     }
 
     suspend fun freshAttachment(media: Mango9ChatMedia): Mango9ChatMedia {

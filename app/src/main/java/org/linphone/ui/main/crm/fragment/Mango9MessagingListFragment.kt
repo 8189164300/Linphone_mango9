@@ -67,7 +67,7 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         }
         smsAdapter = Mango9MessagingListAdapter({ item -> openItem(Mango9MessagingTab.Sms, item) }, ::holdConversation)
         teamAdapter = Mango9MessagingListAdapter({ item -> openItem(Mango9MessagingTab.Team, item) }, ::holdConversation)
-        socialAdapter = Mango9MessagingListAdapter({ item -> openItem(Mango9MessagingTab.Social, item) }, ::holdConversation)
+        socialAdapter = Mango9MessagingListAdapter({ item -> openItem(Mango9MessagingTab.Social, item) }, ::holdConversation, social::preview)
         binding.list.layoutManager = LinearLayoutManager(requireContext())
         binding.list.adapter = adapterFor(mode)
         binding.back.setOnClickListener { goBack() }
@@ -192,7 +192,12 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     private fun renderSocial() {
         if (mode != Mango9MessagingTab.Social || !::socialAdapter.isInitialized) return
         val value = social.current()
-        submitRows(socialAdapter, value.threads.map(Mango9MessagingListItem::Social))
+        submitRows(
+            socialAdapter,
+            value.threads.map {
+            Mango9MessagingListItem.Social(it, value.previews[it.id] ?: "Loading preview…", value.previewEpoch)
+        }
+        )
         showAdapter(mode)
         binding.addGroup.visibility = View.INVISIBLE
         binding.loading.visibility = if (value.loading && value.threads.isEmpty()) View.VISIBLE else View.GONE

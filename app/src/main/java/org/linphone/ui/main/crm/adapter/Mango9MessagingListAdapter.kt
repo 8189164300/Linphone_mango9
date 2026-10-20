@@ -22,7 +22,7 @@ import org.linphone.mango9.Mango9SmsParty
 import org.linphone.mango9.Mango9SocialThread
 
 sealed class Mango9MessagingListItem(val stableId: String) {
-    data class Social(val thread: Mango9SocialThread) : Mango9MessagingListItem("social:${thread.id}")
+    data class Social(val thread: Mango9SocialThread, val preview: String = "Loading preview…", val previewEpoch: Long = 0) : Mango9MessagingListItem("social:${thread.id}")
 
     data class Group(val room: Mango9ChatRoom, val title: String) : Mango9MessagingListItem("group:${room.id}")
 
@@ -103,6 +103,7 @@ object Mango9MessagingListItems {
 class Mango9MessagingListAdapter(
     private val onClick: (Mango9MessagingListItem) -> Unit,
     private val onHold: ((View, Mango9MessagingListItem) -> Unit)? = null,
+    private val onSocialVisible: ((String) -> Unit)? = null,
 ) : ListAdapter<Mango9MessagingListItem, Mango9MessagingListAdapter.ViewHolder>(DiffCallback) {
     internal var notificationScope: org.linphone.mango9.Mango9SessionLease? = null
 
@@ -124,7 +125,8 @@ class Mango9MessagingListAdapter(
             when (item) {
                 is Mango9MessagingListItem.Social -> {
                     title = item.thread.title
-                    preview = item.thread.summary
+                    preview = item.preview
+                    onSocialVisible?.invoke(item.thread.id)
                     unread = if (item.thread.unread) 1 else 0
                     online = null
                     initials = when (item.thread.platform) { "facebook" -> "FB"; "instagram" -> "IG"; "tiktok" -> "TT"; else -> "" }

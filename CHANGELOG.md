@@ -10,6 +10,13 @@ Group changes to describe their impact on the project, as follows:
     Fixed for any bug fixes.
     Security to invite users to upgrade in case of vulnerabilities.
 
+## [Mango9 6.2.8 (602038)] - 2026-10-19
+
+### Fixed
+- Social inbox previews respect messages deleted for the current user.
+- Restored social messages appear on refresh, and stale reads cannot reinsert messages after deletion.
+- Attachment-only and unavailable social messages have clear preview labels.
+
 ## [6.2.6] - 2026-08-20
 
 ### Changed

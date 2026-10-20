@@ -173,7 +173,7 @@ class ConversationsListFragment : AbstractMainFragment() {
         }, onHold = ::holdMango9Conversation)
         socialAdapter = Mango9MessagingListAdapter(onClick = {
             openMango9Item(Mango9MessagingTab.Social, it)
-        }, onHold = ::holdMango9Conversation)
+        }, onHold = ::holdMango9Conversation, onSocialVisible = { social.preview(it) })
     }
 
     override fun onCreateView(
@@ -669,7 +669,11 @@ class ConversationsListFragment : AbstractMainFragment() {
         if (mango9Tab != Mango9MessagingTab.Social || view == null) return
         val value = social.current()
         showMango9MessagesAdapter(mango9Tab)
-        socialAdapter.submitList(value.threads.map(Mango9MessagingListItem::Social))
+        socialAdapter.submitList(
+            value.threads.map {
+            Mango9MessagingListItem.Social(it, value.previews[it.id] ?: "Loading preview…", value.previewEpoch)
+        }
+        )
         updateTabBadge(2, value.threads.count { it.unread })
         binding.mango9MessagesStatus.text = value.error ?: if (value.loading) getString(R.string.mango9_chat_connecting) else getString(R.string.mango9_social)
         binding.mango9MessagesEmpty.setText(R.string.mango9_social_empty)

@@ -68,6 +68,21 @@ data class Mango9SocialMessage(
 
 internal data class Mango9SocialPage<T>(val items: List<T>, val next: String?)
 
+/** Provider summaries are shared; personal deletion must be applied to saved history first. */
+internal object Mango9SocialPreview {
+    fun text(messages: List<Mango9SocialMessage>, hidden: Set<String>, hasOlder: Boolean): String {
+        val latest = messages.filterNot { it.deleted || it.id.toString() in hidden }
+            .maxWithOrNull(compareBy<Mango9SocialMessage>({ Mango9ConversationRecency.time(it.time) }, { it.id }))
+        return when {
+            latest == null -> if (hasOlder) "Open conversation for earlier messages" else "No visible messages"
+            latest.unavailable -> "Content unavailable"
+            latest.text.isNotBlank() -> latest.text
+            latest.attachments.isNotEmpty() -> "Attachment"
+            else -> "Content unavailable"
+        }
+    }
+}
+
 internal enum class Mango9SocialSendOutcome(val notice: String?) {
     Sent(null),
     Failed("Message not sent. Your draft has been kept."),

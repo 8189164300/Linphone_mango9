@@ -871,7 +871,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
                                     if (!viewModel.isCurrentConversation()) return@launch
                                     adapter.select(null)
                                     adapter.submitList(adapter.currentList.filterNot { item -> selected.any { it.stableId == item.stableId } })
-                                    if (isSocial) requestedRoomId?.let { social.open(it) } else binding.retryHistory.performClick()
+                                    if (isSocial) social.deletedMessages(selected.map(::messageId).toSet()) else binding.retryHistory.performClick()
                                 } catch (e: Exception) {
                                     if (e is CancellationException) throw e
                                     if (viewModel.isCurrentConversation()) showLocalError(e.message.orEmpty())
