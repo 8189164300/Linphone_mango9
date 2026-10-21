@@ -96,6 +96,11 @@ class Mango9LiveChatEndToEndTest {
                     waitFor { !vm.current().sending }
                     assertNull(vm.current().error); assertFalse(vm.current().pending)
                     assertTrue(vm.current().messages.any { it.text == text && it.files.any { f -> f.liveText("mime") == mime } })
+                    val sent = vm.current().messages.first { it.text == text }
+                    val media = Mango9LivePolicy.media(sent.files.first(), owner.session)
+                    val downloaded = runBlocking { Mango9MediaCache.acquire(context, media, owner) }
+                    try { assertArrayEquals("The phone can retrieve the complete sent attachment", file.readBytes(), downloaded.file.readBytes()) }
+                    finally { downloaded.close() }
                     scenario.onActivity { activity ->
                         val editor = all(activity.findViewById(android.R.id.content)).filterIsInstance<EditText>().single { it.hint == "Message" }
                         assertEquals("", editor.text.toString()); assertFalse(editor.hasFocus())
