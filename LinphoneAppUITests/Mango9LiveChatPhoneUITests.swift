@@ -2,6 +2,45 @@ import XCTest
 
 /// Physical-phone checks. Mutations target only the named temporary internal fixture; no visitor messages are sent.
 final class Mango9LiveChatPhoneUITests: XCTestCase {
+	func testLiveInboxDoesNotShowEmptyBeforeExistingConversationsLoad() {
+		continueAfterFailure = false
+		XCUIDevice.shared.orientation = .portrait
+		let app = XCUIApplication(); app.terminate(); app.launch()
+		let chats = app.buttons["Conversations"].firstMatch
+		XCTAssertTrue(chats.waitForExistence(timeout: 30)); chats.tap()
+		let live = app.buttons["conversations.tab.live"]
+		XCTAssertTrue(live.waitForExistence(timeout: 10)); live.tap()
+		let row = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "livechat.thread.")).firstMatch
+		let deadline = Date().addingTimeInterval(25)
+		while !row.exists && Date() < deadline {
+			XCTAssertFalse(app.staticTexts["livechat.empty"].exists, "An existing inbox must not claim it is empty while loading")
+			RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+		}
+		XCTAssertTrue(row.exists)
+		XCTAssertFalse(app.staticTexts["livechat.empty"].exists)
+		capture(app, "Live inbox after first server response")
+	}
+	func testSocialConversationRemainsAvailableAcrossProviderRefresh() throws {
+		continueAfterFailure = false
+		XCUIDevice.shared.orientation = .portrait
+		let app = XCUIApplication(); app.terminate(); app.launch()
+		let chats = app.buttons["Conversations"].firstMatch
+		XCTAssertTrue(chats.waitForExistence(timeout: 30)); chats.tap()
+		let social = app.buttons["conversations.tab.social"]
+		XCTAssertTrue(social.waitForExistence(timeout: 10)); social.tap()
+		let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (label CONTAINS[c] %@)", "social.thread.", "test")).firstMatch
+		guard row.waitForExistence(timeout: 25) else { throw XCTSkip("No existing non-test Social conversation on this phone") }
+		row.tap()
+		let composer = app.descendants(matching: .any)["chat.composer"].firstMatch
+		XCTAssertTrue(composer.waitForExistence(timeout: 20))
+		// Allow the real provider refresh at open and the next minute's refresh;
+		// this check reads existing history and never sends a customer reply.
+		for _ in 0..<15 { RunLoop.current.run(until: Date().addingTimeInterval(5)) }
+		capture(app, "Social history after automatic provider refresh")
+		XCTAssertTrue(composer.exists)
+		XCTAssertFalse(app.buttons["Retry"].exists, "The existing Social account should refresh without a provider warning")
+		app.terminate(); app.launch()
+	}
 	func testLiveNotificationColdStartOpensExactConversation() throws { try verifyMessageNotification(channel: "live", cold: true) }
 	func testLiveNotificationWarmStartOpensExactConversation() throws { try verifyMessageNotification(channel: "live", cold: false) }
 	func testSocialNotificationOpensExactConversation() throws { try verifyMessageNotification(channel: "social", cold: false) }

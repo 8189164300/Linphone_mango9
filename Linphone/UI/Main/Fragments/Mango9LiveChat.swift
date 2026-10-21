@@ -17,10 +17,11 @@ import QuickLook
 	private(set) var next: String?
 	private var nextID: String?
 	private var generation = 0
-	private var loadedFilter = ""
+	private var loadedFilter: String?
 	private(set) var expanded = false
 	init(session: Mango9Session? = Mango9SessionStore.load()) { self.session = session }
 	func filter(_ search: String) -> String { [site, status, String(assigned), String(unread), search].joined(separator: "|") }
+	func hasLoaded(_ search: String) -> Bool { loadedFilter == filter(search) }
 	func loadSites() async {
 		guard let session else { return }
 		do {
@@ -149,9 +150,12 @@ struct Mango9LiveChatList: View {
 						.listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 12))
 					}
 				}
-				if store.busy && store.conversations.isEmpty { ProgressView() }
-				if !store.busy && store.conversations.isEmpty && store.error == nil {
+				if store.conversations.isEmpty && store.error == nil && (store.busy || !store.hasLoaded(searchText)) {
+					ProgressView("Loading conversations…").accessibilityIdentifier("livechat.loading")
+				}
+				if !store.busy && store.hasLoaded(searchText) && store.conversations.isEmpty && store.error == nil {
 					Text(searchText.isEmpty ? "No Live Chat conversations yet. Conversations from your connected websites will appear here." : "No matching conversations.").foregroundStyle(.secondary)
+						.accessibilityIdentifier("livechat.empty")
 				}
 				if store.next != nil { Button("Load more") { Task { await store.load(searchText, more: true) } }.disabled(store.busy) }
 			}.listStyle(.plain).refreshable { await store.loadSites(); await store.load(searchText) }

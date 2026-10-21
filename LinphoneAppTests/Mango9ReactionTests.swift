@@ -730,6 +730,69 @@ final class Mango9ReactionTests: XCTestCase {
 			XCTAssertEqual(store.draft, "Keep this draft"); XCTAssertTrue(store.canSend)
 		}
 	}
+	@MainActor func testSocialPollingReconcilesProviderWithoutRequestingItEveryTick() async throws {
+		try await withSocialStore { store, _ in
+			var providerRequests = 0, offline = true
+			ReactionMockProtocol.handler = { request in
+				if request.url!.lastPathComponent == "inbox-refresh-messages" {
+					providerRequests += 1
+					if offline { throw URLError(.timedOut) }
+				}
+				if request.url!.lastPathComponent == "inbox-messages", !offline {
+					return Self.envelope(["items": [["id": 2, "text": "New provider reply", "direction": "incoming", "deleted": false]], "next": NSNull()])
+				}
+				return Self.socialRead(request)
+			}
+			await store.pollThread(id: "thread")
+			XCTAssertEqual(providerRequests, 1); XCTAssertNotNil(store.error)
+			let afterAttempt = Date()
+			store.draft = "Keep my draft"
+			await store.pollThread(id: "thread", now: afterAttempt.addingTimeInterval(15))
+			await store.pollThread(id: "thread", now: afterAttempt.addingTimeInterval(30))
+			XCTAssertEqual(providerRequests, 1, "Saved-history polling must not hammer the provider")
+			offline = false
+			await store.pollThread(id: "thread", now: afterAttempt.addingTimeInterval(61))
+			XCTAssertEqual(providerRequests, 2); XCTAssertNil(store.error)
+			XCTAssertTrue(store.messages.contains { $0.text == "New provider reply" })
+			XCTAssertEqual(store.draft, "Keep my draft")
+		}
+	}
+	@MainActor func testSocialSendDuringSlowReadStillRefreshesConfirmedReply() async throws {
+		try await withSocialStore { store, _ in
+			var receipt: [String: Any]?, slowRead = false, delayedOnce = false
+			var sends = 0, providerRequests = 0
+			let reading = expectation(description: "Saved history is in flight")
+			ReactionMockProtocol.responseDelay = { request in
+				guard slowRead, !delayedOnce, request.url!.lastPathComponent == "inbox-messages" else { return 0 }
+				delayedOnce = true; reading.fulfill(); return 0.4
+			}
+			ReactionMockProtocol.handler = { request in
+				switch request.url!.lastPathComponent {
+				case "inbox-send":
+					sends += 1
+					let body = try ReactionMockProtocol.body(request)
+					receipt = ["id": "thread", "sendId": "send", "requestId": body["requestId"]!, "state": "sent", "message": "Reply", "providerId": "external"]
+					return Self.envelope(receipt!)
+				case "inbox-sends": return Self.envelope(["items": receipt.map { [$0] } ?? [], "open": NSNull()])
+				case "inbox-refresh-messages": providerRequests += 1; return Self.envelope([:])
+				case "inbox-messages" where receipt != nil:
+					return Self.envelope(["items": [["id": 2, "text": "Reply", "direction": "outgoing", "deleted": false]], "next": NSNull()])
+				default: return Self.socialRead(request)
+				}
+			}
+			await store.loadThread(id: "thread"); store.draft = "Reply"
+			slowRead = true
+			let poll = Task { await store.loadThread(id: "thread") }
+			await fulfillment(of: [reading], timeout: 2)
+			XCTAssertTrue(store.busy)
+			await store.send()
+			await poll.value
+			XCTAssertEqual(sends, 1, "Refresh must never resend the reply")
+			XCTAssertEqual(providerRequests, 1, "The post-send refresh must survive the in-flight read")
+			XCTAssertTrue(store.messages.contains { $0.text == "Reply" })
+			XCTAssertEqual(store.draft, ""); XCTAssertFalse(store.busy)
+		}
+	}
 	@MainActor func testSocialRefreshServiceFailureKeepsInboxAndDraftUntilRetryRecovers() async throws {
 		try await withSocialStore { store, _ in
 			var expired = false, refreshAvailable = false
@@ -953,6 +1016,7 @@ final class Mango9ReactionTests: XCTestCase {
 		try Mango9SessionStore.save(active, persist: false, makeActive: true)
 		defer {
 			defaults.removePersistentDomain(forName: name)
+			ReactionMockProtocol.responseDelay = nil
 			Mango9SessionStore.remove(for: active.sipIdentity!)
 			if let previous { try? Mango9SessionStore.save(previous, makeActive: true) }
 		}
@@ -980,13 +1044,19 @@ final class Mango9ReactionTests: XCTestCase {
 
 private final class ReactionMockProtocol: URLProtocol {
 	static var handler: ((URLRequest) throws -> (Int, Data))?
+	static var responseDelay: ((URLRequest) -> TimeInterval)?
 	override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasSuffix(".invalid") == true }
 	override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 	override func startLoading() {
 		do {
 			let (status, data) = try Self.handler!(request)
-			client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
-			client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
+			let deliver = {
+				self.client?.urlProtocol(self, didReceive: HTTPURLResponse(url: self.request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+				self.client?.urlProtocol(self, didLoad: data); self.client?.urlProtocolDidFinishLoading(self)
+			}
+			let delay = Self.responseDelay?(request) ?? 0
+			if delay > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: deliver) }
+			else { deliver() }
 		} catch { client?.urlProtocol(self, didFailWithError: error) }
 	}
 	override func stopLoading() {}

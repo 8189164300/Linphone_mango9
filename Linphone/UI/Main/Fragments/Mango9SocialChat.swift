@@ -514,6 +514,15 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 	private var lifetime = UUID()
 	private var threadGeneration = 0
 	private var providerRefreshWarning: String?
+	private struct ThreadLoad {
+		let id: String
+		var more = false
+		var refreshProvider = false
+		var markRead = false
+	}
+	private var threadLoadTask: Task<Void, Never>?
+	private var pendingThreadLoad: ThreadLoad?
+	private var providerAttempt: (id: String, at: Date)?
 	init(session: Mango9Session, api: Mango9MessagingAPI? = nil, journal: Mango9SocialSendJournal? = nil) {
 		self.session = session; self.api = api ?? .shared; self.journal = journal ?? .shared
 	}
@@ -524,6 +533,7 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 		outgoingText.unicodeScalars.count <= (thread?.platform == "tiktok" ? 6000 : 10000)
 	}
 	func clearPrivateState() {
+		threadLoadTask?.cancel(); threadLoadTask = nil; pendingThreadLoad = nil; providerAttempt = nil
 		providerRefreshWarning = nil
 		lifetime = UUID()
 		inboxGeneration += 1; threadGeneration += 1; threads = []; messages = []; thread = nil
@@ -536,6 +546,7 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 	func inboxQuery(search: String) -> Mango9SocialInboxQuery {
 		.init(search: search.trimmingCharacters(in: .whitespacesAndNewlines), platform: selectedPlatform, account: selectedAccount)
 	}
+	func hasLoadedInbox(search: String) -> Bool { loadedQuery == inboxQuery(search: search) }
 	var filteredAccounts: [Mango9SocialAccount] { accounts.filter { selectedPlatform.isEmpty || $0.platform == selectedPlatform } }
 	func selectPlatform(_ value: String) {
 		guard value.isEmpty || Mango9SocialPlatform.all.contains(value), value != selectedPlatform else { return }
@@ -602,7 +613,42 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 		}
 	}
 	func loadThread(id: String, more: Bool = false, refreshProvider: Bool = false, markRead: Bool = false) async {
-		guard !busy, !more || nextMessage != nil else { return }
+		guard !Task.isCancelled, !more || nextMessage != nil else { return }
+		let request = ThreadLoad(id: id, more: more, refreshProvider: refreshProvider, markRead: markRead)
+		if let task = threadLoadTask {
+			// A send receipt or push can arrive during a slow read. Retain one
+			// follow-up read, including the strongest requested refresh, instead of dropping it.
+			if !more {
+				if var pending = pendingThreadLoad, pending.id == id {
+					pending.refreshProvider = pending.refreshProvider || refreshProvider
+					pending.markRead = pending.markRead || markRead
+					pendingThreadLoad = pending
+				} else { pendingThreadLoad = request }
+			}
+			await task.value
+			return
+		}
+		let life = lifetime
+		let task = Task { @MainActor in
+			var next: ThreadLoad? = request
+			while let current = next, life == lifetime, !Task.isCancelled {
+				pendingThreadLoad = nil
+				await performThreadLoad(current)
+				next = pendingThreadLoad
+			}
+			if life == lifetime { pendingThreadLoad = nil; threadLoadTask = nil }
+		}
+		threadLoadTask = task
+		await task.value
+	}
+	func pollThread(id: String, now: Date = Date()) async {
+		// Match the web inbox: read saved messages frequently, reconcile the
+		// provider at most once per minute, including recovery after a failed attempt.
+		let due = providerAttempt.map { $0.id != id || now.timeIntervalSince($0.at) >= 60 } ?? true
+		await loadThread(id: id, refreshProvider: due, markRead: true)
+	}
+	private func performThreadLoad(_ request: ThreadLoad) async {
+		let (id, more, refreshProvider, markRead) = (request.id, request.more, request.refreshProvider, request.markRead)
 		if thread?.id != id { providerRefreshWarning = nil }
 		threadGeneration += 1; let generation = threadGeneration
 		busy = true; defer { if generation == threadGeneration { busy = false } }
@@ -620,6 +666,7 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 			guard generation == threadGeneration else { return }
 			if refreshProvider && detail.connectionCurrent {
 				// Existing inbox reconciliation, not a new reaction WebSocket contract.
+				providerAttempt = (id, Date())
 				do {
 					let _: RefreshResult = try await api.request(RefreshResult.self, session: session, social: true,
 						path: ["inbox-refresh-messages"], body: ["id": detail.sourceId])
@@ -827,8 +874,8 @@ struct SocialInboxListContent: View {
 					})
 				.listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 12))
 			}
-			if store.busy && store.threads.isEmpty { ProgressView() }
-			else if visibleThreads.isEmpty && store.error == nil { Text("No social conversations").foregroundStyle(.secondary) }
+			if store.threads.isEmpty && store.error == nil && (store.busy || !store.hasLoadedInbox(search: search)) { ProgressView("Loading conversations…") }
+			else if store.hasLoadedInbox(search: search) && visibleThreads.isEmpty && store.error == nil { Text("No social conversations").foregroundStyle(.secondary) }
 			if store.nextThread != nil { Button("Load more") { Task { await store.loadInbox(search: search, more: true) } }.disabled(store.busy) }
 		}.listStyle(.plain).tint(Color.orangeMain500)
 		.mango9ConversationVisibilityRefresh(store: conversationVisibility, channel: .social, ids: store.threads.map(\.id))
@@ -1152,7 +1199,7 @@ struct Mango9SocialConversation: View {
 			while !Task.isCancelled {
 				try? await Task.sleep(nanoseconds: 15_000_000_000)
 				guard !Task.isCancelled else { return }
-				await refresh()
+				await store.pollThread(id: original.id)
 			}
 		}
 	}
