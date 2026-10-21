@@ -1,6 +1,6 @@
 Mango9 is a companion application for existing Mango9 business users. Accounts and telecommunications services are provisioned outside the app under organizational service agreements. There is no consumer signup, purchase, pricing, or subscription link in the app. Sign in using the review credentials entered in App Store Connect. Password and email-code login use the same provisioning flow.
 
-Version 6.2.19 (53) adds Live Chat for authorized website conversations alongside SMS, Team Chat and Social, with visitor details, staff assignment, presence, supported attachments, voice recordings and reactions. It improves chat navigation, portrait/landscape layouts and composer controls. One binary supports iOS 15 and later.
+Version 6.2.19 (54) adds Live Chat for authorized website conversations alongside SMS, Team Chat and Social, with visitor details, staff assignment, presence, supported attachments, voice recordings and reactions. It improves chat navigation, portrait/landscape layouts and composer controls. This build also corrects notification navigation, waits for conversation loading before showing an empty inbox, and improves Social reply refresh on slower connections. One binary supports iOS 15 and later.
 
 To test:
 1. Open Conversations and switch between SMS, Team Chat, Social and Live Chat. Open a saved conversation, rotate the phone and return to the inbox. Settings > Conversations has device-local switches for Team Chat, Social and Live Chat. Hiding a tab preserves history and server permissions.
@@ -11,6 +11,8 @@ To test:
 6. CRM > Calendar offers Day, Week and Month views; CRM > Events & Tasks offers Appointments, Events and Tasks. Create a test event with +, change its start, save and reopen. Moving the start preserves duration; the end is independently editable. Delete only test events. Recurring schedule editing remains on the web. No personal iPhone calendar access is required.
 7. Settings > CRM Settings includes reminders and separate push controls for SMS, Team, Social, leads/imports and Events & Tasks. Task-change pushes are not yet available. In-app reminders are separate from background pushes. Calling remains available through the assigned business line. Denied microphone permission offers Cancel or Open Settings without dialing.
 
-Exact corresponding source: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.19-build-53
+8. Tap an incoming message notification to open its conversation in the correct SMS, Team Chat, Social or Live Chat channel, including when launching the app from a closed state. Social history refreshes while the conversation is open; pull to refresh is also available. Refreshing preserves unsent drafts.
+
+Exact corresponding source: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.19-build-54
 
 Review credentials and contact details are supplied only in App Store Connect, never in public source.
