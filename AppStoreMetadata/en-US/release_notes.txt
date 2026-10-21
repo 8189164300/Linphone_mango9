@@ -1,3 +1,4 @@
+• Create, edit and insert personal message templates from the + menu in SMS, Team Chat, Social and Live Chat. Inserting keeps your existing draft and lets you review before sending.
 • Live Chat brings website conversations, visitor details, assignment and presence into the app.
 • Send supported images, files and voice recordings in Live Chat, with native previews and sharing.
 • Choose which conversation tabs appear on this device in Conversation settings.
