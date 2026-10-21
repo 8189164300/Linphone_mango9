@@ -10,6 +10,18 @@ Group changes to describe their impact on the project, as follows:
     Fixed for any bug fixes.
     Security to invite users to upgrade in case of vulnerabilities.
 
+## [Mango9 6.2.9 (602039)] - 2026-10-20
+
+### Added
+- Native Live Chat with website and conversation filters, assignment, presence, visitor details, and notification preferences.
+- Live Chat images, files, voice messages, reactions, selection, copy, forwarding, and personal message deletion where supported by the connected website.
+- Account-specific controls for showing Team Chat, Social, and Live Chat in Conversations settings.
+
+### Fixed
+- Conversation tabs keep their selected state and compact spacing after navigation and rotation.
+- Landscape conversations use the full screen with compact headers and native composers.
+- Routine Live Chat refreshes preserve message layout and voice playback while signed attachment links refresh.
+
 ## [Mango9 6.2.8 (602038)] - 2026-10-19
 
 ### Fixed

@@ -156,6 +156,7 @@ class SettingsFragment : GenericMainFragment() {
         binding.viewModel = viewModel
         observeToastEvents(viewModel)
         setupMango9CallSettings()
+        setupMango9ConversationTabs()
         binding.mango9CrmSettings.bind(mango9CrmSettingsViewModel.screen, viewLifecycleOwner)
 
         binding.setBackClickListener {
@@ -351,6 +352,16 @@ class SettingsFragment : GenericMainFragment() {
         startPostponedEnterTransition()
     }
 
+    private fun setupMango9ConversationTabs() {
+        val preferences = org.linphone.mango9.Mango9ChatTabPreferences(requireContext())
+        val controls = binding.conversationSettings
+        listOf("team" to controls.mango9TeamEnabled, "social" to controls.mango9SocialEnabled, "live" to controls.mango9LiveEnabled).forEach { (key, control) ->
+            control.setOnCheckedChangeListener(null); control.isChecked = preferences.visible(key)
+            control.setOnCheckedChangeListener { _, checked -> preferences.set(key, checked) }
+        }
+        controls.mango9LiveSettings.setOnClickListener { findNavController().navigate(R.id.action_global_mango9LiveSettingsFragment) }
+    }
+
     private fun setupMango9CallSettings() {
         val section = binding.mango9CallSettings
         section.refresh.setOnClickListener { mango9CallSettingsViewModel.reload(force = true) }
@@ -452,6 +463,7 @@ class SettingsFragment : GenericMainFragment() {
     override fun onResume() {
         super.onResume()
 
+        setupMango9ConversationTabs()
         viewModel.reloadLdapServers()
         viewModel.reloadConfiguredCardDavServers()
         viewModel.reloadShowDeveloperSettings()

@@ -71,8 +71,8 @@
             android:id="@+id/tabs"
             android:layout_width="0dp"
             android:layout_height="48dp"
-            android:layout_marginHorizontal="16dp"
-            android:layout_marginTop="10dp"
+            android:layout_marginHorizontal="6dp"
+            android:layout_marginTop="0dp"
             app:checkedButton="@id/sms_tab"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
@@ -86,7 +86,7 @@
                 android:layout_width="0dp"
                 android:layout_height="42dp"
                 android:layout_weight="1"
-                android:checkable="true"
+                android:checkable="true" android:textAllCaps="false" android:textSize="12sp" android:maxLines="1" android:minWidth="0dp" android:paddingStart="4dp" android:paddingEnd="4dp"
                 android:text="@string/mango9_sms" />
 
             <com.google.android.material.button.MaterialButton
@@ -95,12 +95,14 @@
                 android:layout_width="0dp"
                 android:layout_height="42dp"
                 android:layout_weight="1"
-                android:checkable="true"
+                android:checkable="true" android:textAllCaps="false" android:textSize="12sp" android:maxLines="1" android:minWidth="0dp" android:paddingStart="4dp" android:paddingEnd="4dp"
                 android:text="@string/mango9_team_chat" />
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/social_tab" style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp" android:layout_height="42dp" android:layout_weight="1"
-                android:checkable="true" android:text="@string/mango9_social" />
+                android:checkable="true" android:textAllCaps="false" android:textSize="12sp" android:maxLines="1" android:minWidth="0dp" android:paddingStart="4dp" android:paddingEnd="4dp" android:text="@string/mango9_social" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/live_tab" style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp" android:layout_height="42dp" android:layout_weight="1" android:checkable="true" android:textAllCaps="false" android:textSize="12sp" android:maxLines="1" android:minWidth="0dp" android:paddingStart="4dp" android:paddingEnd="4dp" android:text="Live Chat" />
         </com.google.android.material.button.MaterialButtonToggleGroup>
 
         <LinearLayout android:id="@+id/social_filters" android:layout_width="0dp" android:layout_height="wrap_content"
@@ -188,5 +190,6 @@
             app:layout_constraintEnd_toEndOf="@id/swipe_refresh"
             app:layout_constraintStart_toStartOf="@id/swipe_refresh"
             app:layout_constraintTop_toTopOf="@id/swipe_refresh" />
-    </androidx.constraintlayout.widget.ConstraintLayout>
+    <FrameLayout android:id="@+id/mango9_live_host" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" app:layout_constraintTop_toBottomOf="@id/tabs" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent" />
+</androidx.constraintlayout.widget.ConstraintLayout>
 </layout>

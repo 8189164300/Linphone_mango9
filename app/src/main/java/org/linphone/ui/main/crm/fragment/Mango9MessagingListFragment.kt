@@ -49,6 +49,14 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     private var settingFilters = false
     private var accountIds = emptyList<String>()
     private var mode = Mango9MessagingTab.Sms
+    private lateinit var liveInbox: Mango9LiveInbox
+    private fun visibleTabs() {
+        val preferences = org.linphone.mango9.Mango9ChatTabPreferences(requireContext())
+        listOf("team" to binding.teamTab, "social" to binding.socialTab, "live" to binding.liveTab).forEach { (key, button) ->
+            button.visibility = if (preferences.visible(key)) View.VISIBLE else View.GONE
+        }
+        if (mode != Mango9MessagingTab.Sms && !preferences.visible(mode.name.lowercase())) { mode = Mango9MessagingTab.Sms; binding.tabs.check(R.id.sms_tab) }
+    }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         binding = Mango9MessagingListFragmentBinding.inflate(inflater, container, false)
@@ -60,9 +68,12 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         viewModel = ViewModelProvider(this)[Mango9MessagingViewModel::class.java]
         social = ViewModelProvider(this)[Mango9SocialViewModel::class.java]
         social.bind(Mango9SessionStore(requireContext()).captureSession())
+        liveInbox = Mango9LiveInbox(this, ViewModelProvider(this)[org.linphone.ui.main.crm.viewmodel.Mango9LiveChatViewModel::class.java]) { Mango9LiveChatFragment.open(this, it.id) }
+        binding.mango9LiveHost.addView(liveInbox.view, android.widget.FrameLayout.LayoutParams(-1, -1))
         mode = when (savedInstanceState?.getString(ARG_INITIAL_TAB) ?: arguments?.getString(ARG_INITIAL_TAB)) {
             TYPE_TEAM -> Mango9MessagingTab.Team
             TYPE_SOCIAL -> Mango9MessagingTab.Social
+            "live" -> Mango9MessagingTab.Live
             else -> Mango9MessagingTab.Sms
         }
         smsAdapter = Mango9MessagingListAdapter({ item -> openItem(Mango9MessagingTab.Sms, item) }, ::holdConversation)
@@ -81,12 +92,12 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         binding.addGroup.setOnClickListener { showCreateGroupDialog() }
         binding.tabs.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (!isChecked) return@addOnButtonCheckedListener
-            mode = when (checkedId) { R.id.sms_tab -> Mango9MessagingTab.Sms; R.id.social_tab -> Mango9MessagingTab.Social; else -> Mango9MessagingTab.Team }
+            mode = when (checkedId) { R.id.sms_tab -> Mango9MessagingTab.Sms; R.id.social_tab -> Mango9MessagingTab.Social; R.id.live_tab -> Mango9MessagingTab.Live; else -> Mango9MessagingTab.Team }
             showAdapter(mode)
             render(viewModel.state.value ?: Mango9ChatState())
             if (mode == Mango9MessagingTab.Social) { renderSocial(); social.inbox() }
         }
-        binding.tabs.check(when (mode) { Mango9MessagingTab.Sms -> R.id.sms_tab; Mango9MessagingTab.Team -> R.id.team_tab; Mango9MessagingTab.Social -> R.id.social_tab })
+        binding.tabs.check(when (mode) { Mango9MessagingTab.Sms -> R.id.sms_tab; Mango9MessagingTab.Team -> R.id.team_tab; Mango9MessagingTab.Social -> R.id.social_tab; Mango9MessagingTab.Live -> R.id.live_tab })
         viewModel.state.observe(viewLifecycleOwner, ::render)
         social.state.observe(viewLifecycleOwner) { renderSocial() }
         val platforms = listOf("", "facebook", "instagram", "tiktok")
@@ -131,12 +142,13 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     override fun onResume() {
         super.onResume()
         social.bind(Mango9SessionStore(requireContext()).captureSession())
+        visibleTabs()
         render(viewModel.currentState())
         viewModel.refresh()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        outState.putString(ARG_INITIAL_TAB, when (mode) { Mango9MessagingTab.Sms -> TYPE_SMS; Mango9MessagingTab.Team -> TYPE_TEAM; Mango9MessagingTab.Social -> TYPE_SOCIAL })
+        outState.putString(ARG_INITIAL_TAB, when (mode) { Mango9MessagingTab.Sms -> TYPE_SMS; Mango9MessagingTab.Team -> TYPE_TEAM; Mango9MessagingTab.Social -> TYPE_SOCIAL; Mango9MessagingTab.Live -> "live" })
         super.onSaveInstanceState(outState)
     }
 
@@ -144,6 +156,11 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         val scope = Mango9SessionStore(requireContext()).captureSession()
         listOf(smsAdapter, teamAdapter, socialAdapter).forEach { it.notificationScope = scope }
         binding.socialFilters.visibility = if (mode == Mango9MessagingTab.Social) View.VISIBLE else View.GONE
+        val live = mode == Mango9MessagingTab.Live
+        liveInbox.show(live); binding.mango9LiveHost.visibility = if (live) View.VISIBLE else View.GONE
+        binding.swipeRefresh.visibility = if (live) View.GONE else View.VISIBLE
+        binding.connectionStatus.visibility = if (live) View.GONE else View.VISIBLE
+        if (live) { binding.loading.visibility = View.GONE; binding.empty.visibility = View.GONE; binding.errorCard.visibility = View.GONE; binding.addGroup.visibility = View.INVISIBLE; return }
         if (mode == Mango9MessagingTab.Social) { renderSocial(); return }
         val teamItems = teamItems(state)
         val smsItems = smsItems(state)

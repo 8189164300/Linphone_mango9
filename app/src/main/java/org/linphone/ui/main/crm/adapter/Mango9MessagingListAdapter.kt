@@ -41,12 +41,14 @@ sealed class Mango9MessagingListItem(val stableId: String) {
 enum class Mango9MessagingTab {
     Sms,
     Team,
-    Social;
+    Social,
+    Live;
 
     fun accepts(item: Mango9MessagingListItem): Boolean = when (this) {
         Sms -> item is Mango9MessagingListItem.Sms
         Team -> item is Mango9MessagingListItem.Group || item is Mango9MessagingListItem.User
         Social -> item is Mango9MessagingListItem.Social
+        Live -> false
     }
 }
 

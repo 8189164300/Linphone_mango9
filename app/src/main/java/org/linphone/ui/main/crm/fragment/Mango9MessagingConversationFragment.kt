@@ -163,6 +163,17 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         binding = Mango9MessagingConversationFragmentBinding.inflate(inflater, container, false)
+        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val density = resources.displayMetrics.density
+        if (landscape) {
+            listOf(binding.back, binding.title, binding.more).forEach { it.layoutParams = it.layoutParams.apply { height = (48 * density).toInt() } }
+            binding.statusBar.layoutParams = binding.statusBar.layoutParams.apply { height = (24 * density).toInt() }
+            binding.sender.layoutParams = binding.sender.layoutParams.apply { height = (36 * density).toInt() }
+        }
+        binding.message.maxLines = if (landscape) 2 else 5
+        binding.message.imeOptions = binding.message.imeOptions or android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        binding.root.isFocusableInTouchMode = true
+        binding.root.requestFocus()
         return binding.root
     }
 

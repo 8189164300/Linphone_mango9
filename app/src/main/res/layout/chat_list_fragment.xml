@@ -97,6 +97,7 @@
                         app:layout_constraintStart_toStartOf="parent"
                         app:layout_constraintTop_toTopOf="parent"
                         app:tabGravity="fill"
+                        app:tabMinWidth="0dp" app:tabPaddingStart="3dp" app:tabPaddingEnd="3dp"
                         app:tabIndicatorColor="?attr/color_main1_500"
                         app:tabIndicatorFullWidth="false"
                         app:tabMode="fixed"
@@ -148,6 +149,8 @@
                         app:layout_constraintEnd_toEndOf="@id/mango9_messages_list"
                         app:layout_constraintStart_toStartOf="@id/mango9_messages_list"
                         app:layout_constraintTop_toTopOf="@id/mango9_messages_list" />
+<FrameLayout android:id="@+id/mango9_live_host" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" app:layout_constraintTop_toBottomOf="@id/mango9_messages_tabs" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent" />
+
                 </androidx.constraintlayout.widget.ConstraintLayout>
 
                 <ImageView

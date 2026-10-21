@@ -102,6 +102,90 @@ class ConversationsListFragment : AbstractMainFragment() {
     private var changingSocialFilters = false
 
     private var mango9Tab = Mango9MessagingTab.Sms
+    private lateinit var liveInbox: org.linphone.ui.main.crm.fragment.Mango9LiveInbox
+    private var rebuildingTabs = false
+    private var normalizedMango9Inbox = false
+    private fun normalizeMango9Inbox() {
+        if (normalizedMango9Inbox || mango9Sessions.load() == null) return
+        normalizedMango9Inbox = true
+        val pane = binding.slidingPaneLayout
+        pane.getChildAt(0).layoutParams = pane.getChildAt(0).layoutParams.apply { width = ViewGroup.LayoutParams.MATCH_PARENT }
+        // Mango9 detail destinations live in the main navigator, so the legacy SIP detail pane is unused.
+        pane.getChildAt(1).visibility = View.GONE
+        val ui = org.linphone.ui.main.crm.fragment.Mango9LiveViews(requireContext())
+        if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+            val parent = binding.mango9MessagesPanel.parent as androidx.constraintlayout.widget.ConstraintLayout
+            for (i in 0 until parent.childCount) parent.getChildAt(i).let { if (it.id == View.NO_ID) it.id = View.generateViewId() }
+            androidx.constraintlayout.widget.ConstraintSet().apply {
+                clone(parent)
+                clear(R.id.bottom_nav_bar, androidx.constraintlayout.widget.ConstraintSet.TOP)
+                constrainWidth(R.id.bottom_nav_bar, 0); constrainHeight(R.id.bottom_nav_bar, ui.dp(48))
+                connect(R.id.bottom_nav_bar, androidx.constraintlayout.widget.ConstraintSet.START, 0, androidx.constraintlayout.widget.ConstraintSet.START)
+                connect(R.id.bottom_nav_bar, androidx.constraintlayout.widget.ConstraintSet.END, 0, androidx.constraintlayout.widget.ConstraintSet.END)
+                connect(R.id.bottom_nav_bar, androidx.constraintlayout.widget.ConstraintSet.BOTTOM, 0, androidx.constraintlayout.widget.ConstraintSet.BOTTOM)
+                connect(R.id.mango9_messages_panel, androidx.constraintlayout.widget.ConstraintSet.START, 0, androidx.constraintlayout.widget.ConstraintSet.START)
+                connect(R.id.mango9_messages_panel, androidx.constraintlayout.widget.ConstraintSet.BOTTOM, R.id.bottom_nav_bar, androidx.constraintlayout.widget.ConstraintSet.TOP)
+                connect(R.id.top_bar, androidx.constraintlayout.widget.ConstraintSet.START, 0, androidx.constraintlayout.widget.ConstraintSet.START)
+                constrainHeight(R.id.top_bar, ui.dp(48))
+                connect(R.id.new_conversation, androidx.constraintlayout.widget.ConstraintSet.BOTTOM, R.id.bottom_nav_bar, androidx.constraintlayout.widget.ConstraintSet.TOP, ui.dp(12))
+                applyTo(parent)
+            }
+            val bar = binding.bottomNavBar.root as androidx.constraintlayout.widget.ConstraintLayout
+            val crm = binding.bottomNavBar.crm ?: ui.text(getString(R.string.mango9_crm_title), 12f).apply {
+                id = R.id.crm; gravity = android.view.Gravity.CENTER
+                setOnClickListener { findNavController().navigate(R.id.action_global_mango9CrmFragment) }; bar.addView(this)
+            }
+            val controls = listOf(binding.bottomNavBar.contacts, crm, binding.bottomNavBar.calls, binding.bottomNavBar.conversations)
+            for (i in 0 until bar.childCount) bar.getChildAt(i).let { if (it.id == View.NO_ID) it.id = View.generateViewId() }
+            androidx.constraintlayout.widget.ConstraintSet().apply {
+                clone(bar)
+                controls.forEach { control ->
+                    clear(control.id); constrainWidth(control.id, 0); constrainHeight(control.id, ui.dp(48))
+                    connect(control.id, androidx.constraintlayout.widget.ConstraintSet.TOP, 0, androidx.constraintlayout.widget.ConstraintSet.TOP)
+                    connect(control.id, androidx.constraintlayout.widget.ConstraintSet.BOTTOM, 0, androidx.constraintlayout.widget.ConstraintSet.BOTTOM)
+                    val icon = control.compoundDrawables[1] ?: ContextCompat.getDrawable(requireContext(), R.drawable.users)
+                    icon?.setBounds(0, 0, ui.dp(18), ui.dp(18)); control.setCompoundDrawables(null, icon, null, null)
+                    control.compoundDrawablePadding = ui.dp(2); control.setPadding(ui.dp(6), ui.dp(4), ui.dp(6), ui.dp(4)); control.maxLines = 1; control.textSize = 12f
+                }
+                createHorizontalChain(0, androidx.constraintlayout.widget.ConstraintSet.LEFT, 0, androidx.constraintlayout.widget.ConstraintSet.RIGHT, controls.map { it.id }.toIntArray(), null, androidx.constraintlayout.widget.ConstraintSet.CHAIN_SPREAD)
+                applyTo(bar)
+            }
+        }
+    }
+    private fun rebuildMango9Tabs() {
+        val preferences = org.linphone.mango9.Mango9ChatTabPreferences(requireContext())
+        val visible = Mango9MessagingTab.entries.filter { it == Mango9MessagingTab.Sms || preferences.visible(it.name.lowercase()) }
+        if (mango9Tab !in visible) mango9Tab = Mango9MessagingTab.Sms
+        val tabs = binding.mango9MessagesTabs
+        if ((0 until tabs.tabCount).map { tabs.getTabAt(it)?.tag } != visible) {
+            rebuildingTabs = true; tabs.removeAllTabs()
+            visible.forEach { tab ->
+                val title = when (tab) { Mango9MessagingTab.Sms -> "SMS"; Mango9MessagingTab.Team -> "Team Chat"; Mango9MessagingTab.Social -> "Social"; Mango9MessagingTab.Live -> "Live Chat" }
+                val icon = when (tab) { Mango9MessagingTab.Sms -> R.drawable.chat_teardrop_text; Mango9MessagingTab.Team -> R.drawable.users; Mango9MessagingTab.Social -> R.drawable.chat_teardrop_dots; Mango9MessagingTab.Live -> R.drawable.globe_hemisphere_west }
+                val ui = org.linphone.ui.main.crm.fragment.Mango9LiveViews(requireContext())
+                val colors = android.content.res.ColorStateList(arrayOf(intArrayOf(android.R.attr.state_selected), intArrayOf()), intArrayOf(ui.accent, ui.secondary))
+                val label = ui.text(title, 12f, true).apply {
+                    id = android.R.id.text1; maxLines = 1; isDuplicateParentStateEnabled = true
+                    setTextColor(colors)
+                }
+                val image = android.widget.ImageView(requireContext()).apply {
+                    isDuplicateParentStateEnabled = true; setImageResource(icon); imageTintList = colors
+                }
+                val content = ui.row().apply {
+                    gravity = android.view.Gravity.CENTER; isDuplicateParentStateEnabled = true
+                    background = android.graphics.drawable.StateListDrawable().apply {
+                        addState(intArrayOf(android.R.attr.state_selected), ui.round(ui.tinted, 8)); addState(intArrayOf(), ui.round(android.graphics.Color.TRANSPARENT, 8))
+                    }
+                    setPadding(ui.dp(2), ui.dp(8), ui.dp(2), ui.dp(8))
+                    addView(image, android.widget.LinearLayout.LayoutParams(ui.dp(15), ui.dp(15)).apply { marginEnd = ui.dp(4) })
+                    addView(label)
+                }
+                tabs.addTab(tabs.newTab().setText(title).setContentDescription(title).setCustomView(content).setTag(tab), tab == mango9Tab)
+            }
+            tabs.isInlineLabel = true; rebuildingTabs = false
+        }
+        tabs.selectTab(tabs.getTabAt(visible.indexOf(mango9Tab)))
+    }
 
     private var bottomSheetDialog: BottomSheetDialogFragment? = null
 
@@ -181,6 +265,7 @@ class ConversationsListFragment : AbstractMainFragment() {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
+        normalizedMango9Inbox = false
         binding = ChatListFragmentBinding.inflate(layoutInflater)
         return binding.root
     }
@@ -212,17 +297,16 @@ class ConversationsListFragment : AbstractMainFragment() {
 
         binding.mango9MessagesList.layoutManager = LinearLayoutManager(requireContext())
         binding.mango9MessagesList.adapter = mango9SmsMessagesAdapter
-        binding.mango9MessagesTabs.addTab(
-            binding.mango9MessagesTabs.newTab().setText(R.string.mango9_sms).setTag(Mango9MessagingTab.Sms),
-        )
-        binding.mango9MessagesTabs.addTab(
-            binding.mango9MessagesTabs.newTab().setText(R.string.mango9_team_chat).setTag(Mango9MessagingTab.Team),
-        )
-        binding.mango9MessagesTabs.addTab(binding.mango9MessagesTabs.newTab().setText(R.string.mango9_social).setTag(Mango9MessagingTab.Social))
-        binding.mango9MessagesTabs.selectTab(binding.mango9MessagesTabs.getTabAt(mango9Tab.ordinal))
+        liveInbox = org.linphone.ui.main.crm.fragment.Mango9LiveInbox(this,
+            ViewModelProvider(this)[org.linphone.ui.main.crm.viewmodel.Mango9LiveChatViewModel::class.java]) { item ->
+            org.linphone.ui.main.crm.fragment.Mango9LiveChatFragment.open(this, item.id)
+        }
+        binding.mango9LiveHost.addView(liveInbox.view, android.widget.FrameLayout.LayoutParams(-1, -1))
+        rebuildMango9Tabs()
         binding.mango9MessagesTabs.addOnTabSelectedListener(
             object : TabLayout.OnTabSelectedListener {
                 override fun onTabSelected(tab: TabLayout.Tab) {
+                    if (rebuildingTabs) return
                     mango9Tab = tab.tag as? Mango9MessagingTab ?: return
                     showMango9MessagesAdapter(mango9Tab)
                     renderMango9Messages(mango9ChatStore.state.value)
@@ -231,7 +315,7 @@ class ConversationsListFragment : AbstractMainFragment() {
                             social.inbox()
                         } else if (mango9Tab == Mango9MessagingTab.Sms) {
                             mango9ChatStore.refreshSmsDirectory()
-                        } else {
+                        } else if (mango9Tab == Mango9MessagingTab.Team) {
                             mango9ChatStore.refreshDirectory()
                         }
                     }
@@ -551,6 +635,8 @@ class ConversationsListFragment : AbstractMainFragment() {
         }
 
         listViewModel.filter()
+        rebuildMango9Tabs()
+        renderMango9Messages(mango9ChatStore.state.value)
 
         if (mango9Sessions.load() != null) {
             viewLifecycleOwner.lifecycleScope.launch { mango9ChatStore.refreshDirectory() }
@@ -597,15 +683,16 @@ class ConversationsListFragment : AbstractMainFragment() {
     private fun renderMango9Messages(state: Mango9ChatState) {
         val visible = mango9Sessions.load() != null
         listViewModel.mango9MessagesAvailable.value = visible
-        binding.newConversation.visibility = if (visible && mango9Tab == Mango9MessagingTab.Social) View.GONE else View.VISIBLE
+        if (visible) normalizeMango9Inbox()
+        binding.newConversation.visibility = if (visible && mango9Tab in setOf(Mango9MessagingTab.Social, Mango9MessagingTab.Live)) View.GONE else View.VISIBLE
         if (!visible) return
         listOf(mango9SmsMessagesAdapter, mango9TeamMessagesAdapter, socialAdapter).forEach {
             it.notificationScope = mango9Sessions.captureSession()
         }
         val teamUnread = mango9ChatStore.teamUnreadCount(state)
         val smsUnread = mango9ChatStore.smsUnreadCount(state)
-        updateTabBadge(TEAM_TAB_POSITION, teamUnread)
-        updateTabBadge(SMS_TAB_POSITION, smsUnread)
+        updateTabBadge(Mango9MessagingTab.Team, teamUnread)
+        updateTabBadge(Mango9MessagingTab.Sms, smsUnread)
         val teamItems = Mango9MessagingListItems.team(
             state,
             mango9Moderation::isConversationDeleted,
@@ -616,6 +703,11 @@ class ConversationsListFragment : AbstractMainFragment() {
         mango9SmsMessagesAdapter.submitList(smsItems)
         showMango9MessagesAdapter(mango9Tab)
         binding.socialFilters.visibility = if (mango9Tab == Mango9MessagingTab.Social) View.VISIBLE else View.GONE
+        val live = mango9Tab == Mango9MessagingTab.Live
+        liveInbox.show(live); binding.mango9LiveHost.visibility = if (live) View.VISIBLE else View.GONE
+        binding.mango9MessagesList.visibility = if (live) View.GONE else View.VISIBLE
+        binding.mango9MessagesStatus.visibility = if (live) View.GONE else View.VISIBLE
+        if (live) { binding.mango9MessagesEmpty.visibility = View.GONE; return }
         if (mango9Tab == Mango9MessagingTab.Social) { renderSocial(); return }
         val items = if (mango9Tab == Mango9MessagingTab.Team) teamItems else smsItems
         binding.mango9MessagesEmpty.text = getString(
@@ -628,6 +720,7 @@ class ConversationsListFragment : AbstractMainFragment() {
         } else {
             View.GONE
         }
+        binding.mango9MessagesStatus.visibility = if (state.connection == Mango9ChatConnectionState.Connected) View.GONE else View.VISIBLE
         binding.mango9MessagesStatus.text = getString(
             when (state.connection) {
                 Mango9ChatConnectionState.Connecting -> R.string.mango9_chat_connecting
@@ -637,8 +730,9 @@ class ConversationsListFragment : AbstractMainFragment() {
         )
     }
 
-    private fun updateTabBadge(position: Int, unread: Int) {
-        val tab = binding.mango9MessagesTabs.getTabAt(position) ?: return
+    private fun updateTabBadge(kind: Mango9MessagingTab, unread: Int) {
+        val tabs = binding.mango9MessagesTabs
+        val tab = (0 until tabs.tabCount).mapNotNull { tabs.getTabAt(it) }.firstOrNull { it.tag == kind } ?: return
         if (unread <= 0) {
             tab.removeBadge()
             return
@@ -656,7 +750,7 @@ class ConversationsListFragment : AbstractMainFragment() {
         val selected = when (tab) {
             Mango9MessagingTab.Team -> mango9TeamMessagesAdapter
             Mango9MessagingTab.Social -> socialAdapter
-            Mango9MessagingTab.Sms -> mango9SmsMessagesAdapter
+            Mango9MessagingTab.Sms, Mango9MessagingTab.Live -> mango9SmsMessagesAdapter
         }
         if (binding.mango9MessagesList.adapter !== selected) {
             // These adapters own different click routing callbacks. A compatible swap may reuse a
@@ -674,7 +768,8 @@ class ConversationsListFragment : AbstractMainFragment() {
             Mango9MessagingListItem.Social(it, value.previews[it.id] ?: "Loading preview…", value.previewEpoch)
         }
         )
-        updateTabBadge(2, value.threads.count { it.unread })
+        updateTabBadge(Mango9MessagingTab.Social, value.threads.count { it.unread })
+        binding.mango9MessagesStatus.visibility = if (value.error != null || (value.loading && value.threads.isEmpty())) View.VISIBLE else View.GONE
         binding.mango9MessagesStatus.text = value.error ?: if (value.loading) getString(R.string.mango9_chat_connecting) else getString(R.string.mango9_social)
         binding.mango9MessagesEmpty.setText(R.string.mango9_social_empty)
         binding.mango9MessagesEmpty.visibility = if (!value.loading && value.threads.isEmpty() && value.error == null) View.VISIBLE else View.GONE

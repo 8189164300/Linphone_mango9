@@ -133,6 +133,15 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toBottomOf="@id/mark_as_read_dismiss_notif_switch" />
 
+        <LinearLayout android:id="@+id/mango9_tab_settings" android:layout_width="0dp" android:layout_height="wrap_content" android:orientation="vertical"
+            android:paddingHorizontal="16dp" android:paddingTop="16dp" app:layout_constraintTop_toBottomOf="@id/hide_message_content_in_notification_switch"
+            app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent">
+            <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/mango9_team_enabled" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:text="Team Chat" />
+            <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/mango9_social_enabled" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:text="Social" />
+            <com.google.android.material.materialswitch.MaterialSwitch android:id="@+id/mango9_live_enabled" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="48dp" android:text="Live Chat" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/mango9_live_settings" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Live Chat website settings" />
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="12sp" android:text="Choose the conversation tabs shown on this phone. Turning a tab off keeps its messages and server settings." android:paddingBottom="12dp" />
+        </LinearLayout>
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </layout>
