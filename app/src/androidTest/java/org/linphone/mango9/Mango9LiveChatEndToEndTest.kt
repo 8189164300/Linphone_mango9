@@ -69,6 +69,9 @@ class Mango9LiveChatEndToEndTest {
             pdf.outputStream().use(document::writeTo)
         } finally { document.close() }
         val voice = File(root, "Android-fixture.m4a"); Mango9MediaTestFixtures.createAudio(voice)
+        if (InstrumentationRegistry.getArguments().getString("keepFixtureMedia") == "true") {
+            root.copyRecursively(File(context.getExternalFilesDir(null), "live-chat-verification/fixtures"), overwrite = true)
+        }
         try {
             ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use { scenario ->
                 var model: Mango9LiveChatViewModel? = null
@@ -94,8 +97,9 @@ class Mango9LiveChatEndToEndTest {
                         val send = views.single { it.contentDescription == "Send message" }; assertTrue(send.isEnabled); send.performClick()
                     }
                     waitFor { !vm.current().sending }
-                    assertNull(vm.current().error); assertFalse(vm.current().pending)
-                    assertTrue(vm.current().messages.any { it.text == text && it.files.any { f -> f.liveText("mime") == mime } })
+                    assertNull("$mime: ${vm.current().error}", vm.current().error); assertFalse(vm.current().pending)
+                    assertTrue("Expected $text ($mime); actual messages: " + vm.current().messages.map { it.text to it.files.map { f -> f.liveText("mime") } },
+                        vm.current().messages.any { it.text == text && it.files.any { f -> f.liveText("mime") == mime } })
                     val sent = vm.current().messages.first { it.text == text }
                     val media = Mango9LivePolicy.media(sent.files.first(), owner.session)
                     val downloaded = runBlocking { Mango9MediaCache.acquire(context, media, owner) }
