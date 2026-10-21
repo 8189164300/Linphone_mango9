@@ -635,6 +635,9 @@ class ConversationsListFragment : AbstractMainFragment() {
         }
 
         listViewModel.filter()
+        val notificationTab = findNavController().getBackStackEntry(R.id.conversationsListFragment)
+            .savedStateHandle.remove<String>("mango9_push_tab")
+        Mango9MessagingTab.entries.firstOrNull { it.name == notificationTab }?.let { mango9Tab = it }
         rebuildMango9Tabs()
         renderMango9Messages(mango9ChatStore.state.value)
 

@@ -16,6 +16,46 @@ import org.junit.Test
 
 class Mango9MessagePushTest {
     @Test
+    fun liveChatGatewayPayloadKeepsConversationAccountAndPreviewThroughNotificationTap() {
+        val id = "24b39eb4-03da-4cc1-82eb-e9d039d8336a"
+        val payload = mapOf(
+            "event" to "livechat.message", "category" to "livechat",
+            "conversation_id" to id.uppercase(), "crm_id" to "fixture-crm",
+            "sip_identity" to "sip:7@tenant.example.invalid", "name" to "Visitor · Website",
+            "body" to "Hello 👋", "message_id" to "livechat-123",
+            "app_path" to "/inbox/livechat/$id",
+        )
+        for (data in listOf(payload, mapOf("mango9" to JSONObject(payload).toString()))) {
+            val push = requireNotNull(Mango9MessagePush.parse(data))
+            assertEquals(Mango9MessagePushTarget.LiveChat(id), push.target)
+            assertEquals("fixture-crm", push.crmId)
+            assertEquals(payload["sip_identity"], push.sipIdentity)
+            assertEquals("Visitor · Website", push.previewTitle)
+            assertEquals("Hello 👋", push.previewBody)
+            val bound = push.copy(notificationLogin = "local-login-incarnation")
+            assertEquals(bound, Mango9MessagePush.fromJson(bound.toJson()))
+        }
+    }
+
+    @Test
+    fun liveChatRejectsMissingAccountAndMalformedConversationInsteadOfOpeningSms() {
+        val payload = mapOf(
+            "event" to "livechat.message", "crm_id" to "fixture-crm",
+            "sip_identity" to "sip:7@tenant.example.invalid", "conversation_id" to "24b39eb4-03da-4cc1-82eb-e9d039d8336a"
+        )
+        for (key in listOf("crm_id", "sip_identity", "conversation_id")) {
+            assertNull(Mango9MessagePush.parse(payload - key))
+            assertNull(Mango9MessagePush.parse(payload + (key to "")))
+        }
+        for (id in listOf("1-1-1-1-1", "42", "../sms", "https://example.invalid/chat")) {
+            assertNull(Mango9MessagePush.parse(payload + ("conversation_id" to id)))
+            assertNull(Mango9MessagePush.fromJson(JSONObject(payload + ("type" to "livechat") + ("conversation_id" to id)).toString()))
+        }
+        assertNull(Mango9MessagePush.parse(payload - "conversation_id" + ("app_path" to "/inbox/livechat/24b39eb4-03da-4cc1-82eb-e9d039d8336a")))
+        assertNull(Mango9MessagePush.fromJson("""{"type":"livechat","conversation_id":"24b39eb4-03da-4cc1-82eb-e9d039d8336a"}"""))
+    }
+
+    @Test
     fun parsesNestedTeamChatTargetAndAccount() {
         val push = Mango9MessagePush.parse(
             mapOf(

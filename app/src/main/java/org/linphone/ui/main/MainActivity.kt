@@ -752,6 +752,20 @@ class MainActivity : GenericActivity() {
                             Mango9ChatTarget(target.userId, target.name, target.roomId), lease,
                         )
                         is Mango9MessagePushTarget.Sms -> openMango9Sms(Mango9SmsTarget(target.phone, target.name), lease)
+                        is Mango9MessagePushTarget.LiveChat -> {
+                            val controller = findNavController()
+                            if (!controller.popBackStack(R.id.conversationsListFragment, false)) {
+                                controller.navigate(R.id.action_global_conversationsListFragment)
+                            }
+                            controller.currentBackStackEntry?.savedStateHandle?.set("mango9_push_tab", "Live")
+                            controller.navigate(
+                                R.id.action_global_mango9LiveChatFragment,
+                                Bundle().apply {
+                                    Mango9NavigationSession.bind(this, lease)
+                                    putString("liveId", target.conversationId)
+                                },
+                            )
+                        }
                         is Mango9MessagePushTarget.Lead -> openMango9Lead(target.id, lease)
                         Mango9MessagePushTarget.Leads -> findNavController().navigate(
                             R.id.action_global_mango9CrmFragment,

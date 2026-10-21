@@ -219,6 +219,7 @@ object Mango9MessagePushCoordinator {
             Mango9MessagePushTarget.Leads -> (push.previewTitle ?: "Leads imported") to (push.previewBody ?: "Open your leads to view the completed import.")
             is Mango9MessagePushTarget.Appointment -> (push.previewTitle ?: "New appointment") to (push.previewBody ?: "Open Events to view the booking.")
             is Mango9MessagePushTarget.Social -> (push.previewTitle ?: "Social message") to (push.previewBody ?: "You have a new direct message.")
+            is Mango9MessagePushTarget.LiveChat -> (push.previewTitle ?: "Live Chat") to (push.previewBody ?: "You have a new website message.")
         }
         val notification = NotificationCompat.Builder(
             context,
