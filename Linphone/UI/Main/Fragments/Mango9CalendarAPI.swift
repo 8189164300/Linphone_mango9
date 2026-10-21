@@ -232,7 +232,7 @@ enum Mango9AppointmentSave {
 
 /// Uses the provisioned CRM identity, never the SIP proxy or a fixed tenant hostname.
 enum Mango9CalendarAPI {
-	enum Scope: String { case calendar, crm, tasks }
+	enum Scope: String { case calendar, crm, tasks, livechat }
 	struct Envelope<T: Decodable>: Decodable { let success: Bool; let message: String?; let data: T? }
 	struct ErrorBody: Decodable {
 		struct Detail: Decodable { let code: String }

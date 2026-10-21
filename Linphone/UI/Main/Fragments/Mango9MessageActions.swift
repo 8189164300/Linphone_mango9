@@ -563,6 +563,18 @@ private struct Mango9MessageActionsPopover: UIViewRepresentable {
 	}
 }
 
+/// A tap target for the same bubble-anchored panel used by long press.
+struct Mango9MessageActionsButton: View {
+ let actions: () -> Mango9MessageActionSet
+ @State private var showing = false
+ @State private var pending: (() -> Void)?
+ var body: some View {
+  Button { showing = true } label: { Image(systemName: "face.smiling").padding(7) }
+   .background(Mango9MessageActionsPopover(showing: $showing, pending: $pending, actions: actions()))
+   .onDisappear { showing = false; pending = nil }
+ }
+}
+
 private struct Mango9MessageActionsPanel: View {
 	let actions: Mango9MessageActionSet
 	let moreReactions: () -> Void
@@ -867,6 +879,7 @@ private struct Mango9AttachmentPickerModifier: ViewModifier {
 	@Binding var request: Mango9AttachmentRequest?
 	@Binding var selected: [Attachment]
 	let limit: Int
+	var photosOnly = false
 	let error: (String) -> Void
 	func body(content: Content) -> some View {
 		content
@@ -880,7 +893,7 @@ private struct Mango9AttachmentPickerModifier: ViewModifier {
 			case .camera:
 				EmptyView() // The camera is exclusively presented full-screen above.
 			case .photos:
-				PhotoPicker(filter: .any(of: [.images, .videos]), limit: max(1, limit - selected.count)) { results in
+				PhotoPicker(filter: photosOnly ? .images : .any(of: [.images, .videos]), limit: max(1, limit - selected.count)) { results in
 					PhotoPicker.convertToAttachmentArray(fromResults: results) { values, failure in
 						if let values { append(values, for: selection) }; if let failure { error(failure.localizedDescription) }
 					}
@@ -942,8 +955,8 @@ extension View {
 }
 
 extension View {
-	func mango9Attachments(request: Binding<Mango9AttachmentRequest?>, selected: Binding<[Attachment]>, limit: Int = 10, error: @escaping (String) -> Void) -> some View {
-		modifier(Mango9AttachmentPickerModifier(request: request, selected: selected, limit: limit, error: error))
+	func mango9Attachments(request: Binding<Mango9AttachmentRequest?>, selected: Binding<[Attachment]>, limit: Int = 10, photosOnly: Bool = false, error: @escaping (String) -> Void) -> some View {
+		modifier(Mango9AttachmentPickerModifier(request: request, selected: selected, limit: limit, photosOnly: photosOnly, error: error))
 	}
 }
 

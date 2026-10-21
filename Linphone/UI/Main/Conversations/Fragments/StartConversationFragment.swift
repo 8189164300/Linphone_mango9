@@ -327,6 +327,7 @@ struct StartConversationFragment: View {
 			.navigationBarHidden(true)
 		}
 		.navigationViewStyle(StackNavigationViewStyle())
+		.mango9ConversationNavigationHidden(showsNavigationBar: false)
 	}
 
 	static func recipientDestinations(_ contact: ContactAvatarModel) -> [String] {

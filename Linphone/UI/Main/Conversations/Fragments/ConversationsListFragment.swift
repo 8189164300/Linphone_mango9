@@ -24,6 +24,7 @@ enum Mango9ConversationTab: Hashable {
 	case sms
 	case team
 	case social
+	case live
 }
 
 struct ConversationsListFragment: View {
@@ -42,6 +43,7 @@ struct ConversationsListFragment: View {
 	var onNewConversation: () -> Void
 	@State private var mango9Tab: Mango9ConversationTab = .sms
 	@State private var showingNewTeamChat = false
+	@ObservedObject private var chatTabs = Mango9ChatTabPreferences.shared
 	
 	var body: some View {
 		VStack(spacing: 0) {
@@ -50,8 +52,8 @@ struct ConversationsListFragment: View {
 					selectedTab: $mango9Tab,
 					smsUnreadCount: mango9ChatStore.smsUnreadCount,
 					teamUnreadCount: mango9ChatStore.teamUnreadCount
-				)
-				if mango9Tab != .social {
+				).mango9InboxControls()
+				if mango9Tab == .sms || mango9Tab == .team {
 					Mango9ConversationConnectionStatus(
 						isConnecting: mango9ChatStore.isConnecting,
 						isConnected: mango9ChatStore.isConnected
@@ -61,6 +63,9 @@ struct ConversationsListFragment: View {
 					mango9SMSConversationList
 				} else if mango9Tab == .social {
 					Mango9SocialChatList(searchText: conversationsListViewModel.currentFilter)
+				} else if mango9Tab == .live {
+					Mango9LiveChatList(searchText: conversationsListViewModel.currentFilter)
+						.id(Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey) ?? "signed-out")
 				} else {
 					Mango9TeamChatListFragment(
 						embedded: true,
@@ -72,12 +77,21 @@ struct ConversationsListFragment: View {
 				legacyConversationList
 			}
 		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 		.overlay(alignment: .bottomTrailing) {
 			Mango9ConversationComposeButton(tab: hasMango9Account ? mango9Tab : .sms,
-				onSMS: onNewConversation, onTeam: { showingNewTeamChat = true })
+				onSMS: onNewConversation, onTeam: { showingNewTeamChat = true }).mango9InboxControls()
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in
 			showingNewTeamChat = false
+			mango9Tab = .sms
+		}
+		.onReceive(chatTabs.objectWillChange) { _ in
+			// Published preferences update before SwiftUI redraws; validate on the next run loop.
+			DispatchQueue.main.async {
+				if !chatTabs.team { showingNewTeamChat = false }
+				if !chatTabs.isVisible(mango9Tab) { mango9Tab = .sms }
+			}
 		}
 		.navigationTitle("")
 		.navigationBarHidden(true)
@@ -130,6 +144,7 @@ struct ConversationsListFragment: View {
 		List {
 			ForEach(visibleSMSParties) { party in
 				Mango9SMSConversationRow(party: party)
+					.accessibilityIdentifier("sms.thread." + party.phone)
 					.contentShape(Rectangle())
 					.onTapGesture {
 						Mango9SMSRouting.open(
@@ -276,10 +291,10 @@ struct ConversationsListFragment: View {
 }
 
 struct Mango9ConversationTabs: View {
+	@ObservedObject private var preferences = Mango9ChatTabPreferences.shared
 	@Binding var selectedTab: Mango9ConversationTab
 	let smsUnreadCount: Int
 	let teamUnreadCount: Int
-
 	var body: some View {
 		HStack(spacing: 0) {
 			tabButton(
@@ -287,13 +302,15 @@ struct Mango9ConversationTabs: View {
 				tab: .sms,
 				unreadCount: smsUnreadCount
 			)
-			tabButton(
+			if preferences.team { Spacer(minLength: 4); tabButton(
 				title: "Team Chat",
 				tab: .team,
 				unreadCount: teamUnreadCount
-			)
-			tabButton(title: "Social", tab: .social, unreadCount: 0)
+			) }
+			if preferences.social { Spacer(minLength: 4); tabButton(title: "Social", tab: .social, unreadCount: 0) }
+			if preferences.live { Spacer(minLength: 4); tabButton(title: "Live Chat", tab: .live, unreadCount: 0) }
 		}
+		.padding(.horizontal, 12)
 		.frame(height: 48)
 		.background(Color.white)
 		.overlay(alignment: .bottom) {
@@ -310,27 +327,27 @@ struct Mango9ConversationTabs: View {
 	) -> some View {
 		let isSelected = selectedTab == tab
 		return Button {
-			withAnimation(.easeInOut(duration: 0.18)) {
+			var transaction = Transaction(animation: nil)
+			transaction.disablesAnimations = true
+			withTransaction(transaction) {
 				selectedTab = tab
 			}
 		} label: {
 			VStack(spacing: 0) {
 				Spacer(minLength: 2)
-				HStack(spacing: 7) {
+				HStack(spacing: 5) {
+					Image(systemName: icon(tab)).font(.system(size: 12, weight: .medium)).accessibilityHidden(true)
 					Text(title)
-						.font(.custom("NotoSans-SemiBold", size: 14))
-						.foregroundStyle(isSelected ? Color.orangeMain500 : Color.grayMain2c500)
-					if unreadCount > 0 {
-						Text(unreadCount < 100 ? String(unreadCount) : "99+")
-							.font(.system(size: 10, weight: .bold))
-							.foregroundStyle(Color.white)
-							.padding(.horizontal, 6)
-							.frame(minHeight: 19)
-							.background(Color.orangeMain500)
-							.clipShape(Capsule())
-					}
+						.font(.custom("NotoSans-SemiBold", size: 13))
+						.lineLimit(1).minimumScaleFactor(0.8)
 				}
-				.frame(maxWidth: .infinity, maxHeight: .infinity)
+				.foregroundStyle(isSelected ? Color.orangeMain500 : Color.grayMain2c500)
+				.frame(maxHeight: .infinity)
+				.background {
+					RoundedRectangle(cornerRadius: 8)
+						.fill(isSelected ? Color.orangeMain500.opacity(0.12) : Color.clear)
+						.padding(.vertical, 4)
+				}
 				Capsule()
 					.fill(isSelected ? Color.orangeMain500 : Color.clear)
 					.frame(width: 54, height: 3)
@@ -338,8 +355,22 @@ struct Mango9ConversationTabs: View {
 			.contentShape(Rectangle())
 		}
 		.buttonStyle(.plain)
-		.frame(maxWidth: .infinity)
+		.hoverEffect(.highlight)
+		.frame(minWidth: 54, minHeight: 48)
+		.overlay(alignment: .topTrailing) {
+			if unreadCount > 0 {
+				Text(unreadCount < 100 ? String(unreadCount) : "99+").font(.system(size: 8, weight: .bold))
+					.foregroundStyle(.white).padding(.horizontal, 4).frame(minHeight: 12)
+					.background(Color.orangeMain500).clipShape(Capsule()).offset(x: 3, y: 1).accessibilityHidden(true)
+			}
+		}
+		.accessibilityLabel(title)
+		.accessibilityValue(unreadCount > 0 ? "\(unreadCount) unread" : "")
+		.accessibilityIdentifier("conversations.tab." + String(describing: tab))
 		.accessibilityAddTraits(isSelected ? .isSelected : [])
+	}
+	private func icon(_ tab: Mango9ConversationTab) -> String {
+		switch tab { case .sms: return "message"; case .team: return "person.2"; case .social: return "bubble.left.and.bubble.right"; case .live: return "globe" }
 	}
 }
 

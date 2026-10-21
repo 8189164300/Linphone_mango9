@@ -779,12 +779,15 @@ struct Mango9SocialChatList: View {
 	let searchText: String
 	@Environment(\.scenePhase) private var phase
 	@State private var store: Mango9SocialInboxStore?
-	init(searchText: String = "") { self.searchText = searchText }
+	@MainActor init(searchText: String = "") {
+		self.searchText = searchText
+		_store = State(initialValue: Mango9SessionStore.load().map { Mango9SocialChatCache.shared.store(session: $0) })
+	}
 	var body: some View {
 		Group {
 			if let store { SocialInboxListContent(store: store, search: searchText) }
 			else { Text("Connect your CRM account to view Social Chat.").padding() }
-		}.navigationTitle("Social Chat").navigationBarTitleDisplayMode(.inline)
+		}.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 		.task { if store == nil { reset() } }
 		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in reset() }
 	}
@@ -824,13 +827,13 @@ struct SocialInboxListContent: View {
 					})
 				.listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 12))
 			}
-			if store.busy { ProgressView() }
+			if store.busy && store.threads.isEmpty { ProgressView() }
 			else if visibleThreads.isEmpty && store.error == nil { Text("No social conversations").foregroundStyle(.secondary) }
 			if store.nextThread != nil { Button("Load more") { Task { await store.loadInbox(search: search, more: true) } }.disabled(store.busy) }
 		}.listStyle(.plain).tint(Color.orangeMain500)
 		.mango9ConversationVisibilityRefresh(store: conversationVisibility, channel: .social, ids: store.threads.map(\.id))
 		.refreshable { await store.loadAccounts(force: true); await store.loadInbox(search: search) }
-		}
+		}.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 		.task(id: RefreshKey(query: store.inboxQuery(search: search), active: phase == .active)) {
 			guard phase == .active else { return }
 			try? await Task.sleep(nanoseconds: 300_000_000)
@@ -950,6 +953,7 @@ struct Mango9SocialInboxRow: View {
 				}
 				Text(resolvedKey == previewKey ? preview : "Loading preview…")
 					.font(.custom("NotoSans-Regular", size: 13)).foregroundStyle(.secondary).lineLimit(2)
+					.frame(height: 38, alignment: .topLeading)
 				HStack(alignment: .lastTextBaseline, spacing: 8) {
 					Text(thread.connectionCurrent ? thread.accountName : "Disconnected · " + thread.accountName)
 						.lineLimit(1)

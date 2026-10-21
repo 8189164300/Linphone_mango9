@@ -6,6 +6,8 @@ Use your existing Mango9 account to:
 • Access your assigned CRM records
 • Send and receive SMS conversations
 • Collaborate through tenant-scoped Team Chat
+• Reply to connected social conversations when supported by the provider
+• Support website visitors through Live Chat with assignment, visitor details and supported attachments
 • Manage multiple business lines
 • Open customer records directly from call and message activity
 • Manage CRM appointments with calendar and list views, status updates, sharing and assignment

@@ -1902,27 +1902,30 @@ struct Mango9TeamChatListFragment: View {
 			} else {
 				List {
 					if !groupRooms.isEmpty {
-						Section("Groups") {
+						Section {
 							ForEach(groupRooms) { room in
 								NavigationLink(destination: Mango9ChatFragment(room: room)) {
 									Mango9GroupChatRow(room: room)
 								}
+								.accessibilityIdentifier("team.thread." + room.id)
 								.mango9TeamConversationActions(room: room, title: store.groupTitle(room))
 								.listRowBackground(Color.white)
 							}
-						}
+						} header: { sectionHeader("Groups") }
 					}
-					Section("People") {
+					Section {
 						ForEach(visibleUsers) { user in
 							NavigationLink(destination: Mango9ChatFragment(user: user)) {
 								Mango9TeamChatRow(user: user)
 							}
+							.accessibilityIdentifier("team.thread.user." + String(user.id))
 							.mango9TeamConversationActions(room: store.roomPreview(for: user.id), title: user.name)
 							.listRowBackground(Color.white)
 						}
-					}
+					} header: { sectionHeader("People") }
 				}
 				.listStyle(.plain)
+				.mango9CompactTeamList()
 				.refreshable {
 					await store.refreshDirectory()
 				}
@@ -1998,6 +2001,15 @@ struct Mango9TeamChatListFragment: View {
 		}
 	}
 
+	private func sectionHeader(_ title: String) -> some View {
+		Text(title)
+			.font(.subheadline.weight(.semibold))
+			.foregroundStyle(Color.grayMain2c500)
+			.textCase(nil)
+			.frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+			.listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 14))
+	}
+
 	private func openCreatedConversation() {
 		destination = pendingDestination
 		pendingDestination = nil
@@ -2034,6 +2046,23 @@ struct Mango9TeamChatListFragment: View {
 			filteredUsers,
 			roomPreviews: previews
 		)
+	}
+}
+
+/// Section defaults reserve a large title gap on newer iOS versions. Keep this
+/// adjustment local to the conversation list, including its first section.
+private extension View {
+	@ViewBuilder func mango9CompactTeamList() -> some View {
+		if #available(iOS 26.0, *) {
+			self.listSectionMargins(.top, 0).listSectionSpacing(8)
+				.contentMargins(.top, 0, for: .scrollContent)
+				.environment(\.defaultMinListHeaderHeight, 28)
+		} else if #available(iOS 17.0, *) {
+			self.listSectionSpacing(8).contentMargins(.top, 0, for: .scrollContent)
+				.environment(\.defaultMinListHeaderHeight, 28)
+		} else {
+			self.environment(\.defaultMinListHeaderHeight, 28)
+		}
 	}
 }
 
@@ -2144,6 +2173,7 @@ private struct Mango9GroupChatRow: View {
 }
 
 struct Mango9ChatFragment: View {
+	@Environment(\.verticalSizeClass) private var verticalSizeClass
 	@ObservedObject private var store = Mango9ChatStore.shared
 	@ObservedObject private var visibility = Mango9PersonalMessageVisibility.shared
 	@State private var deletingMessages = false
@@ -2205,8 +2235,7 @@ struct Mango9ChatFragment: View {
 
 	var body: some View {
 		VStack(spacing: 0) {
-			statusHeader
-			Divider()
+			if verticalSizeClass != .compact { statusHeader; Divider() }
 			messageList
 				.mango9VisibilityRefresh(channel: .team, thread: conversationRoomId, ids: store.messages.map(\.id))
 		}
@@ -2216,6 +2245,16 @@ struct Mango9ChatFragment: View {
 		}
 		.background(Color.gray100)
 		.navigationTitle(conversationTitle)
+		.toolbar {
+			ToolbarItem(placement: .principal) {
+				if verticalSizeClass == .compact {
+					HStack(spacing: 6) {
+						Circle().fill(statusColor).frame(width: 6, height: 6).accessibilityLabel(statusText)
+						Text(conversationTitle).font(.headline).lineLimit(1)
+					}.accessibilityIdentifier("team.compactHeader")
+				}
+			}
+		}
 		.mango9ConversationNavigationHidden()
 		.mango9Attachments(request: $attachmentRequest, selected: $selectedMedia, error: { notificationError = $0 })
 		.sheet(item: $forwardPayload) { payload in Mango9TeamForwardSheet(payload: payload) }
@@ -3132,7 +3171,7 @@ private final class Mango9VoiceRecorder: NSObject, ObservableObject, AVAudioReco
 	}
 }
 
-private struct Mango9VoiceRecorderComposer: View {
+struct Mango9VoiceRecorderComposer: View {
 	@StateObject private var recorder = Mango9VoiceRecorder()
 	let onCancel: () -> Void
 	let onComplete: (Attachment) -> Void
@@ -3149,13 +3188,14 @@ private struct Mango9VoiceRecorderComposer: View {
 					.background(Color.gray100)
 					.clipShape(Circle())
 			}
+			.accessibilityLabel("Cancel voice recording")
 			Image(systemName: "waveform")
 				.foregroundStyle(recorder.isRecording ? Color.redDanger500 : Color.grayMain2c400)
 			VStack(alignment: .leading, spacing: 2) {
 				Text(recorder.errorMessage ?? (recorder.isRecording ? "Recording voice message" : "Starting microphone…"))
 					.font(.system(size: 11, weight: .semibold))
 					.foregroundStyle(Color.grayMain2c700)
-				Text(Self.duration(recorder.duration))
+				Text(Self.duration(recorder.duration)).accessibilityIdentifier("chat.recording.duration")
 					.font(.system(size: 10))
 					.foregroundStyle(Color.grayMain2c500)
 			}

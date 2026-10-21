@@ -19,7 +19,7 @@ struct Mango9ConversationComposeButton: View {
 	let onSMS: () -> Void
 	let onTeam: () -> Void
 	var body: some View {
-		if tab != .social {
+		if tab == .sms || tab == .team {
 			Button(action: tab == .team ? onTeam : onSMS) {
 				Image(systemName: "square.and.pencil")
 					.font(.title2).foregroundStyle(.white)
@@ -81,10 +81,16 @@ extension EnvironmentValues {
 private struct Mango9ConversationNavigationModifier: ViewModifier {
 	@Environment(\.mango9ConversationNavigation) private var navigation
 	@State private var owner = UUID()
+	var showsNavigationBar = true
 
 	func body(content: Content) -> some View {
-		content
-			.navigationBarHidden(false)
+		Group {
+   if #available(iOS 16.0, *) {
+    content.toolbarBackground(Color(uiColor: .systemBackground), for: .navigationBar)
+     .toolbarBackground(.visible, for: .navigationBar)
+   } else { content }
+  }
+   .navigationBarHidden(!showsNavigationBar)
 			.onAppear { navigation?.setVisible(true, owner: owner) }
 			.onDisappear { navigation?.setVisible(false, owner: owner) }
 	}
@@ -92,8 +98,8 @@ private struct Mango9ConversationNavigationModifier: ViewModifier {
 
 extension View {
 	/// Hide the app's tabs/side rail, not the conversation's composer or Back button.
-	func mango9ConversationNavigationHidden() -> some View {
-		modifier(Mango9ConversationNavigationModifier())
+	func mango9ConversationNavigationHidden(showsNavigationBar: Bool = true) -> some View {
+		modifier(Mango9ConversationNavigationModifier(showsNavigationBar: showsNavigationBar))
 	}
 
 	func mango9ConversationsPanel(isConversationOpen: Bool, isLandscape: Bool) -> some View {
@@ -101,23 +107,35 @@ extension View {
 	}
 }
 
-/// Team and Social are pushed inside the rounded Conversations panel. Its clip
-/// cuts off a child's safe-area background, and its list shadow used to bleed
-/// below the composer. Fill the home-indicator area *outside* that clip, without
-/// extending the controls or disabling keyboard avoidance. Keep the list style.
+/// A navigation container draws its toolbar into the horizontal safe areas.
+/// Clip only its decorative background: clipping the container itself trims
+/// Back and menu buttons in landscape, even with a zero corner radius.
 private struct Mango9ConversationsPanel: ViewModifier {
 	let isConversationOpen: Bool
 	let isLandscape: Bool
 	func body(content: Content) -> some View {
 		content
-			.roundedCorner(25, corners: [.topRight, .topLeft])
 			.shadow(color: isConversationOpen || isLandscape ? .clear : .black.opacity(0.2), radius: 25)
 			.background {
-				if isConversationOpen {
-					Color(uiColor: .systemBackground)
-						.roundedCorner(25, corners: [.topRight, .topLeft])
-						.ignoresSafeArea(.container, edges: .bottom)
-				}
+				Color(uiColor: .systemBackground)
+					.roundedCorner(isConversationOpen || isLandscape ? 0 : 25, corners: [.topRight, .topLeft])
+					.ignoresSafeArea(.container, edges: .bottom)
 			}
 	}
+}
+
+private struct Mango9InboxControlsModifier: ViewModifier {
+ @Environment(\.mango9ConversationNavigation) private var navigation
+ func body(content: Content) -> some View {
+  if let navigation { Mango9InboxControlsContent(content: content, navigation: navigation) }
+  else { content }
+ }
+}
+private struct Mango9InboxControlsContent<Content: View>: View {
+ let content: Content
+ @ObservedObject var navigation: Mango9ConversationNavigation
+ var body: some View { content.accessibilityHidden(navigation.hidesAppNavigation).allowsHitTesting(!navigation.hidesAppNavigation) }
+}
+extension View {
+ func mango9InboxControls() -> some View { modifier(Mango9InboxControlsModifier()) }
 }

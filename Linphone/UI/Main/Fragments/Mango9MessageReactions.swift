@@ -417,8 +417,10 @@ struct Mango9NativeReactionChoices: View {
 		"😂": "face.smiling.fill", "‼️": "exclamationmark.bubble.fill", "❓": "questionmark.bubble.fill"]
 }
 
-/// The same compact native input and send control for Team, SMS and Social.
+/// The same compact native input and send control for every conversation tab.
 struct Mango9MessageComposer: View {
+	@Environment(\.verticalSizeClass) private var verticalSizeClass
+	private var compact: Bool { verticalSizeClass == .compact }
 	@Binding var text: String
 	let focus: FocusState<Bool>.Binding
 	var placeholder = "Message"
@@ -430,35 +432,39 @@ struct Mango9MessageComposer: View {
 	var record: (() -> Void)?
 	let send: () -> Void
 	var body: some View {
-		HStack(alignment: .bottom, spacing: 8) {
+		HStack(alignment: .center, spacing: 8) {
 			if let attach {
 				// The menu must belong to this button, never to the screen-sized picker host.
 				Menu {
 					if UIImagePickerController.isSourceTypeAvailable(.camera) {
-						Button { attach(.init(source: .camera)) } label: { Label("Take photo", systemImage: "camera") }
+						Button { focus.wrappedValue = false; attach(.init(source: .camera)) } label: { Label("Take photo", systemImage: "camera") }
 					}
-					Button { attach(.init(source: .photos)) } label: { Label("Photo library", systemImage: "photo.on.rectangle") }
-					Button { attach(.init(source: .files)) } label: { Label("Choose file", systemImage: "doc") }
+					Button { focus.wrappedValue = false; attach(.init(source: .photos)) } label: { Label("Photo library", systemImage: "photo.on.rectangle") }
+					Button { focus.wrappedValue = false; attach(.init(source: .files)) } label: { Label("Choose file", systemImage: "doc") }
 				} label: {
-					Image(systemName: "plus.circle.fill").font(.title2).frame(width: 44, height: 44)
+					Image(systemName: "plus.circle.fill").font(.title2).foregroundStyle(Color.orangeMain500)
+						.frame(width: 44, height: 44).contentShape(Rectangle())
 				}
 				.accessibilityLabel("Add attachment").accessibilityIdentifier("chat.attach")
 				.disabled(!enabled || sending)
 			}
 			Group {
 				if #available(iOS 16.0, *) {
-					TextField(placeholder, text: $text, axis: .vertical).lineLimit(1...5).focused(focus)
+					TextField(placeholder, text: $text, axis: .vertical).lineLimit(1...(compact ? 3 : 5)).focused(focus)
 				} else {
 					TextField(placeholder, text: $text).focused(focus)
 				}
-			}.font(.body).padding(.horizontal, 14).padding(.vertical, 11)
+			}.font(compact ? .callout : .body).padding(.horizontal, 14).padding(.vertical, compact ? 7 : 11)
+				.frame(minHeight: 44)
 				.background(Color(uiColor: .secondarySystemBackground)).clipShape(RoundedRectangle(cornerRadius: 22))
 				.disabled(!enabled || sending).accessibilityIdentifier("chat.composer")
 			if text.isEmpty && !hasAttachments, let record {
-				Button(action: record) { Image(systemName: "mic.fill").font(.title3).frame(width: 44, height: 44) }
-					.accessibilityLabel("Record a voice message").disabled(!enabled || sending)
+				Button(action: { focus.wrappedValue = false; record() }) {
+					Image(systemName: "mic.fill").font(.title2).foregroundStyle(Color.orangeMain500)
+						.frame(width: 44, height: 44).contentShape(Rectangle())
+				}.accessibilityLabel("Record a voice message").accessibilityIdentifier("chat.record").disabled(!enabled || sending)
 			} else {
-				Button(action: send) {
+				Button(action: { focus.wrappedValue = false; send() }) {
 					Group {
 						if sending { ProgressView().tint(.white) }
 						else { Image(systemName: "arrow.up").font(.body.weight(.bold)) }
@@ -467,7 +473,7 @@ struct Mango9MessageComposer: View {
 				}.disabled(!enabled || !sendEnabled || sending || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasAttachments))
 					.accessibilityLabel("Send message").accessibilityIdentifier("chat.send")
 			}
-		}.buttonStyle(.plain).tint(Color.orangeMain500).padding(.horizontal, 10).padding(.vertical, 8)
+		}.buttonStyle(.plain).tint(Color.orangeMain500).padding(.horizontal, 10).padding(.vertical, compact ? 2 : 8)
 			.background(Color(uiColor: .systemBackground).ignoresSafeArea(.container, edges: .bottom))
 	}
 }

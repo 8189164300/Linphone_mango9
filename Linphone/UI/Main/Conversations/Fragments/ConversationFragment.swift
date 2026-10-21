@@ -286,6 +286,7 @@ struct ConversationFragment: View {
 			}
 		}
 		.navigationViewStyle(.stack)
+		.mango9ConversationNavigationHidden(showsNavigationBar: false)
 		.mango9Attachments(request: $nativeSMSAttachmentRequest, selected: $conversationViewModel.mediasToSend,
 			limit: conversationViewModel.maxMediaCount, error: { ToastViewModel.shared.show($0) })
 		.sheet(item: $conversationViewModel.nativeSMSForwardPayload) { payload in Mango9SMSForwardSheet(payload: payload) }
@@ -386,33 +387,40 @@ struct ConversationFragment: View {
 
 					conversationHistory(geometry: geometry)
 
-					if !conversationViewModel.composingLabel.isEmpty {
-						HStack {
-							Text(conversationViewModel.composingLabel)
-								.lineLimit(1)
-								.default_text_style_300(styleSize: 15)
-								.frame(maxWidth: .infinity, alignment: .leading)
-								.padding(.horizontal, 10)
-						}
-						.onDisappear {
-							conversationViewModel.composingLabel = ""
-						}
-						.transition(.move(edge: .bottom))
-					}
-
-					if !activeConversationIsReadOnly && !isSearchVisible {
-						replyOrEditBanner()
-
-						pendingAttachments(geometry: geometry)
-
-						attachmentPickerActions()
-
-						mentionSuggestions()
-
-						messageComposer(geometry: geometry)
-
-					}
 				}
+			}
+			.safeAreaInset(edge: .bottom, spacing: 0) {
+				VStack(spacing: 0) {
+					if hasActiveConversation {
+						Divider()
+						if !conversationViewModel.composingLabel.isEmpty {
+							HStack {
+								Text(conversationViewModel.composingLabel)
+									.lineLimit(1)
+									.default_text_style_300(styleSize: 15)
+									.frame(maxWidth: .infinity, alignment: .leading)
+									.padding(.horizontal, 10)
+							}
+							.onDisappear {
+								conversationViewModel.composingLabel = ""
+							}
+							.transition(.move(edge: .bottom))
+						}
+
+						if !activeConversationIsReadOnly && !isSearchVisible {
+							replyOrEditBanner()
+
+							pendingAttachments(geometry: geometry)
+
+							attachmentPickerActions()
+
+							mentionSuggestions()
+
+							messageComposer(geometry: geometry)
+
+						}
+					}
+				}.background(Color(uiColor: .systemBackground).ignoresSafeArea(.container, edges: .bottom))
 			}
 			.blur(radius: conversationViewModel.selectedMessage != nil ? 8 : 0)
 
@@ -513,8 +521,7 @@ struct ConversationFragment: View {
 		AnyView(Group {
 			if !isSearchVisible {
 				HStack {
-					if (!(orientation == .landscapeLeft || orientation == .landscapeRight
-						  || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)) || isShowConversationFragment {
+					if hasActiveConversation {
 						Image("caret-left")
 							.renderingMode(.template)
 							.resizable()
@@ -1324,7 +1331,7 @@ struct ConversationFragment: View {
 					record: { voiceRecordingInProgress = true }, send: {
 						let value = messageText
 						messageText = ""
-						isMessageTextFocused = true
+						isMessageTextFocused = false
 						NotificationCenter.default.post(name: .onScrollToBottom, object: nil)
 						conversationViewModel.sendMessage(messageText: value)
 					})

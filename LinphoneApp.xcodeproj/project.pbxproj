@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		CA1E00412FCA000100000001 /* Mango9MessageReactions.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00422FCA000100000001; };
 		CA1E00432FCA000100000001 /* Mango9SocialChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00442FCA000100000001; };
+		DA2010012FCA000100000001 /* Mango9LiveChatAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2010022FCA000100000001; };
+		DA2010032FCA000100000001 /* Mango9LiveChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2010042FCA000100000001; };
 		CA1E00452FCA000100000001 /* Mango9ConversationNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00462FCA000100000001; };
 		CA1E00472FCA000100000001 /* Mango9MessageActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00482FCA000100000001; };
 		CA1E00812FCA000100000001 /* Mango9CalendarUITestFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00822FCA000100000001; };
@@ -300,6 +302,8 @@
 /* Begin PBXFileReference section */
 		CA1E00422FCA000100000001 /* Mango9MessageReactions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9MessageReactions.swift; sourceTree = "<group>"; };
 		CA1E00442FCA000100000001 /* Mango9SocialChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9SocialChat.swift; sourceTree = "<group>"; };
+		DA2010022FCA000100000001 /* Mango9LiveChatAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9LiveChatAPI.swift; sourceTree = "<group>"; };
+		DA2010042FCA000100000001 /* Mango9LiveChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9LiveChat.swift; sourceTree = "<group>"; };
 		CA1E00462FCA000100000001 /* Mango9ConversationNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9ConversationNavigation.swift; sourceTree = "<group>"; };
 		CA1E00482FCA000100000001 /* Mango9MessageActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9MessageActions.swift; sourceTree = "<group>"; };
 		CA1E00822FCA000100000001 /* Mango9CalendarUITestFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9CalendarUITestFixture.swift; sourceTree = "<group>"; };
@@ -1003,6 +1007,8 @@
 				CA1E00162FCA000100000001 /* Mango9LegacyCalendar.swift */,
 				CA1E00422FCA000100000001 /* Mango9MessageReactions.swift */,
 				CA1E00442FCA000100000001 /* Mango9SocialChat.swift */,
+				DA2010022FCA000100000001 /* Mango9LiveChatAPI.swift */,
+				DA2010042FCA000100000001 /* Mango9LiveChat.swift */,
 				CA1E00462FCA000100000001 /* Mango9ConversationNavigation.swift */,
 				CA1E00482FCA000100000001 /* Mango9MessageActions.swift */,
 				C0D390032F22000100C0FFEE /* Mango9DynamicCRM.swift */,
@@ -1861,6 +1867,8 @@
 				CA1E00152FCA000100000001 /* Mango9LegacyCalendar.swift in Sources */,
 				CA1E00412FCA000100000001 /* Mango9MessageReactions.swift in Sources */,
 				CA1E00432FCA000100000001 /* Mango9SocialChat.swift in Sources */,
+				DA2010012FCA000100000001 /* Mango9LiveChatAPI.swift in Sources */,
+				DA2010032FCA000100000001 /* Mango9LiveChat.swift in Sources */,
 				CA1E00452FCA000100000001 /* Mango9ConversationNavigation.swift in Sources */,
 				CA1E00472FCA000100000001 /* Mango9MessageActions.swift in Sources */,
 				C0D390042F22000100C0FFEE /* Mango9DynamicCRM.swift in Sources */,
@@ -1995,7 +2003,7 @@
 				CODE_SIGN_ENTITLEMENTS = msgNotificationService/msgNotificationService.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2015,7 +2023,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.18;
+				MARKETING_VERSION = 6.2.19;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).msgNotificationService";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -2037,7 +2045,7 @@
 				CODE_SIGN_ENTITLEMENTS = msgNotificationService/msgNotificationService.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2054,7 +2062,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.18;
+				MARKETING_VERSION = 6.2.19;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).msgNotificationService";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -2309,7 +2317,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = Linphone/Linphone.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_ASSET_PATHS = "\"Linphone/Preview Content\"";
@@ -2352,7 +2360,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 13.3;
 				MANGO9_APS_ENVIRONMENT = development;
-				MARKETING_VERSION = 6.2.18;
+				MARKETING_VERSION = 6.2.19;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2372,7 +2380,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = Linphone/Linphone.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "\"Linphone/Preview Content\"";
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
@@ -2411,7 +2419,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 13.3;
 				MANGO9_APS_ENVIRONMENT = production;
-				MARKETING_VERSION = 6.2.18;
+				MARKETING_VERSION = 6.2.19;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2429,7 +2437,7 @@
 				CODE_SIGN_ENTITLEMENTS = linphoneExtension/linphoneExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2444,7 +2452,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.18;
+				MARKETING_VERSION = 6.2.19;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).share";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2463,7 +2471,7 @@
 				CODE_SIGN_ENTITLEMENTS = linphoneExtension/linphoneExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2478,7 +2486,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.18;
+				MARKETING_VERSION = 6.2.19;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).share";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2496,7 +2504,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2511,7 +2519,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.18;
+				MARKETING_VERSION = 6.2.19;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).intents";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -2532,7 +2540,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 53;
 				DEVELOPMENT_TEAM = "$(MANGO9_DEVELOPMENT_TEAM)";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -2547,7 +2555,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 6.2.18;
+				MARKETING_VERSION = 6.2.19;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(MANGO9_BUNDLE_ID).intents";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

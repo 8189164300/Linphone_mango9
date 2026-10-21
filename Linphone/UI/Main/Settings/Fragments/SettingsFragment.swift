@@ -63,6 +63,7 @@ struct SettingsFragment: View {
 									}
 								}
 							}
+							.accessibilityIdentifier("settings.back").accessibilityLabel("Back").accessibilityAddTraits(.isButton)
 						
 						Text("settings_title")
 							.default_text_style_orange_800(styleSize: 16)
@@ -281,6 +282,8 @@ struct SettingsFragment: View {
 									conversationsIsOpen.toggle()
 								}
 							}
+							.accessibilityElement(children: .combine).accessibilityAddTraits(.isButton)
+							.accessibilityIdentifier("settings.conversationsDisclosure")
 							
 							if conversationsIsOpen {
 								VStack(spacing: 0) {
@@ -290,6 +293,7 @@ struct SettingsFragment: View {
 										
 										Toggle("settings_conversations_hide_message_content_in_notif_title", isOn: $settingsViewModel.hideNotificationContent)
 											.default_text_style_700(styleSize: 15)
+										Mango9ChatTabSettings()
 									}
 									.padding(.vertical, 30)
 									.padding(.horizontal, 20)

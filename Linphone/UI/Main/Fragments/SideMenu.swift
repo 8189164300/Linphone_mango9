@@ -144,6 +144,7 @@ struct SideMenu: View {
 								isShowSettingsFragment = true
 							}
 						}
+						.accessibilityIdentifier("main.settings")
 						
 						
 						if !AppServices.corePreferences.disableCallRecordings {

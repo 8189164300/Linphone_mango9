@@ -1,4 +1,5 @@
-• Social conversation previews now respect messages deleted for you.
-• Restored messages reappear when conversation history refreshes.
-• Clearer messages for slow connections, expired sessions and unavailable social replies.
-• Improved retry behavior while preserving saved conversation history and drafts.
+• Live Chat brings website conversations, visitor details, assignment and presence into the app.
+• Send supported images, files and voice recordings in Live Chat, with native previews and sharing.
+• Choose which conversation tabs appear on this device in Conversation settings.
+• Improved chat navigation, selected-tab highlights, compact headers and portrait/landscape layouts.
+• More consistent message actions, reactions and composer controls.

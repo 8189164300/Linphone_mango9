@@ -32,17 +32,31 @@ struct ConversationsView: View {
 	@Binding var showDeleteConversationHistoryPopup: Bool
 	@Binding var isShowRemoveParticipantPopup: Bool
 	
+	let header: AnyView
+
 	var body: some View {
-		NavigationView {
-				ConversationsFragment(
-					text: $text,
-					onNewConversation: { withAnimation { isShowStartConversationFragment = true } },
-					showLeaveConversationPopup: $showLeaveConversationPopup,
-					showDeleteConversationPopup: $showDeleteConversationPopup,
-					showDeleteConversationHistoryPopup: $showDeleteConversationHistoryPopup,
-					isShowRemoveParticipantPopup: $isShowRemoveParticipantPopup
-				)
+		if #available(iOS 16.0, *) {
+			// The header belongs to the inbox route. Keeping it outside the stack
+			// resizes the stack during Back and carries the detail safe area over
+			// the tabs, producing a gap or an invisible toolbar above them.
+			NavigationStack { inbox }
+		} else {
+			NavigationView { inbox }.navigationViewStyle(.stack)
 		}
-		.navigationViewStyle(.stack)
+	}
+
+	private var inbox: some View {
+		VStack(spacing: 0) {
+			header.padding(.top, 1).background(Color.orangeMain500)
+			ConversationsFragment(
+				text: $text,
+				onNewConversation: { withAnimation { isShowStartConversationFragment = true } },
+				showLeaveConversationPopup: $showLeaveConversationPopup,
+				showDeleteConversationPopup: $showDeleteConversationPopup,
+				showDeleteConversationHistoryPopup: $showDeleteConversationHistoryPopup,
+				isShowRemoveParticipantPopup: $isShowRemoveParticipantPopup
+			)
+		}
+		.navigationBarHidden(true)
 	}
 }
