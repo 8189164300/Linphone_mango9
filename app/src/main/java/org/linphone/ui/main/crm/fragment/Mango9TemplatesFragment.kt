@@ -90,14 +90,22 @@ class Mango9TemplatesFragment : GenericMainFragment() {
                 Mango9TemplatesViewModel.Mode.EDITOR -> {
                     val compact = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
                     ui.padded(body, 16, if (compact) 4 else 12)
-                    if (!compact) {
+                    titleInput = editorField("Template name", model.title, false).also { field -> field.doAfterTextChanged { model.title = it.toString(); updateEditor() } }
+                    messageInput = editorField("Type your template…", model.text, true).also { field -> field.doAfterTextChanged { model.text = it.toString(); updateEditor() } }
+                    counter = ui.text(size = 12f).apply { gravity = Gravity.END; setTextColor(ui.secondary); ui.padded(this, 0, if (compact) 4 else 8) }
+                    if (compact) {
+                        // Keep the native message editor tall enough above a landscape keyboard.
+                        val fields = ui.row(); val titleAndCount = ui.column()
+                        titleAndCount.addView(titleInput); titleAndCount.addView(counter)
+                        fields.addView(titleAndCount, LinearLayout.LayoutParams(ui.dp(200), -1).apply { marginEnd = ui.dp(12) })
+                        fields.addView(messageInput, LinearLayout.LayoutParams(0, -1, 1f))
+                        body.addView(fields, LinearLayout.LayoutParams(-1, 0, 1f))
+                    } else {
                         body.addView(ui.text("Saves to your account", 12f).apply { setTextColor(ui.secondary) })
-                        body.addView(ui.padded(ui.text("Title", 14f, true), 0, 8))
+                        body.addView(ui.padded(ui.text("Title", 14f, true), 0, 8)); body.addView(titleInput)
+                        body.addView(ui.padded(ui.text("Message", 14f, true), 0, 8))
+                        body.addView(messageInput, LinearLayout.LayoutParams(-1, 0, 1f)); body.addView(counter)
                     }
-                    titleInput = editorField("Template name", model.title, false).also { field -> body.addView(field); field.doAfterTextChanged { model.title = it.toString(); updateEditor() } }
-                    if (!compact) body.addView(ui.padded(ui.text("Message", 14f, true), 0, 8))
-                    messageInput = editorField("Type your template…", model.text, true).also { field -> body.addView(field, LinearLayout.LayoutParams(-1, 0, 1f)); field.doAfterTextChanged { model.text = it.toString(); updateEditor() } }
-                    counter = ui.text(size = 12f).apply { gravity = Gravity.END; setTextColor(ui.secondary); ui.padded(this, 0, 8) }; body.addView(counter)
                 }
                 else -> Unit
             }
