@@ -491,7 +491,7 @@ struct Mango9LiveChatConversation: View {
     Mango9VoiceRecorderComposer(onCancel: { recordingVoice = false }, onComplete: { selectedMedia = [$0]; recordingVoice = false }).padding(12)
    } else {
     if !selectedMedia.isEmpty { Mango9PendingAttachmentStrip(attachments: $selectedMedia) }
-    Mango9MessageComposer(text: $draft, focus: $focused, placeholder: "Reply to this visitor…",
+    Mango9MessageComposer(templateSession: store.session, text: $draft, focus: $focused, placeholder: "Reply to this visitor…",
      enabled: store.authorized && store.site != nil, sending: store.sending, sendEnabled: draft.count <= 10000,
      hasAttachments: !selectedMedia.isEmpty, attach: canAttach ? { focused = false; attachmentRequest = $0 } : nil,
      record: canRecord ? { focused = false; recordingVoice = true } : nil, send: sendDraft)

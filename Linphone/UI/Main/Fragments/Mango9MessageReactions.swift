@@ -419,6 +419,8 @@ struct Mango9NativeReactionChoices: View {
 
 /// The same compact native input and send control for every conversation tab.
 struct Mango9MessageComposer: View {
+	@State private var templatePresentation: Mango9TemplatePresentation?
+	var templateSession: Mango9Session? = nil
 	@Environment(\.verticalSizeClass) private var verticalSizeClass
 	private var compact: Bool { verticalSizeClass == .compact }
 	@Binding var text: String
@@ -433,20 +435,29 @@ struct Mango9MessageComposer: View {
 	let send: () -> Void
 	var body: some View {
 		HStack(alignment: .center, spacing: 8) {
-			if let attach {
+			Group {
 				// The menu must belong to this button, never to the screen-sized picker host.
 				Menu {
-					if UIImagePickerController.isSourceTypeAvailable(.camera) {
-						Button { focus.wrappedValue = false; attach(.init(source: .camera)) } label: { Label("Take photo", systemImage: "camera") }
-					}
-					Button { focus.wrappedValue = false; attach(.init(source: .photos)) } label: { Label("Photo library", systemImage: "photo.on.rectangle") }
-					Button { focus.wrappedValue = false; attach(.init(source: .files)) } label: { Label("Choose file", systemImage: "doc") }
+					Button { focus.wrappedValue = false; attach?(.init(source: .camera)) } label: {
+						Label("Take photo", systemImage: "camera")
+					}.disabled(!enabled || attach == nil || !UIImagePickerController.isSourceTypeAvailable(.camera))
+					Button { focus.wrappedValue = false; attach?(.init(source: .photos)) } label: {
+						Label("Photo library", systemImage: "photo.on.rectangle")
+					}.disabled(!enabled || attach == nil)
+					Button { focus.wrappedValue = false; attach?(.init(source: .files)) } label: {
+						Label("Choose file", systemImage: "doc")
+					}.disabled(!enabled || attach == nil)
+					Button {
+						focus.wrappedValue = false
+						if let session = templateSession ?? Mango9SessionStore.load() { templatePresentation = .init(session: session) }
+					} label: { Label("Templates ›", systemImage: "doc.text") }
 				} label: {
 					Image(systemName: "plus.circle.fill").font(.title2).foregroundStyle(Color.orangeMain500)
 						.frame(width: 44, height: 44).contentShape(Rectangle())
 				}
-				.accessibilityLabel("Add attachment").accessibilityIdentifier("chat.attach")
-				.disabled(!enabled || sending)
+				.accessibilityLabel("Add to message").accessibilityIdentifier("chat.attach")
+				.mango9FixedComposerMenuOrder()
+				.disabled(sending)
 			}
 			Group {
 				if #available(iOS 16.0, *) {
@@ -475,6 +486,12 @@ struct Mango9MessageComposer: View {
 			}
 		}.buttonStyle(.plain).tint(Color.orangeMain500).padding(.horizontal, 10).padding(.vertical, compact ? 2 : 8)
 			.background(Color(uiColor: .systemBackground).ignoresSafeArea(.container, edges: .bottom))
+			.fullScreenCover(item: $templatePresentation) { presentation in
+				Mango9TemplatePicker(session: presentation.session) { value in
+					guard Mango9TemplateAPI(session: presentation.session).active, !sending else { return }
+					text = Mango9TemplateText.inserting(value, into: text); focus.wrappedValue = false
+				}
+			}
 	}
 }
 

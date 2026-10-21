@@ -1220,7 +1220,7 @@ struct Mango9SocialConversation: View {
 			Text(reason)
 				.font(.footnote).foregroundStyle(.secondary).padding(.horizontal)
 		}
-		Mango9MessageComposer(text: $store.draft, focus: $composerFocused, placeholder: "Message",
+		Mango9MessageComposer(templateSession: store.session, text: $store.draft, focus: $composerFocused, placeholder: "Message",
 			enabled: store.thread?.permitsSending == true && !store.unresolvedSend && store.thread?.openSend == nil,
 			sending: store.sending, sendEnabled: store.canSend, hasAttachments: !store.selectedMedia.isEmpty,
 			attach: { attachmentRequest = $0 }, send: { Task { await store.send() } })

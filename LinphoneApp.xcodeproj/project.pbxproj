@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CA1E10512FCA000100000001 /* Mango9ChatTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E10522FCA000100000001; };
 		CA1E00412FCA000100000001 /* Mango9MessageReactions.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00422FCA000100000001; };
 		CA1E00432FCA000100000001 /* Mango9SocialChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E00442FCA000100000001; };
 		DA2010012FCA000100000001 /* Mango9LiveChatAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2010022FCA000100000001; };
@@ -300,6 +301,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		CA1E10522FCA000100000001 /* Mango9ChatTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9ChatTemplates.swift; sourceTree = "<group>"; };
 		CA1E00422FCA000100000001 /* Mango9MessageReactions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9MessageReactions.swift; sourceTree = "<group>"; };
 		CA1E00442FCA000100000001 /* Mango9SocialChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9SocialChat.swift; sourceTree = "<group>"; };
 		DA2010022FCA000100000001 /* Mango9LiveChatAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9LiveChatAPI.swift; sourceTree = "<group>"; };
@@ -1005,6 +1007,7 @@
 				CA1E000C2FCA000100000001 /* Mango9CRMSettings.swift */,
 				CA1E00062FCA000100000001 /* Mango9ExyteCalendar.swift */,
 				CA1E00162FCA000100000001 /* Mango9LegacyCalendar.swift */,
+				CA1E10522FCA000100000001 /* Mango9ChatTemplates.swift */,
 				CA1E00422FCA000100000001 /* Mango9MessageReactions.swift */,
 				CA1E00442FCA000100000001 /* Mango9SocialChat.swift */,
 				DA2010022FCA000100000001 /* Mango9LiveChatAPI.swift */,
@@ -1865,6 +1868,7 @@
 				CA1E000B2FCA000100000001 /* Mango9CRMSettings.swift in Sources */,
 				CA1E00052FCA000100000001 /* Mango9ExyteCalendar.swift in Sources */,
 				CA1E00152FCA000100000001 /* Mango9LegacyCalendar.swift in Sources */,
+				CA1E10512FCA000100000001 /* Mango9ChatTemplates.swift in Sources */,
 				CA1E00412FCA000100000001 /* Mango9MessageReactions.swift in Sources */,
 				CA1E00432FCA000100000001 /* Mango9SocialChat.swift in Sources */,
 				DA2010012FCA000100000001 /* Mango9LiveChatAPI.swift in Sources */,

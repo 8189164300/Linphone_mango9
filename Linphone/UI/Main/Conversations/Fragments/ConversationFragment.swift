@@ -1344,7 +1344,7 @@ struct ConversationFragment: View {
 							areFilePickersOpen.toggle()
 						}
 					} label: {
-						Image(areFilePickersOpen ? "x" : "paperclip")
+						Image(systemName: areFilePickersOpen ? "xmark" : "plus")
 							.renderingMode(.template)
 							.resizable()
 							.foregroundStyle(conversationViewModel.maxMediaCount <= conversationViewModel.mediasToSend.count || mediasIsLoading ? Color.grayMain2c300 : Color.grayMain2c500)
