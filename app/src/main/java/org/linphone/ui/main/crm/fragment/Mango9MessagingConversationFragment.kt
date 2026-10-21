@@ -234,7 +234,9 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         binding.sender.visibility = if (isSms) View.VISIBLE else View.GONE
         binding.back.setOnClickListener { if (adapter.selectionMode) adapter.select(null) else goBack() }
         binding.more.setOnClickListener { showConversationOptions() }
+        binding.attach.contentDescription = "Add to message"
         binding.attach.setOnClickListener { showAttachmentMenu() }
+        Mango9TemplatesFragment.listen(this, { viewModel.mediaSession() }, { viewModel.isCurrentConversation() }, { binding.message })
         binding.loadEarlier.setOnClickListener { requestedRoomId?.let { social.open(it, more = true) } }
         binding.microphone.setOnClickListener { toggleRecording() }
         binding.send.setOnClickListener { sendMessage() }
@@ -543,7 +545,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         if (isSocial) {
             val canDraft = social.current().thread?.canDraft == true
             binding.message.isEnabled = current && canDraft && !draft.sending
-            binding.attach.isEnabled = current && canDraft && !draft.sending && draft.preparing == 0
+            binding.attach.isEnabled = current && !draft.sending && draft.preparing == 0
         }
         binding.attach.alpha = if (binding.attach.isEnabled) 1f else 0.35f
         binding.send.alpha = if (binding.send.isEnabled) 1f else 0.35f
@@ -1196,22 +1198,21 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
 
     private fun showAttachmentMenu() {
         if (!viewModel.isCurrentConversation()) return
-        if (attachments.size >= if (isSocial) 1 else MAX_ATTACHMENTS) {
-            showLocalError(getString(if (isSocial) R.string.mango9_social_attachment_limit else R.string.mango9_chat_attachment_limit))
-            return
-        }
+        val atLimit = attachments.size >= (if (isSocial) 1 else MAX_ATTACHMENTS) || (isSocial && social.current().thread?.canDraft != true)
         val options = arrayOf(
             getString(R.string.mango9_chat_take_photo),
             getString(R.string.mango9_chat_photo_library),
             getString(R.string.mango9_chat_browse_files),
+            "Templates  ›",
         )
         PopupMenu(requireContext(), binding.attach).apply {
-            options.forEachIndexed { index, label -> menu.add(0, index, index, label) }
+            options.forEachIndexed { index, label -> menu.add(0, index, index, label).isEnabled = index == 3 || !atLimit }
             setOnMenuItemClickListener { selected ->
                 when (selected.itemId) {
                     0 -> requestCamera()
                     1 -> openMediaPicker()
                     2 -> openFilePicker()
+                    3 -> Mango9TemplatesFragment.open(this@Mango9MessagingConversationFragment, viewModel.mediaSession(), binding.message)
                 }
                 true
             }

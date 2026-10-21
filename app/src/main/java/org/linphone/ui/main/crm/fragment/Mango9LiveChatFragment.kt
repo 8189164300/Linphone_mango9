@@ -118,7 +118,7 @@ class Mango9LiveChatFragment : GenericMainFragment() {
         adapter = Messages(); list.adapter = adapter; root.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
         pending = ui.button("") { if (!model.current().pending && recorder == null) { model.attachment = null; render(model.current()) } }; root.addView(pending)
         val composer = ui.row(); ui.padded(composer, 4, 2)
-        attach = ui.icon(R.drawable.paperclip, "Attach image or file") { attachmentMenu() }; composer.addView(attach)
+        attach = ui.icon(R.drawable.plus_circle, "Add to message") { attachmentMenu() }; composer.addView(attach)
         input = EditText(requireContext()).apply {
             hint = "Message"; textSize = 16f; maxLines = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 2 else 4
             minHeight = ui.dp(44); gravity = Gravity.TOP or Gravity.START
@@ -132,6 +132,7 @@ class Mango9LiveChatFragment : GenericMainFragment() {
         mic = ui.icon(R.drawable.microphone, "Record voice message") { if (recorder != null) finishRecording() else requestRecording() }; composer.addView(mic)
         send = ui.icon(R.drawable.paper_plane_right, "Send message") { model.send(input.text.toString()) }; composer.addView(send)
         root.addView(composer)
+        Mango9TemplatesFragment.listen(this, { model.owner() }, input = { input })
         root.isFocusableInTouchMode = true; root.requestFocus()
         model.state.observe(viewLifecycleOwner) { state ->
             if (!draftApplied && state.authorized) {
@@ -209,7 +210,7 @@ class Mango9LiveChatFragment : GenericMainFragment() {
         val state = model.current(); val enabled = model.owner() != null && state.authorized && !state.restoring && !state.sending && !model.importing && recorder == null
         val allowed = Mango9LivePolicy.attachments(state.conversation?.optJSONObject("site"))
         input.isEnabled = enabled && !state.pending
-        attach.visibility = if (allowed.any { !it.startsWith("audio/") }) View.VISIBLE else View.GONE
+        attach.visibility = View.VISIBLE
         attach.isEnabled = enabled && !state.pending && model.pickerKind == null
         mic.visibility = if ("audio/mp4" in allowed || recorder != null) View.VISIBLE else View.GONE
         mic.isEnabled = (enabled && !state.pending && model.pickerKind == null) || recorder != null
@@ -278,15 +279,22 @@ class Mango9LiveChatFragment : GenericMainFragment() {
     }
     private fun attachmentMenu() {
         if (model.owner() == null || model.current().pending) return
-        MaterialAlertDialogBuilder(requireContext()).setTitle("Add attachment").setItems(arrayOf("Take photo", "Photos", "Files")) { _, choice ->
-            if (model.pickerKind != null) return@setItems
-            runCatching {
-                when (choice) {
-                    0 -> takePhoto()
-                    1 -> { model.pickerKind = "photo"; photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
-                    2 -> { model.pickerKind = "document"; document.launch(Mango9LivePolicy.attachments(model.current().conversation?.optJSONObject("site")).toTypedArray()) }
-                }
-            }.onFailure { model.pickerKind = null; model.notice("No app is available to choose this attachment.") }
+        val allowed = Mango9LivePolicy.attachments(model.current().conversation?.optJSONObject("site"))
+        PopupMenu(requireContext(), attach).apply {
+            listOf("Take photo", "Photo library", "Choose file", "Templates  ›").forEachIndexed { index, text ->
+                menu.add(0, index, index, text).isEnabled = index == 3 || allowed.any { !it.startsWith("audio/") }
+            }
+            setOnMenuItemClickListener { selected ->
+                if (model.pickerKind == null) runCatching {
+                    when (selected.itemId) {
+                        0 -> takePhoto()
+                        1 -> { model.pickerKind = "photo"; photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                        2 -> { model.pickerKind = "document"; document.launch(allowed.toTypedArray()) }
+                        3 -> Mango9TemplatesFragment.open(this@Mango9LiveChatFragment, model.owner(), input)
+                    }
+                }.onFailure { model.pickerKind = null; model.notice("Could not open this menu option. Please try again.") }
+                true
+            }
         }.show()
     }
     private fun takePhoto() {

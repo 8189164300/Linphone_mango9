@@ -120,7 +120,7 @@
             android:enabled="@{!viewModel.maxNumberOfAttachmentsReached}"
             android:padding="8dp"
             android:contentDescription="@string/content_description_chat_open_attach_file"
-            android:src="@{viewModel.areFilePickersOpen ? @drawable/x : @drawable/paperclip, default=@drawable/paperclip}"
+            android:src="@{viewModel.areFilePickersOpen ? @drawable/x : @drawable/plus_circle, default=@drawable/plus_circle}"
             android:visibility="@{viewModel.isVoiceRecording ? View.INVISIBLE : !viewModel.isFileTransferServerAvailable ? View.GONE : View.VISIBLE}"
             app:layout_constraintBottom_toBottomOf="@id/message_area_background"
             app:layout_constraintEnd_toStartOf="@id/message_area_background"
