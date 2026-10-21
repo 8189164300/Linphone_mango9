@@ -139,3 +139,111 @@ private struct Mango9InboxControlsContent<Content: View>: View {
 extension View {
  func mango9InboxControls() -> some View { modifier(Mango9InboxControlsModifier()) }
 }
+
+
+/// All message notifications carry an account scope and one explicit channel.
+/// Payload identifiers are navigation hints; each detail API still authorizes access.
+struct Mango9MessagePushRoute {
+	enum Destination {
+		case sms(Mango9SMSTarget), team(Mango9ChatTarget), social(Mango9SocialPushTarget), live(Mango9LivePushTarget)
+	}
+	let identity: String
+	let crmID: String
+	let destination: Destination
+	var tab: Mango9ConversationTab {
+		switch destination { case .sms: return .sms; case .team: return .team; case .social: return .social; case .live: return .live }
+	}
+	init?(userInfo: [AnyHashable: Any], delegate: AppDelegate) {
+		let data = Self.payload(userInfo)
+		guard let crm = data["crm_id"] as? String, !crm.isEmpty,
+			let identity = Mango9SessionStore.normalizedIdentity(data["sip_identity"] as? String) else { return nil }
+		self.identity = identity; crmID = crm
+		let canonical: [AnyHashable: Any] = ["mango9": data]
+		switch data["event"] as? String {
+		case "sms.received":
+			guard let target = delegate.mango9SMSTarget(from: canonical) else { return nil }; destination = .sms(target)
+		case "chat.message":
+			guard let target = delegate.mango9ChatTarget(from: canonical) else { return nil }; destination = .team(target)
+		case "social.message":
+			guard let target = Mango9SocialPushTarget(userInfo: canonical) else { return nil }; destination = .social(target)
+		case "livechat.message":
+			guard let target = Mango9LivePushTarget(userInfo: canonical) else { return nil }; destination = .live(target)
+		default: return nil
+		}
+	}
+	static func payload(_ info: [AnyHashable: Any]) -> [String: Any] {
+		var data = Dictionary(uniqueKeysWithValues: info.compactMap { key, value in (key as? String).map { ($0, value) } })
+		if let nested = info["mango9"] as? [String: Any] { data.merge(nested) { _, nested in nested } }
+		if data["event"] == nil { data["event"] = data["mango9_event"] }
+		if data["crm_id"] == nil { data["crm_id"] = data["crmId"] }
+		if data["sip_identity"] == nil { data["sip_identity"] = data["sipIdentity"] }
+		return data
+	}
+	func matches(_ session: Mango9Session) -> Bool {
+		session.crmId == crmID && Mango9SessionStore.normalizedIdentity(session.sipIdentity) == identity
+	}
+}
+
+struct Mango9LivePushTarget: Equatable, Identifiable {
+	let id: String
+	let identity: String
+	let crmID: String
+	init?(userInfo: [AnyHashable: Any]) {
+		let data = Mango9MessagePushRoute.payload(userInfo)
+		guard data["event"] as? String == "livechat.message",
+			let id = data["conversation_id"] as? String, UUID(uuidString: id) != nil,
+			let crm = data["crm_id"] as? String, !crm.isEmpty,
+			let identity = Mango9SessionStore.normalizedIdentity(data["sip_identity"] as? String) else { return nil }
+		self.id = id.lowercased(); crmID = crm; self.identity = identity
+	}
+	func matches(_ session: Mango9Session) -> Bool {
+		session.crmId == crmID && Mango9SessionStore.normalizedIdentity(session.sipIdentity) == identity
+	}
+}
+
+/// Keep cold-start taps until ContentView subscribes. Only the newest tap may
+/// finish account activation; consuming an older request cannot clear a newer one.
+@MainActor final class Mango9MessagePushInbox: ObservableObject {
+	static let shared = Mango9MessagePushInbox()
+	struct Request: Identifiable { let id: UUID; let route: Mango9MessagePushRoute }
+	@Published private(set) var pending: Request?
+	private var latest = UUID()
+	func begin() -> UUID { latest = UUID(); pending = nil; return latest }
+	func publish(_ route: Mango9MessagePushRoute, request: UUID) {
+		guard request == latest else { return }
+		pending = Request(id: request, route: route)
+	}
+	func consume(_ id: UUID) { if pending?.id == id { pending = nil } }
+}
+
+struct Mango9LivePushConversation: View {
+	let target: Mango9LivePushTarget
+	let onClose: () -> Void
+	@State private var conversation: Mango9LiveConversation?
+	@State private var session: Mango9Session?
+	@State private var error: String?
+	@State private var retry = 0
+	var body: some View {
+		NavigationView {
+			Group {
+				if let conversation, let session { Mango9LiveChatConversation(conversation: conversation, session: session) }
+				else if let error { VStack(spacing: 16) { Text(error); Button("Try again") { retry += 1 } }.padding() }
+				else { ProgressView("Opening conversation…") }
+			}
+			.toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("Back", action: onClose).accessibilityIdentifier("push.conversation.back") } }
+			.mango9ConversationNavigationHidden()
+		}.navigationViewStyle(.stack)
+			.accessibilityIdentifier("push.live." + target.id)
+			.task(id: retry) {
+				error = nil
+				guard let active = Mango9SessionStore.load(), target.matches(active) else { error = "This account is no longer available."; return }
+				do {
+					let data = try await Mango9LiveChatAPI.shared.request("messages", session: active, query: [.init(name: "id", value: target.id)])
+					guard let raw = data["conversation"] as? [String: Any], let result = Mango9LiveConversation(raw), result.id.lowercased() == target.id else { throw Mango9LiveChatFailure(status: 0) }
+					guard !Task.isCancelled, Mango9SessionStore.isActive(active) else { return }
+					session = active; conversation = result
+				} catch { if !Task.isCancelled { self.error = Mango9LiveChatAPI.message(error) } }
+			}
+			.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in onClose() }
+	}
+}

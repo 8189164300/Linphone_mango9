@@ -41,7 +41,7 @@ struct ConversationsListFragment: View {
 	@Binding var text: String
 	@Binding var showingSheet: Bool
 	var onNewConversation: () -> Void
-	@State private var mango9Tab: Mango9ConversationTab = .sms
+	@ObservedObject private var sharedMainViewModel = SharedMainViewModel.shared
 	@State private var showingNewTeamChat = false
 	@ObservedObject private var chatTabs = Mango9ChatTabPreferences.shared
 	
@@ -49,21 +49,21 @@ struct ConversationsListFragment: View {
 		VStack(spacing: 0) {
 			if hasMango9Account {
 				Mango9ConversationTabs(
-					selectedTab: $mango9Tab,
+					selectedTab: $sharedMainViewModel.mango9ConversationTab,
 					smsUnreadCount: mango9ChatStore.smsUnreadCount,
 					teamUnreadCount: mango9ChatStore.teamUnreadCount
 				).mango9InboxControls()
-				if mango9Tab == .sms || mango9Tab == .team {
+				if sharedMainViewModel.mango9ConversationTab == .sms || sharedMainViewModel.mango9ConversationTab == .team {
 					Mango9ConversationConnectionStatus(
 						isConnecting: mango9ChatStore.isConnecting,
 						isConnected: mango9ChatStore.isConnected
 					)
 				}
-				if mango9Tab == .sms {
+				if sharedMainViewModel.mango9ConversationTab == .sms {
 					mango9SMSConversationList
-				} else if mango9Tab == .social {
+				} else if sharedMainViewModel.mango9ConversationTab == .social {
 					Mango9SocialChatList(searchText: conversationsListViewModel.currentFilter)
-				} else if mango9Tab == .live {
+				} else if sharedMainViewModel.mango9ConversationTab == .live {
 					Mango9LiveChatList(searchText: conversationsListViewModel.currentFilter)
 						.id(Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey) ?? "signed-out")
 				} else {
@@ -79,18 +79,18 @@ struct ConversationsListFragment: View {
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 		.overlay(alignment: .bottomTrailing) {
-			Mango9ConversationComposeButton(tab: hasMango9Account ? mango9Tab : .sms,
+			Mango9ConversationComposeButton(tab: hasMango9Account ? sharedMainViewModel.mango9ConversationTab : .sms,
 				onSMS: onNewConversation, onTeam: { showingNewTeamChat = true }).mango9InboxControls()
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in
 			showingNewTeamChat = false
-			mango9Tab = .sms
+			sharedMainViewModel.mango9ConversationTab = .sms
 		}
 		.onReceive(chatTabs.objectWillChange) { _ in
 			// Published preferences update before SwiftUI redraws; validate on the next run loop.
 			DispatchQueue.main.async {
 				if !chatTabs.team { showingNewTeamChat = false }
-				if !chatTabs.isVisible(mango9Tab) { mango9Tab = .sms }
+				if !chatTabs.isVisible(sharedMainViewModel.mango9ConversationTab) { sharedMainViewModel.mango9ConversationTab = .sms }
 			}
 		}
 		.navigationTitle("")
@@ -108,11 +108,11 @@ struct ConversationsListFragment: View {
 				}
 			}
 		}
-		.task(id: mango9Tab) {
+		.task(id: sharedMainViewModel.mango9ConversationTab) {
 			guard hasMango9Account else { return }
-			if mango9Tab == .sms {
+			if sharedMainViewModel.mango9ConversationTab == .sms {
 				await mango9ChatStore.refreshSMSDirectory()
-			} else if mango9Tab == .team {
+			} else if sharedMainViewModel.mango9ConversationTab == .team {
 				await mango9ChatStore.connectIfNeeded()
 				await mango9ChatStore.refreshDirectory()
 			}

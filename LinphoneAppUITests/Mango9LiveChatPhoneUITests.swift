@@ -2,6 +2,63 @@ import XCTest
 
 /// Physical-phone checks. Mutations target only the named temporary internal fixture; no visitor messages are sent.
 final class Mango9LiveChatPhoneUITests: XCTestCase {
+	func testLiveNotificationColdStartOpensExactConversation() throws { try verifyMessageNotification(channel: "live", cold: true) }
+	func testLiveNotificationWarmStartOpensExactConversation() throws { try verifyMessageNotification(channel: "live", cold: false) }
+	func testSocialNotificationOpensExactConversation() throws { try verifyMessageNotification(channel: "social", cold: false) }
+	func testSMSNotificationOpensExactConversation() throws { try verifyMessageNotification(channel: "sms", cold: false) }
+	func testTeamNotificationOpensExactConversation() throws { try verifyMessageNotification(channel: "team", cold: false) }
+	private func verifyMessageNotification(channel: String, cold: Bool) throws {
+		continueAfterFailure = false
+		XCUIDevice.shared.orientation = .portrait
+		let app = XCUIApplication(); app.launch()
+		let chats = app.buttons["Conversations"].firstMatch
+		XCTAssertTrue(chats.waitForExistence(timeout: 30)); chats.tap()
+		let tab = app.buttons["conversations.tab." + channel]
+		XCTAssertTrue(tab.waitForExistence(timeout: 10)); tab.tap()
+		let prefix = channel == "live" ? "livechat.thread." : channel + ".thread."
+		let rows = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT (identifier CONTAINS %@)", prefix, "team.thread.user."))
+		let row = rows.firstMatch
+		guard row.waitForExistence(timeout: 20) else { throw XCTSkip("No existing " + channel + " conversation on this phone") }
+		let id = String(row.identifier.dropFirst(prefix.count))
+		app.terminate()
+		app.launchEnvironment["UITEST_MESSAGE_NOTIFICATION_CHANNEL"] = channel
+		app.launchEnvironment["UITEST_MESSAGE_NOTIFICATION_TARGET"] = id
+		app.launch()
+		XCTAssertTrue(app.buttons["Conversations"].firstMatch.waitForExistence(timeout: 20))
+		let status = app.staticTexts["push.check.status"]
+		XCTAssertTrue(status.waitForExistence(timeout: 10))
+		let ready = NSPredicate(format: "label == %@", "Scheduled")
+		XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: status)], timeout: 10), .completed, status.label)
+		XCUIDevice.shared.press(.home)
+		if cold { app.terminate() }
+		let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+		// iOS can hide the title/body according to the user's preview preference.
+		let notification = springboard.descendants(matching: .any).matching(NSPredicate(format:
+			"identifier == %@ AND label CONTAINS[c] %@", "NotificationShortLookView", "Mango9")).firstMatch
+		if !notification.waitForExistence(timeout: 12) {
+			let hierarchy = XCTAttachment(string: springboard.debugDescription)
+			hierarchy.name = "Notification accessibility"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+			capture(springboard, "Notification delivery")
+		}
+		XCTAssertTrue(notification.exists, "The Mango9 iOS notification must appear")
+		notification.tap()
+		XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+		let composer = app.descendants(matching: .any)["chat.composer"].firstMatch
+		XCTAssertTrue(composer.waitForExistence(timeout: 25), "Tap must open the conversation, not just its list")
+		capture(app, "Notification opens " + channel + (cold ? " cold" : " warm"))
+		if channel == "live" {
+			XCTAssertTrue(app.descendants(matching: .any)["push.live." + id].firstMatch.exists)
+			app.buttons["push.conversation.back"].firstMatch.tap()
+		} else if channel == "sms" { app.images["caret-left"].firstMatch.tap() }
+		else {
+			let back = app.navigationBars.buttons["BackButton"].firstMatch
+			if back.exists { back.tap() } else { app.buttons["Back"].firstMatch.tap() }
+		}
+		XCTAssertTrue(tab.waitForExistence(timeout: 10)); XCTAssertTrue(tab.isSelected, "Back must reveal the notified channel")
+		capture(app, "Notification returns to " + channel)
+		app.terminate(); app.launchEnvironment = [:]; app.launch()
+	}
+
 	func testChatLabelsRemainVisibleAfterReturningFromEveryChannel() {
 		continueAfterFailure = false
 		XCUIDevice.shared.orientation = .portrait

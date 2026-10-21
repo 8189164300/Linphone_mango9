@@ -157,6 +157,11 @@ struct Mango9LiveChatList: View {
 			}.listStyle(.plain).refreshable { await store.loadSites(); await store.load(searchText) }
 		}.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).tint(Color.orangeMain500)
 		.onAppear { visible = true }.onDisappear { visible = false }
+		.onReceive(NotificationCenter.default.publisher(for: .mango9LiveInboxDidChange)) { note in
+			guard visible, let target = note.object as? Mango9LivePushTarget,
+				let session = store.session, target.matches(session) else { return }
+			Task { await store.load(searchText) }
+		}
 		.task(id: store.filter(searchText) + String(phase == .active && visible)) {
 			guard phase == .active && visible else { return }
 			do { try await Task.sleep(nanoseconds: 250_000_000) } catch { return }

@@ -44,6 +44,8 @@ class SharedMainViewModel: ObservableObject {
 	@Published var displayedFriend: ContactAvatarModel?
 	@Published var displayedCall: HistoryModel?
 	@Published var displayedConversation: ConversationModel?
+	@Published var mango9ConversationTab: Mango9ConversationTab = .sms
+	@Published var mango9ConversationRootID = UUID()
 	@Published var displayedSMS: Mango9SMSTarget?
 	@Published var pendingSMSComposerText: String?
 	@Published var displayedMeeting: MeetingModel?

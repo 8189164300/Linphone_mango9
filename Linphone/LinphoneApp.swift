@@ -36,6 +36,7 @@ private var usesOfflineMessagingTestHost: Bool {
 }
 
 extension Notification.Name {
+	static let mango9LiveInboxDidChange = Notification.Name("mango9LiveInboxDidChange")
 	static let mango9LeadDidChange = Notification.Name("mango9LeadDidChange")
 	static let mango9ClientDidChange = Notification.Name("mango9ClientDidChange")
 	static let mango9OpenLead = Notification.Name("mango9OpenLead")
@@ -56,9 +57,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	var launchNotificationPeerAddr: String?
 	var launchNotificationLocalAddr: String?
 	var launchMango9LeadTarget: Mango9LeadPushTarget?
-	var launchMango9SMSTarget: Mango9SMSTarget?
-	var launchMango9ChatTarget: Mango9ChatTarget?
-	var launchMango9SocialTarget: Mango9SocialPushTarget?
 	var launchMango9AppointmentTarget: Mango9AppointmentPushTarget?
 	
 	var coreContext: CoreContext? {
@@ -70,6 +68,43 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	private var pendingRemotePushToken: String?
 	private var chatPushOpenID = UUID()
 	
+#if DEBUG
+	/// Physical-device tests use an OS notification with the production payload and
+	/// delegate. No remote messages are sent and no account credentials are injected.
+	@MainActor func scheduleMessageRoutingCheckIfRequested() async -> String {
+		let env = ProcessInfo.processInfo.environment
+		guard let channel = env["UITEST_MESSAGE_NOTIFICATION_CHANNEL"],
+			let target = env["UITEST_MESSAGE_NOTIFICATION_TARGET"] else { return "" }
+		// The native account is restored asynchronously during launch.
+		for _ in 0..<30 {
+			if Mango9SessionStore.load()?.sipIdentity != nil { break }
+			try? await Task.sleep(nanoseconds: 200_000_000)
+		}
+		guard let session = Mango9SessionStore.load(), let identity = session.sipIdentity else { return "No active account" }
+		let events = ["sms": "sms.received", "team": "chat.message", "social": "social.message", "live": "livechat.message"]
+		guard let event = events[channel] else { return "Unknown channel" }
+		var data: [String: Any] = ["event": event, "crm_id": session.crmId, "sip_identity": identity, "name": "Routing check"]
+		switch channel {
+		case "sms": data["phone"] = target
+		case "team": data["room_id"] = target
+		case "social": data["thread_id"] = target
+		default: data["conversation_id"] = target
+		}
+		guard Mango9MessagePushRoute(userInfo: ["mango9": data], delegate: self) != nil else { return "Invalid target" }
+		let center = UNUserNotificationCenter.current()
+		let settings = await center.notificationSettings()
+		guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return "Notifications not authorized" }
+		let content = UNMutableNotificationContent()
+		content.title = "Mango9 routing check " + channel
+		content.body = "Tap to verify this conversation opens."
+		content.userInfo = ["mango9": data]; content.sound = .default
+		let request = UNNotificationRequest(identifier: "mango9-routing-check-" + channel,
+			content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 8, repeats: false))
+		do { try await center.add(request); return "Scheduled" }
+		catch { return "Scheduling failed" }
+	}
+#endif
+
 	func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
 		let tokenStr = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
 		Log.info("Received remote push token")
@@ -113,6 +148,15 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 			DispatchQueue.main.async {
 				if let session = Mango9SessionStore.load(), target.matches(session) {
 					NotificationCenter.default.post(name: .mango9AppointmentDidChange, object: nil)
+				}
+				completionHandler(.noData)
+			}
+			return
+		}
+		if let target = Mango9LivePushTarget(userInfo: userInfo) {
+			DispatchQueue.main.async {
+				if let session = Mango9SessionStore.load(), target.matches(session) {
+					NotificationCenter.default.post(name: .mango9LiveInboxDidChange, object: target)
 				}
 				completionHandler(.noData)
 			}
@@ -188,6 +232,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	
 	// Called when the user interacts with the notification
 	func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+		guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { completionHandler(); return }
 		let userInfo = response.notification.request.content.userInfo
 		if Mango9LeadPushTarget.isLeadNotification(userInfo) {
 			guard let target = Mango9LeadPushTarget(userInfo: userInfo),
@@ -212,49 +257,27 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 			}
 			completionHandler(); return
 		}
-		if let target = Mango9SocialPushTarget(userInfo: userInfo) {
-			guard let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler(); return }
-			let openID = UUID(); chatPushOpenID = openID
-			activateMango9ChatAccount(identity: target.identity) { [weak self] activated in
-				guard let self, activated, self.chatPushOpenID == openID,
-					let session = Mango9SessionStore.load(), target.matches(session) else { return }
-				if self.navigationManager == nil { self.launchMango9SocialTarget = target }
-				else { NotificationCenter.default.post(name: .mango9OpenSocial, object: target) }
+		if let route = Mango9MessagePushRoute(userInfo: userInfo, delegate: self) {
+			Task { @MainActor in
+				let request = Mango9MessagePushInbox.shared.begin()
+				let openID = UUID(); self.chatPushOpenID = openID
+				guard let stored = Mango9SessionStore.load(for: route.identity), route.matches(stored) else { return }
+				self.activateMango9ChatAccount(identity: route.identity) { [weak self] activated in
+					guard let self, activated, self.chatPushOpenID == openID,
+						let session = Mango9SessionStore.load(), route.matches(session) else { return }
+					Task { @MainActor [weak self] in
+						guard self?.chatPushOpenID == openID else { return }
+						Mango9MessagePushInbox.shared.publish(route, request: request)
+					}
+				}
 			}
 			completionHandler(); return
 		}
-		if let target = mango9ChatTarget(from: userInfo) {
-			let openID = UUID()
-			chatPushOpenID = openID
-			let openChat = { [weak self] in
-				guard let self, self.chatPushOpenID == openID else { return }
-				if self.navigationManager == nil {
-					self.launchMango9ChatTarget = target
-				} else {
-					NotificationCenter.default.post(name: .mango9OpenChat, object: target)
-				}
-			}
-			if let identity = mango9AccountIdentity(from: userInfo) {
-				// Wait for DefaultAccountChanged to finish clearing the previous account's UI.
-				activateMango9ChatAccount(identity: identity) { activated in
-					if activated { openChat() }
-				}
-			} else {
-				openChat()
-			}
-			completionHandler()
-			return
-		}
-		activateMango9AccountIfNeeded(from: userInfo)
 
-		if let target = mango9SMSTarget(from: userInfo) {
-			if navigationManager == nil {
-				launchMango9SMSTarget = target
-			} else {
-				NotificationCenter.default.post(name: .mango9OpenSMS, object: target)
-			}
-			completionHandler()
-			return
+		// Invalid message data must not fall through into legacy SIP/SMS navigation.
+		if let event = Mango9MessagePushRoute.payload(userInfo)["event"] as? String,
+			["sms.received", "chat.message", "social.message", "livechat.message"].contains(event) {
+			completionHandler(); return
 		}
 
 		if let callId = userInfo["CallId"] as? String, let peerAddr = userInfo["peer_addr"] as? String, let localAddr = userInfo["local_addr"] as? String {
@@ -293,6 +316,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 					NotificationCenter.default.post(name: .mango9AppointmentDidChange, object: nil)
 				}
 			}
+			completionHandler([.banner, .sound, .badge]); return
+		}
+		if let target = Mango9LivePushTarget(userInfo: userInfo) {
+			guard let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler([]); return }
+			DispatchQueue.main.async { NotificationCenter.default.post(name: .mango9LiveInboxDidChange, object: target) }
 			completionHandler([.banner, .sound, .badge]); return
 		}
 		if let target = Mango9SocialPushTarget(userInfo: userInfo) {
@@ -350,7 +378,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 		}
 	}
 
-	private func mango9SMSTarget(
+	func mango9SMSTarget(
 		from userInfo: [AnyHashable: Any]
 	) -> Mango9SMSTarget? {
 		let nested = userInfo["mango9"] as? [String: Any]
@@ -419,28 +447,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 			name: displayName,
 			roomId: roomId?.isEmpty == false ? roomId : nil
 		)
-	}
-
-	private func activateMango9AccountIfNeeded(
-		from userInfo: [AnyHashable: Any]
-	) {
-		guard let identity = mango9AccountIdentity(from: userInfo),
-		      Mango9SessionStore.hasSession(for: identity) else {
-			Log.info("Ignoring Mango9 message push for an account not stored on this device")
-			return
-		}
-
-		Mango9SessionStore.activate(sipIdentity: identity)
-		CoreContext.shared.doOnCoreQueue { core in
-			guard let account = core.accountList.first(where: {
-				Mango9SessionStore.normalizedIdentity(
-					$0.params?.identityAddress?.asStringUriOnly()
-				) == identity
-			}) else {
-				return
-			}
-			core.defaultAccount = account
-		}
 	}
 
 	private func activateMango9ChatAccount(identity: String, completion: @escaping (Bool) -> Void) {
@@ -761,6 +767,10 @@ struct MainViewSwitcher: View {
 	let appDelegate: AppDelegate
 	@ObservedObject private var colors = ColorProvider.shared
 
+#if DEBUG
+	@State private var notificationCheckStatus = "Waiting"
+#endif
+
 	var body: some View {
 		selectedMainView()
 	}
@@ -769,6 +779,15 @@ struct MainViewSwitcher: View {
 	func selectedMainView() -> some View {
 		ContentView()
 			.safeAreaInset(edge: .top, spacing: 0) { Mango9InAppReminderHost() }
+#if DEBUG
+			.overlay(alignment: .bottom) {
+				if ProcessInfo.processInfo.environment["UITEST_MESSAGE_NOTIFICATION_CHANNEL"] != nil {
+					Text(notificationCheckStatus).accessibilityIdentifier("push.check.status")
+				}
+			}
+			.task { notificationCheckStatus = await appDelegate.scheduleMessageRoutingCheckIfRequested() }
+#endif
+
 			.onAppear {
 				appDelegate.coreContext = coreContext
 				appDelegate.navigationManager = navigationManager
@@ -786,23 +805,6 @@ struct MainViewSwitcher: View {
 					}
 				}
 
-				if let smsTarget = appDelegate.launchMango9SMSTarget {
-					appDelegate.launchMango9SMSTarget = nil
-					DispatchQueue.main.async {
-						NotificationCenter.default.post(name: .mango9OpenSMS, object: smsTarget)
-					}
-				}
-
-				if let chatTarget = appDelegate.launchMango9ChatTarget {
-					appDelegate.launchMango9ChatTarget = nil
-					DispatchQueue.main.async {
-						NotificationCenter.default.post(name: .mango9OpenChat, object: chatTarget)
-					}
-				}
-				if let socialTarget = appDelegate.launchMango9SocialTarget {
-					appDelegate.launchMango9SocialTarget = nil
-					DispatchQueue.main.async { NotificationCenter.default.post(name: .mango9OpenSocial, object: socialTarget) }
-				}
 				if let target = appDelegate.launchMango9AppointmentTarget {
 					appDelegate.launchMango9AppointmentTarget = nil
 					DispatchQueue.main.async { NotificationCenter.default.post(name: .mango9OpenAppointment, object: target) }

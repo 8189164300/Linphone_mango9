@@ -80,6 +80,8 @@ struct ContentView: View {
 	@State private var crmDeepLinkLeadId: Int?
 	@State private var mango9ChatTarget: Mango9ChatTarget?
 	@State private var mango9SocialTarget: Mango9SocialPushTarget?
+	@State private var mango9LiveTarget: Mango9LivePushTarget?
+	@ObservedObject private var messagePushInbox = Mango9MessagePushInbox.shared
 	@State private var mango9AppointmentTarget: Mango9AppointmentPushTarget?
 	@State private var mango9LeadPushTarget: Mango9LeadPushTarget?
 	@State private var mango9ChatPresentationID = UUID()
@@ -116,7 +118,13 @@ struct ContentView: View {
 		return max(0, sharedMainViewModel.unreadMessages) + mango9Unread
 	}
 	
-	@ViewBuilder private var appHeader: some View {
+	private var appHeader: some View {
+		// Render the large shared header in its own SwiftUI pass instead of nesting
+		// its construction inside the already deep conversation/navigation tree.
+		Mango9AppHeaderHost { AnyView(appHeaderContent) }
+	}
+
+	@ViewBuilder private var appHeaderContent: some View {
 		if searchIsActive == false {
 			HStack {
 				Button {
@@ -992,6 +1000,7 @@ struct ContentView: View {
 												orientation: orientation,
 												header: AnyView(appHeader)
 											)
+											.id(sharedMainViewModel.mango9ConversationRootID)
 										} else if sharedMainViewModel.indexView == 3 {
 											MeetingsContainer(
 												meetingsListViewModel: $meetingsListViewModel,
@@ -1781,6 +1790,7 @@ struct ContentView: View {
 								isShowStartConversationFragment = false
 								mango9ChatTarget = nil
 								mango9SocialTarget = nil
+								mango9LiveTarget = nil
 								sharedMainViewModel.displayedSMS = nil
 								sharedMainViewModel.displayedFriend = nil
 								sharedMainViewModel.displayedCall = nil
@@ -1800,9 +1810,14 @@ struct ContentView: View {
 							.zIndex(4)
 							.transition(.move(edge: .trailing))
 					}
+					if let target = mango9LiveTarget {
+						Mango9LivePushConversation(target: target, onClose: { mango9LiveTarget = nil })
+							.id(target.id + target.identity).zIndex(4)
+					}
 					if let target = mango9SocialTarget {
 						Mango9SocialPushConversation(target: target, onClose: { mango9SocialTarget = nil })
 							.id(target.id + target.identity).zIndex(4)
+							.accessibilityIdentifier("push.social." + target.id)
 					}
 					
 					if let meetingsListVM = meetingsListViewModel, isShowSendCancelMeetingNotificationPopup {
@@ -2149,8 +2164,10 @@ struct ContentView: View {
 			.onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("DefaultAccountChanged"))) { _ in
                 accountProfileViewModel.defaultAccountModelIndex = CoreContext.shared.accounts.firstIndex(where: {$0.isDefaultAccount})
 				isShowCRMFragment = false
+				sharedMainViewModel.mango9ConversationTab = .sms
 				mango9ChatTarget = nil
 				mango9SocialTarget = nil
+				mango9LiveTarget = nil
 				sharedMainViewModel.displayedSMS = nil
 				Mango9ChatStore.shared.disconnect()
 				ContactsManager.shared.syncMango9Team([])
@@ -2242,50 +2259,30 @@ struct ContentView: View {
 				let session = Mango9SessionStore.load(), target.matches(session) else { return }
 			mango9AppointmentTarget = target
 		}
-		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenChat)) { notification in
-			guard let target = notification.object as? Mango9ChatTarget else { return }
-			mango9SocialTarget = nil
-			resetFilter()
-			isShowStartConversationFragment = false
-			isShowCRMFragment = false
-			sharedMainViewModel.displayedSMS = nil
-			sharedMainViewModel.displayedFriend = nil
-			sharedMainViewModel.displayedCall = nil
-			sharedMainViewModel.displayedConversation = nil
-			sharedMainViewModel.displayedMeeting = nil
-			sharedMainViewModel.changeIndexView(indexViewInt: 2)
-			withAnimation {
-				mango9ChatPresentationID = UUID()
-				mango9ChatTarget = target
+		.onReceive(messagePushInbox.$pending) { request in
+			guard let request else { return }
+			guard let session = Mango9SessionStore.load(), request.route.matches(session) else {
+				messagePushInbox.consume(request.id); return
 			}
+			sharedMainViewModel.pendingSMSComposerText = nil
+			switch request.route.destination {
+			case .sms(let target): openSMS(target)
+			case .team(let target): openTeam(target)
+			case .social(let target): openSocial(target)
+			case .live(let target): prepareMessageDestination(.live); mango9LiveTarget = target
+			}
+			messagePushInbox.consume(request.id)
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenChat)) { notification in
+			if let target = notification.object as? Mango9ChatTarget { openTeam(target) }
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenSMS)) { notification in
-			guard let target = notification.object as? Mango9SMSTarget else { return }
-			mango9SocialTarget = nil
-			resetFilter()
-			isShowStartConversationFragment = false
-			isShowCRMFragment = false
-			mango9ChatTarget = nil
-			sharedMainViewModel.displayedFriend = nil
-			sharedMainViewModel.displayedCall = nil
-			sharedMainViewModel.displayedConversation = nil
-			sharedMainViewModel.displayedMeeting = nil
-			sharedMainViewModel.changeIndexView(indexViewInt: 2)
-			withAnimation {
-				sharedMainViewModel.displayedSMS = target
-			}
+			if let target = notification.object as? Mango9SMSTarget { openSMS(target) }
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenSocial)) { notification in
-			guard let target = notification.object as? Mango9SocialPushTarget,
-				let session = Mango9SessionStore.load(), target.matches(session) else { return }
-			resetFilter(); isShowStartConversationFragment = false; isShowCRMFragment = false
-			mango9ChatTarget = nil
-			sharedMainViewModel.displayedSMS = nil
-			sharedMainViewModel.displayedFriend = nil; sharedMainViewModel.displayedCall = nil
-			sharedMainViewModel.displayedConversation = nil; sharedMainViewModel.displayedMeeting = nil
-			sharedMainViewModel.changeIndexView(indexViewInt: 2)
-			mango9SocialTarget = target
+			if let target = notification.object as? Mango9SocialPushTarget { openSocial(target) }
 		}
+
 		.task {
 			if var session = Mango9SessionStore.load() {
 				do {
@@ -2331,6 +2328,29 @@ struct ContentView: View {
 				await refreshMango9LineIdentity()
 			}
 		}
+	}
+
+	private func prepareMessageDestination(_ tab: Mango9ConversationTab) {
+		resetFilter(); focusedField = false; isMenuOpen = false; sideMenuIsOpen = false
+		isShowStartConversationFragment = false; isShowCRMFragment = false
+		mango9ChatTarget = nil; mango9SocialTarget = nil; mango9LiveTarget = nil
+		sharedMainViewModel.displayedSMS = nil
+		sharedMainViewModel.displayedFriend = nil; sharedMainViewModel.displayedCall = nil
+		sharedMainViewModel.displayedConversation = nil; sharedMainViewModel.displayedMeeting = nil
+		// A tap may arrive over another channel's native navigation stack.
+		sharedMainViewModel.mango9ConversationRootID = UUID()
+		sharedMainViewModel.mango9ConversationTab = tab
+		sharedMainViewModel.changeIndexView(indexViewInt: 2)
+	}
+	private func openSMS(_ target: Mango9SMSTarget) {
+		prepareMessageDestination(.sms); sharedMainViewModel.displayedSMS = target
+	}
+	private func openTeam(_ target: Mango9ChatTarget) {
+		prepareMessageDestination(.team); mango9ChatPresentationID = UUID(); mango9ChatTarget = target
+	}
+	private func openSocial(_ target: Mango9SocialPushTarget) {
+		guard let session = Mango9SessionStore.load(), target.matches(session) else { return }
+		prepareMessageDestination(.social); mango9SocialTarget = target
 	}
 
 	private func refreshMango9LineIdentity() async {
@@ -2637,4 +2657,9 @@ private struct Mango9HeaderInitialsAvatar: View {
    else { Image(systemName: "person.crop.circle.fill").resizable().foregroundStyle(Color.grayMain2c200) }
   }.task(id: name) { avatar = ContactsManager.shared.textToImage(firstName: name, lastName: "") }
  }
+}
+
+private struct Mango9AppHeaderHost: View {
+	let content: () -> AnyView
+	var body: some View { content() }
 }

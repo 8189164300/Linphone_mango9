@@ -274,3 +274,79 @@ final class Mango9ConversationRenderingTests: XCTestCase {
 		attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
 	}
 }
+
+final class Mango9MessageNotificationRoutingTests: XCTestCase {
+	private let identity = "sip:7@tenant.example.invalid"
+	private let conversation = "00000000-0000-4000-8000-000000000042"
+	private func payload(_ event: String) -> [String: Any] {
+		["event": event, "crm_id": "tenant", "sip_identity": identity,
+			"conversation_id": conversation, "thread_id": conversation,
+			"room_id": "91", "sender_user_id": 42, "phone": "+1 555 555 0123", "name": "Fixture"]
+	}
+	@MainActor func testEachInboundChannelSelectsItsExactDestinationForNestedAndFlatPayloads() throws {
+		let delegate = AppDelegate()
+		for (event, tab) in [("sms.received", Mango9ConversationTab.sms), ("chat.message", .team), ("social.message", .social), ("livechat.message", .live)] {
+			for nested in [false, true] {
+				let raw: [AnyHashable: Any] = nested ? ["mango9": payload(event)] : Dictionary(uniqueKeysWithValues: payload(event).map { (AnyHashable($0.key), $0.value) })
+				let route = try XCTUnwrap(Mango9MessagePushRoute(userInfo: raw, delegate: delegate))
+				XCTAssertEqual(route.tab, tab); XCTAssertEqual(route.identity, identity); XCTAssertEqual(route.crmID, "tenant")
+				switch route.destination {
+				case .live(let value): XCTAssertEqual(value.id, conversation)
+				case .social(let value): XCTAssertEqual(value.id, conversation)
+				case .team(let value): XCTAssertEqual(value.roomId, "91")
+				case .sms(let value): XCTAssertEqual(value.phone, "15555550123")
+				}
+			}
+		}
+	}
+	@MainActor func testPayloadAliasesAndNestedScopeRemainConsistent() throws {
+		let delegate = AppDelegate()
+		let route = try XCTUnwrap(Mango9MessagePushRoute(userInfo: [
+			"mango9_event": "livechat.message", "crmId": "tenant", "sipIdentity": identity,
+			"conversation_id": conversation
+		], delegate: delegate))
+		XCTAssertEqual(route.tab, .live)
+		let nested = try XCTUnwrap(Mango9MessagePushRoute(userInfo: [
+			"event": "sms.received", "crm_id": "different", "sip_identity": "sip:8@tenant.example.invalid",
+			"mango9": payload("livechat.message")
+		], delegate: delegate))
+		XCTAssertEqual(nested.tab, .live); XCTAssertEqual(nested.crmID, "tenant"); XCTAssertEqual(nested.identity, identity)
+	}
+	@MainActor func testUnknownMalformedOrUnscopedMessagesNeverFallBackToSMS() {
+		let delegate = AppDelegate()
+		for event in ["", "livechat.unknown", "incoming_call", "social.received"] {
+			XCTAssertNil(Mango9MessagePushRoute(userInfo: payload(event), delegate: delegate))
+		}
+		for key in ["conversation_id", "crm_id", "sip_identity"] {
+			var data = payload("livechat.message"); data.removeValue(forKey: key)
+			XCTAssertNil(Mango9MessagePushRoute(userInfo: data, delegate: delegate))
+		}
+		var data = payload("livechat.message"); data["conversation_id"] = "../sms"
+		XCTAssertNil(Mango9MessagePushRoute(userInfo: data, delegate: delegate))
+	}
+	@MainActor func testColdStartQueuePersistsUntilConsumedAndLatestTapWins() throws {
+		let inbox = Mango9MessagePushInbox(), delegate = AppDelegate()
+		let old = inbox.begin(), current = inbox.begin()
+		let live = try XCTUnwrap(Mango9MessagePushRoute(userInfo: payload("livechat.message"), delegate: delegate))
+		let sms = try XCTUnwrap(Mango9MessagePushRoute(userInfo: payload("sms.received"), delegate: delegate))
+		inbox.publish(live, request: current)
+		inbox.publish(sms, request: old)
+		XCTAssertEqual(inbox.pending?.route.tab, .live)
+		inbox.consume(old); XCTAssertEqual(inbox.pending?.id, current)
+		inbox.consume(current); XCTAssertNil(inbox.pending)
+		let repeated = inbox.begin(); inbox.publish(live, request: repeated)
+		XCTAssertEqual(inbox.pending?.id, repeated)
+	}
+	@MainActor func testScopeCannotOpenSameConversationInDifferentAccount() throws {
+		let target = try XCTUnwrap(Mango9MessagePushRoute(userInfo: payload("livechat.message"), delegate: AppDelegate()))
+		func session(_ crm: String, _ sip: String) -> Mango9Session {
+			Mango9Session(crmId: crm, crmBaseUrl: "https://tenant.example.invalid", crmApiBaseUrl: "https://tenant.example.invalid/app/api/v2",
+				userId: "7", parentClientId: "7", role: "client", loginId: "fixture@example.invalid", displayName: "Fixture",
+				accessToken: "test", refreshToken: "test", smsChatApi: "https://tenant.example.invalid/sms_chat_api", connectWebsocket: "",
+				enrollmentExpiresAt: .distantFuture, sipIdentity: sip)
+		}
+		XCTAssertTrue(target.matches(session("tenant", identity)))
+		XCTAssertFalse(target.matches(session("other", identity)))
+		XCTAssertFalse(target.matches(session("tenant", "sip:8@tenant.example.invalid")))
+	}
+}
