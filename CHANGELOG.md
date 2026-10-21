@@ -10,6 +10,17 @@ Group changes to describe their impact on the project, as follows:
     Fixed for any bug fixes.
     Security to invite users to upgrade in case of vulnerabilities.
 
+## [Mango9 6.2.9 (602041)] - 2026-10-21
+
+### Added
+- Personal message templates in the + menu across SMS, Team Chat, Social and Live Chat, with server-controlled account permissions.
+- Create and edit templates with a character counter, then insert into the current draft for review before sending.
+
+### Fixed
+- Live Chat notifications open their matching conversation.
+- Template insertion preserves the existing draft and cursor position.
+- The template editor keeps its fields and controls visible above the native keyboard in landscape.
+
 ## [Mango9 6.2.9 (602039)] - 2026-10-20
 
 ### Added
