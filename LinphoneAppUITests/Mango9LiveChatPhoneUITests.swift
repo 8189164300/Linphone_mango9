@@ -36,6 +36,11 @@ final class Mango9LiveChatPhoneUITests: XCTestCase {
 		// Allow the real provider refresh at open and the next minute's refresh;
 		// this check reads existing history and never sends a customer reply.
 		for _ in 0..<15 { RunLoop.current.run(until: Date().addingTimeInterval(5)) }
+		// Warnings live above the history in a lazy stack. Bring that area into
+		// view so an offscreen warning cannot make this assertion pass falsely.
+		let platform = app.staticTexts.matching(NSPredicate(format: "label IN %@", ["Instagram", "Facebook", "TikTok"])).firstMatch
+		for _ in 0..<12 where !platform.isHittable { app.scrollViews.firstMatch.swipeDown() }
+		XCTAssertTrue(platform.isHittable, "The refresh status area must be visible")
 		capture(app, "Social history after automatic provider refresh")
 		XCTAssertTrue(composer.exists)
 		XCTAssertFalse(app.buttons["Retry"].exists, "The existing Social account should refresh without a provider warning")
