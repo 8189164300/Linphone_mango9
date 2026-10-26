@@ -27,7 +27,9 @@ with tempfile.TemporaryDirectory(prefix="mango9-session-checks-") as directory:
         str(fixtures / "SwiftPatchTests.swift"), str(fixtures / "StorageCleanupTests.swift"),
         "-o", str(output / "checks"),
     ], check=True)
-    run = subprocess.run([str(output / "checks")], check=True, capture_output=True, text=True)
+    run = subprocess.run([str(output / "checks")], capture_output=True, text=True)
+    if run.returncode:
+        raise SystemExit(run.stderr)
     results = json.loads(run.stdout)
     if not results or not all(item["passed"] for item in results):
         raise SystemExit("Session lifecycle checks failed")

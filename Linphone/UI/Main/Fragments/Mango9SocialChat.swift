@@ -465,11 +465,15 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 @MainActor final class Mango9SocialChatCache {
 	static let shared = Mango9SocialChatCache()
 	private var account: String?
+	private var loginGeneration: String?
 	private var stores: [String: Mango9SocialInboxStore] = [:]
 	private var order: [String] = []
 	func store(session: Mango9Session, thread: String? = nil) -> Mango9SocialInboxStore {
 		let scope = Mango9ReactionTarget.accountKey(session)
-		if account != scope { clear(); account = scope }
+		// Token renewal keeps this login; signing in again must retire its old stores.
+		if account != scope || loginGeneration != session.loginGeneration {
+			clear(); account = scope; loginGeneration = session.loginGeneration
+		}
 		let key = thread ?? "inbox"
 		if let existing = stores[key] { return existing }
 		let value = Mango9SocialInboxStore(session: session)
@@ -477,7 +481,10 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 		if order.count > 24 { stores.removeValue(forKey: order.removeFirst()) }
 		return value
 	}
-	func clear() { for store in stores.values { store.clearPrivateState() }; stores.removeAll(); order.removeAll(); account = nil }
+	func clear() {
+		for store in stores.values { store.clearPrivateState() }
+		stores.removeAll(); order.removeAll(); account = nil; loginGeneration = nil
+	}
 }
 
 @MainActor final class Mango9SocialInboxStore: ObservableObject {

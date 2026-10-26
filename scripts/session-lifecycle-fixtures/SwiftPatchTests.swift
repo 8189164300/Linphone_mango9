@@ -164,6 +164,28 @@ enum AuditTransport {
   try await httpFailureChecks()
   try await storageChecks()
   try await cleanupChecks()
+  try await socialCacheChecks()
   print(String(data:try JSONSerialization.data(withJSONObject:results,options:[.prettyPrinted,.sortedKeys]),encoding:.utf8)!)
+ }
+}
+
+
+extension SwiftPatchTests {
+ @MainActor static func socialCacheChecks() async throws {
+  let original = try fresh()
+  let cache = Mango9SocialChatCache()
+  let first = cache.store(session: original)
+  RotationProtocol.reset()
+  let renewed = try await Mango9CRMAPI.refresh(session: original)
+  try check("social_cache_preserves_same_login_after_renewal",
+      cache.store(session: renewed) === first && Mango9SessionStore.isActive(first.session))
+  let replacement = try fresh()
+  let current = cache.store(session: replacement)
+  try check("social_cache_replaces_same_account_after_new_login",
+      current !== first && first.cleared && Mango9SessionStore.isActive(current.session))
+  try check("social_cache_keeps_previous_login_fenced", !Mango9SessionStore.isActive(first.session))
+  let other = try fresh("sip:b@fixture.example.invalid")
+  let switched = cache.store(session: other)
+  try check("social_cache_clears_after_account_switch", switched !== current && current.cleared)
  }
 }

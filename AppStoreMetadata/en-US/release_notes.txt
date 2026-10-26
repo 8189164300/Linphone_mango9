@@ -6,3 +6,4 @@
 • More consistent message actions, reactions and composer controls.
 • Message notifications open the correct conversation and channel.
 • Improved conversation loading and Social reply refresh on slower connections.
+• Social conversations refresh correctly after signing back into the same account.
