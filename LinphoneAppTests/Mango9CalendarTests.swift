@@ -220,7 +220,7 @@ final class Mango9CalendarTests: XCTestCase {
 		let current = session(host: "tasks.example.invalid")
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
 		defer {
-			Mango9SessionStore.remove(for: current.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!)); Mango9SessionStore.activate(sipIdentity: previous)
 			CalendarMockURLProtocol.handler = nil
 		}
 		let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CalendarMockURLProtocol.self]
@@ -736,8 +736,8 @@ final class Mango9CalendarTests: XCTestCase {
 		let original = session(); let replacement = session(user: "99")
 		try Mango9SessionStore.save(original, persist: false, makeActive: true)
 		defer {
-			Mango9SessionStore.remove(for: original.sipIdentity!)
-			Mango9SessionStore.remove(for: replacement.sipIdentity!)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: original.sipIdentity!))
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: replacement.sipIdentity!))
 			Mango9SessionStore.activate(sipIdentity: previous)
 			CalendarMockURLProtocol.handler = nil
 		}
@@ -1048,7 +1048,7 @@ final class Mango9CalendarTests: XCTestCase {
 		let current = session()
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
 		defer {
-			Mango9SessionStore.remove(for: current.sipIdentity!)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!))
 			Mango9SessionStore.activate(sipIdentity: previousIdentity)
 			CalendarMockURLProtocol.handler = nil
 		}
@@ -1392,7 +1392,7 @@ final class Mango9CalendarTests: XCTestCase {
 		let previousIdentity = Mango9SessionStore.activeIdentity
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
 		defer {
-			Mango9SessionStore.remove(for: current.sipIdentity!)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!))
 			Mango9SessionStore.activate(sipIdentity: previousIdentity)
 			CalendarMockURLProtocol.handler = nil
 		}
@@ -1445,7 +1445,7 @@ final class Mango9CalendarTests: XCTestCase {
 		let original = try event(), current = session()
 		let previous = Mango9SessionStore.activeIdentity
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
-		defer { Mango9SessionStore.remove(for: current.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous); CalendarMockURLProtocol.handler = nil }
+		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!)); Mango9SessionStore.activate(sipIdentity: previous); CalendarMockURLProtocol.handler = nil }
 		var methods: [String] = []
 		let response = Data("{\"success\":true,\"message\":\"success\",\"data\":\(eventJSON)}".utf8)
 		CalendarMockURLProtocol.handler = { request in methods.append(request.httpMethod!); return (200, response) }
@@ -1522,7 +1522,7 @@ final class Mango9CalendarTests: XCTestCase {
 		let current = session()
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
 		defer {
-			Mango9SessionStore.remove(for: current.sipIdentity!)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!))
 			Mango9SessionStore.activate(sipIdentity: previousIdentity)
 			CalendarMockURLProtocol.handler = nil
 		}
@@ -1558,7 +1558,7 @@ final class Mango9CalendarTests: XCTestCase {
 		let current = session()
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
 		defer {
-			Mango9SessionStore.remove(for: current.sipIdentity!)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!))
 			Mango9SessionStore.activate(sipIdentity: previousIdentity)
 			CalendarMockURLProtocol.handler = nil
 		}
@@ -1599,7 +1599,7 @@ final class Mango9CalendarTests: XCTestCase {
 		let current = session()
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
 		defer {
-			Mango9SessionStore.remove(for: current.sipIdentity!)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!))
 			Mango9SessionStore.activate(sipIdentity: previousIdentity)
 			CalendarMockURLProtocol.handler = nil
 		}
@@ -1637,7 +1637,7 @@ final class Mango9CalendarTests: XCTestCase {
 		let previous = Mango9SessionStore.activeIdentity; let current = session()
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
 		defer {
-			Mango9SessionStore.remove(for: current.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!)); Mango9SessionStore.activate(sipIdentity: previous)
 			CalendarMockURLProtocol.handler = nil
 		}
 		let metadata = metadataJSON; let json = eventJSON
@@ -1758,7 +1758,7 @@ final class Mango9CalendarTests: XCTestCase {
 		let current = session(host: "calendar-\(UUID().uuidString.lowercased()).example.invalid")
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
 		defer {
-			Mango9SessionStore.remove(for: current.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!)); Mango9SessionStore.activate(sipIdentity: previous)
 			CalendarMockURLProtocol.handler = nil
 		}
 		let metadata = metadataJSON; let json = eventJSON
@@ -1869,7 +1869,7 @@ final class Mango9CalendarTests: XCTestCase {
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
 		let suite = "calendar-reminder-tests-\(UUID().uuidString)"; let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
 		defer {
-			Mango9SessionStore.remove(for: current.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!)); Mango9SessionStore.activate(sipIdentity: previous)
 			CalendarMockURLProtocol.handler = nil; defaults.removePersistentDomain(forName: suite)
 		}
 		let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CalendarMockURLProtocol.self]
@@ -1881,13 +1881,13 @@ final class Mango9CalendarTests: XCTestCase {
 		await store.refresh(); XCTAssertEqual(store.due.count, 1)
 		CalendarMockURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
 		await store.refresh(); XCTAssertTrue(store.due.isEmpty)
-		Mango9SessionStore.remove(for: current.sipIdentity!)
+		XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!))
 		await store.refresh(); XCTAssertTrue(store.due.isEmpty); XCTAssertNil(store.session); XCTAssertEqual(requests, 1)
 	}
 	@MainActor func testCRMSettingsAndPushBackRender() async throws {
 		let previous = Mango9SessionStore.activeIdentity; let current = session()
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
-		defer { Mango9SessionStore.remove(for: current.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous); CalendarMockURLProtocol.handler = nil }
+		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!)); Mango9SessionStore.activate(sipIdentity: previous); CalendarMockURLProtocol.handler = nil }
 		let json = settingsJSON
 		CalendarMockURLProtocol.handler = { request in
 			XCTAssertEqual(request.httpMethod, "GET"); XCTAssertTrue(request.url!.path.hasSuffix("/crm/settings"))
@@ -1945,7 +1945,7 @@ final class Mango9CalendarTests: XCTestCase {
 	@MainActor func testInlineCRMSettingsLoadsOnExpansionAndKeepsUnsavedDraftWhenCollapsed() async throws {
 		let previous = Mango9SessionStore.activeIdentity; let current = session()
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
-		defer { Mango9SessionStore.remove(for: current.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous); CalendarMockURLProtocol.handler = nil }
+		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!)); Mango9SessionStore.activate(sipIdentity: previous); CalendarMockURLProtocol.handler = nil }
 		let json = settingsJSON; var reads = 0
 		CalendarMockURLProtocol.handler = { request in
 			XCTAssertEqual(request.httpMethod, "GET", "Expanding/collapsing settings must not save them")
@@ -1982,7 +1982,7 @@ final class Mango9CalendarTests: XCTestCase {
 	@MainActor func testPersonalReminderDetailRendersInitialLargeTextWithoutSelection() async throws {
 		let previous = Mango9SessionStore.activeIdentity; let current = session()
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
-		defer { Mango9SessionStore.remove(for: current.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous); CalendarMockURLProtocol.handler = nil }
+		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!)); Mango9SessionStore.activate(sipIdentity: previous); CalendarMockURLProtocol.handler = nil }
 		let json = eventJSON.replacingOccurrences(of: "2026-09-11", with: "2032-09-11")
 		let metadata = try Mango9CalendarAPI.decoder().decode(Mango9CalendarMetadata.self,
 			from: Data(metadataJSON.replacingOccurrences(of: "\"push\":false", with: "\"push\":false,\"in_app_reminders\":true").utf8))
@@ -2026,7 +2026,7 @@ final class Mango9CalendarTests: XCTestCase {
 	@MainActor func testSettingsAndPersonalReminderPatchReadBackThroughAuthenticatedTransport() async throws {
 		let previous = Mango9SessionStore.activeIdentity; let current = session()
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
-		defer { Mango9SessionStore.remove(for: current.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous); CalendarMockURLProtocol.handler = nil }
+		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!)); Mango9SessionStore.activate(sipIdentity: previous); CalendarMockURLProtocol.handler = nil }
 		var settings = try JSONSerialization.jsonObject(with: Data(settingsJSON.utf8)) as! [String: Any]
 		var reminder: [String: Any] = ["enabled": true, "minutes_before": 15, "dismissed": false, "needs_reenable": false, "revision": "r1"]
 		var writes = 0

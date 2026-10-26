@@ -378,7 +378,7 @@ final class Mango9MultiAccountTests: XCTestCase {
 			sipIdentity: identity
 		)
 		defer {
-			Mango9SessionStore.remove(for: identity)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: identity))
 		}
 
 		try Mango9SessionStore.save(
@@ -388,7 +388,7 @@ final class Mango9MultiAccountTests: XCTestCase {
 		)
 		XCTAssertTrue(Mango9SessionStore.hasSession(for: identity))
 
-		Mango9SessionStore.remove(for: identity)
+		XCTAssertNoThrow(try Mango9SessionStore.remove(for: identity))
 
 		XCTAssertFalse(Mango9SessionStore.hasSession(for: identity))
 	}
@@ -428,7 +428,7 @@ final class Mango9MultiAccountTests: XCTestCase {
 			sipIdentity: identity
 		)
 		defer {
-			Mango9SessionStore.remove(for: identity)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: identity))
 			Mango9SessionStore.activate(sipIdentity: previousIdentity)
 		}
 

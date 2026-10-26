@@ -174,9 +174,9 @@ struct Mango9CRMFragment: View {
 				ProgressView()
 					.tint(Color.orangeMain500)
 			} else if viewModel.session != nil {
-				Text("CONNECTED")
+				Text(viewModel.connectionLabel)
 					.font(.system(size: 9, weight: .bold))
-					.foregroundStyle(Color.greenSuccess500)
+					.foregroundStyle(viewModel.connectionLabel == "CONNECTED" ? Color.greenSuccess500 : Color.grayMain2c500)
 					.padding(.horizontal, 8)
 					.padding(.vertical, 5)
 					.background(Color.greenSuccess200.opacity(0.45))
@@ -361,6 +361,7 @@ final class Mango9CRMViewModel: ObservableObject {
 	@Published private(set) var isLoading = false
 	@Published private(set) var errorMessage: String?
 	private var reloadGeneration = 0
+	@Published private(set) var connectionLabel = "CONNECTING"
 
 	func reload() async {
 		reloadGeneration += 1
@@ -372,8 +373,10 @@ final class Mango9CRMViewModel: ObservableObject {
 		}
 		session = storedSession
 		errorMessage = nil
+		connectionLabel = "CONNECTING"
 
 		guard var currentSession = storedSession else {
+			errorMessage = Mango9SessionStore.lastStorageError?.localizedDescription
 			dashboard = nil
 			isLoading = false
 			return
@@ -395,7 +398,7 @@ final class Mango9CRMViewModel: ObservableObject {
 				context = try await loadContext(session: currentSession)
 			} catch Mango9CRMAPIError.unauthorized {
 				currentSession = try await Mango9CRMAPI.refresh(session: currentSession)
-				try Mango9SessionStore.save(currentSession)
+
 				context = try await loadContext(session: currentSession)
 			}
 			guard reloadGeneration == generation,
@@ -404,13 +407,20 @@ final class Mango9CRMViewModel: ObservableObject {
 			}
 			session = currentSession
 			dashboard = context.dashboard
+			connectionLabel = "CONNECTED"
 			ContactsManager.shared.syncMango9Team(context.team)
 			await reloadAppointmentCount()
-		} catch Mango9CRMAPIError.unauthorized {
+		} catch let error as Mango9CRMAPIError where error.isSignInRequired {
 			if reloadGeneration == generation,
 			   Mango9SessionStore.isActive(currentSession) {
+				connectionLabel = "SIGN IN REQUIRED"
 				errorMessage =
 					"Your CRM session has expired. Connect the Mango9 account again."
+			}
+		} catch Mango9CRMAPIError.permissionDenied(let message) {
+			if reloadGeneration == generation, Mango9SessionStore.isActive(currentSession) {
+				connectionLabel = "ACCESS UNAVAILABLE"
+				errorMessage = message
 			}
 		} catch is CancellationError {
 			// Navigation and view refreshes routinely cancel view-bound work.
@@ -422,7 +432,8 @@ final class Mango9CRMViewModel: ObservableObject {
 				Log.error(
 					"[Mango9 CRM] Dashboard reload failed: \(String(reflecting: error))"
 				)
-				errorMessage = "Check the network connection and try again."
+				connectionLabel = "RECONNECTING"
+				errorMessage = error is Mango9SessionStoreError ? error.localizedDescription : "Check the network connection and try again."
 			}
 		}
 	}
@@ -475,6 +486,10 @@ enum Mango9CRMAPI {
 		struct Tokens: Decodable {
 			let accessToken: String
 			let refreshToken: String
+			let sessionId: String?
+			let refreshProtocol: Int?
+			let dpopJkt: String?
+			let logoutToken: String?
 		}
 
 		let tokens: Tokens
@@ -498,27 +513,45 @@ enum Mango9CRMAPI {
 	}
 
 	static func refresh(session: Mango9Session, transport: URLSession = .shared) async throws -> Mango9Session {
-		guard let baseURL = URL(string: session.crmApiBaseUrl) else {
+		try await Mango9SessionRenewal.shared.refresh(session: session, transport: transport)
+	}
+
+	fileprivate static func rotate(session: Mango9Session, transport: URLSession) async throws -> Mango9Session {
+		guard let baseURL = URL(string: session.crmApiBaseUrl), baseURL.scheme == "https",
+			baseURL.host != nil, baseURL.user == nil, baseURL.password == nil,
+			baseURL.query == nil, baseURL.fragment == nil else {
 			throw Mango9CRMAPIError.invalidConfiguration
 		}
 
 		let refreshURL = baseURL
 			.appendingPathComponent("auth")
 			.appendingPathComponent("refresh")
-		var request = URLRequest(url: refreshURL)
+		var request = URLRequest(url: refreshURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 25)
+		request.httpShouldHandleCookies = false
 		request.httpMethod = "POST"
+		if let keyID = session.proofKeyID {
+			request.setValue(try Mango9DeviceProof.proof(keyID: keyID, url: refreshURL), forHTTPHeaderField: "DPoP")
+		}
 		request.setValue("application/json", forHTTPHeaderField: "Accept")
 		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 		request.httpBody = try JSONSerialization.data(
 			withJSONObject: ["refresh_token": session.refreshToken]
 		)
 
-		let envelope: Envelope<RefreshPayload> = try await send(request, transport: transport)
+		let envelope: Envelope<RefreshPayload> = try await send(request, transport: transport === URLSession.shared ? Mango9AuthTransport.session : transport, isRenewal: true)
 		guard envelope.success, let tokens = envelope.data?.tokens else {
-			throw Mango9CRMAPIError.unauthorized
+			throw Mango9CRMAPIError.server
 		}
 
+		if let keyID = session.proofKeyID {
+			guard tokens.refreshProtocol == 2, tokens.sessionId == session.sessionFamilyID,
+				tokens.dpopJkt == (try Mango9DeviceProof.thumbprint(keyID: keyID)) else { throw Mango9CRMAPIError.server }
+		}
 		return Mango9Session(
+			loginGeneration: session.loginGeneration,
+			proofKeyID: session.proofKeyID,
+			sessionFamilyID: tokens.sessionId ?? session.sessionFamilyID,
+			logoutToken: tokens.logoutToken ?? session.logoutToken,
 			crmId: session.crmId,
 			crmBaseUrl: session.crmBaseUrl,
 			crmApiBaseUrl: session.crmApiBaseUrl,
@@ -538,14 +571,38 @@ enum Mango9CRMAPI {
 
 	static func send<Payload: Decodable>(
 		_ request: URLRequest,
-		transport: URLSession = .shared
+		transport: URLSession = .shared,
+		isRenewal: Bool = false
 	) async throws -> Envelope<Payload> {
+		try await Mango9SessionRenewal.shared.checkKnownExpiredBearer(request)
 		let (data, response) = try await transport.data(for: request)
 		guard let httpResponse = response as? HTTPURLResponse else {
 			throw Mango9CRMAPIError.server
 		}
-		if httpResponse.statusCode == 401 {
-			throw Mango9CRMAPIError.unauthorized
+		if isRenewal && [400,401].contains(httpResponse.statusCode) {
+			let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String:Any]
+			let code = payload?["error"] as? String
+			let message = (payload?["message"] as? String)?.lowercased() ?? ""
+			if code == "invalid_grant" || code == "stale_refresh_generation" || message == "invalid or expired refresh token" {
+				throw Mango9CRMAPIError.unauthorized
+			}
+			if code == "invalid_dpop_proof" {
+				throw Mango9CRMAPIError.serverMessage("Device authorization could not be verified. Check your iPhone’s date and time, then try again.")
+			}
+			throw Mango9CRMAPIError.server // A proxy challenge does not prove the login expired.
+		}
+		if httpResponse.statusCode == 401 { throw Mango9CRMAPIError.unauthorized }
+		if httpResponse.statusCode == 403 {
+			let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String:Any]
+			throw Mango9CRMAPIError.permissionDenied(payload?["message"] as? String ?? "Account access is unavailable. Check your Mango9 permissions.")
+		}
+		if httpResponse.statusCode == 429 || httpResponse.statusCode == 503 {
+			let value = httpResponse.value(forHTTPHeaderField: "Retry-After") ?? ""
+			let format = DateFormatter()
+			format.locale = Locale(identifier: "en_US_POSIX"); format.timeZone = TimeZone(secondsFromGMT: 0)
+			format.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss z"
+			let delay = TimeInterval(value) ?? format.date(from: value)?.timeIntervalSinceNow ?? 2
+			throw Mango9CRMAPIError.retryAfter(min(max(delay, 1), 3600))
 		}
 		guard (200..<300).contains(httpResponse.statusCode) else {
 			if let payload = try? JSONDecoder().decode(Mango9CRMErrorPayload.self, from: data),
@@ -568,17 +625,96 @@ private struct Mango9CRMErrorPayload: Decodable {
 
 enum Mango9CRMAPIError: LocalizedError {
 	case unauthorized
+	case sessionExpired
+	case staleSession
+	case retryAfter(TimeInterval)
+	case permissionDenied(String)
 	case invalidConfiguration
 	case server
 	case serverMessage(String)
+	var isSignInRequired: Bool {
+		if case .unauthorized = self { return true }
+		if case .sessionExpired = self { return true }
+		return false
+	}
 	var errorDescription: String? {
 		switch self {
-		case .unauthorized: return "Your Mango9 session has expired. Sign in again to continue."
+		case .unauthorized, .sessionExpired: return "Your Mango9 session has expired. Sign in again to continue."
+		case .staleSession: return "This account changed. Reopen the conversation to continue."
+		case .retryAfter: return "Mango9 is temporarily unavailable. Please try again shortly."
 		case .invalidConfiguration: return "Your Mango9 connection needs to be set up again. Reconnect your account in Settings."
 		case .server: return "Mango9 is temporarily unavailable. Please try again shortly."
-		case .serverMessage(let message): return message
+		case .serverMessage(let message), .permissionDenied(let message): return message
 		}
 	}
+}
+
+/// One credential operation per login, independent of the screen's task lifetime.
+actor Mango9SessionRenewal {
+	static let shared = Mango9SessionRenewal()
+	private init() {}
+	private var flights: [String: Task<Mango9Session, Error>] = [:]
+	private var expired = Set<String>()
+	private var expiredAccessTokens = Set<String>()
+
+	func checkKnownExpiredBearer(_ request: URLRequest) throws {
+		let fields = (request.value(forHTTPHeaderField: "Authorization") ?? "").split(separator: " ", maxSplits: 1)
+		if fields.count == 2, fields[0].lowercased() == "bearer", expiredAccessTokens.contains(String(fields[1])) {
+			throw Mango9CRMAPIError.sessionExpired
+		}
+	}
+	private var retryAt: [String: Date] = [:]
+	private var failures: [String: Int] = [:]
+
+	func refresh(session snapshot: Mango9Session, transport: URLSession) async throws -> Mango9Session {
+		guard let current = Mango9SessionStore.currentLogin(for: snapshot) else {
+			if let storage = Mango9SessionStore.lastStorageError { throw storage }
+			throw Mango9CRMAPIError.staleSession
+		}
+		let key = [current.crmApiBaseUrl, current.userId, current.sipIdentity ?? "", current.loginGeneration ?? "legacy"].joined(separator: "|")
+		if current.refreshToken != snapshot.refreshToken || current.accessToken != snapshot.accessToken { return current }
+		if expired.contains(key) { throw Mango9CRMAPIError.sessionExpired }
+		if let flight = flights[key] { return try await flight.value }
+		if let next = retryAt[key], next > Date() { throw Mango9CRMAPIError.retryAfter(next.timeIntervalSinceNow) }
+		let flight = Task.detached(priority: .userInitiated) {
+			let renewed = try await Mango9CRMAPI.rotate(session: current, transport: transport)
+			return try Mango9SessionStore.replaceTokens(expected: current, renewed: renewed)
+		}
+		flights[key] = flight
+		defer { flights.removeValue(forKey: key) }
+		do {
+			let result = try await flight.value
+			failures.removeValue(forKey: key); retryAt.removeValue(forKey: key)
+			return result
+		} catch {
+			guard let latest = Mango9SessionStore.currentLogin(for: current) else {
+				if let storage = Mango9SessionStore.lastStorageError { throw storage }
+				throw Mango9CRMAPIError.staleSession
+			}
+			if latest.refreshToken != current.refreshToken || latest.accessToken != current.accessToken { return latest }
+			if case Mango9CRMAPIError.unauthorized = error {
+				expired.insert(key); expiredAccessTokens.insert(current.accessToken)
+				throw Mango9CRMAPIError.sessionExpired
+			}
+			let count = min((failures[key] ?? 0) + 1, 5); failures[key] = count
+			var delay = Double.random(in: 1...min(30, pow(2, Double(count))))
+			if case Mango9CRMAPIError.retryAfter(let serverDelay) = error { delay = max(delay, serverDelay) }
+			retryAt[key] = Date().addingTimeInterval(delay)
+			throw error
+		}
+	}
+}
+
+final class Mango9AuthTransport: NSObject, URLSessionTaskDelegate {
+	static let delegate = Mango9AuthTransport()
+	static let session: URLSession = {
+		let config = URLSessionConfiguration.ephemeral
+		config.timeoutIntervalForRequest = 25; config.timeoutIntervalForResource = 30
+		return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+	}()
+	func urlSession(_ session: URLSession, task: URLSessionTask,
+		willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+		completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
 }
 
 #Preview {

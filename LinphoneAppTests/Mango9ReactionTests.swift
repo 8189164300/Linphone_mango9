@@ -11,7 +11,7 @@ final class Mango9ReactionTests: XCTestCase {
 		let defaults = UserDefaults(suiteName: suite)!, secondDefaults = UserDefaults(suiteName: secondSuite)!
 		defer {
 			defaults.removePersistentDomain(forName: suite); secondDefaults.removePersistentDomain(forName: secondSuite)
-			Mango9SessionStore.remove(for: active.sipIdentity!); if let prior { try? Mango9SessionStore.save(prior, makeActive: true) }
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); if let prior { try? Mango9SessionStore.save(prior, makeActive: true) }
 		}
 		for channel in [Mango9PersonalMessageVisibility.Channel.sms, .team, .social] {
 			let id = channel == .sms ? "15555550101" : "thread"
@@ -54,7 +54,7 @@ final class Mango9ReactionTests: XCTestCase {
 		let active = session(), prior = Mango9SessionStore.load()
 		try Mango9SessionStore.save(active, persist: false, makeActive: true)
 		let suite = "conversation-invalid-" + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
-		defer { defaults.removePersistentDomain(forName: suite); Mango9SessionStore.remove(for: active.sipIdentity!); if let prior { try? Mango9SessionStore.save(prior, makeActive: true) } }
+		defer { defaults.removePersistentDomain(forName: suite); XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); if let prior { try? Mango9SessionStore.save(prior, makeActive: true) } }
 		let store = Mango9PersonalConversationVisibility(api: mockAPI(), defaults: defaults)
 		for failure in ["scope", "channel", "state", "requestId", "conversationIds", "hiddenConversationIds"] {
 			ReactionMockProtocol.handler = { request in
@@ -70,12 +70,12 @@ final class Mango9ReactionTests: XCTestCase {
 		let other = session(user: "43"); try Mango9SessionStore.save(other, persist: false, makeActive: true)
 		ReactionMockProtocol.handler = { _ in XCTFail("Cross-account request"); throw URLError(.badURL) }
 		do { try await store.delete(session: active, channel: .social, id: "thread"); XCTFail("Scope changed") } catch {}
-		XCTAssertFalse(store.isHidden("thread", channel: .social)); Mango9SessionStore.remove(for: other.sipIdentity!)
+		XCTAssertFalse(store.isHidden("thread", channel: .social)); XCTAssertNoThrow(try Mango9SessionStore.remove(for: other.sipIdentity!))
 	}
 	@MainActor func testConversationVisibilityRefreshBatchesLargeDirectories() async throws {
 		let active = session(), prior = Mango9SessionStore.load()
 		try Mango9SessionStore.save(active, persist: false, makeActive: true)
-		defer { Mango9SessionStore.remove(for: active.sipIdentity!); if let prior { try? Mango9SessionStore.save(prior, makeActive: true) } }
+		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); if let prior { try? Mango9SessionStore.save(prior, makeActive: true) } }
 		var calls = 0
 		ReactionMockProtocol.handler = { request in
 			let body = try ReactionMockProtocol.body(request), ids = try XCTUnwrap(body["conversationIds"] as? [String]); calls += 1
@@ -113,7 +113,7 @@ final class Mango9ReactionTests: XCTestCase {
 	@MainActor func testSocialListMuteUsesExactThreadAndServerConfirmedState() async throws {
 		let active = session(), prior = Mango9SessionStore.load()
 		try Mango9SessionStore.save(active, persist: false, makeActive: true)
-		defer { Mango9SessionStore.remove(for: active.sipIdentity!); if let prior { try? Mango9SessionStore.save(prior, makeActive: true) } }
+		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); if let prior { try? Mango9SessionStore.save(prior, makeActive: true) } }
 		var muted = false
 		ReactionMockProtocol.handler = { request in
 			if request.url!.lastPathComponent == "inbox-notification-set" {
@@ -165,7 +165,7 @@ final class Mango9ReactionTests: XCTestCase {
 		let suite = "visibility-tests-" + UUID().uuidString
 		let defaults = UserDefaults(suiteName: suite)!
 		defer {
-			defaults.removePersistentDomain(forName: suite); Mango9SessionStore.remove(for: active.sipIdentity!)
+			defaults.removePersistentDomain(forName: suite); XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!))
 			if let prior { try? Mango9SessionStore.save(prior, makeActive: true) }
 		}
 		let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [ReactionMockProtocol.self]
@@ -262,7 +262,7 @@ final class Mango9ReactionTests: XCTestCase {
 		let active = session(); let prior = Mango9SessionStore.load()
 		try Mango9SessionStore.save(active, persist: false, makeActive: true)
 		let suite = "visibility-tests-" + UUID().uuidString; let defaults = UserDefaults(suiteName: suite)!
-		defer { defaults.removePersistentDomain(forName: suite); Mango9SessionStore.remove(for: active.sipIdentity!); if let prior { try? Mango9SessionStore.save(prior, makeActive: true) } }
+		defer { defaults.removePersistentDomain(forName: suite); XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); if let prior { try? Mango9SessionStore.save(prior, makeActive: true) } }
 		let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [ReactionMockProtocol.self]
 		let visibility = Mango9PersonalMessageVisibility(api: Mango9MessagingAPI(transport: URLSession(configuration: config)), defaults: defaults)
 		for failure in ["offline", "denied", "unknown", "wrong-scope", "wrong-target"] {
@@ -278,7 +278,7 @@ final class Mango9ReactionTests: XCTestCase {
 		let other = session(user: "43"); try Mango9SessionStore.save(other, persist: false, makeActive: true)
 		ReactionMockProtocol.handler = { _ in XCTFail("No cross-account request"); throw URLError(.badURL) }
 		do { try await visibility.update(session: active, channel: .social, thread: "thread", ids: ["1"], hide: true); XCTFail("Scope changed") } catch {}
-		Mango9SessionStore.remove(for: other.sipIdentity!)
+		XCTAssertNoThrow(try Mango9SessionStore.remove(for: other.sipIdentity!))
 	}
 	func testNativeEmojiInputPreservesOneCompleteGrapheme() {
 		for emoji in ["👍", "❤️", "👍🏽", "👨‍👩‍👧‍👦", "🇺🇸", "🥳", "1️⃣"] {
@@ -341,7 +341,7 @@ final class Mango9ReactionTests: XCTestCase {
 		let other = session(user: "43")
 		try Mango9SessionStore.save(other, persist: false, makeActive: true)
 		XCTAssertFalse(payload.isCurrent)
-		Mango9SessionStore.remove(for: active.sipIdentity!); Mango9SessionStore.remove(for: other.sipIdentity!)
+		XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); XCTAssertNoThrow(try Mango9SessionStore.remove(for: other.sipIdentity!))
 		if let previous { try Mango9SessionStore.save(previous, makeActive: true) }
 	}
 	@MainActor func testSocialAttachmentFailureNeverInvokesSendOrCreatesUnknownIntent() async throws {
@@ -539,7 +539,7 @@ final class Mango9ReactionTests: XCTestCase {
 	@MainActor func testSocial403DoesNotTryCookiesRefreshOrImpersonation() async throws {
 		let active = session(); let previous = Mango9SessionStore.load()
 		try Mango9SessionStore.save(active, persist: false, makeActive: true)
-		defer { Mango9SessionStore.remove(for: active.sipIdentity!); if let previous { try? Mango9SessionStore.save(previous, makeActive: true) } }
+		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); if let previous { try? Mango9SessionStore.save(previous, makeActive: true) } }
 		var calls = 0
 		ReactionMockProtocol.handler = { request in
 			calls += 1
@@ -559,7 +559,7 @@ final class Mango9ReactionTests: XCTestCase {
 	@MainActor func testExpiredCRMTokenRefreshesAndRetriesIdenticalSocialCommand() async throws {
 		let active = session(); let previous = Mango9SessionStore.load()
 		try Mango9SessionStore.save(active, persist: false, makeActive: true)
-		defer { Mango9SessionStore.remove(for: active.sipIdentity!); if let previous { try? Mango9SessionStore.save(previous, makeActive: true) } }
+		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); if let previous { try? Mango9SessionStore.save(previous, makeActive: true) } }
 		let target = Mango9ReactionTarget(account: Mango9ReactionTarget.accountKey(active), channel: .social, conversation: "thread", message: "1")
 		let command = Mango9ReactionCommand(target: target, version: 3, emoji: "👍🏽", remove: false)
 		var bodies: [[String: Any]] = []
@@ -585,7 +585,7 @@ final class Mango9ReactionTests: XCTestCase {
 	@MainActor func testExpiredChatTokenRefreshUsesChatActorAndNeverSMSSend() async throws {
 		let active = session(); let previous = Mango9SessionStore.load()
 		try Mango9SessionStore.save(active, persist: false, makeActive: true)
-		defer { Mango9SessionStore.remove(for: active.sipIdentity!); if let previous { try? Mango9SessionStore.save(previous, makeActive: true) } }
+		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); if let previous { try? Mango9SessionStore.save(previous, makeActive: true) } }
 		var commands: [[String: Any]] = []; var bootstraps = 0; var refreshes = 0
 		ReactionMockProtocol.handler = { request in
 			switch request.url!.lastPathComponent {
@@ -615,7 +615,7 @@ final class Mango9ReactionTests: XCTestCase {
 	@MainActor func testChangedAccountPreventsRequestBeforeSending() async throws {
 		let previous = Mango9SessionStore.load(); let active = session(user: "43")
 		try Mango9SessionStore.save(active, persist: false, makeActive: true)
-		defer { Mango9SessionStore.remove(for: active.sipIdentity!); if let previous { try? Mango9SessionStore.save(previous, makeActive: true) } }
+		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); if let previous { try? Mango9SessionStore.save(previous, makeActive: true) } }
 		ReactionMockProtocol.handler = { _ in XCTFail("No request may cross accounts"); throw URLError(.badURL) }
 		do {
 			let _: Mango9StaffReactionReceipt = try await mockAPI().request(Mango9StaffReactionReceipt.self, session: session(), social: false, path: ["reactions", "sms", "message"])
@@ -625,7 +625,7 @@ final class Mango9ReactionTests: XCTestCase {
 	@MainActor func testSocialProviderFailureStillLoadsSavedHistoryAndRevocationClearsIt() async throws {
 		let active = session(); let previous = Mango9SessionStore.load()
 		try Mango9SessionStore.save(active, persist: false, makeActive: true)
-		defer { Mango9SessionStore.remove(for: active.sipIdentity!); if let previous { try? Mango9SessionStore.save(previous, makeActive: true) } }
+		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); if let previous { try? Mango9SessionStore.save(previous, makeActive: true) } }
 		var revoked = false
 		ReactionMockProtocol.handler = { request in
 			if revoked { return (403, Data(#"{"error":{"code":"posting_session_required"}}"#.utf8)) }
@@ -1017,7 +1017,7 @@ final class Mango9ReactionTests: XCTestCase {
 		defer {
 			defaults.removePersistentDomain(forName: name)
 			ReactionMockProtocol.responseDelay = nil
-			Mango9SessionStore.remove(for: active.sipIdentity!)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!))
 			if let previous { try? Mango9SessionStore.save(previous, makeActive: true) }
 		}
 		let journal = Mango9SocialSendJournal(defaults: defaults)

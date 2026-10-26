@@ -610,6 +610,8 @@ private enum Mango9LoginService {
 		case invalidOrExpiredCode
 		case emailCodeUnavailable
 		case invalidCredentials
+		case deviceAuthorization
+		case accountChanged
 		case accountNotProvisionable
 		case rateLimited
 		case crmUnavailable
@@ -625,6 +627,10 @@ private enum Mango9LoginService {
 				return "Email code sign-in is temporarily unavailable. Use your password or try again later."
 			case .invalidCredentials:
 				return "The CRM username or password is incorrect."
+			case .deviceAuthorization:
+				return "Device authorization could not be verified. Check your iPhone’s date and time, then try again."
+			case .accountChanged:
+				return "Account security changed while signing in. Please try again."
 			case .accountNotProvisionable:
 				return "This CRM user does not have an active SIP extension."
 			case .rateLimited:
@@ -642,12 +648,14 @@ private enum Mango9LoginService {
 		let password: String
 		let deviceId: String
 		let platform: String
+		let deviceProof: String
 
 		enum CodingKeys: String, CodingKey {
 			case username
 			case password
 			case deviceId = "device_id"
 			case platform
+			case deviceProof = "device_proof"
 		}
 	}
 
@@ -666,12 +674,14 @@ private enum Mango9LoginService {
 		let code: String
 		let deviceId: String
 		let platform: String
+		let deviceProof: String
 
 		enum CodingKeys: String, CodingKey {
 			case email
 			case code
 			case deviceId = "device_id"
 			case platform
+			case deviceProof = "device_proof"
 		}
 	}
 
@@ -710,6 +720,10 @@ private enum Mango9LoginService {
 	private struct Tokens: Decodable {
 		let accessToken: String
 		let refreshToken: String
+		let sessionId: String?
+		let refreshProtocol: Int?
+		let dpopJkt: String?
+		let logoutToken: String?
 	}
 
 	private struct User: Decodable {
@@ -749,7 +763,10 @@ private enum Mango9LoginService {
 	) async throws {
 		let endpoint = Mango9Configuration.provisioningBaseURL
 			.appendingPathComponent("v1/mobile/login")
-		var request = URLRequest(url: endpoint)
+		let proofKeyID = try Mango9DeviceProof.create()
+		defer { Mango9DeviceProof.removeIfUnused(proofKeyID) }
+		let deviceProof = try Mango9DeviceProof.proof(keyID: proofKeyID, url: endpoint)
+		var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 25)
 		request.httpMethod = "POST"
 		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 		request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -758,17 +775,22 @@ private enum Mango9LoginService {
 				username: username,
 				password: password,
 				deviceId: deviceId,
-				platform: "ios"
+				platform: "ios",
+				deviceProof: deviceProof
 			)
 		)
 
-		let (data, response) = try await URLSession.shared.data(for: request)
+		let (data, response) = try await Mango9AuthTransport.session.data(for: request)
 		guard let httpResponse = response as? HTTPURLResponse else {
 			throw SignInFailure.invalidResponse
 		}
 		guard (200..<300).contains(httpResponse.statusCode) else {
 			let serverError = try? JSONDecoder().decode(ErrorResponse.self, from: data)
 			switch (httpResponse.statusCode, serverError?.error) {
+			case (400, "invalid_dpop_proof"):
+				throw SignInFailure.deviceAuthorization
+			case (409, "authentication_state_changed"):
+				throw SignInFailure.accountChanged
 			case (401, _), (403, _):
 				throw SignInFailure.invalidCredentials
 			case (409, "account_not_provisionable"):
@@ -785,7 +807,7 @@ private enum Mango9LoginService {
 		let decoder = JSONDecoder()
 		decoder.keyDecodingStrategy = .convertFromSnakeCase
 		let login = try decoder.decode(LoginResponse.self, from: data)
-		try await completeLogin(login, rememberLogin: rememberLogin)
+		try await completeLogin(login, rememberLogin: rememberLogin, proofKeyID: proofKeyID)
 	}
 
 	static func requestLoginCode(email: String) async throws -> Int {
@@ -799,13 +821,17 @@ private enum Mango9LoginService {
 			LoginCodeRequest(email: email, deviceId: deviceId)
 		)
 
-		let (data, response) = try await URLSession.shared.data(for: request)
+		let (data, response) = try await Mango9AuthTransport.session.data(for: request)
 		guard let httpResponse = response as? HTTPURLResponse else {
 			throw SignInFailure.invalidResponse
 		}
 		guard (200..<300).contains(httpResponse.statusCode) else {
 			let serverError = try? JSONDecoder().decode(ErrorResponse.self, from: data)
 			switch (httpResponse.statusCode, serverError?.error) {
+			case (400, "invalid_dpop_proof"):
+				throw SignInFailure.deviceAuthorization
+			case (409, "authentication_state_changed"):
+				throw SignInFailure.accountChanged
 			case (404, _):
 				throw SignInFailure.emailCodeUnavailable
 			case (400, "invalid_email"):
@@ -835,7 +861,10 @@ private enum Mango9LoginService {
 	) async throws {
 		let endpoint = Mango9Configuration.provisioningBaseURL
 			.appendingPathComponent("v1/mobile/login-code/verify")
-		var request = URLRequest(url: endpoint)
+		let proofKeyID = try Mango9DeviceProof.create()
+		defer { Mango9DeviceProof.removeIfUnused(proofKeyID) }
+		let deviceProof = try Mango9DeviceProof.proof(keyID: proofKeyID, url: endpoint)
+		var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 25)
 		request.httpMethod = "POST"
 		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 		request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -844,17 +873,22 @@ private enum Mango9LoginService {
 				email: email,
 				code: code,
 				deviceId: deviceId,
-				platform: "ios"
+				platform: "ios",
+				deviceProof: deviceProof
 			)
 		)
 
-		let (data, response) = try await URLSession.shared.data(for: request)
+		let (data, response) = try await Mango9AuthTransport.session.data(for: request)
 		guard let httpResponse = response as? HTTPURLResponse else {
 			throw SignInFailure.invalidResponse
 		}
 		guard (200..<300).contains(httpResponse.statusCode) else {
 			let serverError = try? JSONDecoder().decode(ErrorResponse.self, from: data)
 			switch (httpResponse.statusCode, serverError?.error) {
+			case (400, "invalid_dpop_proof"):
+				throw SignInFailure.deviceAuthorization
+			case (409, "authentication_state_changed"):
+				throw SignInFailure.accountChanged
 			case (404, _):
 				throw SignInFailure.emailCodeUnavailable
 			case (400, "invalid_email"):
@@ -876,7 +910,7 @@ private enum Mango9LoginService {
 		let decoder = JSONDecoder()
 		decoder.keyDecodingStrategy = .convertFromSnakeCase
 		let login = try decoder.decode(LoginResponse.self, from: data)
-		try await completeLogin(login, rememberLogin: rememberLogin)
+		try await completeLogin(login, rememberLogin: rememberLogin, proofKeyID: proofKeyID)
 	}
 
 	private static var deviceId: String {
@@ -893,15 +927,23 @@ private enum Mango9LoginService {
 
 	private static func completeLogin(
 		_ login: LoginResponse,
-		rememberLogin: Bool
+		rememberLogin: Bool,
+		proofKeyID: String
 	) async throws {
+		guard login.tokens.refreshProtocol == 2, login.tokens.sessionId != nil, login.tokens.logoutToken != nil,
+			login.tokens.dpopJkt == (try Mango9DeviceProof.thumbprint(keyID: proofKeyID)) else {
+			throw SignInFailure.invalidResponse
+		}
 		guard let provisioningURL = Mango9Configuration.verifiedProvisioningURL(from: login.enrollmentUrl) else {
 			throw URLError(.badServerResponse)
 		}
 		let enrollment = try await Mango9AccountProvisioner.fetchEnrollment(
 			from: provisioningURL
 		)
-		let session = Mango9Session(
+		var session = Mango9Session(
+			proofKeyID: proofKeyID,
+			sessionFamilyID: login.tokens.sessionId,
+			logoutToken: login.tokens.logoutToken,
 			crmId: login.crm.id,
 			crmBaseUrl: login.crm.baseUrl,
 			crmApiBaseUrl: login.crm.apiBaseUrl,
@@ -917,8 +959,8 @@ private enum Mango9LoginService {
 			enrollmentExpiresAt: Date().addingTimeInterval(TimeInterval(login.expiresIn)),
 			sipIdentity: enrollment.identity
 		)
-		try await Mango9LogoutCoordinator.shared.prepareLogin(identity: enrollment.identity, session: session)
-		try Mango9SessionStore.save(
+		try await Mango9LogoutCoordinator.shared.prepareLogin(identity: enrollment.identity, session: session, freshAuthentication: true)
+		session = try Mango9SessionStore.save(
 			session,
 			for: enrollment.identity,
 			persist: rememberLogin,
@@ -967,11 +1009,6 @@ private enum Mango9LoginService {
 			provisioning = try await storedProvisioning(session: currentSession)
 		} catch Mango9CRMAPIError.unauthorized {
 			currentSession = try await Mango9CRMAPI.refresh(session: currentSession)
-			try Mango9SessionStore.save(
-				currentSession,
-				for: currentSession.sipIdentity,
-				persist: true
-			)
 			provisioning = try await storedProvisioning(session: currentSession)
 		}
 
@@ -1003,12 +1040,7 @@ private enum Mango9LoginService {
 
 		let associatedSession = currentSession.associated(with: identity)
 		try await Mango9LogoutCoordinator.shared.prepareLogin(identity: identity, session: associatedSession)
-		try Mango9SessionStore.save(
-			associatedSession,
-			for: identity,
-			persist: true,
-			makeActive: true
-		)
+		try Mango9SessionStore.activateExisting(associatedSession)
 		Mango9LineIdentityStore.save(
 			Mango9LineIdentity(
 				extensionNumber: username,
@@ -1047,7 +1079,79 @@ private enum Mango9LoginService {
 	}
 }
 
+
+/// The Secure Enclave private key stays on this device; only its public JWK leaves it.
+enum Mango9DeviceProof {
+	private static func tag(_ id: String) -> Data { Data(((Bundle.main.bundleIdentifier ?? "com.mango9.linphone") + ".session-proof." + id).utf8) }
+	static func create() throws -> String {
+		let id = UUID().uuidString
+		var error: Unmanaged<CFError>?
+		guard let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, .privateKeyUsage, &error) else {
+			throw Mango9SessionStoreError.keychain(errSecInteractionNotAllowed)
+		}
+		let attributes: [String: Any] = [kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+			kSecAttrKeySizeInBits as String: 256, kSecAttrTokenID as String: kSecAttrTokenIDSecureEnclave,
+			kSecPrivateKeyAttrs as String: [kSecAttrIsPermanent as String: true,
+				kSecAttrApplicationTag as String: tag(id), kSecAttrAccessControl as String: access]]
+		guard SecKeyCreateRandomKey(attributes as CFDictionary, &error) != nil else {
+			if let error { throw error.takeRetainedValue() }
+			throw Mango9SessionStoreError.keychain(errSecNotAvailable)
+		}
+		return id
+	}
+	static func removeIfUnused(_ id: String) {
+		guard !Mango9SessionStore.retainsProofKey(id) else { return }
+		SecItemDelete([kSecClass as String:kSecClassKey, kSecAttrApplicationTag as String:tag(id),
+			kSecAttrKeyType as String:kSecAttrKeyTypeECSECPrimeRandom] as CFDictionary)
+	}
+	private static func key(_ id: String) throws -> SecKey {
+		let query: [String: Any] = [kSecClass as String: kSecClassKey,
+			kSecAttrApplicationTag as String: tag(id), kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+			kSecReturnRef as String: true]
+		var result: CFTypeRef?
+		let status = SecItemCopyMatching(query as CFDictionary, &result)
+		if status == errSecItemNotFound { throw Mango9CRMAPIError.sessionExpired }
+		guard status == errSecSuccess, let result else { throw Mango9SessionStoreError.keychain(status) }
+		return result as! SecKey
+	}
+	private static func jwk(_ key: SecKey) throws -> [String: String] {
+		var error: Unmanaged<CFError>?
+		guard let publicKey = SecKeyCopyPublicKey(key),
+			let data = SecKeyCopyExternalRepresentation(publicKey, &error) as Data?, data.count == 65, data.first == 4 else {
+			throw Mango9CRMAPIError.invalidConfiguration
+		}
+		return ["kty":"EC", "crv":"P-256", "x":base64(Data(data[1..<33])), "y":base64(Data(data[33..<65]))]
+	}
+	static func thumbprint(keyID: String) throws -> String {
+		let data = try JSONSerialization.data(withJSONObject: jwk(key(keyID)), options: [.sortedKeys, .withoutEscapingSlashes])
+		return base64(Data(SHA256.hash(data: data)))
+	}
+	static func proof(keyID: String, url: URL) throws -> String {
+		guard url.scheme == "https", url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
+			throw Mango9CRMAPIError.invalidConfiguration
+		}
+		let privateKey = try key(keyID)
+		let header: [String: Any] = ["typ":"dpop+jwt", "alg":"ES256", "jwk":try jwk(privateKey)]
+		let payload: [String: Any] = ["jti":UUID().uuidString, "htm":"POST", "htu":url.absoluteString, "iat":Int(Date().timeIntervalSince1970)]
+		let input = try base64(JSONSerialization.data(withJSONObject: header, options: [.sortedKeys, .withoutEscapingSlashes])) + "." + base64(JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .withoutEscapingSlashes]))
+		var error: Unmanaged<CFError>?
+		guard let signature = SecKeyCreateSignature(privateKey, .ecdsaSignatureMessageX962SHA256, Data(input.utf8) as CFData, &error) as Data? else {
+			if let error { throw error.takeRetainedValue() }
+			throw Mango9SessionStoreError.keychain(errSecInteractionNotAllowed)
+		}
+		let raw = try P256.Signing.ECDSASignature(derRepresentation: signature).rawRepresentation
+		return input + "." + base64(raw)
+	}
+	private static func base64(_ data: Data) -> String {
+		data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+	}
+}
+
 struct Mango9Session: Codable {
+	var loginGeneration: String? = nil
+	var proofKeyID: String? = nil
+	var sessionFamilyID: String? = nil
+	var logoutToken: String? = nil
 	let crmId: String
 	let crmBaseUrl: String
 	let crmApiBaseUrl: String
@@ -1065,6 +1169,10 @@ struct Mango9Session: Codable {
 
 	func associated(with identity: String) -> Mango9Session {
 		Mango9Session(
+			loginGeneration: loginGeneration,
+			proofKeyID: proofKeyID,
+			sessionFamilyID: sessionFamilyID,
+			logoutToken: logoutToken,
 			crmId: crmId,
 			crmBaseUrl: crmBaseUrl,
 			crmApiBaseUrl: crmApiBaseUrl,
@@ -1092,60 +1200,105 @@ enum Mango9SessionStore {
 	private static let legacyAccount = "current"
 	private static var volatileSessions: [String: Mango9Session] = [:]
 	private static let volatileSessionsLock = NSLock()
+	private static let lifecycleLock = NSRecursiveLock()
+	private struct Record: Codable {
+		let version: Int
+		let session: Mango9Session?
+		let revoked: Bool
+	}
+	private static var storageFailure: Error?
+	static var lastStorageError: Error? {
+		lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+		return storageFailure
+	}
 
-	static func save(
-		_ session: Mango9Session,
-		for sipIdentity: String? = nil,
-		persist: Bool? = nil,
-		makeActive: Bool = false
-	) throws {
-		guard let identity = normalizedIdentity(
-			sipIdentity ?? session.sipIdentity ?? activeIdentity
-		) else {
+
+	static func retainsProofKey(_ keyID: String) -> Bool {
+		lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+		volatileSessionsLock.lock()
+		let memoryUsesKey = volatileSessions.values.contains { $0.proofKeyID == keyID }
+		volatileSessionsLock.unlock()
+		if memoryUsesKey { return true }
+		do {
+			for identity in storedIdentities.union([legacyAccount]) {
+				if try read(account: identity)?.session?.proofKeyID == keyID { return true }
+			}
+			return false
+		} catch { return true } // Unavailable storage cannot justify destroying a key.
+	}
+
+	/// New authentication only. Renewal uses replaceTokens and cannot create a login.
+	@discardableResult
+	static func save(_ session: Mango9Session, for sipIdentity: String? = nil,
+		persist: Bool? = nil, makeActive: Bool = false) throws -> Mango9Session {
+		lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+		guard let identity = normalizedIdentity(sipIdentity ?? session.sipIdentity ?? activeIdentity) else {
 			throw Mango9SessionStoreError.missingIdentity
 		}
-		let associatedSession = session.associated(with: identity)
-		setVolatileSession(associatedSession, for: identity)
-		var identities = storedIdentities
-		identities.insert(identity)
-		storeIdentities(identities)
-		if makeActive {
-			setActiveIdentity(identity)
-		}
-		let shouldPersist = persist ?? rememberedLoginIsEnabled
-		guard shouldPersist else {
-			deletePersistentSession(for: identity)
-			return
-		}
+		var associated = session.associated(with: identity)
+		associated.loginGeneration = UUID().uuidString
+		try write(associated, account: identity, persist: persist ?? rememberedLoginIsEnabled)
+		setVolatileSession(associated, for: identity)
+		var identities = storedIdentities; identities.insert(identity); storeIdentities(identities)
+		if makeActive { setActiveIdentity(identity) }
+		storageFailure = nil
+		return associated
+	}
 
-		let data = try JSONEncoder().encode(associatedSession)
-		let key: [String: Any] = [
-			kSecClass as String: kSecClassGenericPassword,
-			kSecAttrService as String: service,
-			kSecAttrAccount as String: identity
-		]
-		let attributes: [String: Any] = [
-			kSecValueData as String: data,
-			kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-		]
+	static func currentLogin(for snapshot: Mango9Session) -> Mango9Session? {
+		lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+		guard let identity = normalizedIdentity(snapshot.sipIdentity), let current = load(for: identity),
+			(current.loginGeneration == snapshot.loginGeneration ||
+				(snapshot.loginGeneration == nil && current.refreshToken == snapshot.refreshToken)),
+			current.crmId == snapshot.crmId, current.userId == snapshot.userId,
+			current.crmApiBaseUrl == snapshot.crmApiBaseUrl else { return nil }
+		return current
+	}
 
-		let updateStatus = SecItemUpdate(key as CFDictionary, attributes as CFDictionary)
-		if updateStatus == errSecSuccess {
-			return
+	/// Compare-and-save protects against logout, re-login and out-of-order completions.
+	static func replaceTokens(expected: Mango9Session, renewed: Mango9Session) throws -> Mango9Session {
+		lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+		guard let current = currentLogin(for: expected), let identity = current.sipIdentity,
+			current.refreshToken == expected.refreshToken, current.accessToken == expected.accessToken else {
+			throw Mango9CRMAPIError.staleSession
 		}
-		guard updateStatus == errSecItemNotFound else {
-			throw Mango9SessionStoreError.keychain(updateStatus)
-		}
+		guard renewed.crmApiBaseUrl == current.crmApiBaseUrl, renewed.crmId == current.crmId,
+			renewed.userId == current.userId, renewed.sipIdentity == current.sipIdentity,
+			renewed.loginGeneration == current.loginGeneration,
+			renewed.proofKeyID == current.proofKeyID,
+			(current.sessionFamilyID == nil || renewed.sessionFamilyID == current.sessionFamilyID),
+			!renewed.accessToken.isEmpty, !renewed.refreshToken.isEmpty else { throw Mango9CRMAPIError.server }
+		try write(renewed, account: identity, persist: rememberedLoginIsEnabled)
+		setVolatileSession(renewed, for: identity)
+		storageFailure = nil
+		return renewed
+	}
 
-		var newItem = key
-		attributes.forEach { newItem[$0.key] = $0.value }
-		let addStatus = SecItemAdd(newItem as CFDictionary, nil)
-		guard addStatus == errSecSuccess else {
-			throw Mango9SessionStoreError.keychain(addStatus)
+	static func activateExisting(_ snapshot: Mango9Session) throws {
+		lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+		guard let current = currentLogin(for: snapshot), let identity = current.sipIdentity else {
+			throw Mango9CRMAPIError.staleSession
 		}
+		setActiveIdentity(identity); notifyContextChanged()
+	}
+
+	private static func write(_ session: Mango9Session?, account: String, persist: Bool) throws {
+		let record = Record(version: 1, session: persist ? session : nil, revoked: !persist || session == nil)
+		let key: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+			kSecAttrService as String: service, kSecAttrAccount as String: account]
+		let attributes: [String: Any] = [kSecValueData as String: try JSONEncoder().encode(record),
+			kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+		let status = SecItemUpdate(key as CFDictionary, attributes as CFDictionary)
+		if status == errSecSuccess { return }
+		guard status == errSecItemNotFound else { throw Mango9SessionStoreError.keychain(status) }
+		var item = key; attributes.forEach { item[$0.key] = $0.value }
+		let added = SecItemAdd(item as CFDictionary, nil)
+		guard added == errSecSuccess else { throw Mango9SessionStoreError.keychain(added) }
 	}
 
 	static func load() -> Mango9Session? {
+		lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+		storageFailure = nil
 		if let activeIdentity {
 			return load(for: activeIdentity)
 		}
@@ -1153,9 +1306,14 @@ enum Mango9SessionStore {
 	}
 
 	static func load(for sipIdentity: String) -> Mango9Session? {
+		lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+		storageFailure = nil
 		guard let identity = normalizedIdentity(sipIdentity) else {
 			return nil
 		}
+		do {
+			if try Mango9LogoutKeychain.blocksLogin(identity) { return nil }
+		} catch { storageFailure = error; return nil }
 		if let session = volatileSession(for: identity) {
 			return session
 		}
@@ -1163,37 +1321,27 @@ enum Mango9SessionStore {
 			return nil
 		}
 
-		if let session = loadPersistentSession(account: identity) {
-			let associatedSession = session.associated(with: identity)
-			setVolatileSession(associatedSession, for: identity)
-			return associatedSession
-		}
-
-		// Migrate the pre-multi-account "current" record to the active SIP
-		// identity the first time this version runs.
-		guard let legacy = loadLegacySession() else {
-			return nil
-		}
-		let migrated = legacy.associated(with: identity)
-		try? save(migrated, for: identity)
-		deletePersistentSession(account: legacyAccount)
-		return migrated
+		do {
+			if let record = try read(account: identity) {
+				guard !record.revoked, let session = record.session,
+					normalizedIdentity(session.sipIdentity) == identity else { return nil }
+				let associated = session.associated(with: identity)
+				setVolatileSession(associated, for: identity)
+				return associated
+			}
+			guard let legacy = try read(account: legacyAccount), !legacy.revoked,
+				let session = legacy.session,
+				normalizedIdentity(session.sipIdentity) == identity else { return nil }
+			let migrated = try save(session, for: identity)
+			try write(nil, account: legacyAccount, persist: false)
+			return migrated
+		} catch { storageFailure = error; return nil }
 	}
 
-	static func hasSession(for sipIdentity: String) -> Bool {
-		guard let identity = normalizedIdentity(sipIdentity) else {
-			return false
-		}
-		if volatileSession(for: identity) != nil {
-			return true
-		}
-		guard rememberedLoginIsEnabled else {
-			return false
-		}
-		return loadPersistentSession(account: identity) != nil
-	}
+	static func hasSession(for sipIdentity: String) -> Bool { load(for: sipIdentity) != nil }
 
 	static func activate(sipIdentity: String?) {
+		lifecycleLock.lock(); defer { lifecycleLock.unlock() }
 		guard let identity = normalizedIdentity(sipIdentity) else {
 			UserDefaults.standard.removeObject(forKey: activeIdentityKey)
 			notifyContextChanged()
@@ -1204,10 +1352,12 @@ enum Mango9SessionStore {
 		notifyContextChanged()
 	}
 
-	static func remove(for sipIdentity: String) {
+	static func remove(for sipIdentity: String) throws {
+		lifecycleLock.lock(); defer { lifecycleLock.unlock() }
 		guard let identity = normalizedIdentity(sipIdentity) else { return }
+		// A checked secure tombstone survives a crash and defeats late renewal callbacks.
+		try write(nil, account: identity, persist: false)
 		setVolatileSession(nil, for: identity)
-		deletePersistentSession(for: identity)
 		var identities = storedIdentities
 		identities.remove(identity)
 		storeIdentities(identities)
@@ -1218,11 +1368,12 @@ enum Mango9SessionStore {
 		}
 	}
 
-	static func clear() {
+	static func clear() throws {
+		lifecycleLock.lock(); defer { lifecycleLock.unlock() }
 		if let activeIdentity {
-			remove(for: activeIdentity)
+			try remove(for: activeIdentity)
 		} else {
-			deletePersistentSession(account: legacyAccount)
+			try write(nil, account: legacyAccount, persist: false)
 			notifyContextChanged()
 		}
 	}
@@ -1234,7 +1385,7 @@ enum Mango9SessionStore {
 	}
 
 	static func isActive(_ session: Mango9Session) -> Bool {
-		isActive(sipIdentity: session.sipIdentity)
+		isActive(sipIdentity: session.sipIdentity) && currentLogin(for: session) != nil
 	}
 
 	static func isActive(sipIdentity: String?) -> Bool {
@@ -1272,15 +1423,12 @@ enum Mango9SessionStore {
 	}
 
 	private static func loadLegacySession() -> Mango9Session? {
-		if let legacy = volatileSession(for: legacyAccount) {
-			return legacy
-		}
-		guard rememberedLoginIsEnabled,
-			  let legacy = loadPersistentSession(account: legacyAccount) else {
-			return nil
-		}
-		setVolatileSession(legacy, for: legacyAccount)
-		return legacy
+		guard rememberedLoginIsEnabled else { return nil }
+		do {
+			guard let record = try read(account: legacyAccount), !record.revoked,
+				let identity = normalizedIdentity(record.session?.sipIdentity) else { return nil }
+			return load(for: identity)
+		} catch { storageFailure = error; return nil }
 	}
 
 	private static func volatileSession(for identity: String) -> Mango9Session? {
@@ -1298,44 +1446,22 @@ enum Mango9SessionStore {
 		volatileSessions[identity] = session
 	}
 
-	private static func loadPersistentSession(account: String) -> Mango9Session? {
-		let query: [String: Any] = [
-			kSecClass as String: kSecClassGenericPassword,
-			kSecAttrService as String: service,
-			kSecAttrAccount as String: account,
-			kSecReturnData as String: true,
-			kSecMatchLimit as String: kSecMatchLimitOne
-		]
+	private static func read(account: String) throws -> Record? {
+		let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+			kSecAttrService as String: service, kSecAttrAccount as String: account,
+			kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
 		var result: CFTypeRef?
 		let status = SecItemCopyMatching(query as CFDictionary, &result)
-		guard status == errSecSuccess,
-			  let data = result as? Data else {
-			if status != errSecItemNotFound {
-				Log.warn("[Mango9 Session] Keychain lookup failed for the stored account (status: \(status))")
-			}
-			return nil
+		if status == errSecItemNotFound { return nil }
+		guard status == errSecSuccess, let data = result as? Data else { throw Mango9SessionStoreError.keychain(status) }
+		if let record = try? JSONDecoder().decode(Record.self, from: data) {
+			guard record.version == 1 else { throw Mango9SessionStoreError.invalidRecord }
+			return record
 		}
-		do {
-			return try JSONDecoder().decode(Mango9Session.self, from: data)
-		} catch {
-			let keys = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?
-				.keys.sorted().joined(separator: ",") ?? "unreadable"
-			Log.error("[Mango9 Session] Stored session could not be decoded (keys: \(keys), error: \(error))")
-			return nil
+		guard let session = try? JSONDecoder().decode(Mango9Session.self, from: data) else {
+			throw Mango9SessionStoreError.invalidRecord
 		}
-	}
-
-	private static func deletePersistentSession(for sipIdentity: String) {
-		deletePersistentSession(account: sipIdentity)
-	}
-
-	private static func deletePersistentSession(account: String) {
-		let query: [String: Any] = [
-			kSecClass as String: kSecClassGenericPassword,
-			kSecAttrService as String: service,
-			kSecAttrAccount as String: account
-		]
-		SecItemDelete(query as CFDictionary)
+		return Record(version: 1, session: session, revoked: false)
 	}
 
 	private static func setActiveIdentity(_ identity: String) {
@@ -1390,9 +1516,9 @@ enum Mango9SessionStore {
 	}
 }
 
-private enum Mango9SessionStoreError: Error {
-	case keychain(OSStatus)
-	case missingIdentity
+enum Mango9SessionStoreError: LocalizedError {
+	case keychain(OSStatus), missingIdentity, invalidRecord
+	var errorDescription: String? { "Mango9 couldn’t access secure account storage. Unlock your iPhone and try again." }
 }
 
 struct Mango9SIPEnrollment {

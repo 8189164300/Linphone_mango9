@@ -309,6 +309,7 @@ enum Mango9CalendarAPI {
 		for attempt in 0...1 {
 			try Task.checkCancellation()
 			let request = try request(session: current, path: path, method: method, query: query, body: body, revision: revision, scope: scope)
+			try await Mango9SessionRenewal.shared.checkKnownExpiredBearer(request)
 			let (data, response) = try await transport.data(for: request)
 			_ = try active()
 			guard let http = response as? HTTPURLResponse else { throw Mango9CRMAPIError.server }
@@ -322,7 +323,7 @@ enum Mango9CalendarAPI {
 				if latest.accessToken != current.accessToken { current = latest; continue }
 				let refreshed = try await Mango9CRMAPI.refresh(session: current)
 				_ = try active()
-				try Mango9SessionStore.save(refreshed)
+
 				current = refreshed
 				continue
 			}

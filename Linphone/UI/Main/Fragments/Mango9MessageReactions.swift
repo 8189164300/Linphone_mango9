@@ -261,7 +261,7 @@ final class Mango9MessagingRedirectPolicy: NSObject, URLSessionTaskDelegate {
 				do { bootstrap = try await Mango9CRMAPI.chatBootstrap(session: session, transport: transport) }
 				catch Mango9CRMAPIError.unauthorized {
 					session = try await Mango9CRMAPI.refresh(session: session, transport: transport)
-					try check(); try Mango9SessionStore.save(session)
+					try check()
 					bootstrap = try await Mango9CRMAPI.chatBootstrap(session: session, transport: transport)
 				}
 				try check()
@@ -284,12 +284,13 @@ final class Mango9MessagingRedirectPolicy: NSObject, URLSessionTaskDelegate {
 				request.httpBody = try JSONSerialization.data(withJSONObject: body)
 				request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 			}
+			try await Mango9SessionRenewal.shared.checkKnownExpiredBearer(request)
 			let (data, response) = try await transport.data(for: request)
 			try check()
 			guard let http = response as? HTTPURLResponse else { throw Mango9MessagingError.invalidResponse }
 			if http.statusCode == 401 && attempt == 0 {
 				session = try await Mango9CRMAPI.refresh(session: session, transport: transport)
-				try check(); try Mango9SessionStore.save(session)
+				try check()
 				continue // Identical command ID/payload; only replace expired credentials.
 			}
 			guard (200..<300).contains(http.statusCode) else {

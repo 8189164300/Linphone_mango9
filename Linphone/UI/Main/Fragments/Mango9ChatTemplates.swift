@@ -75,13 +75,14 @@ enum Mango9TemplateText {
         for attempt in 0...1 {
             guard active, !Task.isCancelled, let current = Mango9SessionStore.load() else { throw Mango9MessagingError.scopeChanged }
             let request = try Self.wire(session: current, path: path, method: method, query: query, body: body)
+            try await Mango9SessionRenewal.shared.checkKnownExpiredBearer(request)
             let (data, response) = try await transport.data(for: request)
             guard active, !Task.isCancelled else { throw Mango9MessagingError.scopeChanged }
             guard let http = response as? HTTPURLResponse, data.count <= 2_097_152 else { throw Mango9MessagingError.invalidResponse }
             if http.statusCode == 401 && attempt == 0 {
-                let refreshed = try await Mango9CRMAPI.refresh(session: current, transport: transport)
+                _ = try await Mango9CRMAPI.refresh(session: current, transport: transport)
                 guard active else { throw Mango9MessagingError.scopeChanged }
-                try Mango9SessionStore.save(refreshed); continue
+                continue
             }
             guard (200..<300).contains(http.statusCode) else {
                 let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]

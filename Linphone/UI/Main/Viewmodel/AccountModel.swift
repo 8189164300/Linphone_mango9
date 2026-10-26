@@ -51,6 +51,7 @@ class AccountModel: ObservableObject {
 	private var accountDelegate: AccountDelegate?
 	private var coreDelegate: CoreDelegate?
 	private var logoutCleanupPending = false
+	private var pendingLogoutAccounts: [Account] = []
 	private var logoutPreparationPending = false
 	
 	init(account: Account, core: Core) {
@@ -222,13 +223,14 @@ class AccountModel: ObservableObject {
 					if usesMango9Cleanup {
 						try await Mango9LogoutCoordinator.shared.prepareLogout(identity: identity, token: token, session: session)
 					}
+					try Mango9SessionStore.remove(for: identity)
 				} catch {
 					CoreContext.shared.doOnCoreQueue { _ in self.logoutPreparationPending = false }
 					ToastViewModel.shared.show(error.localizedDescription, duration: 6)
 					return
 				}
 				Mango9ChatStore.shared.disconnectIfConnected(to: identity)
-				if let session {
+				if let session, session.logoutToken == nil {
 					Task { @MainActor in
 						if !(await Mango9ChatStore.shared.unregisterRemotePushToken(for: identity, session: session)) {
 							Log.warn("[Logout] Message push cleanup did not complete")
@@ -238,8 +240,8 @@ class AccountModel: ObservableObject {
 				CoreContext.shared.doOnCoreQueue { core in
 					self.logoutPreparationPending = false
 					self.logoutCleanupPending = true
-					Mango9SessionStore.remove(for: identity)
-					for account in core.accountList where account.params?.identityAddress?.asStringUriOnly() == identity {
+					self.pendingLogoutAccounts = core.accountList.filter { $0.params?.identityAddress?.asStringUriOnly() == identity }
+					for account in self.pendingLogoutAccounts {
 						if let params = account.params?.clone() {
 							params.registerEnabled = false
 							account.params = params
@@ -258,9 +260,12 @@ class AccountModel: ObservableObject {
 			guard self.logoutCleanupPending else { return }
 			self.logoutCleanupPending = false
 			let identity = self.account.params?.identityAddress?.asStringUriOnly()
-			let targets = core.accountList.filter {
-				$0 === self.account || (identity != nil && $0.params?.identityAddress?.asStringUriOnly() == identity)
+			// A delayed unregister completion may only remove the captured accounts.
+			// A fresh login can create a new account with the same SIP identity.
+			let targets = core.accountList.filter { candidate in
+				self.pendingLogoutAccounts.contains { $0 === candidate }
 			}
+			self.pendingLogoutAccounts.removeAll()
 			let authInfos = targets.compactMap { $0.findAuthInfo() }
 			for target in targets { core.removeAccount(account: target) }
 			for authInfo in authInfos where core.authInfoList.contains(where: { $0 === authInfo })

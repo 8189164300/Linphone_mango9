@@ -2297,7 +2297,7 @@ struct ContentView: View {
 						team = try await Mango9CRMAPI.teamMembers(session: session)
 					} catch Mango9CRMAPIError.unauthorized {
 						session = try await Mango9CRMAPI.refresh(session: session)
-						try Mango9SessionStore.save(session)
+
 						if let lineIdentity = try? await Mango9CRMAPI.lineIdentity(session: session) {
 							Mango9LineIdentityStore.save(
 								lineIdentity,
@@ -2364,7 +2364,7 @@ struct ContentView: View {
 				lineIdentity = try await Mango9CRMAPI.lineIdentity(session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				lineIdentity = try await Mango9CRMAPI.lineIdentity(session: session)
 			}
 			Mango9LineIdentityStore.save(
@@ -2395,7 +2395,7 @@ struct ContentView: View {
 				team = try await Mango9CRMAPI.teamMembers(session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				if let lineIdentity = try? await Mango9CRMAPI.lineIdentity(
 					session: session
 				) {

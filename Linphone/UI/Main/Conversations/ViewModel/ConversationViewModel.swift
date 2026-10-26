@@ -642,7 +642,7 @@ class ConversationViewModel: ObservableObject {
 				match = try await fetchCRMMatch(phone: phone, session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				match = try await fetchCRMMatch(phone: phone, session: session)
 			}
 			guard smsTarget?.phone == phone, Mango9SessionStore.isActive(session) else { return }

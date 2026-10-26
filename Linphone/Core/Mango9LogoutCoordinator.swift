@@ -17,6 +17,15 @@ struct Mango9LogoutRecord: Codable, Equatable, Identifiable {
 	let topic: String
 	var cleanupToken: String?
 	var pendingLogout = false
+	var crmCleanupToken: String?
+	var crmApiBaseURL: String?
+	var retryAfter: Date?
+	var retryAttempts: Int?
+
+	static func blocksLogin(_ identity: String, records: [Mango9LogoutRecord]) -> Bool {
+		records.contains { $0.identity == identity && $0.pendingLogout }
+			&& !records.contains { $0.identity == identity && !$0.pendingLogout }
+	}
 
 	func matches(identity: String, token: String, provider: String, topic: String) -> Bool {
 		self.identity == identity && voipToken == token && self.provider == provider && self.topic == topic
@@ -28,7 +37,7 @@ enum Mango9LogoutError: LocalizedError {
 	var errorDescription: String? {
 		switch self {
 		case .secureStorage:
-			return "Mango9 couldn’t securely save the sign-out request. Please unlock your iPhone and try again."
+			return "Mango9 couldn’t access secure account storage. Please unlock your iPhone and try again."
 		case .unavailable:
 			return "Please connect to the internet and try again so Mango9 can safely stop calls for this account."
 		case .missingDeviceScope:
@@ -56,6 +65,10 @@ enum Mango9LogoutKeychain {
 		}
 		return records
 	}
+	static func blocksLogin(_ identity: String) throws -> Bool {
+		Mango9LogoutRecord.blocksLogin(identity, records: try load())
+	}
+
 	static func save(_ records: [Mango9LogoutRecord]) throws {
 		let attributes: [String: Any] = [
 			kSecValueData as String: try JSONEncoder().encode(records),
@@ -160,12 +173,22 @@ final class Mango9LogoutCoordinator {
 			!$0.pendingLogout && $0.matches(identity: identity, token: token, provider: provider, topic: topic)
 		}) {
 			index = existing
-			if records[index].cleanupToken != nil { return }
+			if records[index].cleanupToken != nil {
+				if let capability = session.logoutToken,
+					records[index].crmCleanupToken != capability {
+					records[index].crmCleanupToken = capability
+					records[index].crmApiBaseURL = session.crmApiBaseUrl
+					try write(records)
+				}
+				return
+			}
 		} else {
 			records.append(Mango9LogoutRecord(identity: identity, voipToken: token, provider: provider, topic: topic))
 			index = records.count - 1
 			try write(records)
 		}
+		records[index].crmCleanupToken = session.logoutToken
+		records[index].crmApiBaseURL = session.crmApiBaseUrl
 		let record = records[index]
 		records[index].cleanupToken = try await authorizeLease(record, session: session)
 		try write(records)
@@ -211,30 +234,84 @@ final class Mango9LogoutCoordinator {
 		guard !targets.isEmpty, targets.allSatisfy({ records[$0].cleanupToken != nil }) else {
 			throw Mango9LogoutError.missingDeviceScope
 		}
-		for index in targets { records[index].pendingLogout = true }
+		for index in targets {
+			let wasPending = records[index].pendingLogout
+			records[index].pendingLogout = true
+			// Older intent retains its own family's revocation capability.
+			if !wasPending, let capability = session?.logoutToken {
+				records[index].crmCleanupToken = capability
+				records[index].crmApiBaseURL = session?.crmApiBaseUrl
+			}
+		}
 		try write(records) // Never remove the local account if durable intent fails.
 	}
 
-	func prepareLogin(identity: String, token: String?, session: Mango9Session?) async throws {
+	func prepareLogin(identity: String, token: String?, session: Mango9Session?, freshAuthentication: Bool = false) async throws {
 		await acquire()
 		defer { release() }
-		// A queued previous logout must finish before this line can register
-		// again. Activation then cancels the server's older cleanup generation.
-		try await drain(identity: identity)
-		guard let token = Self.normalizedVoIPToken(token), let session else { return }
+		// Only a newly authenticated login may supersede older durable logout intent.
+		// A late restore callback must not reactivate the account after sign-out.
+		if !freshAuthentication, let session,
+			Mango9SessionStore.currentLogin(for: session) == nil { throw Mango9CRMAPIError.staleSession }
+		if freshAuthentication, Self.needsLocalRemoval(identity: identity, records: try read()) {
+			let deadline = Date().addingTimeInterval(8)
+			while await accountExists(identity) {
+				guard Date() < deadline else { throw Mango9LogoutError.unavailable }
+				try await Task.sleep(nanoseconds: 100_000_000)
+			}
+		}
+		do { try await drain(identity: identity, force: true) }
+		catch {
+			guard freshAuthentication else { throw error }
+			Log.warn("[Logout] Previous cleanup remains queued for its original generation")
+		}
+		guard let token = Self.normalizedVoIPToken(token), let session else {
+			if freshAuthentication, Self.needsLocalRemoval(identity: identity, records: try read()) {
+				throw Mango9LogoutError.missingDeviceScope
+			}
+			return
+		}
 		try await ensureLease(identity: identity, token: token, session: session)
 	}
 
-	private func drain(identity: String? = nil) async throws {
+	private func drain(identity: String? = nil, force: Bool = false) async throws {
 		for record in try read() where record.pendingLogout && (identity == nil || record.identity == identity) {
-			// Do not acknowledge/delete intent during the SIP unregister grace
-			// period. A process kill must still recover the local account removal.
-			guard !(await accountExists(record.identity)) else { throw Mango9LogoutError.unavailable }
+			if !force, let next = record.retryAfter, next > Date() { continue }
+			// A newer lease fences this old cleanup at the server. Otherwise preserve
+			// the intent throughout the original SIP unregister grace period.
+			let superseded = try read().contains { $0.identity == record.identity && !$0.pendingLogout && $0.id != record.id }
+			guard !(await accountExists(record.identity)) || superseded else { throw Mango9LogoutError.unavailable }
+			if !superseded { try Mango9SessionStore.remove(for: record.identity) }
 			guard let capability = record.cleanupToken else { throw Mango9LogoutError.missingDeviceScope }
-			let result = try await request(path: "v1/mobile/logout", bearer: capability, body: [:])
-			guard result["completed"] as? Bool == true else { throw Mango9LogoutError.unavailable }
+			var failure: Error?
+			if let cleanup = record.crmCleanupToken, let base = record.crmApiBaseURL {
+				do { try await revokeCRM(capability: cleanup, baseURL: base) }
+				catch { failure = error }
+			}
+			// Each service is idempotent and independently reachable. An outage in
+			// CRM must not prevent removal of this device's incoming-call route.
+			do {
+				let result = try await request(path: "v1/mobile/logout", bearer: capability, body: [:])
+				guard result["completed"] as? Bool == true else { throw Mango9LogoutError.unavailable }
+			} catch { if failure == nil { failure = error } }
+			if let failure { throw failure }
 			try write(try read().filter { $0.id != record.id })
 		}
+	}
+
+	private func revokeCRM(capability: String, baseURL: String) async throws {
+		guard let base = URL(string: baseURL), base.scheme == "https", base.user == nil,
+			base.password == nil, base.query == nil, base.fragment == nil else { throw Mango9LogoutError.unavailable }
+		var request = URLRequest(url: base.appendingPathComponent("auth/logout"))
+		request.httpMethod = "POST"
+		request.timeoutInterval = 25
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.httpBody = try JSONSerialization.data(withJSONObject: ["cleanup_token":capability])
+		let (data,response) = try await send(request)
+		guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+			let json = try JSONSerialization.jsonObject(with: data) as? [String:Any],
+			json["success"] as? Bool == true,
+			(json["data"] as? [String:Any])?["completed"] as? Bool == true else { throw Mango9LogoutError.unavailable }
 	}
 
 	func retryPending() async {
@@ -244,8 +321,21 @@ final class Mango9LogoutCoordinator {
 		let identities = Set(((try? read()) ?? []).filter(\.pendingLogout).map(\.identity))
 		for identity in identities {
 			do { try await drain(identity: identity) }
-			catch { Log.warn("[Logout] Device registration cleanup remains queued") }
+			catch {
+				var records = (try? read()) ?? []
+				for index in records.indices where records[index].identity == identity && records[index].pendingLogout {
+					let count = min((records[index].retryAttempts ?? 0) + 1, 8)
+					records[index].retryAttempts = count
+					records[index].retryAfter = Date().addingTimeInterval(Double.random(in: 30...min(3600, 30 * pow(2, Double(count)))))
+				}
+				try? write(records)
+				Log.warn("[Logout] Device registration cleanup remains queued")
+			}
 		}
+	}
+
+	nonisolated static func needsLocalRemoval(identity: String, records: [Mango9LogoutRecord]) -> Bool {
+		Mango9LogoutRecord.blocksLogin(identity, records: records)
 	}
 
 	func hasPendingLogout(identity: String) -> Bool {
@@ -267,13 +357,13 @@ final class Mango9LogoutCoordinator {
 		}
 	}
 
-	func prepareLogin(identity: String, session: Mango9Session) async throws {
+	func prepareLogin(identity: String, session: Mango9Session, freshAuthentication: Bool = false) async throws {
 		let token: String? = await withCheckedContinuation { continuation in
 			CoreContext.shared.doOnCoreQueue { core in
 				continuation.resume(returning: core.pushNotificationConfig?.voipToken)
 			}
 		}
-		try await prepareLogin(identity: identity, token: token, session: session)
+		try await prepareLogin(identity: identity, token: token, session: session, freshAuthentication: freshAuthentication)
 	}
 
 	func refresh() async {
@@ -294,7 +384,7 @@ final class Mango9LogoutCoordinator {
 				// Bootstrap cleanup capabilities for accounts from older builds.
 				await acquire()
 				defer { release() }
-				guard !((try? read()) ?? []).contains(where: { $0.identity == identity && $0.pendingLogout }),
+				guard !Self.needsLocalRemoval(identity: identity, records: (try? read()) ?? []),
 					  let token = Self.normalizedVoIPToken(token),
 					  let session = Mango9SessionStore.load(for: identity) else { continue }
 				do { try await ensureLease(identity: identity, token: token, session: session) }
@@ -308,14 +398,14 @@ final class Mango9LogoutCoordinator {
 	/// the original five-second SIP unregister completion callback.
 	nonisolated static func recoverLocalRemovals(core: Core) {
 		guard let records = try? Mango9LogoutKeychain.load() else { return }
-		let pending = Set(records.filter(\.pendingLogout).map(\.identity))
+		let pending = Set(records.filter { Self.needsLocalRemoval(identity: $0.identity, records: records) }.map(\.identity))
 		for account in core.accountList {
 			guard let identity = account.params?.identityAddress?.asStringUriOnly(), pending.contains(identity) else { continue }
 			if let params = account.params?.clone() { params.registerEnabled = false; account.params = params }
 			let auth = account.findAuthInfo()
 			core.removeAccount(account: account)
 			if let auth, !core.accountList.contains(where: { $0.findAuthInfo() === auth }) { core.removeAuthInfo(info: auth) }
-			Mango9SessionStore.remove(for: identity)
+			try? Mango9SessionStore.remove(for: identity)
 		}
 	}
 }

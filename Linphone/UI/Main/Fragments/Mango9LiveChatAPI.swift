@@ -229,6 +229,7 @@ struct Mango9LiveSite: Identifiable {
 			try Task.checkCancellation()
 			var request = try Mango9CalendarAPI.request(session: current, path: operation, method: body == nil ? "GET" : "POST", query: query, body: body, scope: .livechat)
 			request.httpShouldHandleCookies = false
+			try await Mango9SessionRenewal.shared.checkKnownExpiredBearer(request)
 			let (data, response) = try await transport.data(for: request)
 			_ = try active(); try Task.checkCancellation()
 			guard let response = response as? HTTPURLResponse else { throw Mango9LiveChatFailure(status: 0) }
@@ -236,7 +237,7 @@ struct Mango9LiveSite: Identifiable {
 				let latest = try active()
 				if latest.accessToken != current.accessToken { current = latest; continue }
 				let refreshed = try await Mango9CRMAPI.refresh(session: current)
-				_ = try active(); try Mango9SessionStore.save(refreshed); current = refreshed; continue
+				_ = try active(); current = refreshed; continue
 			}
 			guard (200..<300).contains(response.statusCode) else { throw Mango9LiveChatFailure(status: response.statusCode) }
 			guard let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any], envelope["success"] as? Bool == true,

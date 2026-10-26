@@ -38,8 +38,8 @@ private final class LeadStatusURLProtocol: URLProtocol {
 		defer {
 			transport.invalidateAndCancel()
 			LeadStatusURLProtocol.handler = nil
-			Mango9SessionStore.remove(for: current.sipIdentity!)
-			Mango9SessionStore.remove(for: session("replacement").sipIdentity!)
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: current.sipIdentity!))
+			XCTAssertNoThrow(try Mango9SessionStore.remove(for: session("replacement").sipIdentity!))
 			Mango9SessionStore.activate(sipIdentity: previous)
 		}
 		try await body(current, transport)

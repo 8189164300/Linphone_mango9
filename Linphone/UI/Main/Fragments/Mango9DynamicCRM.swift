@@ -253,6 +253,8 @@ final class Mango9ChatStore: ObservableObject {
 	private var socket: URLSessionWebSocketTask?
 	private var pendingCalls: [String: PendingCall] = [:]
 	private var reconnectTask: Task<Void, Never>?
+	private var reconnectAttempts = 0
+	private var reconnectNotBefore = Date.distantPast
 	private var intentionallyDisconnected = false
 	private var openingUserId: Int?
 	private var chatOpenState = Mango9ChatOpenState()
@@ -325,7 +327,7 @@ final class Mango9ChatStore: ObservableObject {
 				bootstrap = try await Mango9CRMAPI.chatBootstrap(session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				bootstrap = try await Mango9CRMAPI.chatBootstrap(session: session)
 			}
 			guard isCurrentConnection(
@@ -354,11 +356,15 @@ final class Mango9ChatStore: ObservableObject {
 			let task = URLSession.shared.webSocketTask(with: request)
 			socket = task
 			task.resume()
+			try await Mango9SocketReadyGate.wait(for: task)
+			guard isCurrentConnection(generation: generation, identity: requestedIdentity),
+				Mango9SessionStore.isActive(session) else { task.cancel(with: .goingAway, reason: nil); return }
 			isConnected = true
 			connectedIdentity = requestedIdentity
 			receiveNext(on: task)
 
 			try await loadDirectory()
+			reconnectAttempts = 0; reconnectNotBefore = .distantPast
 			// Chat readiness must not wait for the separate push-token HTTP registration.
 			Task { [weak self] in
 				guard let self, self.isCurrentConnection(generation: generation, identity: requestedIdentity) else { return }
@@ -374,6 +380,12 @@ final class Mango9ChatStore: ObservableObject {
 			isConnected = false
 			connectedIdentity = nil
 			errorMessage = error.localizedDescription
+			socket?.cancel(with: .goingAway, reason: nil); socket = nil
+			failPendingCalls()
+			if let auth = error as? Mango9CRMAPIError, auth.isSignInRequired { return }
+			if case Mango9CRMAPIError.staleSession = error { return }
+			if case Mango9CRMAPIError.permissionDenied = error { return }
+			if case Mango9CRMAPIError.retryAfter(let delay) = error { reconnectNotBefore = Date().addingTimeInterval(delay) }
 			scheduleReconnect()
 		}
 	}
@@ -433,13 +445,15 @@ final class Mango9ChatStore: ObservableObject {
 			return
 		}
 
+		reconnectAttempts = 0
 		if activeRoomId == nil && activeSMSPhone == nil && !isOpeningConversation {
 			// A push may already be bootstrapping the socket before its room is resolved.
 			await connectIfNeeded(force: !isConnecting)
 			return
 		}
 
-		await connectIfNeeded()
+		reconnectAttempts = 0
+		await connectIfNeeded(force: !isConnecting)
 		guard isConnected else {
 			return
 		}
@@ -1133,7 +1147,7 @@ final class Mango9ChatStore: ObservableObject {
 			bootstrap = try await Mango9CRMAPI.chatBootstrap(session: session)
 		} catch Mango9CRMAPIError.unauthorized {
 			session = try await Mango9CRMAPI.refresh(session: session)
-			try Mango9SessionStore.save(session)
+
 			bootstrap = try await Mango9CRMAPI.chatBootstrap(session: session)
 		}
 		chatToken = bootstrap.token
@@ -1408,6 +1422,8 @@ final class Mango9ChatStore: ObservableObject {
 				case .failure(let error):
 					self.isConnected = false
 					self.errorMessage = error.localizedDescription
+					self.socket?.cancel(with: .goingAway, reason: nil); self.socket = nil
+					self.failPendingCalls()
 					self.scheduleReconnect()
 				}
 			}
@@ -1613,12 +1629,20 @@ final class Mango9ChatStore: ObservableObject {
 		}
 	}
 
+	private func failPendingCalls() {
+		let pending = Array(pendingCalls.values); pendingCalls.removeAll()
+		for call in pending { call.timeoutTask.cancel(); call.continuation.resume(throwing: Mango9ChatError.disconnected) }
+	}
+
 	private func scheduleReconnect() {
-		guard !intentionallyDisconnected, reconnectTask == nil else {
+		guard !intentionallyDisconnected, reconnectTask == nil, reconnectAttempts < 6 else {
 			return
 		}
+		reconnectAttempts += 1
+		let backoff = Double.random(in: 1...min(30, pow(2, Double(reconnectAttempts))))
+		let delay = max(backoff, reconnectNotBefore.timeIntervalSinceNow)
 		reconnectTask = Task {
-			try? await Task.sleep(nanoseconds: 2_000_000_000)
+			try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
 			guard !Task.isCancelled else {
 				return
 			}
@@ -4788,7 +4812,7 @@ final class Mango9CallSettingsViewModel: ObservableObject {
 				try await load(session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				try await load(session: session)
 			}
 		} catch Mango9CRMAPIError.unauthorized {
@@ -4820,7 +4844,7 @@ final class Mango9CallSettingsViewModel: ObservableObject {
 				)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				updated = try await Mango9CRMAPI.updateCallForwarding(
 					session: session,
 					enabled: forwardingEnabled,
@@ -4955,7 +4979,7 @@ final class Mango9LeadsViewModel: ObservableObject {
 				try await loadConfiguration(session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				try await loadConfiguration(session: session)
 			}
 			configurationLoaded = true
@@ -5005,7 +5029,7 @@ final class Mango9LeadsViewModel: ObservableObject {
 					try await loadList(session: session)
 				} catch Mango9CRMAPIError.unauthorized {
 					session = try await Mango9CRMAPI.refresh(session: session)
-					try Mango9SessionStore.save(session)
+
 					try await loadList(session: session)
 				}
 			} catch Mango9CRMAPIError.unauthorized {
@@ -5544,7 +5568,7 @@ final class Mango9CreateLeadViewModel: ObservableObject {
 				)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				return try await create(
 					session: session,
 					firstName: trimmedFirstName,
@@ -5786,7 +5810,7 @@ final class Mango9ClientsViewModel: ObservableObject {
 				try await load(session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				try await load(session: session)
 			}
 		} catch Mango9CRMAPIError.unauthorized {
@@ -5827,7 +5851,7 @@ final class Mango9ClientsViewModel: ObservableObject {
 				try await loadList(session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				try await loadList(session: session)
 			}
 		} catch Mango9CRMAPIError.unauthorized {
@@ -6357,7 +6381,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 				try await load(session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				try await load(session: session)
 			}
 		} catch Mango9CRMAPIError.unauthorized {
@@ -6428,7 +6452,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 				)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				payload = try await update(
 					session: session,
 					values: changes
@@ -6464,7 +6488,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 				try await delete(session: session)
 			} catch Mango9CRMAPIError.unauthorized {
 				session = try await Mango9CRMAPI.refresh(session: session)
-				try Mango9SessionStore.save(session)
+
 				try await delete(session: session)
 			}
 			NotificationCenter.default.post(name: recordKind.changeNotification, object: nil)
@@ -6532,7 +6556,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 				guard isCurrent() else { return }
 				session = try await Mango9CRMAPI.refresh(session: session, transport: statusTransport)
 				guard isCurrent() else { return }
-				try Mango9SessionStore.save(session, for: session.sipIdentity)
+
 				payload = try await updateStatus(session: session, key: field.key, status: status)
 			}
 			guard isCurrent() else { return }
@@ -7364,6 +7388,28 @@ private struct Mango9LocationMapView: View {
 			)
 		} catch {
 			Log.warn("[Mango9 CRM] Apple Maps could not resolve \(normalized)")
+		}
+	}
+}
+
+/// A pong proves that the WebSocket handshake succeeded. Timeout and callback race safely.
+private final class Mango9SocketReadyGate {
+	private let lock = NSLock()
+	private var continuation: CheckedContinuation<Void, Error>?
+	init(_ continuation: CheckedContinuation<Void, Error>) { self.continuation = continuation }
+	private func finish(_ error: Error?) -> Bool {
+		lock.lock(); let pending = continuation; continuation = nil; lock.unlock()
+		guard let pending else { return false }
+		if let error { pending.resume(throwing: error) } else { pending.resume() }
+		return true
+	}
+	static func wait(for socket: URLSessionWebSocketTask) async throws {
+		try await withCheckedThrowingContinuation { continuation in
+			let gate = Mango9SocketReadyGate(continuation)
+			socket.sendPing { error in _ = gate.finish(error) }
+			DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
+				if gate.finish(URLError(.timedOut)) { socket.cancel(with: .goingAway, reason: nil) }
+			}
 		}
 	}
 }
