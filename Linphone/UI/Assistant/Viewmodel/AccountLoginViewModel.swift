@@ -26,12 +26,12 @@ class AccountLoginViewModel: ObservableObject {
 	
 	@Published var username: String = ""
 	@Published var passwd: String = ""
-	@Published var domain: String = Mango9Configuration.sipProxyHost
+	@Published var domain: String = ""
 	@Published var displayName: String = ""
 	@Published var transportType: String = "TLS"
 	@Published var authId: String = ""
-	@Published var sipProxyUrl: String = Mango9Configuration.sipProxyHost
-	@Published var outboundProxy: String = Mango9Configuration.sipProxyHost
+	@Published var sipProxyUrl: String = ""
+	@Published var outboundProxy: String = ""
 	
 	private var mCoreDelegate: CoreDelegate!
 	
@@ -142,11 +142,11 @@ class AccountLoginViewModel: ObservableObject {
 				core.defaultAccount = account
 				
 				DispatchQueue.main.async {
-					self.domain = Mango9Configuration.sipProxyHost
+					self.domain = ""
 					self.transportType = "TLS"
 					self.authId = ""
-					self.sipProxyUrl = Mango9Configuration.sipProxyHost
-					self.outboundProxy = Mango9Configuration.sipProxyHost
+					self.sipProxyUrl = ""
+					self.outboundProxy = ""
 				}
 				
 			} catch { NSLog(error.localizedDescription) }

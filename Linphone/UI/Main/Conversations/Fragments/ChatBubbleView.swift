@@ -1653,6 +1653,7 @@ struct Mango9RemoteAudioPlayer: View {
 	let audioURL: URL
 	let name: String
 	let isOutgoing: Bool
+	let cardStyle: Bool
 
 	@State private var player: AVPlayer
 	@State private var isPlaying = false
@@ -1669,15 +1670,16 @@ struct Mango9RemoteAudioPlayer: View {
 		)
 	}
 
-	init(audioURL: URL, name: String, isOutgoing: Bool) {
+	init(audioURL: URL, name: String, isOutgoing: Bool, cardStyle: Bool = false) {
 		self.audioURL = audioURL
 		self.name = name
 		self.isOutgoing = isOutgoing
+		self.cardStyle = cardStyle
 		_player = State(initialValue: AVPlayer(url: audioURL))
 	}
 
 	private var primaryColor: Color {
-		isOutgoing ? .white : Color.grayMain2c700
+		cardStyle ? Color.primary : isOutgoing ? .white : Color.grayMain2c700
 	}
 
 	var body: some View {
@@ -1685,16 +1687,17 @@ struct Mango9RemoteAudioPlayer: View {
 			Button(action: togglePlayback) {
 				Image(systemName: isPlaying ? "pause.fill" : "play.fill")
 					.font(.system(size: 16, weight: .bold))
-					.foregroundStyle(isOutgoing ? Color.orangeMain500 : Color.white)
-					.frame(width: 38, height: 38)
-					.background(isOutgoing ? Color.white : Color.orangeMain500)
+					.foregroundStyle(!cardStyle && isOutgoing ? Color.orangeMain500 : Color.white)
+					.frame(width: cardStyle ? 46 : 38, height: cardStyle ? 46 : 38)
+					.background(!cardStyle && isOutgoing ? Color.white : Color.orangeMain500)
 					.clipShape(Circle())
 			}
 			.buttonStyle(.plain)
+			.accessibilityLabel(isPlaying ? "Pause voice message" : "Play voice message")
 
 			VStack(alignment: .leading, spacing: 4) {
-				Text(name.isEmpty ? "Audio message" : name)
-					.font(.system(size: 13, weight: .semibold))
+				Text(name.isEmpty || (cardStyle && name.lowercased().hasPrefix("mango9-voice-")) ? "Voice message" : name)
+					.font(.system(size: cardStyle ? 15 : 13, weight: .semibold))
 					.foregroundStyle(primaryColor)
 					.lineLimit(1)
 
@@ -1708,7 +1711,7 @@ struct Mango9RemoteAudioPlayer: View {
 						}
 					}
 				)
-				.tint(isOutgoing ? .white : Color.orangeMain500)
+				.tint(!cardStyle && isOutgoing ? .white : Color.orangeMain500)
 
 				HStack {
 					Text(formatTime(currentTime))
@@ -1721,8 +1724,9 @@ struct Mango9RemoteAudioPlayer: View {
 		}
 		.padding(.horizontal, 12)
 		.padding(.vertical, 10)
-		.background(isOutgoing ? Color.orangeMain500 : Color.grayMain2c100)
+		.background(cardStyle ? Color(uiColor: .secondarySystemGroupedBackground) : isOutgoing ? Color.orangeMain500 : Color.grayMain2c100)
 		.clipShape(RoundedRectangle(cornerRadius: 14))
+		.overlay(RoundedRectangle(cornerRadius: 14).stroke(cardStyle ? Color(uiColor: .separator).opacity(0.35) : .clear, lineWidth: 0.75))
 		.onAppear(perform: preparePlayer)
 		.onDisappear(perform: stopObserving)
 		.onReceive(

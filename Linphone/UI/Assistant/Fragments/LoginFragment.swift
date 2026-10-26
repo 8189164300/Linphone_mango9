@@ -35,9 +35,17 @@ struct LoginFragment: View {
 		case emailVerification
 	}
 
+	private enum LoginField: Hashable { case username, password }
+	@FocusState private var focusedField: LoginField?
+
 	@ObservedObject private var coreContext = CoreContext.shared
 
 	@State private var isShowHelpFragment = false
+	@State private var isShowingManual = false
+	@State private var isShowingSettingsGate = false
+	@State private var settingsUnlocked = false
+	@State private var settingsPassword = ""
+	@State private var settingsPasswordError = false
 	@State private var username = ""
 	@State private var password = ""
 	@State private var loginMode: LoginMode = .password
@@ -50,27 +58,25 @@ struct LoginFragment: View {
 	@State private var signInError: String?
 	@AppStorage("mango9_remember_login") private var rememberLogin = true
 
+	private let signInBackground = Color.mango9Primary
+	private let signInAccent = Color.mango9Primary
+
 	var isShowBack = false
 	var onBackPressed: (() -> Void)?
 
 	var body: some View {
 		NavigationView {
 			ZStack {
-				Color.mango9Surface
-					.ignoresSafeArea()
-
-				ScrollView(.vertical, showsIndicators: false) {
-					VStack(spacing: 0) {
-						header
-						Spacer()
-							.frame(height: 14)
-						brandCard
-						Spacer()
-							.frame(height: 16)
-						enrollmentCard
-						Spacer()
-							.frame(height: 16)
-					}
+				signInBackground.ignoresSafeArea()
+				GeometryReader { geometry in
+					ScrollView(.vertical, showsIndicators: false) {
+						VStack(spacing: 0) {
+							header
+							brandCard.padding(.top, geometry.size.height > 500 ? 26 : 8)
+							enrollmentCard.padding(.top, geometry.size.height > 500 ? min(116, geometry.size.height * 0.14) : 24)
+							Spacer(minLength: 32)
+						}.frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .top)
+					}.mango9SignInScroll()
 				}
 
 				if isShowHelpFragment {
@@ -87,7 +93,12 @@ struct LoginFragment: View {
 			.navigationTitle("")
 			.navigationBarHidden(true)
 		}
+		.sheet(isPresented: $isShowingSettingsGate, onDismiss: {
+			settingsPassword = ""
+			if settingsUnlocked { settingsUnlocked = false; isShowingManual = true }
+		}) { settingsGate }
 		.navigationViewStyle(StackNavigationViewStyle())
+		.preferredColorScheme(isShowHelpFragment || isShowingManual ? nil : .dark)
 		.onAppear {
 			if rememberLogin,
 			   username.isEmpty,
@@ -122,176 +133,101 @@ struct LoginFragment: View {
 	}
 
 	private var header: some View {
-		HStack {
+		HStack(spacing: 6) {
 			if isShowBack {
-				Button {
-					withAnimation {
-						onBackPressed?()
-					}
-				} label: {
-					Image("caret-left")
-						.renderingMode(.template)
-						.resizable()
-						.foregroundStyle(Color.mango9Primary)
-						.frame(width: 25, height: 25)
-						.padding(10)
-				}
-			} else {
-				Color.clear
-					.frame(width: 45, height: 45)
+				Button { onBackPressed?() } label: {
+					Image(systemName: "chevron.left").frame(width: 44, height: 44)
+				}.accessibilityLabel("Back")
 			}
-
 			Spacer()
-
-			NavigationLink {
-				ThirdPartySipAccountLoginFragment(
-					accountLoginViewModel: AccountLoginViewModel()
-				)
-			} label: {
-				Image("gear")
-					.renderingMode(.template)
-					.resizable()
-					.foregroundStyle(Color.mango9Primary)
-					.frame(width: 21, height: 21)
-					.padding(12)
-			}
-			.accessibilityLabel("Configure SIP account manually")
-
+			NavigationLink(isActive: $isShowingManual) {
+				ThirdPartySipAccountLoginFragment(accountLoginViewModel: AccountLoginViewModel())
+			} label: { EmptyView() }
 			Button {
-				withAnimation {
-					isShowHelpFragment = true
-				}
+				settingsPassword = ""; settingsPasswordError = false; settingsUnlocked = false
+				isShowingSettingsGate = true
 			} label: {
-				Image("question")
-					.renderingMode(.template)
-					.resizable()
-					.foregroundStyle(Color.mango9Primary)
-					.frame(width: 20, height: 20)
-					.padding(12)
-			}
+				Image(systemName: "gearshape").font(.system(size: 21)).frame(width: 44, height: 44)
+			}.accessibilityLabel("Connection settings")
+			Button { withAnimation { isShowHelpFragment = true } } label: {
+				Image(systemName: "questionmark.circle").font(.system(size: 21)).frame(width: 44, height: 44)
+			}.accessibilityLabel("Help")
+		}.foregroundStyle(Color.white.opacity(0.85)).padding(.horizontal, 12).padding(.top, 6)
+	}
+
+	private var settingsGate: some View {
+		NavigationView {
+			Form {
+				SecureField("Settings password", text: $settingsPassword)
+					.textInputAutocapitalization(.never).disableAutocorrection(true)
+					.submitLabel(.go).onSubmit(unlockSettings)
+					.accessibilityIdentifier("settings.unlockPassword")
+				if settingsPasswordError {
+					Text("Incorrect settings password").foregroundStyle(Color.red)
+				}
+			}.navigationTitle("Connection settings").navigationBarTitleDisplayMode(.inline)
+				.toolbar {
+					ToolbarItem(placement: .cancellationAction) {
+						Button("Cancel") { isShowingSettingsGate = false }
+					}
+					ToolbarItem(placement: .confirmationAction) {
+						Button("Unlock", action: unlockSettings).disabled(settingsPassword.isEmpty)
+					}
+				}
+		}.navigationViewStyle(.stack).preferredColorScheme(.light).tint(.mango9Primary)
+	}
+
+	private func unlockSettings() {
+		let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+		guard let version, !version.isEmpty,
+			settingsPassword.trimmingCharacters(in: .whitespacesAndNewlines) == version else {
+			settingsPasswordError = true
+			return
 		}
-		.padding(.horizontal, 12)
-		.padding(.top, 8)
+		settingsUnlocked = true
+		isShowingSettingsGate = false
 	}
 
 	private var brandCard: some View {
-		VStack(spacing: 8) {
-			Image("mango9-logo")
-				.resizable()
-				.scaledToFit()
-				.frame(maxWidth: 176, maxHeight: 46)
-
-			Text("Business calling and messaging")
-				.default_text_style_white_600(styleSize: 18)
-				.multilineTextAlignment(.center)
-				.lineLimit(2)
-				.minimumScaleFactor(0.85)
-				.fixedSize(horizontal: false, vertical: true)
-
-			Text("Securely connect this device to your Mango9 account.")
-				.default_text_style_white_600(styleSize: 13)
-				.multilineTextAlignment(.center)
-				.lineLimit(2)
-				.minimumScaleFactor(0.85)
-				.fixedSize(horizontal: false, vertical: true)
-				.opacity(0.85)
-		}
-		.frame(maxWidth: .infinity)
-		.padding(.horizontal, 24)
-		.padding(.vertical, 18)
-		.background(Color.mango9Primary)
-		.cornerRadius(20)
-		.padding(.horizontal, 24)
+		Image("mango9-logo").renderingMode(.template).resizable().scaledToFit().foregroundStyle(Color.white)
+			.frame(width: 190, height: 56).accessibilityLabel("Mango9")
 	}
 
 	private var enrollmentCard: some View {
 		VStack(spacing: 12) {
-			Text("Connect your account")
-				.default_text_style_800(styleSize: 20)
-
-			Text(loginSubtitle)
-				.default_text_style(styleSize: 14)
-				.foregroundStyle(Color.grayMain2c600)
-				.multilineTextAlignment(.center)
-				.lineLimit(3)
-				.fixedSize(horizontal: false, vertical: true)
-
+			Text(loginMode == .password ? "Sign in" : loginMode == .emailRequest ? "Email sign in" : "Check your email")
+				.font(.largeTitle.weight(.bold)).foregroundStyle(Color.white)
+				.padding(.bottom, loginMode == .password ? 18 : 2)
+			if loginMode != .password {
+				Text(loginSubtitle).font(.subheadline).foregroundStyle(Color.white.opacity(0.8))
+					.multilineTextAlignment(.center).padding(.bottom, 8)
+			}
 			Group {
 				switch loginMode {
-				case .password:
-					passwordLoginFields
-				case .emailRequest:
-					emailRequestFields
-				case .emailVerification:
-					emailVerificationFields
+				case .password: passwordLoginFields
+				case .emailRequest: emailRequestFields
+				case .emailVerification: emailVerificationFields
 				}
 			}
-
-			Toggle(isOn: $rememberLogin) {
-				VStack(alignment: .leading, spacing: 2) {
-					Text("Keep me signed in")
-						.default_text_style_600(styleSize: 14)
-					Text("Stored securely on this device. Your password is never saved.")
-						.default_text_style(styleSize: 11)
-						.foregroundStyle(Color.grayMain2c500)
-				}
-			}
-			.toggleStyle(SwitchToggleStyle(tint: Color.mango9Primary))
-
+			Toggle("Keep me signed in", isOn: $rememberLogin)
+				.font(.body).foregroundStyle(Color.white)
+				.toggleStyle(SwitchToggleStyle(tint: Color.white.opacity(0.35)))
+				.frame(minHeight: 44).padding(.top, 6)
 			if let signInError {
-				Text(signInError)
-					.default_text_style(styleSize: 13)
-					.foregroundStyle(Color.red)
+				Text(signInError).font(.footnote).foregroundStyle(Color(red: 1, green: 0.84, blue: 0.87))
 					.multilineTextAlignment(.center)
 			}
-
 			primaryLoginButton
-
-			if loginMode == .password {
-				Button {
-					showEmailLogin()
-				} label: {
-					HStack(spacing: 8) {
-						Image(systemName: "envelope")
-							.font(.system(size: 16, weight: .semibold))
-
-						Text("Use an email code")
-							.default_text_style_600(styleSize: 16)
-					}
-					.foregroundStyle(Color.mango9Primary)
-					.frame(maxWidth: .infinity)
-					.padding(.horizontal, 20)
-					.frame(height: 48)
-					.background(Color.white)
-					.overlay(
-						Capsule()
-							.stroke(Color.mango9Primary, lineWidth: 1.5)
-					)
-				}
-				.buttonStyle(.plain)
-			} else {
-				Button {
-					showPasswordLogin()
-				} label: {
-					HStack(spacing: 6) {
-						Image(systemName: "key")
-						Text("Use password instead")
-					}
-					.font(.system(size: 14, weight: .semibold))
-					.foregroundStyle(Color.mango9Primary)
-					.padding(.vertical, 4)
-				}
-				.buttonStyle(.plain)
-				.disabled(isSigningIn)
-			}
-
-		}
-		.frame(maxWidth: SharedMainViewModel.shared.maxWidth)
-		.padding(20)
-		.background(Color.white)
-		.cornerRadius(20)
-		.shadow(color: Color.black.opacity(0.05), radius: 12, y: 4)
-		.padding(.horizontal, 24)
+			Button {
+				if loginMode == .password { showEmailLogin() } else { showPasswordLogin() }
+			} label: {
+				Label(loginMode == .password ? "Use an email code" : "Use password instead",
+					systemImage: loginMode == .password ? "envelope" : "key")
+					.font(.headline).foregroundStyle(Color.white)
+					.frame(maxWidth: .infinity, minHeight: 52)
+					.overlay(Capsule().stroke(Color.white.opacity(0.8), lineWidth: 1))
+			}.buttonStyle(.plain).disabled(isSigningIn)
+		}.frame(maxWidth: 520).padding(.horizontal, 25)
 	}
 
 	private var loginSubtitle: String {
@@ -307,69 +243,37 @@ struct LoginFragment: View {
 
 	private var passwordLoginFields: some View {
 		Group {
-			TextField("Email or username", text: $username)
-				.textContentType(.username)
-				.textInputAutocapitalization(.never)
-				.autocorrectionDisabled()
-				.padding(.horizontal, 18)
-				.frame(height: 48)
-				.background(Color.gray100)
-				.overlay(
-					RoundedRectangle(cornerRadius: 14)
-						.stroke(Color.gray200, lineWidth: 1)
-				)
-				.cornerRadius(14)
-
+			TextField("Email or username", text: $username, prompt: Text("Email or username").foregroundColor(Color.white.opacity(0.85)))
+				.textContentType(.username).textInputAutocapitalization(.never).disableAutocorrection(true)
+				.submitLabel(.next).focused($focusedField, equals: .username)
+				.onSubmit {
+					focusedField = nil
+					DispatchQueue.main.async { focusedField = .password }
+				}.mango9SignInField()
 			HStack(spacing: 8) {
 				Group {
 					if isPasswordVisible {
-						TextField("Password", text: $password)
+						TextField("Password", text: $password, prompt: Text("Password").foregroundColor(Color.white.opacity(0.85)))
+							.focused($focusedField, equals: .password)
 					} else {
-						SecureField("Password", text: $password)
+						SecureField("Password", text: $password, prompt: Text("Password").foregroundColor(Color.white.opacity(0.85)))
+							.focused($focusedField, equals: .password)
 					}
-				}
-				.textContentType(.password)
-				.textInputAutocapitalization(.never)
-				.autocorrectionDisabled()
-				.onSubmit(signIn)
-
-				Button {
-					isPasswordVisible.toggle()
-				} label: {
-					Image(systemName: isPasswordVisible ? "eye.slash" : "eye")
-						.foregroundStyle(Color.grayMain2c600)
-						.frame(width: 28, height: 28)
-				}
-				.buttonStyle(.plain)
-				.accessibilityLabel(isPasswordVisible ? "Hide password" : "Show password")
-			}
-				.padding(.leading, 18)
-				.padding(.trailing, 12)
-				.frame(height: 48)
-				.background(Color.gray100)
-				.overlay(
-					RoundedRectangle(cornerRadius: 14)
-						.stroke(Color.gray200, lineWidth: 1)
-				)
-				.cornerRadius(14)
+				}.textContentType(.password).textInputAutocapitalization(.never).disableAutocorrection(true)
+					.submitLabel(.go).onSubmit(signIn)
+				Button { isPasswordVisible.toggle() } label: {
+					Image(systemName: isPasswordVisible ? "eye.slash" : "eye").font(.title3)
+						.frame(width: 44, height: 44)
+				}.buttonStyle(.plain).accessibilityLabel(isPasswordVisible ? "Hide password" : "Show password")
+			}.mango9SignInField()
 		}
 	}
 
 	private var emailRequestFields: some View {
-		TextField("Email address", text: $email)
-			.textContentType(.emailAddress)
-			.keyboardType(.emailAddress)
-			.textInputAutocapitalization(.never)
-			.autocorrectionDisabled()
-			.onSubmit(requestEmailCode)
-			.padding(.horizontal, 18)
-			.frame(height: 48)
-			.background(Color.gray100)
-			.overlay(
-				RoundedRectangle(cornerRadius: 14)
-					.stroke(Color.gray200, lineWidth: 1)
-			)
-			.cornerRadius(14)
+		TextField("Email address", text: $email, prompt: Text("Email address").foregroundColor(Color.white.opacity(0.85)))
+			.textContentType(.emailAddress).keyboardType(.emailAddress)
+			.textInputAutocapitalization(.never).disableAutocorrection(true)
+			.onSubmit(requestEmailCode).mango9SignInField()
 	}
 
 	private var emailVerificationFields: some View {
@@ -386,21 +290,14 @@ struct LoginFragment: View {
 						verificationCode = normalizedCode
 					}
 				}
-				.padding(.horizontal, 18)
-				.frame(height: 52)
-				.background(Color.gray100)
-				.overlay(
-					RoundedRectangle(cornerRadius: 14)
-						.stroke(Color.gray200, lineWidth: 1)
-				)
-				.cornerRadius(14)
+				.mango9SignInField()
 
 			HStack {
 				Button("Change email") {
 					showEmailLogin()
 				}
 				.default_text_style_600(styleSize: 13)
-				.foregroundStyle(Color.mango9Primary)
+				.foregroundStyle(Color.white)
 				.buttonStyle(.plain)
 				.disabled(isSigningIn)
 
@@ -422,23 +319,12 @@ struct LoginFragment: View {
 	private var primaryLoginButton: some View {
 		Button(action: primaryLoginAction) {
 			HStack {
-				if isSigningIn {
-					ProgressView()
-						.progressViewStyle(CircularProgressViewStyle(tint: Color.white))
-				}
-
-				Text(primaryButtonTitle)
-					.default_text_style_white_600(styleSize: 18)
-			}
-			.frame(maxWidth: .infinity)
-			.padding(.horizontal, 20)
-			.frame(height: 50)
-			.background(Color.mango9Primary)
-			.cornerRadius(60)
-		}
-		.buttonStyle(.plain)
-		.allowsHitTesting(canPerformPrimaryAction)
-		.opacity(canPerformPrimaryAction ? 1 : 0.65)
+				if isSigningIn { ProgressView().tint(signInAccent) }
+				Text(primaryButtonTitle).font(.title3.weight(.bold))
+			}.foregroundStyle(signInAccent).frame(maxWidth: .infinity, minHeight: 52)
+				.background(Color.white)
+				.clipShape(Capsule())
+		}.buttonStyle(.plain).disabled(!canPerformPrimaryAction).opacity(isSigningIn ? 0.75 : 1)
 	}
 
 	private var primaryButtonTitle: String {
@@ -600,6 +486,20 @@ struct LoginFragment: View {
 				resendCountdown -= 1
 			}
 		}
+	}
+}
+
+private extension View {
+	@ViewBuilder func mango9SignInScroll() -> some View {
+		if #available(iOS 16.0, *) { self.scrollDismissesKeyboard(.interactively) } else { self }
+	}
+
+	func mango9SignInField() -> some View {
+		self.font(.body).foregroundStyle(Color.white).tint(Color.white)
+			.padding(.horizontal, 18).frame(minHeight: 56)
+			.background(Color.white.opacity(0.10))
+			.clipShape(RoundedRectangle(cornerRadius: 14))
+			.overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.4), lineWidth: 0.8))
 	}
 }
 

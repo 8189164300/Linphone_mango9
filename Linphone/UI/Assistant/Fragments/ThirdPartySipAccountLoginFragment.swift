@@ -123,15 +123,16 @@ struct ThirdPartySipAccountLoginFragment: View {
 						.padding(.all, 10)
 						.onTapGesture {
 							withAnimation {
-								accountLoginViewModel.domain = Mango9Configuration.sipProxyHost
+								accountLoginViewModel.domain = ""
 								accountLoginViewModel.transportType = "TLS"
 								dismiss()
 							}
 						}
+						.accessibilityIdentifier("connectionSettings.back").accessibilityLabel("Back").accessibilityAddTraits(.isButton)
 					Spacer()
 				}
 				
-				Text("Manual SIP account")
+				Text("Connection settings")
 					.default_text_style_800(styleSize: 20)
 			}
 			.frame(width: geometry.size.width)
@@ -203,7 +204,7 @@ struct ThirdPartySipAccountLoginFragment: View {
 					.default_text_style_700(styleSize: 15)
 					.padding(.bottom, -5)
 				
-				TextField(Mango9Configuration.sipProxyHost, text: $accountLoginViewModel.domain)
+				TextField("Server domain", text: $accountLoginViewModel.domain)
 					.default_text_style(styleSize: 15)
 					.disableAutocorrection(true)
 					.autocapitalization(.none)

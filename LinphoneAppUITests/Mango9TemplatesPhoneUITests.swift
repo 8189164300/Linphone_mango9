@@ -43,3 +43,114 @@ final class Mango9TemplatesPhoneUITests: XCTestCase {
     }
     private func capture(_ name: String, _ app: XCUIApplication) { let item = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); item.name = name; item.lifetime = .keepAlways; add(item) }
 }
+
+/// Physical-device presentation checks. No messages, credentials or templates are submitted.
+final class Mango9ChatDesignPhoneUITests: XCTestCase {
+    func testLoginControlsAndRotationWithoutSigningOut() throws {
+        continueAfterFailure = false
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication(); app.terminate(); app.launch()
+        XCUIDevice.shared.orientation = .portrait
+        let username = app.textFields["Email or username"].firstMatch
+        let menu = app.buttons["main.menu"]
+        let wasSignedIn = !username.waitForExistence(timeout: 5) && menu.waitForExistence(timeout: 10)
+        if wasSignedIn {
+            menu.tap()
+            let add = app.staticTexts["Add account"].firstMatch
+            XCTAssertTrue(add.waitForExistence(timeout: 5)); add.tap()
+        }
+        XCTAssertTrue(username.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.secureTextFields["Password"].exists)
+        capture(app, "Sign in portrait")
+        app.buttons["Show password"].tap()
+        XCTAssertTrue(app.textFields["Password"].exists)
+        app.buttons["Hide password"].tap()
+        app.buttons["Use an email code"].tap()
+        XCTAssertTrue(app.textFields["Email address"].exists)
+        app.buttons["Use password instead"].tap()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let rotated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.frame.width > app.frame.height && app.frame.contains(username.frame)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 15), .completed)
+        username.tap()
+        username.typeText("layout-check")
+        let next = app.keyboards.buttons.matching(NSPredicate(format: "label ==[c] %@", "Next")).firstMatch
+        XCTAssertTrue(next.waitForExistence(timeout: 5)); next.tap()
+        let password = app.secureTextFields["Password"].firstMatch
+        let reachable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.keyboards.firstMatch.exists && password.isHittable && app.frame.contains(password.frame)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [reachable], timeout: 10), .completed)
+        capture(app, "Sign in landscape with keyboard")
+        app.terminate(); app.launch()
+        if wasSignedIn { XCTAssertTrue(app.buttons["Conversations"].firstMatch.waitForExistence(timeout: 20)) }
+    }
+
+    func testExistingGroupCardsAndRotation() throws {
+        continueAfterFailure = false
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication(); app.activate()
+        XCUIDevice.shared.orientation = .portrait
+        let composer = app.descendants(matching: .any)["chat.composer"].firstMatch
+        if !composer.exists {
+            let chats = app.buttons["Conversations"].firstMatch
+            if !chats.waitForExistence(timeout: 10) && app.textFields["Email or username"].exists {
+                throw XCTSkip("Sign in on this phone to check existing group conversations")
+            }
+            XCTAssertTrue(chats.exists); chats.tap()
+            let team = app.buttons["conversations.tab.team"]
+            XCTAssertTrue(team.waitForExistence(timeout: 10)); team.tap()
+            let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS[c] %@", "team.thread.", "Test Group")).firstMatch
+            guard row.waitForExistence(timeout: 20) else { throw XCTSkip("This device needs an existing Test Group conversation") }
+            row.tap()
+        }
+        guard app.buttons["chat.renameGroup"].waitForExistence(timeout: 10) else {
+            throw XCTSkip("Open a Team group on the phone before running this check")
+        }
+        XCTAssertTrue(composer.waitForExistence(timeout: 15))
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft, .landscapeRight] {
+            XCUIDevice.shared.orientation = orientation
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                composer.exists && (app.frame.width > app.frame.height) == (orientation != .portrait) && app.frame.contains(composer.frame)
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 12), .completed)
+            capture(app, "Team Chat orientation \(orientation.rawValue)")
+        }
+    }
+
+    func testConnectionSettingsPasswordAndBack() throws {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication(); app.terminate(); app.launch()
+        if app.buttons["main.menu"].waitForExistence(timeout: 5) {
+            app.buttons["main.menu"].tap()
+            app.staticTexts["Add account"].firstMatch.tap()
+        }
+        let gear = app.buttons["Connection settings"]
+        XCTAssertTrue(gear.waitForExistence(timeout: 10)); gear.tap()
+        let password = app.secureTextFields["settings.unlockPassword"]
+        XCTAssertTrue(password.waitForExistence(timeout: 5)); password.tap(); password.typeText("wrong")
+        app.buttons["Unlock"].tap()
+        XCTAssertTrue(app.staticTexts["Incorrect settings password"].exists)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(gear.waitForExistence(timeout: 5)); gear.tap()
+        XCTAssertTrue(password.waitForExistence(timeout: 5)); password.tap(); password.typeText("6.2.19")
+        app.buttons["Unlock"].tap()
+        let domain = app.textFields["Server domain"].firstMatch
+        XCTAssertTrue(domain.waitForExistence(timeout: 10))
+        XCTAssertTrue((domain.value as? String).map { $0.isEmpty || $0 == "Server domain" } ?? true)
+        XCTAssertFalse(app.staticTexts["proxy.mango9.com"].exists)
+        capture(app, "Connection settings without a prefilled server")
+        let back = app.buttons["connectionSettings.back"].firstMatch
+        XCTAssertTrue(back.exists); back.tap()
+        XCTAssertTrue(gear.waitForExistence(timeout: 5)); gear.tap()
+        XCTAssertTrue(password.waitForExistence(timeout: 5), "The gate must lock again after leaving settings")
+        app.buttons["Cancel"].tap()
+    }
+
+    private func capture(_ app: XCUIApplication, _ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+}

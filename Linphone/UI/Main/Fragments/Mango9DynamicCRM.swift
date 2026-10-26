@@ -2542,8 +2542,9 @@ struct Mango9ChatFragment: View {
 
 	private var messageList: some View {
 		ScrollViewReader { proxy in
+			let messages = visibleMessages
 			ScrollView {
-				LazyVStack(spacing: 8) {
+				LazyVStack(spacing: 12) {
 					if isDirectUserBlocked {
 						Label(
 							"This user is blocked. Their messages are hidden.",
@@ -2570,14 +2571,24 @@ struct Mango9ChatFragment: View {
 							.foregroundStyle(Color.grayMain2c500)
 							.padding(.top, 36)
 					}
-					ForEach(visibleMessages) { message in
+					ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+						let previous = index > 0 ? messages[index - 1] : nil
+						let startsDay = !Mango9TeamMessageLayout.sameDay(message.time, previous?.time)
+						let startsSender = Mango9TeamMessageLayout.startsSender(message, after: previous)
+						let dayHeading = Mango9TeamMessageLayout.dayLabel(message.time)
+						if startsDay && !dayHeading.isEmpty {
+							Text(dayHeading)
+								.font(.subheadline).foregroundStyle(Color.secondary)
+								.frame(maxWidth: .infinity).padding(.vertical, 12)
+						}
 						Mango9ChatBubble(
 							message: message,
 							isOutgoing: message.fromUserId == store.currentUserId,
-							senderName: room?.isDirect == false
+							senderName: room?.isDirect == false && startsSender
 								? store.userName(message.fromUserId)
 								: nil
 						)
+						.padding(.top, startsSender && !startsDay ? 10 : 0)
 						.id(message.id)
 						.mango9MessageActions(enabled: !selectionMode) { teamActions(message) }
 						.mango9MessageSelection(active: selectionMode, selected: selectedIDs.contains(message.id)) {
@@ -2587,9 +2598,10 @@ struct Mango9ChatFragment: View {
 					Color.clear.frame(height: 1).id("chat.latest")
 						.onAppear { atMessageBottom = true }.onDisappear { atMessageBottom = false }
 				}
-				.padding(.horizontal, 12)
+				.padding(.horizontal, 18)
 				.padding(.vertical, 14)
 			}
+			.background(Color(uiColor: .systemGroupedBackground))
 			.onChange(of: store.messages.last?.id) { _ in
 				guard !store.messages.isEmpty, !initiallyScrolled || atMessageBottom else { return }
 				// Open at the latest message without flying through the entire history.
@@ -2844,64 +2856,66 @@ struct Mango9ChatFragment: View {
 	}
 }
 
+/// Shared presentation decisions use local calendar days without changing message timestamps.
+@MainActor enum Mango9TeamMessageLayout {
+	static func sameDay(_ value: String, _ previous: String?) -> Bool {
+		guard let previous, let current = Mango9SMSConversationAdapter.date(from: value),
+			let prior = Mango9SMSConversationAdapter.date(from: previous) else { return false }
+		return Calendar.autoupdatingCurrent.isDate(current, inSameDayAs: prior)
+	}
+	static func startsSender(_ message: Mango9ChatMessage, after previous: Mango9ChatMessage?) -> Bool {
+		guard let previous, previous.fromUserId == message.fromUserId, sameDay(message.time, previous.time),
+			let current = Mango9SMSConversationAdapter.date(from: message.time),
+			let prior = Mango9SMSConversationAdapter.date(from: previous.time) else { return true }
+		return abs(current.timeIntervalSince(prior)) > 5 * 60
+	}
+	static func dayLabel(_ value: String) -> String {
+		guard let date = Mango9SMSConversationAdapter.date(from: value) else { return "" }
+		return date.formatted(.dateTime.month(.wide).day().year())
+	}
+	static func timeLabel(_ value: String) -> String {
+		guard let date = Mango9SMSConversationAdapter.date(from: value) else { return "" }
+		return date.formatted(date: .omitted, time: .shortened)
+	}
+}
+
 private struct Mango9ChatBubble: View {
 	let message: Mango9ChatMessage
 	let isOutgoing: Bool
 	let senderName: String?
 
 	var body: some View {
-		HStack {
-			if isOutgoing {
-				Spacer(minLength: 52)
-			}
-			VStack(alignment: .trailing, spacing: 4) {
-			VStack(alignment: .leading, spacing: 4) {
+		HStack(alignment: .top, spacing: 0) {
+			if isOutgoing { Spacer(minLength: 44) }
+			VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 5) {
 				if let senderName, !isOutgoing {
-					Text(senderName)
-						.font(.caption)
-						.foregroundStyle(Color.grayMain2c500)
-						.padding(.horizontal, 6)
+					Text(senderName).font(.subheadline.weight(.semibold)).foregroundStyle(Color.secondary)
+						.padding(.bottom, 3)
 				}
-
-				VStack(alignment: .leading, spacing: 8) {
-					ForEach(Mango9ChatMedia.parse(message.files)) { media in
-						Mango9ChatMediaView(
-							media: media,
-							isOutgoing: isOutgoing
-						)
+				VStack(alignment: .trailing, spacing: 5) {
+					VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 8) {
+						ForEach(Mango9ChatMedia.parse(message.files)) { media in
+							Mango9ChatMediaView(media: media, isOutgoing: isOutgoing)
+						}
+						if !message.text.isEmpty {
+							Text(message.text).font(.body)
+								.foregroundStyle(isOutgoing ? Color.white : Color.primary)
+								.multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+								.padding(.horizontal, 13).padding(.vertical, 9)
+								.background(isOutgoing ? Color.orangeMain500 : Color(uiColor: .tertiarySystemFill))
+								.clipShape(RoundedRectangle(cornerRadius: 20))
+						}
 					}
-					if !message.text.isEmpty {
-						Text(message.text)
-							.font(.custom("NotoSans-Regular", size: 14))
-							.foregroundStyle(isOutgoing ? Color.white : Color.primary)
-							.multilineTextAlignment(.leading)
-							.lineLimit(nil)
-							.fixedSize(horizontal: false, vertical: true)
-							.layoutPriority(1)
-					}
+					Mango9ReactionBadges(state: message.reactionState)
+					HStack(spacing: 4) {
+						Text(Mango9TeamMessageLayout.timeLabel(message.time))
+						if isOutgoing { Text(message.status >= 3 ? "Read" : message.status >= 2 ? "Delivered" : "Sent") }
+					}.font(.caption).foregroundStyle(Color.secondary)
 				}
-				.layoutPriority(1)
-				.padding(.horizontal, 13)
-				.padding(.vertical, 9)
-				.background(isOutgoing ? Color.orangeMain500 : Color(uiColor: .secondarySystemBackground))
-				.clipShape(RoundedRectangle(cornerRadius: 20))
-				Mango9ReactionBadges(state: message.reactionState)
-			}
-				HStack(spacing: 4) {
-					Text(Mango9ChatDateText.display(message.time, inConversation: true))
-					if isOutgoing {
-						Text(message.status >= 3 ? "Read" : (message.status >= 2 ? "Delivered" : "Sent"))
-					}
-				}.font(.custom("NotoSans-Light", size: 12)).foregroundStyle(Color.grayMain2c500)
-			}
-			.layoutPriority(1)
-			if !isOutgoing {
-				Spacer(minLength: 52)
-			}
-		}
-		.frame(maxWidth: .infinity)
+			}.fixedSize(horizontal: false, vertical: true).layoutPriority(1)
+			if !isOutgoing { Spacer(minLength: 44) }
+		}.frame(maxWidth: .infinity, alignment: isOutgoing ? .trailing : .leading)
 	}
-
 }
 
 struct Mango9ChatMedia: Identifiable {
@@ -2993,9 +3007,10 @@ private struct Mango9ChatMediaView: View {
 			Mango9RemoteAudioPlayer(
 				audioURL: media.url,
 				name: media.name,
-				isOutgoing: isOutgoing
+				isOutgoing: isOutgoing,
+				cardStyle: true
 			)
-			.frame(width: 220)
+			.frame(maxWidth: 264)
 		case .file:
 			attachmentLink(icon: "doc.fill", title: media.name)
 		}
@@ -3003,17 +3018,24 @@ private struct Mango9ChatMediaView: View {
 
 	private func attachmentLink(icon: String, title: String) -> some View {
 		Link(destination: media.url) {
-			HStack(spacing: 8) {
-				Image(systemName: icon)
-					.foregroundStyle(Color.orangeMain500)
-				Text(title)
-					.font(.system(size: 12, weight: .semibold))
-					.foregroundStyle(Color.white)
-					.lineLimit(2)
-			}
-			.frame(maxWidth: 220, alignment: .leading)
-		}
+			HStack(spacing: 12) {
+				Image(systemName: icon).font(.system(size: 25)).foregroundStyle(Color.orangeMain500)
+					.frame(width: 44, height: 44).background(Color.orangeMain500.opacity(0.08))
+					.clipShape(RoundedRectangle(cornerRadius: 9))
+				VStack(alignment: .leading, spacing: 4) {
+					Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Color.primary)
+						.lineLimit(2).truncationMode(.middle)
+					Text(media.mimeType == "application/pdf" || media.name.lowercased().hasSuffix(".pdf") ? "PDF document" : "Attachment")
+						.font(.caption).foregroundStyle(Color.secondary)
+				}
+				Spacer(minLength: 0)
+			}.padding(11).frame(maxWidth: 264, alignment: .leading)
+				.background(Color(uiColor: .secondarySystemGroupedBackground))
+				.clipShape(RoundedRectangle(cornerRadius: 12))
+				.overlay(RoundedRectangle(cornerRadius: 12).stroke(Color(uiColor: .separator).opacity(0.35), lineWidth: 0.75))
+		}.buttonStyle(.plain)
 	}
+
 }
 
 private struct Mango9VideoAttachmentView: View {

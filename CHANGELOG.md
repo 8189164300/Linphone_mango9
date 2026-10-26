@@ -1,6 +1,14 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## [Mango9 6.2.19 (58)] - 2026-10-26
+
+### Changed
+- Connection settings require the current app-version password and no longer prefill the server hostname.
+- Refined sign-in with the Mango9 blue background and focused password/email-code controls.
+- Team Chat groups messages by local day and sender, with compact time labels.
+- File and voice attachments use readable cards while retaining existing message actions.
+
 ## [Mango9 6.2.18 (52)] - 2026-10-19
 
 ### Fixed
