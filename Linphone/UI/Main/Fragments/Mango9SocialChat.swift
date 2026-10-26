@@ -839,10 +839,13 @@ struct Mango9SocialChatList: View {
 	}
 	var body: some View {
 		Group {
-			if let store { SocialInboxListContent(store: store, search: searchText) }
+			if let store {
+				SocialInboxListContent(store: store, search: searchText)
+					.id(ObjectIdentifier(store))
+			}
 			else { Text("Connect your CRM account to view Social Chat.").padding() }
 		}.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-		.task { if store == nil { reset() } }
+		.task { reset() }
 		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in reset() }
 	}
 	private func reset() {
