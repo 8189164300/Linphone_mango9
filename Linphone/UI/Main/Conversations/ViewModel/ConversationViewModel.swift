@@ -4330,6 +4330,7 @@ class VoiceRecordPlayerManager {
 	}
 	
 	func startVoiceRecordPlayer() {
+		guard core.callsNb == 0 else { return }
 		if voiceRecordAudioFocusRequest == nil {
 			voiceRecordAudioFocusRequest = AVAudioSession.sharedInstance()
 			if let request = voiceRecordAudioFocusRequest {
@@ -4391,7 +4392,7 @@ class VoiceRecordPlayerManager {
 		}
 		
 		if let request = voiceRecordAudioFocusRequest {
-			try? request.setActive(false)
+			if core.callsNb == 0 { try? request.setActive(false, options: .notifyOthersOnDeactivation) }
 			voiceRecordAudioFocusRequest = nil
 		}
 	}
@@ -4412,6 +4413,11 @@ class VoiceRecordPlayerManager {
 	}
 	
 	func getSpeakerSoundCard(core: Core) -> String? {
+		// An external route belongs to the OS/user. Otherwise voice replay uses
+		// the built-in loudspeaker, including the legacy SIP conversation player.
+		if AVAudioSession.sharedInstance().currentRoute.outputs.contains(where: {
+			$0.portType != .builtInSpeaker && $0.portType != .builtInReceiver
+		}) { return nil }
 		var speakerCard: String? = nil
 		var earpieceCard: String? = nil
 		core.audioDevices.forEach { device in

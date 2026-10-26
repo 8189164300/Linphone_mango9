@@ -369,6 +369,7 @@ struct Mango9LiveChatConversation: View {
 	@State private var showDetails = false
 	@State private var localError: String?
 	@State private var previewURL: URL?
+	@State private var voicePreviewOwner = UUID()
 	@State private var preparingFile = false
 	@State private var downloadedDirectories: [URL] = []
 	@State private var downloadedFiles: [String: URL] = [:]
@@ -447,6 +448,7 @@ struct Mango9LiveChatConversation: View {
    }
   }
 		.quickLookPreview($previewURL)
+		.modifier(Mango9VoicePreviewLifecycle(owner: voicePreviewOwner, url: $previewURL))
 		.task(id: phase == .active) {
 			guard phase == .active else { return }
 			await store.load(); await store.availability()
@@ -616,9 +618,7 @@ struct Mango9LiveChatConversation: View {
   do {
    let url = try await downloadFile(file)
    if (file["mime"] as? String ?? "").hasPrefix("audio/") {
-    guard TelecomManager.shared.callkitAudioSessionActivated != true else { throw Mango9LiveInputFailure(message: "Finish the call before playing this voice message.") }
-    try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-    try AVAudioSession.sharedInstance().setActive(true)
+    try Mango9VoicePlaybackSession.shared.acquire(voicePreviewOwner) { previewURL = nil }
    }
    previewURL = url
   } catch { localError = error.localizedDescription }

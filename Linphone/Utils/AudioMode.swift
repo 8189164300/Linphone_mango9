@@ -41,8 +41,7 @@ func configureAudio(_ mode: AudioMode) throws {
 	case .voiceMessage:
 		try session.setCategory(
 			.playback,
-			mode: .spokenAudio,
-			options: [.allowBluetoothHFP, .mixWithOthers]
+			mode: .default
 		)
 		
 	case .recording:

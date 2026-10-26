@@ -1062,6 +1062,7 @@ struct Mango9SocialConversation: View {
 	@State private var forwardingAttachments: [Attachment] = []
 	@State private var preparingMedia = false
 	@State private var previewURL: URL?
+	@State private var voicePreviewOwner = UUID()
 	@State private var localError: String?
 	@ObservedObject private var moderation = Mango9ChatModerationStore.shared
 	init(thread: Mango9SocialThread, session: Mango9Session, api: Mango9MessagingAPI? = nil) {
@@ -1166,6 +1167,7 @@ struct Mango9SocialConversation: View {
 		.navigationBarHidden(false)
 		.mango9Attachments(request: $attachmentRequest, selected: $store.selectedMedia, limit: 1, error: { localError = $0 })
 		.quickLookPreview($previewURL)
+		.modifier(Mango9VoicePreviewLifecycle(owner: voicePreviewOwner, url: $previewURL))
 		#if DEBUG && targetEnvironment(simulator)
 		.overlay(alignment: .topLeading) {
 			if ProcessInfo.processInfo.environment["UITEST_SOCIAL_ATTACHMENT"] == "1" {
@@ -1242,6 +1244,9 @@ struct Mango9SocialConversation: View {
 		do {
 			let attachment = try await store.api.socialAttachment(session: store.session, thread: original.id, message: message.id, index: media.index)
 			guard Mango9SessionStore.isActive(store.session) else { return }
+			if media.type == "audio" || attachment.type == .audio || attachment.type == .voiceRecording {
+				try Mango9VoicePlaybackSession.shared.acquire(voicePreviewOwner) { previewURL = nil }
+			}
 			previewURL = attachment.full
 		} catch { if Mango9SessionStore.isActive(store.session) { localError = error.localizedDescription } }
 	}

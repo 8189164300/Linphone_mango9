@@ -1649,6 +1649,72 @@ struct CachedAsyncImage<Placeholder: View>: View {
 	}
 }
 
+/// A single media lease prevents an old bubble from deactivating a newer player.
+/// Playback uses the media route (loudspeaker or connected headphones), never
+/// overrides CallKit's route, and never changes the user's volume.
+@MainActor
+final class Mango9VoicePlaybackSession {
+	static let shared = Mango9VoicePlaybackSession()
+	private var owner: UUID?
+	private var stop: (() -> Void)?
+	func owns(_ id: UUID) -> Bool { owner == id }
+	func acquire(_ id: UUID, stop: @escaping () -> Void) throws {
+		guard !TelecomManager.shared.callInProgress,
+			TelecomManager.shared.callkitAudioSessionActivated != true else {
+			throw NSError(domain: "Mango9VoicePlayback", code: 1,
+				userInfo: [NSLocalizedDescriptionKey: "Finish your call before playing a voice message."])
+		}
+		if owner != id {
+			let previous = self.stop
+			owner = nil; self.stop = nil
+			previous?()
+		}
+		let session = AVAudioSession.sharedInstance()
+		do {
+			try session.setCategory(.playback, mode: .default)
+			try session.setActive(true)
+			owner = id; self.stop = stop
+		} catch {
+			try? session.setActive(false, options: .notifyOthersOnDeactivation)
+			throw error
+		}
+	}
+	func release(_ id: UUID) {
+		guard owner == id else { return }
+		owner = nil; stop = nil
+		guard !TelecomManager.shared.callInProgress,
+			TelecomManager.shared.callkitAudioSessionActivated != true else { return }
+		try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+	}
+}
+
+/// Native audio previews share the same routing and interruption rules as
+/// inline bubbles. Dismissing a preview must not release another player's lease.
+struct Mango9VoicePreviewLifecycle: ViewModifier {
+	let owner: UUID
+	@Binding var url: URL?
+	@Environment(\.scenePhase) private var phase
+	private func stop() {
+		guard Mango9VoicePlaybackSession.shared.owns(owner) else { return }
+		url = nil
+		Mango9VoicePlaybackSession.shared.release(owner)
+	}
+	func body(content: Content) -> some View {
+		content
+			.onChange(of: url) { if $0 == nil { Mango9VoicePlaybackSession.shared.release(owner) } }
+			.onChange(of: phase) { if $0 != .active { stop() } }
+			.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in stop() }
+			.onReceive(TelecomManager.shared.$callInProgress) { if $0 { stop() } }
+			.onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { note in
+				if (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue { stop() }
+			}
+			.onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { note in
+				if (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { stop() }
+			}
+	}
+}
+
+@MainActor
 struct Mango9RemoteAudioPlayer: View {
 	let audioURL: URL
 	let name: String
@@ -1661,6 +1727,9 @@ struct Mango9RemoteAudioPlayer: View {
 	@State private var currentTime: Double = 0
 	@State private var duration: Double = 0
 	@State private var timeObserver: Any?
+	@State private var playbackOwner = UUID()
+	@State private var playbackError: String?
+	@Environment(\.scenePhase) private var scenePhase
 
 	init(attachment: Attachment, isOutgoing: Bool) {
 		self.init(
@@ -1694,6 +1763,10 @@ struct Mango9RemoteAudioPlayer: View {
 			}
 			.buttonStyle(.plain)
 			.accessibilityLabel(isPlaying ? "Pause voice message" : "Play voice message")
+			.accessibilityIdentifier("voice.playback.control")
+			.accessibilityValue(isPlaying ? AVAudioSession.sharedInstance().currentRoute.outputs.map {
+				$0.portType == .builtInSpeaker ? "Loudspeaker" : $0.portName
+			}.joined(separator: ", ") : "Paused")
 
 			VStack(alignment: .leading, spacing: 4) {
 				Text(name.isEmpty || (cardStyle && name.lowercased().hasPrefix("mango9-voice-")) ? "Voice message" : name)
@@ -1729,13 +1802,26 @@ struct Mango9RemoteAudioPlayer: View {
 		.overlay(RoundedRectangle(cornerRadius: 14).stroke(cardStyle ? Color(uiColor: .separator).opacity(0.35) : .clear, lineWidth: 0.75))
 		.onAppear(perform: preparePlayer)
 		.onDisappear(perform: stopObserving)
+		.onChange(of: scenePhase) { phase in if phase != .active { pausePlayback() } }
+		.onReceive(TelecomManager.shared.$callInProgress) { active in
+			if active { pausePlayback() }
+		}
+		.onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { note in
+			if (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue { pausePlayback() }
+		}
+		.onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { note in
+			if (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { pausePlayback() }
+		}
+		.alert("Voice message", isPresented: Binding(get: { playbackError != nil }, set: { if !$0 { playbackError = nil } })) {
+			Button("OK") { playbackError = nil }
+		} message: { Text(playbackError ?? "") }
 		.onReceive(
 			NotificationCenter.default.publisher(
 				for: AVPlayerItem.didPlayToEndTimeNotification,
 				object: player.currentItem
 			)
 		) { _ in
-			isPlaying = false
+			pausePlayback()
 			currentTime = 0
 			player.seek(to: .zero)
 		}
@@ -1743,11 +1829,23 @@ struct Mango9RemoteAudioPlayer: View {
 
 	private func togglePlayback() {
 		if isPlaying {
-			player.pause()
+			pausePlayback()
 		} else {
-			player.play()
+			do {
+				try Mango9VoicePlaybackSession.shared.acquire(playbackOwner, stop: pausePlayback)
+				player.play()
+				isPlaying = true
+			} catch {
+				playbackError = (error as NSError).domain == "Mango9VoicePlayback"
+					? error.localizedDescription : "Voice playback is unavailable. Please try again."
+			}
 		}
-		isPlaying.toggle()
+	}
+
+	private func pausePlayback() {
+		player.pause()
+		isPlaying = false
+		Mango9VoicePlaybackSession.shared.release(playbackOwner)
 	}
 
 	private func preparePlayer() {
@@ -1770,8 +1868,7 @@ struct Mango9RemoteAudioPlayer: View {
 	}
 
 	private func stopObserving() {
-		player.pause()
-		isPlaying = false
+		pausePlayback()
 		if let timeObserver {
 			player.removeTimeObserver(timeObserver)
 			self.timeObserver = nil

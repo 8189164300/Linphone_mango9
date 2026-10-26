@@ -46,6 +46,30 @@ final class Mango9TemplatesPhoneUITests: XCTestCase {
 
 /// Physical-device presentation checks. No messages, credentials or templates are submitted.
 final class Mango9ChatDesignPhoneUITests: XCTestCase {
+    func testExistingGroupVoiceUsesLoudspeaker() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.activate()
+        XCUIDevice.shared.orientation = .portrait
+        if !app.buttons["chat.renameGroup"].exists {
+            let chats = app.buttons["Conversations"].firstMatch
+            guard chats.waitForExistence(timeout: 10) else { throw XCTSkip("Open a signed-in Team group on the phone") }
+            chats.tap()
+            let team = app.buttons["conversations.tab.team"]
+            XCTAssertTrue(team.waitForExistence(timeout: 10)); team.tap()
+            let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS[c] %@", "team.thread.", "Test Group")).firstMatch
+            guard row.waitForExistence(timeout: 20) else { throw XCTSkip("This account needs an existing Test Group") }
+            row.tap()
+        }
+        let play = app.buttons["voice.playback.control"].firstMatch
+        guard play.waitForExistence(timeout: 10), play.isHittable else { throw XCTSkip("Scroll an existing voice message into view") }
+        play.tap()
+        defer { if play.exists && play.isHittable && play.label == "Pause voice message" { play.tap() } }
+        let routed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            play.exists && play.label == "Pause voice message" && (play.value as? String) == "Loudspeaker"
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [routed], timeout: 5), .completed)
+    }
+
     func testLoginControlsAndRotationWithoutSigningOut() throws {
         continueAfterFailure = false
         defer { XCUIDevice.shared.orientation = .portrait }

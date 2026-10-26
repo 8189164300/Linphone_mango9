@@ -1058,10 +1058,14 @@ final class Mango9ChatStore: ObservableObject {
 
 	func groupTitle(_ room: Mango9ChatRoom) -> String {
 		if !room.groupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return room.groupName }
-		let names = room.userIds.compactMap { userId in
+		let names = humanMemberIds(room).compactMap { userId in
 			users.first(where: { $0.id == userId })?.name
 		}
 		return names.isEmpty ? "Team group" : names.joined(separator: ", ")
+	}
+
+	func humanMemberIds(_ room: Mango9ChatRoom) -> [Int] {
+		room.userIds.filter { id in users.first(where: { $0.id == id })?.isSystem != true }
 	}
 
 	func userName(_ userId: Int) -> String {
@@ -1708,7 +1712,10 @@ final class Mango9ChatStore: ObservableObject {
 			id: id,
 			name: (dictionary["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? fallback,
 			avatar: dictionary["avatar"] as? String ?? "",
-			category: dictionary["category"] as? String ?? ""
+			category: dictionary["category"] as? String ?? "",
+			role: dictionary["role"] as? String ?? dictionary["agentType"] as? String ?? dictionary["agent_type"] as? String ?? "",
+			systemAccount: dictionary["isSystem"] as? Bool ?? false,
+			groupEligible: dictionary["canJoinGroups"] as? Bool ?? true
 		)
 	}
 
@@ -2054,12 +2061,13 @@ struct Mango9TeamChatListFragment: View {
 	private var visibleUsers: [Mango9ChatUser] {
 		let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 		let users = store.users.filter { user in
+			guard !user.isSystem else { return false }
 			guard let room = store.roomPreview(for: user.id) else { return true }
 			return !conversationVisibility.isHidden(room.id, channel: .team)
 		}
 		let filteredUsers = query.isEmpty ? users : users.filter { user in
 			user.name.localizedCaseInsensitiveContains(query)
-				|| user.category.localizedCaseInsensitiveContains(query)
+				|| user.roleLabel.localizedCaseInsensitiveContains(query)
 				|| (store.roomPreview(for: user.id)?.lastMessage
 					.localizedCaseInsensitiveContains(query) ?? false)
 		}
@@ -2114,15 +2122,13 @@ private struct Mango9TeamChatRow: View {
 				Text(user.name)
 					.default_text_style_700(styleSize: 14)
 					.lineLimit(1)
+				Text(user.roleLabel + (store.isOnline(user.id) ? " · Online" : ""))
+					.font(.system(size: 11)).foregroundStyle(Color.grayMain2c500)
 				if let room = store.roomPreview(for: user.id), !room.lastMessage.isEmpty {
 					Text(room.lastMessage)
 						.default_text_style(styleSize: 12)
 						.foregroundStyle(Color.grayMain2c500)
 						.lineLimit(1)
-				} else {
-					Text(store.isOnline(user.id) ? "Online" : user.category.capitalized)
-						.default_text_style(styleSize: 12)
-						.foregroundStyle(Color.grayMain2c500)
 				}
 			}
 
@@ -2171,7 +2177,7 @@ private struct Mango9GroupChatRow: View {
 				Text(store.groupTitle(room))
 					.default_text_style_700(styleSize: 14)
 					.lineLimit(1)
-				Text(room.lastMessage.isEmpty ? "\(room.userIds.count + 1) members" : room.lastMessage)
+				Text(room.lastMessage.isEmpty ? "\(store.humanMemberIds(room).count + 1) members" : room.lastMessage)
 					.default_text_style(styleSize: 12)
 					.foregroundStyle(Color.grayMain2c500)
 					.lineLimit(1)
@@ -2720,19 +2726,20 @@ struct Mango9ChatFragment: View {
 		if let user {
 			return store.isTyping(user.id)
 				? "\(user.name) is typing…"
-				: (store.isOnline(user.id) ? "Online" : "Offline")
+				: user.roleLabel + (store.isOnline(user.id) ? " · Online" : " · Offline")
 		}
 		guard let room else {
 			return "Offline"
 		}
-		let typingNames = room.userIds
+		let memberIds = store.humanMemberIds(room)
+		let typingNames = memberIds
 			.filter(store.isTyping)
 			.map(store.userName)
 		if !typingNames.isEmpty {
 			return "\(typingNames.joined(separator: ", ")) typing…"
 		}
-		let online = room.userIds.filter(store.isOnline).count
-		return "\(room.userIds.count + 1) members · \(online) online"
+		let online = memberIds.filter(store.isOnline).count
+		return "\(memberIds.count + 1) members · \(online) online"
 	}
 
 	private var emptyPrompt: String {
@@ -3402,7 +3409,7 @@ struct Mango9TeamMemberPicker: View {
 					HStack {
 						VStack(alignment: .leading, spacing: 3) {
 							Text(user.name).foregroundStyle(.primary)
-							if !user.category.isEmpty { Text(user.category).font(.caption).foregroundStyle(.secondary) }
+							Text(user.roleLabel + (user.canJoinGroups ? "" : " · Inactive")).font(.caption).foregroundStyle(.secondary)
 						}
 						Spacer()
 						Image(systemName: selection.contains(user.id) ? "checkmark.circle.fill" : "circle")
@@ -3414,10 +3421,10 @@ struct Mango9TeamMemberPicker: View {
 					}
 					.contentShape(Rectangle())
 				}
-				.accessibilityLabel(user.name)
+				.accessibilityLabel(user.name + ", " + user.roleLabel)
 				.accessibilityValue(selection.contains(user.id) ? "Selected" : "Not selected")
 				.accessibilityIdentifier("team.member.\(user.id)")
-				.disabled(isSaving)
+				.disabled(isSaving || (!user.canJoinGroups && !selection.contains(user.id)))
 				}
 				if visibleUsers.isEmpty {
 					Text(users.isEmpty ? "No teammates available. Return to Team Chat and refresh the directory." : "No matching teammates")
@@ -3448,7 +3455,7 @@ struct Mango9TeamMemberPicker: View {
 							} else { error = failureMessage() }
 						}
 					}
-					.disabled(selection.count < minimumSelection || isSaving || !isCurrentAccount)
+					.disabled(users.filter { !$0.isSystem && selection.contains($0.id) }.count < minimumSelection || isSaving || !isCurrentAccount)
 				}
 			}
 		}
@@ -3466,7 +3473,8 @@ struct Mango9TeamMemberPicker: View {
 	}
 	private var visibleUsers: [Mango9ChatUser] {
 		let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-		return query.isEmpty ? users : users.filter { $0.name.localizedCaseInsensitiveContains(query) }
+		let people = users.filter { !$0.isSystem }
+		return query.isEmpty ? people : people.filter { $0.name.localizedCaseInsensitiveContains(query) || $0.roleLabel.localizedCaseInsensitiveContains(query) }
 	}
 }
 
@@ -3997,6 +4005,24 @@ struct Mango9ChatUser: Identifiable, Equatable {
 	let name: String
 	let avatar: String
 	let category: String
+	var role: String = ""
+	var systemAccount: Bool = false
+	var groupEligible: Bool = true
+	var isSystem: Bool { systemAccount || category.lowercased() == "system" }
+	var canJoinGroups: Bool { !isSystem && groupEligible }
+	var roleLabel: String {
+		let value = (role.isEmpty ? category : role).lowercased()
+		switch value {
+		case "super_agent": return "Super Agent"
+		case "lead_buyer", "buyer_agent": return "Buyer Agent"
+		case "agent": return "Agent"
+		case "client": return "Client"
+		case "admin", "administrator": return "Administrator"
+		case "system": return "System"
+		case "": return "Teammate"
+		default: return value.replacingOccurrences(of: "_", with: " ").capitalized
+		}
+	}
 }
 
 enum Mango9ChatNotificationSettings {
