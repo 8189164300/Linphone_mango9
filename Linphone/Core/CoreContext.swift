@@ -92,7 +92,7 @@ class CoreContext: ObservableObject {
 			AppServices.resetConfig()
 			self.mCore.config?.reload()
 			if startCore {
-				try?core.start()
+				self.startAfterLogoutRecovery(core)
 			}
 			self.handleConfigurationChanged(status: .Successful)
 		}
@@ -300,7 +300,6 @@ class CoreContext: ObservableObject {
 			
 			self.mCoreDelegate = CoreDelegateStub(onGlobalStateChanged: { (core: Core, state: GlobalState, _: String) in
 				if state == GlobalState.On {
-					Mango9LogoutCoordinator.recoverLocalRemovals(core: core)
 					self.enforceMango9AccountRouting(core: core)
 					Task { @MainActor in
 						Mango9LogoutCoordinator.shared.start()
@@ -546,7 +545,7 @@ class CoreContext: ObservableObject {
 			
 			self.mCore.autoIterateEnabled = true
 			
-			try? self.mCore.start()
+			self.startAfterLogoutRecovery(self.mCore)
 		}
 	}
 	
@@ -556,12 +555,36 @@ class CoreContext: ObservableObject {
 		}
 	}
 	
+	private var logoutRecoveryAttempts = 0
+	private var logoutRecoveryScheduled = false
+
+	/// Core queue only; never register a saved account before checking durable logout intent.
+	private func startAfterLogoutRecovery(_ core: Core) {
+		do {
+			try Mango9LogoutCoordinator.recoverLocalRemovals(core: core)
+			try core.start()
+			logoutRecoveryAttempts = 0
+		} catch {
+			Log.warn("[CoreContext] Voice startup waits for saved logout cleanup")
+			guard !logoutRecoveryScheduled, logoutRecoveryAttempts < 6 else { return }
+			logoutRecoveryAttempts += 1
+			logoutRecoveryScheduled = true
+			let wait = min(30.0, pow(2.0, Double(logoutRecoveryAttempts)))
+			coreQueue.asyncAfter(deadline: .now() + wait) { [weak self] in
+				guard let self else { return }
+				self.logoutRecoveryScheduled = false
+				self.startAfterLogoutRecovery(core)
+			}
+		}
+	}
+
 	func onEnterForeground() {
 		Task { @MainActor in await Mango9LogoutCoordinator.shared.refresh() }
 		coreQueue.async {
 			Log.info("[onEnterForegroundOrBackground] Entering foreground")
+			self.logoutRecoveryAttempts = 0
 			
-			try? self.mCore.start()
+			self.startAfterLogoutRecovery(self.mCore)
 		}
 	}
 

@@ -16,6 +16,20 @@ extension SwiftPatchTests {
   guard status==errSecSuccess else { throw NSError(domain:"fixture keychain",code:Int(status)) }
  }
  static func httpFailureChecks() async throws {
+  try check("resource_401_is_not_confirmed_session_expiry", !Mango9CRMAPIError.unauthorized.isSignInRequired)
+  RotationProtocol.reset()
+  let unbound=try fresh()
+  let bound=try altered(unbound,["proofKeyID":"missing-fixture-key","sessionFamilyID":"fixture-family"])
+  try Mango9SessionStore.save(bound)
+  let saved=Mango9SessionStore.load()!
+  AuditSecurity.failure=errSecItemNotFound
+  var firstMissing=false
+  do { _ = try await Mango9CRMAPI.refresh(session:saved) } catch Mango9CRMAPIError.sessionExpired { firstMissing=true }
+  AuditSecurity.failure=nil
+  var secondMissing=false
+  do { _ = try await Mango9CRMAPI.dashboard(session:saved) } catch Mango9CRMAPIError.sessionExpired { secondMissing=true }
+  try check("missing_device_key_stops_api_polling",firstMissing && secondMissing && RotationProtocol.requests==0)
+
   for mode in [RotationProtocol.Mode.forbidden,.invalidGrant,.proxyUnauthorized,.rateLimited,.unavailable,.malformed] {
    RotationProtocol.reset(mode);let session=try fresh()
    var failure:Error?

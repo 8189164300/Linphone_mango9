@@ -633,13 +633,13 @@ enum Mango9CRMAPIError: LocalizedError {
 	case server
 	case serverMessage(String)
 	var isSignInRequired: Bool {
-		if case .unauthorized = self { return true }
 		if case .sessionExpired = self { return true }
 		return false
 	}
 	var errorDescription: String? {
 		switch self {
-		case .unauthorized, .sessionExpired: return "Your Mango9 session has expired. Sign in again to continue."
+		case .sessionExpired: return "Your Mango9 session has expired. Sign in again to continue."
+		case .unauthorized: return "Mango9 couldn’t verify this request. Please try again."
 		case .staleSession: return "This account changed. Reopen the conversation to continue."
 		case .retryAfter: return "Mango9 is temporarily unavailable. Please try again shortly."
 		case .invalidConfiguration: return "Your Mango9 connection needs to be set up again. Reconnect your account in Settings."
@@ -692,7 +692,7 @@ actor Mango9SessionRenewal {
 				throw Mango9CRMAPIError.staleSession
 			}
 			if latest.refreshToken != current.refreshToken || latest.accessToken != current.accessToken { return latest }
-			if case Mango9CRMAPIError.unauthorized = error {
+			if (error as? Mango9CRMAPIError)?.isSignInRequired == true || Self.isRejectedGrant(error) {
 				expired.insert(key); expiredAccessTokens.insert(current.accessToken)
 				throw Mango9CRMAPIError.sessionExpired
 			}
@@ -703,12 +703,17 @@ actor Mango9SessionRenewal {
 			throw error
 		}
 	}
+	private static func isRejectedGrant(_ error: Error) -> Bool {
+		if case Mango9CRMAPIError.unauthorized = error { return true }
+		return false
+	}
 }
 
 final class Mango9AuthTransport: NSObject, URLSessionTaskDelegate {
 	static let delegate = Mango9AuthTransport()
 	static let session: URLSession = {
 		let config = URLSessionConfiguration.ephemeral
+		config.httpCookieStorage = nil; config.httpShouldSetCookies = false; config.urlCache = nil
 		config.timeoutIntervalForRequest = 25; config.timeoutIntervalForResource = 30
 		return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
 	}()

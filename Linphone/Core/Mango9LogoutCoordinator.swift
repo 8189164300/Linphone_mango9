@@ -116,6 +116,9 @@ final class Mango9LogoutCoordinator {
 		 }, accountExists: @escaping (String) async -> Bool = { identity in
 			await withCheckedContinuation { continuation in
 				CoreContext.shared.doOnCoreQueue { core in
+					// Do not retire durable intent while SIP removal exists only in memory.
+					guard let config = core.config else { continuation.resume(returning: true); return }
+					do { try config.sync() } catch { continuation.resume(returning: true); return }
 					continuation.resume(returning: core.accountList.contains {
 						$0.params?.identityAddress?.asStringUriOnly() == identity
 					})
@@ -396,8 +399,8 @@ final class Mango9LogoutCoordinator {
 
 	/// Core-queue only. Recover a process kill between saving logout intent and
 	/// the original five-second SIP unregister completion callback.
-	nonisolated static func recoverLocalRemovals(core: Core) {
-		guard let records = try? Mango9LogoutKeychain.load() else { return }
+	nonisolated static func recoverLocalRemovals(core: Core) throws {
+		let records = try Mango9LogoutKeychain.load()
 		let pending = Set(records.filter { Self.needsLocalRemoval(identity: $0.identity, records: records) }.map(\.identity))
 		for account in core.accountList {
 			guard let identity = account.params?.identityAddress?.asStringUriOnly(), pending.contains(identity) else { continue }
@@ -405,7 +408,11 @@ final class Mango9LogoutCoordinator {
 			let auth = account.findAuthInfo()
 			core.removeAccount(account: account)
 			if let auth, !core.accountList.contains(where: { $0.findAuthInfo() === auth }) { core.removeAuthInfo(info: auth) }
-			try? Mango9SessionStore.remove(for: identity)
+			try Mango9SessionStore.remove(for: identity)
+		}
+		if !pending.isEmpty {
+			guard let config = core.config else { throw Mango9LogoutError.unavailable }
+			try config.sync()
 		}
 	}
 }

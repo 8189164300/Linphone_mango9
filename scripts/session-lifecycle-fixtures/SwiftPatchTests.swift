@@ -6,6 +6,9 @@ enum AuditSecurity {
  static var failure: OSStatus?
  static func isolated(_ query:CFDictionary)->Bool {
   let values=query as NSDictionary
+  if let tag=values[kSecAttrApplicationTag] as? Data, let value=String(data:tag,encoding:.utf8) {
+   return value.hasPrefix(Mango9Configuration.bundleIdentifier+".")
+  }
   return (values[kSecAttrService] as? String)?.hasPrefix(Mango9Configuration.bundleIdentifier+".") == true
  }
  static func update(_ query:CFDictionary,_ attributes:CFDictionary)->OSStatus { guard isolated(query) else { return errSecParam }; return failure ?? SecItemUpdate(query,attributes) }
