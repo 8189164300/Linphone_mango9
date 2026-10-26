@@ -30,6 +30,11 @@ import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import java.time.format.FormatStyle
 import org.linphone.R
+import org.linphone.mango9.Mango9TeamMessageLayout
+import android.graphics.Typeface
+import android.content.res.ColorStateList
+import android.graphics.drawable.GradientDrawable
+import androidx.core.content.ContextCompat
 import org.linphone.databinding.Mango9MessageCellBinding
 import org.linphone.mango9.Mango9ChatMedia
 import org.linphone.mango9.Mango9ChatMessage
@@ -57,6 +62,8 @@ sealed class Mango9MessageListItem(val stableId: String) {
         val message: Mango9ChatMessage,
         val outgoing: Boolean,
         val senderName: String?,
+        val dayHeading: String? = null,
+        val startsSender: Boolean = true,
     ) : Mango9MessageListItem("team:${message.id}")
 
     data class Sms(val message: Mango9SmsMessage) : Mango9MessageListItem("sms:${message.id}")
@@ -127,6 +134,7 @@ class Mango9MessageAdapter(
     inner class ViewHolder(private val binding: Mango9MessageCellBinding) : RecyclerView.ViewHolder(binding.root) {
         private var boundMedia: List<Mango9ChatMedia>? = null
         private var boundMessageId: String? = null
+        private var boundCardStyle = false
 
         fun bind(item: Mango9MessageListItem) {
             val outgoing: Boolean
@@ -193,7 +201,22 @@ class Mango9MessageAdapter(
             binding.messageContainer.layoutParams = params
             binding.bubble.setBackgroundResource(if (outgoing) R.drawable.mango9_chat_bubble_background else R.drawable.mango9_chat_incoming_background)
             binding.message.setTextColor(if (outgoing) Color.WHITE else com.google.android.material.color.MaterialColors.getColor(binding.message, R.attr.color_main2_800))
-            binding.root.setPadding(dp(12), dp(4), dp(12), dp(4))
+            val team = item as? Mango9MessageListItem.Team
+            binding.root.setPadding(dp(if (team != null) 18 else 12), dp(if (team?.startsSender == true && team.dayHeading == null) 14 else 4), dp(if (team != null) 18 else 12), dp(if (team != null) 7 else 4))
+            binding.dayHeading.text = team?.dayHeading.orEmpty()
+            binding.dayHeading.visibility = if (team?.dayHeading.isNullOrBlank()) View.GONE else View.VISIBLE
+            binding.sender.textSize = if (team != null) 14f else 11f
+            binding.message.textSize = if (team != null) 17f else 14f
+            binding.footer.textSize = if (team != null) 12f else 11f
+            val separateCards = team != null && Mango9ChatMedia.parse(files).isNotEmpty()
+            binding.bubble.setPadding(dp(if (separateCards) 0 else 13), dp(if (separateCards) 0 else 9), dp(if (separateCards) 0 else 13), dp(if (separateCards) 0 else 9))
+            if (separateCards) binding.bubble.background = null
+            binding.message.background = null
+            binding.message.setPadding(0, 0, 0, 0)
+            if (separateCards && text.isNotBlank()) {
+                binding.message.setBackgroundResource(if (outgoing) R.drawable.mango9_chat_bubble_background else R.drawable.mango9_chat_incoming_background)
+                binding.message.setPadding(dp(13), dp(9), dp(13), dp(9))
+            }
             params.marginStart = dp(if (selectionMode) 44 else 0)
             binding.messageContainer.layoutParams = params
             binding.selected.visibility = if (selectionMode) View.VISIBLE else View.GONE
@@ -203,7 +226,7 @@ class Mango9MessageAdapter(
             binding.sender.text = sender.orEmpty()
             binding.message.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
             bindText(item)
-            binding.footer.text = listOfNotNull(dateText(time, true), status).filter(String::isNotBlank).joinToString(" · ")
+            binding.footer.text = listOfNotNull(if (team != null) Mango9TeamMessageLayout.timeLabel(time) else dateText(time, true), status).filter(String::isNotBlank).joinToString(" · ")
             val reactions = when (item) {
                 is Mango9MessageListItem.Team -> item.message.reactions.values.map { "${it.key} ${it.value.size}" }
                 is Mango9MessageListItem.Sms -> item.message.reactions.values.map { "${it.key} ${it.value.size}" }
@@ -211,7 +234,7 @@ class Mango9MessageAdapter(
             }
             binding.reactions.text = reactions.joinToString("  ")
             binding.reactions.visibility = if (reactions.isEmpty()) View.GONE else View.VISIBLE
-            bindMedia(item.stableId, if (item is Mango9MessageListItem.Social) item.media else Mango9ChatMedia.parse(files))
+            bindMedia(item.stableId, if (item is Mango9MessageListItem.Social) item.media else Mango9ChatMedia.parse(files), team != null)
             for (index in 0 until binding.media.childCount) {
                 (binding.media.getChildAt(index) as? Mango9AudioMessageView)?.apply {
                     setInk(binding.message.currentTextColor)
@@ -256,8 +279,9 @@ class Mango9MessageAdapter(
             }
         }
 
-        private fun bindMedia(messageId: String, media: List<Mango9ChatMedia>) {
-            if (messageId == boundMessageId && media == boundMedia) return
+        private fun bindMedia(messageId: String, media: List<Mango9ChatMedia>, cardStyle: Boolean) {
+            if (messageId == boundMessageId && media == boundMedia && cardStyle == boundCardStyle) return
+            boundCardStyle = cardStyle
             boundMessageId = messageId
             boundMedia = media
             binding.media.removeAllViews()
@@ -265,7 +289,7 @@ class Mango9MessageAdapter(
             media.forEachIndexed { index, item ->
                 val owner = audioController
                 val view = if (item.kind == Mango9ChatMedia.Kind.Audio && owner != null) {
-                    Mango9AudioMessageView(binding.root.context).apply {
+                    Mango9AudioMessageView(binding.root.context, cardStyle).apply {
                         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                             if (index > 0) topMargin = dp(7)
                         }
@@ -297,6 +321,11 @@ class Mango9MessageAdapter(
                             )
                         }
                     }
+                } else if (cardStyle) {
+                    attachmentCard(item).apply {
+                        layoutParams = LinearLayout.LayoutParams(dp(minOf(264, resources.configuration.screenWidthDp - 80)), ViewGroup.LayoutParams.WRAP_CONTENT)
+                            .apply { if (index > 0) topMargin = dp(8) }
+                    }
                 } else {
                     TextView(binding.root.context).apply {
                         text = when (item.kind) {
@@ -325,6 +354,39 @@ class Mango9MessageAdapter(
                     true
                 }
                 binding.media.addView(view)
+            }
+        }
+
+        private fun attachmentCard(media: Mango9ChatMedia): View {
+            val context = binding.root.context
+            return LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(11), dp(11), dp(11), dp(11))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(12).toFloat()
+                    setColor(ContextCompat.getColor(context, R.color.mango9_team_card))
+                    setStroke(dp(1), ContextCompat.getColor(context, R.color.mango9_team_border))
+                }
+                addView(ImageView(context).apply {
+                    setImageResource(R.drawable.file_text)
+                    imageTintList = ColorStateList.valueOf(ContextCompat.getColor(context, R.color.orange_main_500))
+                    setPadding(dp(8), dp(8), dp(8), dp(8))
+                    background = GradientDrawable().apply { cornerRadius = dp(9).toFloat(); setColor(ContextCompat.getColor(context, R.color.mango9_team_icon_tile)) }
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }, LinearLayout.LayoutParams(dp(44), dp(44)))
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(TextView(context).apply {
+                        text = media.name; textSize = 15f; setTypeface(typeface, Typeface.BOLD)
+                        maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                        setTextColor(ContextCompat.getColor(context, R.color.mango9_team_ink))
+                    })
+                    addView(TextView(context).apply {
+                        setText(if (media.name.endsWith(".pdf", true)) R.string.mango9_pdf_document else R.string.mango9_attachment_document)
+                        textSize = 12f; setPadding(0, dp(3), 0, 0)
+                        setTextColor(ContextCompat.getColor(context, R.color.mango9_team_secondary))
+                    })
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) })
             }
         }
 

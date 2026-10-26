@@ -21,6 +21,8 @@ package org.linphone.ui.assistant
 
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.graphics.drawable.ColorDrawable
+import androidx.core.view.WindowCompat
 import android.view.ViewGroup
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
@@ -55,7 +57,10 @@ class AssistantActivity : GenericActivity() {
         override fun handleOnBackPressed() {
             val navController = binding.assistantNavContainer.findNavController()
             if (navController.currentDestination?.id != R.id.landingFragment) {
-                navController.popBackStack()
+                if (!navController.popBackStack()) {
+                    navController.navigate(R.id.landingFragment, null,
+                        androidx.navigation.NavOptions.Builder().setPopUpTo(R.id.assistant_nav_graph, false).build())
+                }
             }
         }
     }
@@ -66,6 +71,11 @@ class AssistantActivity : GenericActivity() {
 
         binding = DataBindingUtil.setContentView(this, R.layout.assistant_activity)
         binding.lifecycleOwner = this
+        val originalBackground = binding.assistantNavContainer.background
+        val bars = WindowCompat.getInsetsController(window, window.decorView)
+        val originalStatusAppearance = bars.isAppearanceLightStatusBars
+        val originalNavigationAppearance = bars.isAppearanceLightNavigationBars
+
         setUpToastsArea(binding.toastsArea)
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.assistantNavContainer) { v, windowInsets ->
@@ -92,6 +102,14 @@ class AssistantActivity : GenericActivity() {
         }
 
         (binding.root as? ViewGroup)?.doOnPreDraw {
+            binding.assistantNavContainer.findNavController().addOnDestinationChangedListener { _, destination, _ ->
+                val signingIn = destination.id == R.id.landingFragment
+                binding.assistantNavContainer.background = if (signingIn) {
+                    ColorDrawable(ContextCompat.getColor(this, R.color.mango9_login_background))
+                } else originalBackground
+                bars.isAppearanceLightStatusBars = !signingIn && originalStatusAppearance
+                bars.isAppearanceLightNavigationBars = !signingIn && originalNavigationAppearance
+            }
             if (!areAllPermissionsGranted()) {
                 Log.w("$TAG Not all required permissions are granted, showing Permissions fragment")
                 val action = PermissionsFragmentDirections.actionGlobalPermissionsFragment()

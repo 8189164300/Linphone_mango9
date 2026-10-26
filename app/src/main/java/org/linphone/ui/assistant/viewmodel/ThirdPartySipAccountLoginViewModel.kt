@@ -154,7 +154,7 @@ class ThirdPartySipAccountLoginViewModel
         availableTransports.add(TransportType.Tls.name.uppercase(Locale.getDefault()))
 
         coreContext.postOnCoreThread {
-            domain.postValue(corePreferences.thirdPartySipAccountDefaultDomain)
+            domain.postValue("")
 
             val defaultTransport = corePreferences.thirdPartySipAccountDefaultTransport.uppercase(
                 Locale.getDefault()

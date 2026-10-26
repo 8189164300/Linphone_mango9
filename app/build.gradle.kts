@@ -18,7 +18,7 @@ plugins {
 val packageName = "com.mango9.phone"
 val useDifferentPackageNameForDebugBuild = providers.gradleProperty("Mango9IsolatedDebug").orNull == "true"
 val mango9VersionName = "6.2.9"
-val mango9VersionCode = 602042
+val mango9VersionCode = 602043
 val mango9ReleaseTag = "android-$mango9VersionName-build-$mango9VersionCode"
 
 val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
@@ -571,14 +571,13 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
             "Help must not expose upstream debug, update, or translation routes",
         )
         requirePolicy(
-            loginLayoutText.contains("android:background=\"@color/gray_100\"") &&
+            loginLayoutText.contains("android:background=\"@color/mango9_login_background\"") &&
                 loginLayoutText.contains("@drawable/mango9_login_field_background") &&
                 loginLayoutText.contains("@drawable/mango9_login_primary_button_background") &&
-                loginLayoutText.contains("@drawable/mango9_login_secondary_button_background") &&
-                !loginLayoutText.contains("?attr/") &&
-                loginBrandBackgroundText.contains("@color/orange_main_500") &&
-                !loginBrandBackgroundText.contains("<gradient"),
-            "Mango9 login must retain the fixed iOS parity palette in light and dark device modes",
+                loginLayoutText.contains("@color/mango9_login_outline") &&
+                loginLayoutText.contains("@drawable/mango9_wordmark_white") &&
+                !loginLayoutText.contains("?attr/"),
+            "Mango9 login must retain its original Mango9 palette and explicit high-contrast controls",
         )
         requirePolicy(
             !splashThemeText.contains("linphone_splashscreen") &&

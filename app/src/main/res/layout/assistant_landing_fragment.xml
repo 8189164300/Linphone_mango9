@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layout xmlns:android="http://schemas.android.com/apk/res/android"
+<layout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
-
     <data>
         <import type="android.view.View" />
         <import type="android.text.InputType" />
-
         <variable
             name="backClickListener"
             type="View.OnClickListener" />
@@ -19,29 +18,26 @@
             name="viewModel"
             type="org.linphone.ui.assistant.viewmodel.Mango9LoginViewModel" />
     </data>
-
     <androidx.coordinatorlayout.widget.CoordinatorLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/gray_100">
-
+        android:background="@color/mango9_login_background">
         <ScrollView
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:fillViewport="true">
-
+            android:fillViewport="true"
+            android:overScrollMode="never"
+            android:scrollbars="none">
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
-                android:paddingBottom="24dp">
-
+                android:paddingBottom="0dp">
                 <FrameLayout
                     android:layout_width="match_parent"
                     android:layout_height="56dp"
                     android:layout_marginHorizontal="8dp">
-
                     <ImageView
                         android:id="@+id/back"
                         style="@style/icon_top_bar_button_style"
@@ -52,33 +48,22 @@
                         android:onClick="@{backClickListener}"
                         android:src="@drawable/caret_left"
                         android:visibility="@{viewModel.showBackButton ? View.VISIBLE : View.INVISIBLE, default=invisible}"
-                        app:tint="@color/gray_main2_600" />
-
-                    <TextView
-                        style="@style/assistant_page_title_style"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="center"
-                        android:text="@string/app_name"
-                        android:textColor="@color/gray_main2_600" />
-
+                        app:tint="@color/bc_white" />
                     <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="match_parent"
                         android:layout_gravity="end"
                         android:gravity="center_vertical"
                         android:orientation="horizontal">
-
                         <ImageView
                             style="@style/icon_top_bar_button_style"
                             android:layout_width="44dp"
                             android:layout_height="44dp"
-                            android:contentDescription="@string/mango9_manual_sip_accessibility"
+                            android:contentDescription="@string/mango9_connection_settings"
                             android:onClick="@{manualSipClickListener}"
                             android:padding="11dp"
                             android:src="@drawable/gear"
-                            app:tint="@color/gray_main2_600" />
-
+                            app:tint="@color/bc_white" />
                         <ImageView
                             style="@style/icon_top_bar_button_style"
                             android:layout_width="44dp"
@@ -87,70 +72,45 @@
                             android:onClick="@{helpClickListener}"
                             android:padding="11dp"
                             android:src="@drawable/question"
-                            app:tint="@color/gray_main2_600" />
+                            app:tint="@color/bc_white" />
                     </LinearLayout>
                 </FrameLayout>
-
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginHorizontal="24dp"
-                    android:layout_marginTop="8dp"
-                    android:background="@drawable/mango9_brand_card_background"
+                    android:layout_marginTop="26dp"
                     android:gravity="center"
-                    android:orientation="vertical"
-                    android:paddingHorizontal="24dp"
-                    android:paddingVertical="18dp">
-
+                    android:orientation="vertical">
                     <ImageView
-                        android:layout_width="176dp"
-                        android:layout_height="46dp"
+                        android:layout_width="190dp"
+                        android:layout_height="56dp"
                         android:adjustViewBounds="true"
                         android:contentDescription="@string/app_name"
                         android:scaleType="fitCenter"
-                        android:src="@drawable/mango9_wordmark_white" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:fontFamily="@font/noto_sans_600"
-                        android:gravity="center"
-                        android:text="@string/mango9_brand_tagline"
-                        android:textColor="@color/bc_white"
-                        android:textSize="18sp" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
-                        android:alpha="0.85"
-                        android:fontFamily="@font/noto_sans_600"
-                        android:gravity="center"
-                        android:text="@string/mango9_brand_subtitle"
-                        android:textColor="@color/bc_white"
-                        android:textSize="13sp" />
+                        android:src="@drawable/mango9_wordmark_white"
+                        app:tint="@color/bc_white" />
                 </LinearLayout>
-
+                <Space
+                    android:layout_width="1dp"
+                    android:layout_height="24dp"
+                    android:layout_weight="1" />
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginHorizontal="24dp"
-                    android:layout_marginTop="16dp"
-                    android:background="@drawable/mango9_login_card_background"
-                    android:elevation="4dp"
+                    android:layout_marginHorizontal="25dp"
+                    android:layout_marginTop="0dp"
                     android:orientation="vertical"
-                    android:padding="20dp">
-
+                    android:id="@+id/mango9_login_form">
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:fontFamily="@font/noto_sans_800"
                         android:gravity="center"
-                        android:text="@string/mango9_connect_account"
-                        android:textColor="@color/gray_main2_600"
-                        android:textSize="20sp" />
-
+                        android:text="@string/mango9_sign_in_heading"
+                        android:textColor="@color/bc_white"
+                        android:textSize="32sp"
+                        android:textStyle="bold" />
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -159,21 +119,20 @@
                         android:gravity="center"
                         android:maxLines="3"
                         android:text="@{viewModel.loginSubtitle}"
-                        android:textColor="@color/gray_main2_600"
+                        android:visibility="@{viewModel.passwordMode ? View.GONE : View.VISIBLE, default=gone}"
+                        android:textColor="@color/bc_white"
                         android:textSize="14sp" />
-
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="16dp"
+                        android:layout_marginTop="28dp"
                         android:orientation="vertical"
                         android:visibility="@{viewModel.passwordMode ? View.VISIBLE : View.GONE, default=visible}">
-
                         <EditText
                             style="@style/default_text_style"
                             android:id="@+id/mango9_username"
                             android:layout_width="match_parent"
-                            android:layout_height="50dp"
+                            android:layout_height="56dp"
                             android:autofillHints="username"
                             android:background="@drawable/mango9_login_field_background"
                             android:hint="@string/mango9_username_hint"
@@ -181,15 +140,13 @@
                             android:inputType="text|textNoSuggestions"
                             android:paddingHorizontal="18dp"
                             android:text="@={viewModel.username}"
-                            android:textColor="@color/gray_main2_600"
-                            android:textColorHint="@color/gray_main2_400"
-                            android:textSize="14sp" />
-
+                            android:textColor="@color/bc_white"
+                            android:textColorHint="@color/mango9_login_hint"
+                            android:textSize="18sp" />
                         <FrameLayout
                             android:layout_width="match_parent"
-                            android:layout_height="50dp"
+                            android:layout_height="56dp"
                             android:layout_marginTop="12dp">
-
                             <EditText
                                 style="@style/default_text_style"
                                 android:id="@+id/password"
@@ -200,53 +157,49 @@
                                 android:hint="@string/mango9_password_hint"
                                 android:imeOptions="actionDone"
                                 android:inputType="textPassword"
-                                android:onEditorAction="@{(view, actionId, event) -> viewModel.primaryActionFromIme()}"
+                                android:onEditorAction="@{(view, actionId, event) -&gt; viewModel.primaryActionFromIme()}"
                                 android:paddingStart="18dp"
                                 android:paddingEnd="52dp"
                                 android:text="@={viewModel.password}"
-                                android:textColor="@color/gray_main2_600"
-                                android:textColorHint="@color/gray_main2_400"
-                                android:textSize="14sp"
+                                android:textColor="@color/bc_white"
+                                android:textColorHint="@color/mango9_login_hint"
+                                android:textSize="18sp"
                                 passwordInputType="@{viewModel.showPassword ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD, default=textPassword}" />
-
                             <ImageView
                                 android:layout_width="44dp"
                                 android:layout_height="match_parent"
                                 android:layout_gravity="end"
                                 android:contentDescription="@string/content_description_toggle_password_visibility"
-                                android:onClick="@{() -> viewModel.toggleShowPassword()}"
+                                android:onClick="@{() -&gt; viewModel.toggleShowPassword()}"
                                 android:padding="10dp"
                                 android:src="@{viewModel.showPassword ? @drawable/eye_slash : @drawable/eye, default=@drawable/eye}"
-                                app:tint="@color/gray_main2_600" />
+                                app:tint="@color/bc_white" />
                         </FrameLayout>
                     </LinearLayout>
-
                     <EditText
                         style="@style/default_text_style"
                         android:id="@+id/mango9_email"
                         android:layout_width="match_parent"
-                        android:layout_height="50dp"
+                        android:layout_height="56dp"
                         android:layout_marginTop="16dp"
                         android:autofillHints="emailAddress"
                         android:background="@drawable/mango9_login_field_background"
                         android:hint="@string/mango9_email_hint"
                         android:imeOptions="actionDone"
                         android:inputType="textEmailAddress"
-                        android:onEditorAction="@{(view, actionId, event) -> viewModel.primaryActionFromIme()}"
+                        android:onEditorAction="@{(view, actionId, event) -&gt; viewModel.primaryActionFromIme()}"
                         android:paddingHorizontal="18dp"
                         android:text="@={viewModel.email}"
-                        android:textColor="@color/gray_main2_600"
-                        android:textColorHint="@color/gray_main2_400"
-                        android:textSize="14sp"
+                        android:textColor="@color/bc_white"
+                        android:textColorHint="@color/mango9_login_hint"
+                        android:textSize="18sp"
                         android:visibility="@{viewModel.emailRequestMode ? View.VISIBLE : View.GONE, default=gone}" />
-
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="16dp"
                         android:orientation="vertical"
                         android:visibility="@{viewModel.emailVerificationMode ? View.VISIBLE : View.GONE, default=gone}">
-
                         <EditText
                             style="@style/default_text_style"
                             android:layout_width="match_parent"
@@ -258,30 +211,27 @@
                             android:imeOptions="actionDone"
                             android:inputType="number"
                             android:maxLength="6"
-                            android:onEditorAction="@{(view, actionId, event) -> viewModel.primaryActionFromIme()}"
+                            android:onEditorAction="@{(view, actionId, event) -&gt; viewModel.primaryActionFromIme()}"
                             android:text="@={viewModel.verificationCode}"
-                            android:textColor="@color/gray_main2_600"
-                            android:textColorHint="@color/gray_main2_400"
-                            android:textSize="24sp" />
-
+                            android:textColor="@color/bc_white"
+                            android:textColorHint="@color/mango9_login_hint"
+                            android:textSize="18sp" />
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="8dp"
                             android:gravity="center_vertical"
                             android:orientation="horizontal">
-
                             <TextView
                                 style="@style/default_text_style"
                                 android:layout_width="0dp"
                                 android:layout_height="44dp"
                                 android:layout_weight="1"
                                 android:gravity="start|center_vertical"
-                                android:onClick="@{() -> viewModel.changeEmail()}"
+                                android:onClick="@{() -&gt; viewModel.changeEmail()}"
                                 android:text="@string/mango9_change_email"
-                                android:textColor="@color/orange_main_500"
+                                android:textColor="@color/bc_white"
                                 android:textSize="13sp" />
-
                             <TextView
                                 style="@style/default_text_style"
                                 android:layout_width="0dp"
@@ -289,44 +239,31 @@
                                 android:layout_weight="1"
                                 android:enabled="@{viewModel.resendCountdown == 0 &amp;&amp; !viewModel.inProgress}"
                                 android:gravity="end|center_vertical"
-                                android:onClick="@{() -> viewModel.resendCode()}"
+                                android:onClick="@{() -&gt; viewModel.resendCode()}"
                                 android:text="@{viewModel.resendButtonTitle}"
-                                android:textColor="@color/orange_main_500"
+                                android:textColor="@color/bc_white"
                                 android:textSize="13sp" />
                         </LinearLayout>
                     </LinearLayout>
-
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
                         android:gravity="center_vertical"
                         android:orientation="horizontal">
-
                         <LinearLayout
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:orientation="vertical">
-
                             <TextView
                                 style="@style/default_text_style"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:text="@string/mango9_keep_signed_in"
-                                android:textColor="@color/gray_main2_600"
-                                android:textSize="14sp" />
-
-                            <TextView
-                                style="@style/default_text_style"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="2dp"
-                                android:text="@string/mango9_secure_storage_note"
-                                android:textColor="@color/gray_main2_500"
-                                android:textSize="11sp" />
+                                android:textColor="@color/bc_white"
+                                android:textSize="16sp" />
                         </LinearLayout>
-
                         <com.google.android.material.materialswitch.MaterialSwitch
                             style="@style/material_switch_style"
                             android:layout_width="wrap_content"
@@ -335,7 +272,6 @@
                             app:thumbTint="@color/mango9_login_switch_thumb"
                             app:trackTint="@color/mango9_login_switch_track" />
                     </LinearLayout>
-
                     <TextView
                         style="@style/default_text_style"
                         android:layout_width="match_parent"
@@ -343,15 +279,13 @@
                         android:layout_marginTop="10dp"
                         android:gravity="center"
                         android:text="@{viewModel.errorMessage}"
-                        android:textColor="@color/red_danger_500"
+                        android:textColor="@color/mango9_login_error"
                         android:textSize="13sp"
                         android:visibility="@{viewModel.errorMessage != null ? View.VISIBLE : View.GONE, default=gone}" />
-
                     <FrameLayout
                         android:layout_width="match_parent"
-                        android:layout_height="50dp"
+                        android:layout_height="52dp"
                         android:layout_marginTop="16dp">
-
                         <TextView
                             style="@style/primary_button_label_style"
                             android:id="@+id/mango9_primary_action"
@@ -360,47 +294,45 @@
                             android:background="@drawable/mango9_login_primary_button_background"
                             android:enabled="@{viewModel.primaryActionEnabled}"
                             android:gravity="center"
-                            android:onClick="@{() -> viewModel.primaryAction()}"
+                            android:onClick="@{() -&gt; viewModel.primaryAction()}"
                             android:text="@{viewModel.primaryButtonTitle}"
-                            android:textColor="@color/bc_white" />
-
+                            android:textColor="@color/orange_main_500"
+                            android:textSize="20sp"
+                            android:textStyle="bold" />
                         <ProgressBar
                             android:layout_width="24dp"
                             android:layout_height="24dp"
                             android:layout_gravity="center_vertical|start"
                             android:layout_marginStart="18dp"
-                            android:indeterminateTint="@color/bc_white"
+                            android:indeterminateTint="@color/orange_main_500"
                             android:visibility="@{viewModel.inProgress ? View.VISIBLE : View.GONE, default=gone}" />
                     </FrameLayout>
-
-                    <FrameLayout
+                    <com.google.android.material.button.MaterialButton
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:fontFamily="@font/noto_sans_600"
+                        android:id="@+id/mango9_use_email_code"
                         android:layout_width="match_parent"
-                        android:layout_height="48dp"
+                        android:layout_height="52dp"
+                        android:gravity="center"
+                        android:onClick="@{() -&gt; viewModel.showEmailLogin()}"
+                        android:text="@string/mango9_use_email_code"
+                        android:textColor="@color/bc_white"
                         android:layout_marginTop="12dp"
-                        android:background="@drawable/mango9_login_secondary_button_background"
-                        android:visibility="@{viewModel.passwordMode ? View.VISIBLE : View.GONE, default=visible}">
-
-                        <ImageView
-                            android:layout_width="22dp"
-                            android:layout_height="22dp"
-                            android:layout_gravity="start|center_vertical"
-                            android:layout_marginStart="18dp"
-                            android:contentDescription="@null"
-                            android:importantForAccessibility="no"
-                            android:src="@drawable/envelope_simple"
-                            app:tint="@color/orange_main_500" />
-
-                        <TextView
-                            style="@style/secondary_button_label_style"
-                            android:id="@+id/mango9_use_email_code"
-                            android:layout_width="match_parent"
-                            android:layout_height="match_parent"
-                            android:gravity="center"
-                            android:onClick="@{() -> viewModel.showEmailLogin()}"
-                            android:text="@string/mango9_use_email_code"
-                            android:textColor="@color/orange_main_500" />
-                    </FrameLayout>
-
+                        android:visibility="@{viewModel.passwordMode ? View.VISIBLE : View.GONE, default=visible}"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textAllCaps="false"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        app:backgroundTint="@android:color/transparent"
+                        app:strokeColor="@color/mango9_login_outline"
+                        app:strokeWidth="1dp"
+                        app:cornerRadius="26dp"
+                        app:icon="@drawable/envelope_simple"
+                        app:iconTint="@color/bc_white"
+                        app:iconGravity="textStart"
+                        app:iconPadding="10dp"
+                        app:iconSize="22dp" />
                     <TextView
                         style="@style/default_text_style"
                         android:id="@+id/mango9_use_password"
@@ -408,12 +340,16 @@
                         android:layout_height="44dp"
                         android:layout_marginTop="8dp"
                         android:gravity="center"
-                        android:onClick="@{() -> viewModel.showPasswordLogin()}"
+                        android:onClick="@{() -&gt; viewModel.showPasswordLogin()}"
                         android:text="@string/mango9_use_password"
-                        android:textColor="@color/orange_main_500"
+                        android:textColor="@color/bc_white"
                         android:textSize="14sp"
                         android:visibility="@{viewModel.passwordMode ? View.GONE : View.VISIBLE, default=gone}" />
                 </LinearLayout>
+                <Space
+                    android:layout_width="1dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1.5" />
             </LinearLayout>
         </ScrollView>
     </androidx.coordinatorlayout.widget.CoordinatorLayout>

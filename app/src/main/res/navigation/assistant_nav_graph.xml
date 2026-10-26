@@ -111,7 +111,7 @@
             app:popExitAnim="@anim/slide_out_right"
             app:launchSingleTop="true"
             app:popUpTo="@id/landingFragment"
-            app:popUpToInclusive="true" />
+            app:popUpToInclusive="false" />
 
         <action
             android:id="@+id/action_landingFragment_to_helpFragment"

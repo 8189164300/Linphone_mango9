@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mango9_team_card">#20222B</color>
+    <color name="mango9_team_ink">#F2F3F8</color>
+    <color name="mango9_team_secondary">#B1BDCF</color>
+    <color name="mango9_team_border">#454A59</color>
+    <color name="mango9_team_icon_tile">#303248</color>
+</resources>

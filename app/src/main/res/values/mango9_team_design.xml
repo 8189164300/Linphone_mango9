@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mango9_team_card">#FFFFFF</color>
+    <color name="mango9_team_ink">#11162D</color>
+    <color name="mango9_team_secondary">#5A6D86</color>
+    <color name="mango9_team_border">#DDE2EC</color>
+    <color name="mango9_team_icon_tile">#F0EFFF</color>
+    <string name="mango9_pdf_document">PDF document</string>
+    <string name="mango9_attachment_document">Attachment</string>
+    <string name="mango9_voice_message">Voice message</string>
+</resources>

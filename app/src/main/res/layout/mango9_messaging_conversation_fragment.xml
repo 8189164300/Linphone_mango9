@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layout xmlns:android="http://schemas.android.com/apk/res/android"
+<layout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools">
-
     <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="?attr/color_grey_100">
-
         <ImageView
             android:id="@+id/back"
             style="@style/icon_top_bar_button_style"
@@ -18,7 +17,6 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             app:tint="?attr/color_main1_500" />
-
         <TextView
             android:id="@+id/title"
             style="@style/default_text_style_800"
@@ -29,22 +27,50 @@
             android:maxLines="1"
             android:textColor="?attr/color_main1_500"
             android:textSize="17sp"
-            app:layout_constraintEnd_toStartOf="@id/more"
+            app:layout_constraintEnd_toStartOf="@id/group_actions"
             app:layout_constraintStart_toEndOf="@id/back"
             app:layout_constraintTop_toTopOf="parent"
             tools:text="Ani Paytyan" />
-
-        <ImageView
-            android:id="@+id/more"
-            style="@style/icon_top_bar_button_style"
+        <LinearLayout
+            android:id="@+id/group_actions"
             android:layout_width="wrap_content"
-            android:layout_height="@dimen/top_bar_height"
-            android:contentDescription="@string/mango9_chat_options"
-            android:src="@drawable/dots_three_vertical"
+            android:layout_height="44dp"
+            android:layout_marginEnd="8dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent"
-            app:tint="?attr/color_main1_500" />
-
+            app:layout_constraintBottom_toBottomOf="@id/title">
+            <ImageView
+                android:id="@+id/rename_group"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:padding="10dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/mango9_rename_group"
+                android:src="@drawable/pencil_simple"
+                app:tint="?attr/color_main1_500"
+                android:visibility="gone" />
+            <ImageView
+                android:id="@+id/group_members"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:padding="10dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/mango9_chat_manage_members"
+                android:src="@drawable/users"
+                app:tint="?attr/color_main1_500"
+                android:visibility="gone" />
+            <ImageView
+                android:id="@+id/more"
+                style="@style/icon_top_bar_button_style"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:contentDescription="@string/mango9_chat_options"
+                android:src="@drawable/dots_three_vertical"
+                app:tint="?attr/color_main1_500"
+                android:padding="10dp" />
+        </LinearLayout>
         <LinearLayout
             android:id="@+id/status_bar"
             android:layout_width="0dp"
@@ -56,13 +82,11 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/title">
-
             <View
                 android:id="@+id/status_dot"
                 android:layout_width="9dp"
                 android:layout_height="9dp"
                 android:background="@drawable/mango9_chat_offline_background" />
-
             <TextView
                 android:id="@+id/status"
                 style="@style/default_text_style"
@@ -73,7 +97,6 @@
                 android:textColor="?attr/color_main2_500"
                 android:textSize="11sp"
                 tools:text="Online" />
-
             <TextView
                 android:id="@+id/transport_label"
                 android:layout_width="wrap_content"
@@ -83,7 +106,6 @@
                 android:textSize="11sp"
                 android:textStyle="bold" />
         </LinearLayout>
-
         <Spinner
             android:id="@+id/sender"
             android:layout_width="0dp"
@@ -95,7 +117,6 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/status_bar"
             tools:visibility="visible" />
-
         <LinearLayout
             android:id="@+id/search_panel"
             android:layout_width="0dp"
@@ -107,7 +128,6 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toBottomOf="@id/sender">
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -175,7 +195,6 @@
                     app:tint="?attr/color_main1_500" />
             </LinearLayout>
         </LinearLayout>
-
         <Button
             android:id="@+id/load_earlier"
             android:layout_width="wrap_content"
@@ -185,7 +204,6 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toBottomOf="@id/search_panel" />
-
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/messages"
             android:layout_width="0dp"
@@ -197,7 +215,6 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/load_earlier"
             tools:listitem="@layout/mango9_message_cell" />
-
         <TextView
             android:id="@+id/empty"
             style="@style/default_text_style"
@@ -213,7 +230,6 @@
             app:layout_constraintEnd_toEndOf="@id/messages"
             app:layout_constraintStart_toStartOf="@id/messages"
             app:layout_constraintTop_toTopOf="@id/messages" />
-
         <LinearLayout
             android:id="@+id/composer_panel"
             android:layout_width="0dp"
@@ -225,7 +241,6 @@
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent">
-
             <TextView
                 android:id="@+id/error"
                 android:layout_width="match_parent"
@@ -237,7 +252,6 @@
                 android:visibility="gone"
                 tools:text="Message could not be sent."
                 tools:visibility="visible" />
-
             <Button
                 android:id="@+id/retry_history"
                 android:layout_width="wrap_content"
@@ -245,14 +259,12 @@
                 android:layout_gravity="center_horizontal"
                 android:text="@string/mango9_chat_retry_history"
                 android:visibility="gone" />
-
             <HorizontalScrollView
                 android:id="@+id/pending_scroll"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:scrollbars="none"
                 android:visibility="gone">
-
                 <LinearLayout
                     android:id="@+id/pending_attachments"
                     android:layout_width="wrap_content"
@@ -260,7 +272,6 @@
                     android:orientation="horizontal"
                     tools:ignore="UselessParent" />
             </HorizontalScrollView>
-
             <TextView
                 android:id="@+id/recording_status"
                 android:layout_width="match_parent"
@@ -271,13 +282,11 @@
                 android:textSize="12sp"
                 android:textStyle="bold"
                 android:visibility="gone" />
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="bottom"
                 android:orientation="horizontal">
-
                 <ImageView
                     android:id="@+id/attach"
                     android:layout_width="48dp"
@@ -287,7 +296,6 @@
                     android:padding="10dp"
                     android:src="@drawable/plus_circle"
                     app:tint="?attr/color_main2_700" />
-
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/message"
                     android:layout_width="0dp"
@@ -303,7 +311,6 @@
                     android:textColor="?attr/color_main2_800"
                     android:textColorHint="?attr/color_main2_400"
                     android:textSize="14sp" />
-
                 <ImageView
                     android:id="@+id/microphone"
                     android:layout_width="48dp"
@@ -313,7 +320,6 @@
                     android:padding="10dp"
                     android:src="@drawable/microphone"
                     app:tint="?attr/color_main2_700" />
-
                 <ImageView
                     android:id="@+id/send"
                     android:layout_width="48dp"
@@ -327,7 +333,6 @@
                     app:tint="@color/bc_white" />
             </LinearLayout>
         </LinearLayout>
-
         <com.google.android.material.progressindicator.CircularProgressIndicator
             android:id="@+id/loading"
             android:layout_width="42dp"

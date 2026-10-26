@@ -17,12 +17,13 @@ import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import org.linphone.R
+import androidx.core.content.ContextCompat
 import org.linphone.ui.main.crm.viewmodel.Mango9AudioClip
 import org.linphone.ui.main.crm.viewmodel.Mango9AudioState
 import org.linphone.ui.main.crm.viewmodel.Mango9InlineAudioController
 
 /** Lightweight recycled controls: binding does not prepare or download audio. */
-internal class Mango9AudioMessageView(context: Context) : LinearLayout(context) {
+internal class Mango9AudioMessageView(context: Context, private val cardStyle: Boolean = false) : LinearLayout(context) {
     val play = ImageButton(context)
     val seek = SeekBar(context)
     val name = TextView(context)
@@ -47,6 +48,14 @@ internal class Mango9AudioMessageView(context: Context) : LinearLayout(context) 
         selectionAction != null || super.onInterceptTouchEvent(event)
 
     fun setInk(color: Int) {
+        if (cardStyle) {
+            name.setTextColor(ContextCompat.getColor(context, R.color.mango9_team_ink))
+            listOf(elapsed, duration, status).forEach { it.setTextColor(ContextCompat.getColor(context, R.color.mango9_team_secondary)) }
+            play.imageTintList = ColorStateList.valueOf(Color.WHITE)
+            seek.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(context, R.color.orange_main_500))
+            seek.thumbTintList = ColorStateList.valueOf(ContextCompat.getColor(context, R.color.orange_main_500))
+            return
+        }
         listOf(name, elapsed, duration, status).forEach { it.setTextColor(color) }
         play.imageTintList = ColorStateList.valueOf(color)
         seek.progressTintList = ColorStateList.valueOf(color)
@@ -104,6 +113,28 @@ internal class Mango9AudioMessageView(context: Context) : LinearLayout(context) 
         addView(times)
         status.apply { setTextColor(Color.WHITE); textSize = 12f; visibility = GONE }
         addView(status, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        if (cardStyle) {
+            heading.removeAllViews(); removeAllViews()
+            heading.addView(play, LayoutParams(dp(46), dp(46)))
+            val controls = LinearLayout(context).apply {
+                orientation = VERTICAL
+                addView(name, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+                addView(seek, LayoutParams(LayoutParams.MATCH_PARENT, dp(36)))
+                addView(times, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            }
+            name.setPadding(0, 0, 0, 0); name.textSize = 15f
+            seek.setPadding(dp(2), 0, dp(2), 0)
+            play.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(ContextCompat.getColor(context, R.color.orange_main_500)) }
+            heading.addView(controls, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) })
+            addView(heading, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            addView(status, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(12).toFloat(); setColor(ContextCompat.getColor(context, R.color.mango9_team_card))
+                setStroke(dp(1), ContextCompat.getColor(context, R.color.mango9_team_border))
+            }
+            setInk(Color.WHITE)
+        }
     }
 
     fun bind(value: Mango9AudioClip, owner: Mango9InlineAudioController) {
@@ -111,7 +142,9 @@ internal class Mango9AudioMessageView(context: Context) : LinearLayout(context) 
         subscription?.close(); subscription = null
         dragging = false
         clip = value; controller = owner
-        name.text = value.media.name.ifBlank { context.getString(R.string.mango9_audio_message) }
+        name.text = if (cardStyle && (value.media.name.isBlank() || value.media.name.startsWith("mango9-voice-", true))) {
+            context.getString(R.string.mango9_voice_message)
+        } else value.media.name.ifBlank { context.getString(R.string.mango9_audio_message) }
         render(Mango9AudioState())
         if (isAttachedToWindow) subscribe()
     }
@@ -130,7 +163,7 @@ internal class Mango9AudioMessageView(context: Context) : LinearLayout(context) 
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        super.onMeasure(MeasureSpec.makeMeasureSpec(resolveSize(dp(250), widthMeasureSpec), MeasureSpec.EXACTLY), heightMeasureSpec)
+        super.onMeasure(MeasureSpec.makeMeasureSpec(resolveSize(dp(if (cardStyle) minOf(264, resources.configuration.screenWidthDp - 80) else 250), widthMeasureSpec), MeasureSpec.EXACTLY), heightMeasureSpec)
     }
 
     private fun render(state: Mango9AudioState) {

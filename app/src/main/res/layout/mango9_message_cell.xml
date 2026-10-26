@@ -1,76 +1,97 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layout xmlns:android="http://schemas.android.com/apk/res/android"
+<layout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-
-    <FrameLayout
+    <LinearLayout
         android:id="@+id/root"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingHorizontal="12dp"
-        android:paddingVertical="4dp">
-
-        <CheckBox android:button="@drawable/mango9_message_selection" android:buttonTint="@null" android:gravity="center" android:id="@+id/selected" android:layout_width="44dp" android:layout_height="48dp"
-            android:layout_gravity="start|center_vertical" android:layout_marginStart="0dp"
-            android:visibility="gone" android:contentDescription="@string/mango9_select" />
-
-        <LinearLayout
-            android:id="@+id/message_container"
-            android:layout_width="wrap_content"
+        android:paddingVertical="4dp"
+        android:orientation="vertical">
+        <TextView
+            android:id="@+id/day_heading"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/sender"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="6dp"
-                android:layout_marginBottom="3dp"
-                android:textColor="?attr/color_main2_500"
-                android:textSize="11sp"
-                android:textStyle="bold"
+            android:textColor="?attr/color_main2_500"
+            android:textSize="14sp"
+            android:gravity="center"
+            android:paddingTop="12dp"
+            android:paddingBottom="20dp"
+            android:visibility="gone"
+            android:accessibilityHeading="true" />
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+            <CheckBox
+                android:button="@drawable/mango9_message_selection"
+                android:buttonTint="@null"
+                android:gravity="center"
+                android:id="@+id/selected"
+                android:layout_width="44dp"
+                android:layout_height="48dp"
+                android:layout_gravity="start|center_vertical"
+                android:layout_marginStart="0dp"
                 android:visibility="gone"
-                tools:text="Teammate"
-                tools:visibility="visible" />
-
+                android:contentDescription="@string/mango9_select" />
             <LinearLayout
-                android:id="@+id/bubble"
+                android:id="@+id/message_container"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:background="@drawable/mango9_chat_bubble_background"
-                android:orientation="vertical"
-                android:paddingHorizontal="13dp"
-                android:paddingVertical="9dp">
-
-                <LinearLayout
-                    android:id="@+id/media"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical" />
-
+                android:orientation="vertical">
                 <TextView
-                    android:id="@+id/message"
+                    android:id="@+id/sender"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:maxWidth="270dp"
-                    android:textColor="@color/bc_white"
-                    android:textIsSelectable="true"
+                    android:layout_marginHorizontal="6dp"
+                    android:layout_marginBottom="3dp"
+                    android:textColor="?attr/color_main2_500"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    tools:text="Teammate"
+                    tools:visibility="visible" />
+                <LinearLayout
+                    android:id="@+id/bubble"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/mango9_chat_bubble_background"
+                    android:orientation="vertical"
+                    android:paddingHorizontal="13dp"
+                    android:paddingVertical="9dp">
+                    <LinearLayout
+                        android:id="@+id/media"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
+                    <TextView
+                        android:id="@+id/message"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:maxWidth="270dp"
+                        android:textColor="@color/bc_white"
+                        android:textIsSelectable="true"
+                        android:textSize="14sp"
+                        tools:text="This is a Mango9 message." />
+                </LinearLayout>
+                <TextView
+                    android:id="@+id/reactions"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:textSize="14sp"
-                    tools:text="This is a Mango9 message." />
+                    android:textColor="?attr/color_main2_800"
+                    android:visibility="gone" />
+                <TextView
+                    android:id="@+id/footer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="end"
+                    android:layout_marginHorizontal="5dp"
+                    android:layout_marginTop="3dp"
+                    android:textColor="?attr/color_main2_500"
+                    android:textSize="11sp"
+                    tools:text="10:31 AM · Read" />
             </LinearLayout>
-
-            <TextView
-                android:id="@+id/reactions" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:textSize="14sp" android:textColor="?attr/color_main2_800" android:visibility="gone" />
-            <TextView
-                android:id="@+id/footer"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="end"
-                android:layout_marginHorizontal="5dp"
-                android:layout_marginTop="3dp"
-                android:textColor="?attr/color_main2_500"
-                android:textSize="11sp"
-                tools:text="10:31 AM · Read" />
-        </LinearLayout>
-    </FrameLayout>
+        </FrameLayout>
+    </LinearLayout>
 </layout>

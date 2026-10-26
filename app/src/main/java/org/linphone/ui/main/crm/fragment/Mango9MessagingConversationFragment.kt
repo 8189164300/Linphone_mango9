@@ -60,6 +60,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import org.linphone.R
+import org.linphone.mango9.Mango9TeamMessageLayout
 import org.linphone.databinding.Mango9MessagingConversationFragmentBinding
 import org.linphone.mango9.Mango9ChatConnectionState
 import org.linphone.mango9.Mango9ChatMedia
@@ -166,7 +167,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val density = resources.displayMetrics.density
         if (landscape) {
-            listOf(binding.back, binding.title, binding.more).forEach { it.layoutParams = it.layoutParams.apply { height = (48 * density).toInt() } }
+            listOf(binding.back, binding.title).forEach { it.layoutParams = it.layoutParams.apply { height = (48 * density).toInt() } }
             binding.statusBar.layoutParams = binding.statusBar.layoutParams.apply { height = (24 * density).toInt() }
             binding.sender.layoutParams = binding.sender.layoutParams.apply { height = (36 * density).toInt() }
         }
@@ -200,6 +201,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         adapter.onSelection = { selected ->
             binding.title.text = if (adapter.selectionMode) "${selected.size} selected" else targetName
             binding.composerPanel.visibility = if (adapter.selectionMode) View.GONE else View.VISIBLE
+            renderGroupActions(viewModel.currentState())
             if (adapter.selectionMode) binding.more.contentDescription = getString(R.string.mango9_select)
         }
         adapter.setThumbnailLoader(requireNotNull(thumbnails))
@@ -234,6 +236,12 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         binding.sender.visibility = if (isSms) View.VISIBLE else View.GONE
         binding.back.setOnClickListener { if (adapter.selectionMode) adapter.select(null) else goBack() }
         binding.more.setOnClickListener { showConversationOptions() }
+        binding.renameGroup.setOnClickListener {
+            if (viewModel.isCurrentConversation() && !adapter.selectionMode) currentRoom(viewModel.currentState())?.takeUnless { it.isDirect }?.let { renameGroup(it.id) }
+        }
+        binding.groupMembers.setOnClickListener {
+            if (viewModel.isCurrentConversation() && !adapter.selectionMode) currentRoom(viewModel.currentState())?.takeUnless { it.isDirect }?.let(::showGroupMembers)
+        }
         binding.attach.contentDescription = "Add to message"
         binding.attach.setOnClickListener { showAttachmentMenu() }
         Mango9TemplatesFragment.listen(this, { viewModel.mediaSession() }, { viewModel.isCurrentConversation() }, { binding.message })
@@ -445,15 +453,20 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
             it.isDirect && it.userIds.contains(userId)
         }?.id
         val blocked = directUserId(state)?.let(viewModel.moderation::isBlocked) == true
-        return state.messages.filter { message ->
+        val visible = state.messages.filter { message ->
             message.roomId == expectedRoom && !viewModel.moderation.isMessageHidden(message.id) &&
                 (message.fromUserId == state.currentUserId || !viewModel.moderation.isBlocked(message.fromUserId)) &&
                 !(blocked && message.fromUserId != state.currentUserId)
-        }.map { message ->
+        }
+        return visible.mapIndexed { index, message ->
+            val previous = visible.getOrNull(index - 1)
+            val startsSender = Mango9TeamMessageLayout.startsSender(message, previous)
             Mango9MessageListItem.Team(
                 message,
                 message.fromUserId == state.currentUserId,
-                if (currentRoom(state)?.isDirect == false) viewModel.userName(message.fromUserId) else null,
+                if (currentRoom(state)?.isDirect == false && startsSender && message.fromUserId != state.currentUserId) viewModel.userName(message.fromUserId) else null,
+                if (!Mango9TeamMessageLayout.sameDay(message.time, previous?.time)) Mango9TeamMessageLayout.dayLabel(message.time) else null,
+                startsSender,
             )
         }
     }
@@ -464,7 +477,29 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
             .map(Mango9MessageListItem::Sms)
     }
 
+    private fun renderGroupActions(state: Mango9ChatState) {
+        val group = !isSms && !isSocial && currentRoom(state)?.isDirect == false
+        val showActions = group && !adapter.selectionMode
+        binding.renameGroup.visibility = if (showActions) View.VISIBLE else View.GONE
+        binding.groupMembers.visibility = if (showActions) View.VISIBLE else View.GONE
+        binding.renameGroup.isEnabled = viewModel.isCurrentConversation()
+        binding.groupMembers.isEnabled = viewModel.isCurrentConversation()
+        binding.more.setImageResource(if (group) R.drawable.info else R.drawable.dots_three_vertical)
+        binding.more.contentDescription = getString(R.string.mango9_chat_options)
+        binding.title.textSize = if (group) 20f else 17f
+        binding.status.textSize = if (group) 13f else 11f
+        val ink = if (group) androidx.core.content.ContextCompat.getColor(requireContext(), R.color.mango9_team_ink)
+            else com.google.android.material.color.MaterialColors.getColor(binding.title, R.attr.color_main1_500)
+        binding.title.setTextColor(ink)
+        binding.back.imageTintList = android.content.res.ColorStateList.valueOf(ink)
+        binding.groupActions.background = if (group) android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 24 * resources.displayMetrics.density
+            setColor(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.mango9_team_card))
+        } else null
+    }
+
     private fun renderHeader(state: Mango9ChatState) {
+        renderGroupActions(state)
         val connected = state.connection == Mango9ChatConnectionState.Connected
         if (!connected) {
             binding.status.setText(

@@ -177,7 +177,11 @@ class ThirdPartySipAccountLoginFragment : GenericFragment() {
     }
 
     private fun goBack() {
-        findNavController().popBackStack()
+        val navigation = findNavController()
+        if (!navigation.popBackStack()) {
+            navigation.navigate(R.id.landingFragment, null,
+                androidx.navigation.NavOptions.Builder().setPopUpTo(R.id.assistant_nav_graph, false).build())
+        }
     }
 
     private fun showOutboundProxyInfoDialog() {

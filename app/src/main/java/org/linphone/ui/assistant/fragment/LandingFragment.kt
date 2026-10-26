@@ -7,6 +7,12 @@
 package org.linphone.ui.assistant.fragment
 
 import android.os.Bundle
+import android.text.InputType
+import android.view.inputmethod.EditorInfo
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
+import org.linphone.BuildConfig
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -44,6 +50,14 @@ class LandingFragment : GenericFragment() {
         super.onViewCreated(view, savedInstanceState)
         binding.lifecycleOwner = viewLifecycleOwner
         binding.viewModel = viewModel
+        val loginForm = binding.mango9LoginForm
+        view.addOnLayoutChangeListener { _, left, _, right, _, _, _, _, _ ->
+            val width = minOf(right - left - (50 * resources.displayMetrics.density).toInt(),
+                (520 * resources.displayMetrics.density).toInt())
+            if (width > 0 && loginForm.layoutParams.width != width) {
+                loginForm.layoutParams = loginForm.layoutParams.apply { this.width = width }
+            }
+        }
         observeToastEvents(viewModel)
 
         binding.setBackClickListener {
@@ -56,14 +70,7 @@ class LandingFragment : GenericFragment() {
                 findNavController().navigate(LandingFragmentDirections.actionLandingFragmentToHelpFragment())
             }
         }
-        binding.setManualSipClickListener {
-            if (findNavController().currentDestination?.id == R.id.landingFragment) {
-                viewModel.cancelPendingActions()
-                findNavController().navigate(
-                    LandingFragmentDirections.actionLandingFragmentToThirdPartySipAccountLoginFragment(),
-                )
-            }
-        }
+        binding.setManualSipClickListener { showConnectionSettingsGate() }
 
         viewModel.showPassword.observe(viewLifecycleOwner) {
             viewLifecycleOwner.lifecycleScope.launch {
@@ -78,6 +85,43 @@ class LandingFragment : GenericFragment() {
             }
         }
         viewModel.restoreSavedSessionIfNeeded()
+    }
+
+    private fun showConnectionSettingsGate() {
+        val field = TextInputEditText(requireContext()).apply {
+            id = R.id.mango9_settings_password
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            imeOptions = EditorInfo.IME_ACTION_GO
+            setSingleLine(true)
+        }
+        val input = TextInputLayout(requireContext()).apply {
+            hint = getString(R.string.mango9_settings_password)
+            addView(field)
+            val padding = (24 * resources.displayMetrics.density).toInt()
+            setPadding(padding, padding / 2, padding, 0)
+        }
+        val dialog = MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.mango9_connection_settings)
+            .setView(input)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.mango9_settings_unlock, null)
+            .create()
+        fun unlock() {
+            if (field.text?.toString()?.trim() != BuildConfig.VERSION_NAME) {
+                input.error = getString(R.string.mango9_settings_password_error)
+                return
+            }
+            dialog.dismiss()
+            if (findNavController().currentDestination?.id == R.id.landingFragment) {
+                viewModel.cancelPendingActions()
+                findNavController().navigate(LandingFragmentDirections.actionLandingFragmentToThirdPartySipAccountLoginFragment())
+            }
+        }
+        dialog.setOnShowListener { dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener { unlock() } }
+        field.setOnEditorActionListener { _, action, _ ->
+            if (action == EditorInfo.IME_ACTION_GO) { unlock(); true } else false
+        }
+        dialog.show()
     }
 
     override fun onStop() {

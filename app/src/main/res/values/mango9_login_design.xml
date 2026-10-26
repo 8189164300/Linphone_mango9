@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mango9_login_background">@color/orange_main_500</color>
+    <color name="mango9_login_outline">#CCD3F6</color>
+    <color name="mango9_login_error">#FFD5DE</color>
+    <color name="mango9_login_accent">#8390DB</color>
+    <color name="mango9_login_hint">#E1E5FA</color>
+    <string name="mango9_sign_in_heading">Sign in</string>
+    <string name="mango9_connection_settings">Connection settings</string>
+    <string name="mango9_settings_password">Settings password</string>
+    <string name="mango9_settings_unlock">Unlock</string>
+    <string name="mango9_settings_password_error">Incorrect settings password</string>
+    <item name="mango9_settings_password" type="id" />
+</resources>

@@ -10,6 +10,15 @@ Group changes to describe their impact on the project, as follows:
     Fixed for any bug fixes.
     Security to invite users to upgrade in case of vulnerabilities.
 
+## [Mango9 6.2.9 (602043)] - 2026-10-26
+
+### Changed
+- Back from connection settings returns to sign-in.
+- Connection settings require the current app-version password and no longer prefill the server hostname.
+- Refined sign-in with the Mango9 blue background and focused password/email-code controls.
+- Team Chat groups messages by local day and sender, with compact time labels.
+- File and voice attachments use readable cards, with direct group-edit and member controls.
+
 ## [Mango9 6.2.9 (602042)] - 2026-10-26
 
 ### Fixed
