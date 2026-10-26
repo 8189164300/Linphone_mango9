@@ -10,6 +10,12 @@ Group changes to describe their impact on the project, as follows:
     Fixed for any bug fixes.
     Security to invite users to upgrade in case of vulnerabilities.
 
+## [Mango9 6.2.9 (602042)] - 2026-10-26
+
+### Fixed
+- Sign out works again after signing back in without restarting the app.
+- Leaving a removed account's profile no longer saves changes or refreshes its registration.
+
 ## [Mango9 6.2.9 (602041)] - 2026-10-21
 
 ### Added

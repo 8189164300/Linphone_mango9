@@ -276,45 +276,50 @@ class AccountProfileViewModel
     fun deleteAccount() {
         coreContext.postOnCoreThread { core ->
             if (!::account.isInitialized || removalPending) return@postOnCoreThread
-            if (core.accountList.none { it.nativePointer == account.nativePointer }) return@postOnCoreThread
+            if (core.accountList.none { it.nativePointer == account.nativePointer }) {
+                accountFoundEvent.postValue(Event(false))
+                return@postOnCoreThread
+            }
             val identity = account.params.identityAddress?.asStringUriOnly()
             val lease = accountLogin
             removalPending = true
-            if (lease != null) {
-                val removed = try {
-                    mango9Sessions.removeIfCurrent(lease, journalPushCleanup = true) { current ->
+            try {
+                if (lease != null) {
+                    val removed = mango9Sessions.removeIfCurrent(lease, journalPushCleanup = true) { current ->
                         val removedIdentity = current.sipIdentity ?: return@removeIfCurrent
                         mango9ChatStore.disconnectIfConnected(removedIdentity)
                         // The encrypted journal already guarantees a later cleanup attempt.
                         runCatching { mango9ChatStore.retireRemotePushToken(removedIdentity, current) }
                         Mango9AccountRemoval.remove(core, account)
                     }
-                } catch (_: Exception) {
-                    removalPending = false
-                    showRedToast(R.string.mango9_logout_cleanup_storage_error, R.drawable.warning_circle)
-                    return@postOnCoreThread
+                    if (!removed) {
+                        // An old profile must not remove a re-provisioned account with the same URI.
+                        accountFoundEvent.postValue(Event(false))
+                        return@postOnCoreThread
+                    }
+                } else {
+                    if (identity != null && mango9Sessions.hasSession(identity)) {
+                        accountFoundEvent.postValue(Event(false))
+                        return@postOnCoreThread
+                    }
+                    identity?.let(mango9ChatStore::disconnectIfConnected)
+                    Mango9AccountRemoval.remove(core, account)
                 }
-                if (!removed) {
-                    // An old profile must not remove a re-provisioned account with the same URI.
-                    accountFoundEvent.postValue(Event(false))
-                    return@postOnCoreThread
-                }
-            } else {
-                if (identity != null && mango9Sessions.hasSession(identity)) {
-                    accountFoundEvent.postValue(Event(false))
-                    return@postOnCoreThread
-                }
-                identity?.let(mango9ChatStore::disconnectIfConnected)
-                Mango9AccountRemoval.remove(core, account)
-            }
-            accountRemovedEvent.postValue(Event(true))
+                accountRemovedEvent.postValue(Event(true))
 
-            if (core.accountList.isEmpty()) {
-                Log.w("$TAG No more account found in Core")
-                if (!core.provisioningUri.isNullOrEmpty()) {
-                    Log.w("$TAG Removing remote provisioning URI")
-                    core.provisioningUri = null
+                if (core.accountList.isEmpty()) {
+                    Log.w("$TAG No more account found in Core")
+                    if (!core.provisioningUri.isNullOrEmpty()) {
+                        Log.w("$TAG Removing remote provisioning URI")
+                        core.provisioningUri = null
+                    }
                 }
+            } catch (error: Exception) {
+                Log.w("$TAG Logout could not complete (${error.javaClass.simpleName})")
+                showRedToast(R.string.mango9_logout_cleanup_storage_error, R.drawable.warning_circle)
+            } finally {
+                // This model survives navigation and another login. Only an active removal blocks taps.
+                removalPending = false
             }
         }
     }
@@ -358,7 +363,17 @@ class AccountProfileViewModel
 
     @UiThread
     fun saveChangesWhenLeaving() {
-        coreContext.postOnCoreThread {
+        coreContext.postOnCoreThread { core ->
+            // onPause also runs after logout. Never save/re-register the retired account,
+            // or let a stale profile overwrite a new login that reused the same SDK account.
+            if (!::account.isInitialized || removalPending ||
+                core.accountList.none { it.nativePointer == account.nativePointer }
+            ) return@postOnCoreThread
+            val lease = accountLogin
+            if (lease != null && mango9Sessions.currentLogin(lease) == null) return@postOnCoreThread
+            if (lease == null && account.params.identityAddress?.asStringUriOnly()?.let(mango9Sessions::hasSession) == true) {
+                return@postOnCoreThread
+            }
             if (::account.isInitialized) {
                 val params = account.params
                 val copy = params.clone()
