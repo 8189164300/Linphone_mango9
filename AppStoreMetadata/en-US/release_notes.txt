@@ -1,9 +1,6 @@
-• Create, edit and insert personal message templates from the + menu in SMS, Team Chat, Social and Live Chat. Inserting keeps your existing draft and lets you review before sending.
-• Live Chat brings website conversations, visitor details, assignment and presence into the app.
-• Send supported images, files and voice recordings in Live Chat, with native previews and sharing.
-• Choose which conversation tabs appear on this device in Conversation settings.
-• Improved chat navigation, selected-tab highlights, compact headers and portrait/landscape layouts.
-• More consistent message actions, reactions and composer controls.
-• Message notifications open the correct conversation and channel.
-• Improved conversation loading and Social reply refresh on slower connections.
-• Social conversations refresh correctly after signing back into the same account.
+• A cleaner sign-in page with Mango9 colors and simpler controls.
+• Improved Team Chat layout with grouped dates and clearer document and voice-message cards.
+• Voice messages play through the loudspeaker by default and respect connected headphones and active calls.
+• More accurate team member roles and cleaner people and group-member lists.
+• More reliable session recovery, reconnecting and sign-out.
+• Improved Settings navigation and protected manual connection settings.
