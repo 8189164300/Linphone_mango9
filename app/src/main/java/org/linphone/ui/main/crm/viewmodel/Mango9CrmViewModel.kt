@@ -41,6 +41,7 @@ class Mango9CrmViewModel internal constructor(
     constructor() : this(Mango9CrmScreenRepository(coreContext.context), Mango9SessionStore.contextChanges)
 
     val accountRevision = MutableLiveData(0L)
+    val connectionLabel = MutableLiveData("CONNECTING")
     val activeIdentity = MutableLiveData<String?>()
     val activeSession = MutableLiveData<Mango9Session?>()
     val dashboard = MutableLiveData<Mango9CrmDashboard?>()
@@ -116,6 +117,10 @@ class Mango9CrmViewModel internal constructor(
         screenSession = current
         activeIdentity.value = current?.session?.sipIdentity
         activeSession.value = current?.session
+        if (current == null) {
+            connectionLabel.value = "SIGN IN REQUIRED"
+            repository.sessionStorageError()?.let { errorMessage.value = it.userMessage }
+        }
         if (refresh || changed) {
             if (selectedKind != null) {
                 loadRecords(reset = true)
@@ -196,6 +201,7 @@ class Mango9CrmViewModel internal constructor(
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 if (repository.isCurrent(lease) && detailRequests.isLatest(request) && requestedContext == contextRequests.current) {
+                    connectionLabel.value = connectionFailure(error)
                     errorMessage.value = userMessage(error)
                 }
             } finally {
@@ -356,12 +362,14 @@ class Mango9CrmViewModel internal constructor(
                     emptyList()
                 }
                 if (!repository.isCurrent(lease) || !isCurrentContext(requestedContext, requestedIdentity, kind)) return@launch
+                connectionLabel.value = "CONNECTED"
                 schema.value = loadedSchema
                 groups.value = loadedGroups
                 loadRecords(reset = true)
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 if (repository.isCurrent(lease) && isCurrentContext(requestedContext, requestedIdentity, kind)) {
+                    connectionLabel.value = connectionFailure(error)
                     errorMessage.value = userMessage(error)
                     loading.value = false
                 }
@@ -374,6 +382,7 @@ class Mango9CrmViewModel internal constructor(
         val requestedContext = contextRequests.current
         val requestedIdentity = lease.session.sipIdentity
         val request = dashboardRequests.next()
+        connectionLabel.value = "CONNECTING"
         viewModelScope.launch {
             loading.value = true
             errorMessage.value = null
@@ -386,6 +395,7 @@ class Mango9CrmViewModel internal constructor(
                     activeIdentity.value == requestedIdentity
                 ) {
                     dashboard.value = loaded
+                    connectionLabel.value = "CONNECTED"
                 }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -395,6 +405,7 @@ class Mango9CrmViewModel internal constructor(
                     selectedKind == null &&
                     activeIdentity.value == requestedIdentity
                 ) {
+                    connectionLabel.value = connectionFailure(error)
                     errorMessage.value = userMessage(error)
                 }
             } finally {
@@ -444,6 +455,7 @@ class Mango9CrmViewModel internal constructor(
                 ) {
                     return@launch
                 }
+                connectionLabel.value = "CONNECTED"
                 page = result.pagination.page
                 pages = result.pagination.pages
                 records.value = if (reset) result.records else records.value.orEmpty() + result.records
@@ -453,6 +465,7 @@ class Mango9CrmViewModel internal constructor(
                     repository.isCurrent(lease) && recordsRequests.isLatest(request) &&
                     isCurrentContext(requestedContext, requestedIdentity, kind)
                 ) {
+                    connectionLabel.value = connectionFailure(error)
                     errorMessage.value = userMessage(error)
                 }
             } finally {
@@ -475,6 +488,12 @@ class Mango9CrmViewModel internal constructor(
 
     private fun updateEmpty() {
         empty.value = loading.value != true && records.value.orEmpty().isEmpty()
+    }
+
+    private fun connectionFailure(error: Exception): String = when (error) {
+        Mango9ApiException.SessionExpired -> "SIGN IN REQUIRED"
+        Mango9ApiException.Forbidden -> "ACCESS UNAVAILABLE"
+        else -> "RECONNECTING"
     }
 
     private fun userMessage(error: Exception): String =

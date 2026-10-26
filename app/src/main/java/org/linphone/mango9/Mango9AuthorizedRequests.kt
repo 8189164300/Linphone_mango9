@@ -6,8 +6,6 @@ package org.linphone.mango9
 
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /** An authenticated operation belongs to one login and one account selection, not just a SIP URI. */
 data class Mango9SessionLease(
@@ -87,9 +85,11 @@ internal class Mango9AuthorizedRequests(
     ): T {
         coroutineContext.ensureActive()
         val original = sessions.currentSession(lease) ?: throw Mango9ApiException.Unauthorized
+        Mango9TokenRefresh.check(original)
         val result = try {
             action(original)
-        } catch (_: Mango9ApiException.InvalidCredentials) {
+        } catch (error: Mango9ApiException) {
+            if (error != Mango9ApiException.InvalidCredentials && error != Mango9ApiException.Unauthorized) throw error
             val renewed = renew(lease, original)
             coroutineContext.ensureActive()
             if (sessions.currentSession(lease) == null) throw Mango9ApiException.Unauthorized
@@ -100,24 +100,16 @@ internal class Mango9AuthorizedRequests(
         return result
     }
 
-    private suspend fun renew(lease: Mango9SessionLease, failed: Mango9Session): Mango9Session =
-        Mango9TokenRefresh.lock.withLock {
-            val current = sessions.currentSession(lease) ?: throw Mango9ApiException.Unauthorized
-            // Another request may already have rotated this login's refresh token.
-            if (current.accessToken != failed.accessToken || current.refreshToken != failed.refreshToken) {
-                return@withLock current
-            }
-            val renewed = refresh(current)
-            coroutineContext.ensureActive()
-            if (!sessions.replaceTokens(lease, current, renewed)) throw Mango9ApiException.Unauthorized
-            renewed
-        }
-
-}
-
-/** Active UI requests and inactive push renewal must not rotate the same token concurrently. */
-internal object Mango9TokenRefresh {
-    val lock = Mutex()
+    private suspend fun renew(lease: Mango9SessionLease, failed: Mango9Session): Mango9Session {
+        val login = Mango9LoginLease(lease.session, lease.loginGeneration)
+        val loginAccess = sessions as? Mango9LoginAccess
+        return Mango9TokenRefresh.renew(
+            sessions, login, failed,
+            current = { loginAccess?.currentLogin(login) ?: if (loginAccess == null) sessions.currentSession(lease) else null },
+            replace = { before, after -> if (loginAccess != null) loginAccess.replaceLoginTokens(login, before, after) else sessions.replaceTokens(lease, before, after) },
+            refresh = refresh
+        )
+    }
 }
 
 /** Background authentication may renew an existing login, but can never select or recreate it. */
@@ -128,20 +120,17 @@ internal class Mango9AuthorizedLoginRequests(
     suspend fun <T> execute(lease: Mango9LoginLease, action: suspend (Mango9Session) -> T): T {
         coroutineContext.ensureActive()
         val original = sessions.currentLogin(lease) ?: throw Mango9ApiException.Unauthorized
+        Mango9TokenRefresh.check(original)
         val result = try {
             action(original)
-        } catch (_: Mango9ApiException.InvalidCredentials) {
-            val renewed = Mango9TokenRefresh.lock.withLock {
-                val current = sessions.currentLogin(lease) ?: throw Mango9ApiException.Unauthorized
-                if (current.accessToken != original.accessToken || current.refreshToken != original.refreshToken) {
-                    current
-                } else {
-                    val updated = refresh(current)
-                    coroutineContext.ensureActive()
-                    if (!sessions.replaceLoginTokens(lease, current, updated)) throw Mango9ApiException.Unauthorized
-                    updated
-                }
-            }
+        } catch (error: Mango9ApiException) {
+            if (error != Mango9ApiException.InvalidCredentials && error != Mango9ApiException.Unauthorized) throw error
+            val renewed = Mango9TokenRefresh.renew(
+                sessions, lease, original,
+                current = { sessions.currentLogin(lease) },
+                replace = { before, after -> sessions.replaceLoginTokens(lease, before, after) },
+                refresh = refresh
+            )
             coroutineContext.ensureActive()
             if (sessions.currentLogin(lease) == null) throw Mango9ApiException.Unauthorized
             action(renewed)

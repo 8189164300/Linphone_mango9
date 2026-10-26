@@ -51,7 +51,7 @@ class Mango9LoginRepository(context: Context) : Mango9LoginActions {
         rememberLogin: Boolean,
         attempt: Mango9EnrollmentAttempts.Attempt,
     ) {
-        completeLogin(login.authenticate(rememberLogin, attempt) { api.signIn(username, password) }, attempt)
+        authenticate(rememberLogin, attempt) { api.signIn(username, password) }
     }
 
     override suspend fun requestLoginCode(email: String): Int = api.requestLoginCode(email)
@@ -62,7 +62,17 @@ class Mango9LoginRepository(context: Context) : Mango9LoginActions {
         rememberLogin: Boolean,
         attempt: Mango9EnrollmentAttempts.Attempt,
     ) {
-        completeLogin(login.authenticate(rememberLogin, attempt) { api.verifyLoginCode(email, code) }, attempt)
+        authenticate(rememberLogin, attempt) { api.verifyLoginCode(email, code) }
+    }
+
+    private suspend fun authenticate(
+        remember: Boolean, attempt: Mango9EnrollmentAttempts.Attempt,
+        action: suspend () -> Mango9LoginResponse
+    ) {
+        var key: String? = null
+        try {
+            completeLogin(login.authenticate(remember, attempt) { action().also { key = it.session.proofKeyId } }, attempt)
+        } finally { key?.let { if (!sessions.retainsProofKey(it)) Mango9DeviceProof.remove(it) } }
     }
 
     override suspend fun restore(session: Mango9Session, attempt: Mango9EnrollmentAttempts.Attempt) {

@@ -70,6 +70,12 @@ internal class Mango9MessagePushSync private constructor(context: Context) {
         cleanups[entry.id] ?: scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 val current = sessions.pendingPushRemovals().firstOrNull { it.id == entry.id } ?: return@async true
+                if (current.session.logoutToken != null) {
+                    if (!api.revokeSession(current.session)) return@async false
+                    sessions.acknowledgePushRemoval(entry.id)
+                    current.session.proofKeyId?.let { if (!sessions.retainsProofKey(it)) Mango9DeviceProof.remove(it) }
+                    return@async true
+                }
                 val operation = lifecycle.retire(current.session) { before, after -> sessions.updatePushRemoval(entry.id, before, after) }
                 if (operation?.await() == true) {
                     sessions.acknowledgePushRemoval(entry.id)

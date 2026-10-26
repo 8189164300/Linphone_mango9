@@ -12,6 +12,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -91,6 +92,9 @@ class Mango9ChatStore private constructor(context: Context) {
     @Volatile private var chatTokenExpiresAtMillis = 0L
 
     @Volatile private var reconnectJob: Job? = null
+    private var reconnectAttempts = 0
+    private var reconnectNotBefore = 0L
+    private var connectedAt = 0L
 
     fun currentConnectionSession(): Mango9SessionLease? =
         connectionSession?.takeIf { sessions.currentSession(it) != null }
@@ -98,12 +102,14 @@ class Mango9ChatStore private constructor(context: Context) {
     suspend fun connect(
         force: Boolean = false,
         expectedSession: Mango9SessionLease? = sessions.captureSession(),
+        automaticRetry: Boolean = false,
     ) = connectMutex.withLock {
         val lease = expectedSession ?: run {
             updateError(Mango9ApiException.Unauthorized.userMessage)
             return@withLock
         }
         if (sessions.currentSession(lease) == null) return@withLock
+        if (!automaticRetry) reconnectAttempts = 0
         val session = lease.session
         val identity = Mango9SessionStore.normalizedIdentity(session.sipIdentity)
             ?: run {
@@ -155,8 +161,9 @@ class Mango9ChatStore private constructor(context: Context) {
                 )
             }
             connectingIdentity = null
+            connectedAt = System.nanoTime()
         } catch (error: Exception) {
-            if (error is CancellationException) {
+            if (error is CancellationException && !kotlinx.coroutines.currentCoroutineContext().isActive) {
                 if (connectionGeneration == generation) {
                     connectionGeneration++
                     disconnectInternal(clearData = true, intentional = true)
@@ -172,6 +179,10 @@ class Mango9ChatStore private constructor(context: Context) {
                     errorMessage = userMessage(error),
                 )
             }
+            socket?.cancel(); socket = null
+            failPending(Mango9ChatException(DISCONNECTED))
+            if (error == Mango9ApiException.SessionExpired || error == Mango9ApiException.Unauthorized || error == Mango9ApiException.Forbidden) return@withLock
+            if (error is Mango9ApiException.RetryAfter) reconnectNotBefore = System.nanoTime() + error.seconds * 1_000_000_000L
             scheduleReconnect()
             return@withLock
         }
@@ -1143,7 +1154,9 @@ class Mango9ChatStore private constructor(context: Context) {
 
     private fun handleSocketFailure(generation: Long) {
         if (connectionGeneration != generation) return
-        socket = null
+        if (connectedAt != 0L && System.nanoTime() - connectedAt > 30_000_000_000L) reconnectAttempts = 0
+        connectedAt = 0
+        socket?.cancel(); socket = null
         failPending(Mango9ChatException(DISCONNECTED))
         mutableState.update {
             it.copy(
@@ -1155,11 +1168,14 @@ class Mango9ChatStore private constructor(context: Context) {
     }
 
     private fun scheduleReconnect() {
-        if (intentionallyDisconnected || reconnectJob?.isActive == true || sessions.load() == null) return
+        if (intentionallyDisconnected || reconnectJob?.isActive == true || sessions.load() == null || reconnectAttempts >= 6) return
+        reconnectAttempts++
+        val backoff = kotlin.random.Random.nextLong(1000, (1000L shl reconnectAttempts).coerceAtMost(30_000) + 1)
+        val pause = maxOf(backoff, (reconnectNotBefore - System.nanoTime()) / 1_000_000L)
         reconnectJob = scope.launch {
-            delay(RECONNECT_DELAY_MS)
+            delay(pause)
             reconnectJob = null
-            connect(force = true)
+            connect(force = true, automaticRetry = true)
         }
     }
 

@@ -18,9 +18,10 @@ import okhttp3.Response
 
 /** Cancellable, size-bounded transport; never replay writes or forward credentials on redirects. */
 internal class Mango9ApiHttpTransport {
-    data class Result(val status: Int, val body: ByteArray)
+    data class Result(val status: Int, val body: ByteArray, val retryAfterSeconds: Long? = null)
 
     suspend fun execute(request: Request): Result {
+        Mango9TokenRefresh.checkBearer(request.header("Authorization"))
         try {
             return executeOnce(request)
         } catch (error: IOException) {
@@ -51,7 +52,7 @@ internal class Mango9ApiHttpTransport {
                         if (body.contentLength() > MAX_BYTES || body.source().request(MAX_BYTES + 1)) {
                             throw Mango9ApiException.InvalidResponse
                         }
-                        Result(it.code, body.bytes())
+                        Result(it.code, body.bytes(), retryAfter(it.header("Retry-After")))
                     }
                     if (continuation.isActive) continuation.resume(result)
                 } catch (error: Exception) {
@@ -62,6 +63,16 @@ internal class Mango9ApiHttpTransport {
     }
 
     private companion object {
+        fun retryAfter(value: String?): Long? {
+            if (value == null) return null
+            val number = value.toLongOrNull()
+            val seconds = number ?: runCatching {
+                val date = java.time.ZonedDateTime.parse(value, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME)
+                java.time.Duration.between(java.time.Instant.now(), date.toInstant()).seconds
+            }.getOrNull() ?: return null
+            return seconds.coerceIn(1, 3600)
+        }
+
         class Attempt { val sent = AtomicBoolean(false) }
 
         const val MAX_BYTES = 2L * 1024 * 1024
@@ -72,7 +83,14 @@ internal class Mango9ApiHttpTransport {
                 if (chain.request().tag(Attempt::class.java)?.sent?.compareAndSet(false, true) != true) {
                     throw IOException("Request cannot be replayed")
                 }
-                chain.proceed(chain.request())
+                val response = chain.proceed(chain.request())
+                // OkHttp otherwise repeats 503/Retry-After: 0 even with connection retries off.
+                // Let the session owner apply bounded cooldown; never replay a mutation here.
+                if (response.code == 503 && response.header("Retry-After")?.toLongOrNull() == 0L) {
+                    response.newBuilder().header("Retry-After", "1").build()
+                } else {
+                    response
+                }
             }.build()
     }
 }

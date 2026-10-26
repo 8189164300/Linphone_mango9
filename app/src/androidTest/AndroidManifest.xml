@@ -4,7 +4,7 @@
         <!-- Synthetic bytes only, installed exclusively with the instrumentation APK. -->
         <provider
             android:name="org.linphone.mango9.Mango9OutgoingTestProvider"
-            android:authorities="com.mango9.phone.test.outgoing"
+            android:authorities="${applicationId}.outgoing"
             android:exported="true" />
     </application>
 </manifest>

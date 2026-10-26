@@ -13,6 +13,8 @@ class Mango9CrmRepository(context: Context) {
     private val sessions = Mango9SessionStore(context)
     private val requests = Mango9AuthorizedRequests(sessions, api::refresh)
 
+    internal fun sessionStorageError() = sessions.lastStorageError
+
     fun hasActiveSession(): Boolean = sessions.load() != null
 
     fun activeIdentity(): String? = sessions.activeIdentity

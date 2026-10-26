@@ -159,6 +159,14 @@ class Mango9CrmFragment : GenericMainFragment() {
             binding.clientsCount.text = dashboard?.clients?.toString() ?: "—"
         }
         viewModel.activeSession.observe(viewLifecycleOwner, ::renderSession)
+        viewModel.connectionLabel.observe(viewLifecycleOwner) { label ->
+            binding.connectedBadge.text = label
+            val connected = label == "CONNECTED"
+            binding.connectedBadge.setTextColor(if (connected) android.graphics.Color.rgb(30, 110, 60) else android.graphics.Color.DKGRAY)
+            binding.connectedBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                if (connected) android.graphics.Color.rgb(222, 245, 230) else android.graphics.Color.rgb(238, 238, 242)
+            )
+        }
         viewModel.accountRevision.observe(viewLifecycleOwner) { dismissRecordDialogs() }
         viewModel.search.observe(viewLifecycleOwner) { value ->
             if (binding.search.text?.toString() != value.orEmpty()) binding.search.setText(value.orEmpty())

@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Mango9. SPDX-License-Identifier: GPL-3.0-or-later
 package org.linphone.mango9
 
-import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -28,28 +27,29 @@ class Mango9ApiHttpTransportTest {
                 .method(method, "{}".toRequestBody()).build()
                 )
             }
-            assertTrue(result.exceptionOrNull() is IOException); assertEquals(1, server.requestCount)
+            assertEquals(503, result.getOrThrow().status); assertEquals(1, server.requestCount)
         }
     }
 
-    @Test fun readRecoversFromTransientFailureWithoutUnboundedReplay() = runBlocking {
+    @Test fun serviceOutageReturnsCooldownWithoutHiddenRetry() = runBlocking {
         MockWebServer().use { server ->
             server.enqueue(MockResponse.Builder().code(503).addHeader("Retry-After", "0").body("{}").build())
-            server.enqueue(MockResponse.Builder().body("recovered").build())
-            server.start()
+            server.enqueue(MockResponse.Builder().body("unexpected").build()); server.start()
             val result = Mango9ApiHttpTransport().execute(Request.Builder().url(server.url("/dashboard")).build())
-            assertEquals("recovered", result.body.toString(Charsets.UTF_8))
-            assertEquals(2, server.requestCount)
+            assertEquals(503, result.status); assertEquals(1L, result.retryAfterSeconds)
+            assertEquals(1, server.requestCount)
         }
+    }
+
+    @Test fun rateLimitPreservesNumericAndDateDelay() = runBlocking {
         MockWebServer().use { server ->
-            repeat(3) {
-                server.enqueue(MockResponse.Builder().code(503).addHeader("Retry-After", "0").body("{}").build())
-            }
-            server.start()
-            val result = runCatching {
-                Mango9ApiHttpTransport().execute(Request.Builder().url(server.url("/dashboard")).build())
-            }
-            assertTrue(result.exceptionOrNull() is IOException)
+            server.enqueue(MockResponse.Builder().code(429).addHeader("Retry-After", "42").body("{}").build())
+            val date = java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(1)
+                .format(java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME)
+            server.enqueue(MockResponse.Builder().code(503).addHeader("Retry-After", date).body("{}").build()); server.start()
+            val request = Request.Builder().url(server.url("/dashboard")).build()
+            assertEquals(42L, Mango9ApiHttpTransport().execute(request).retryAfterSeconds)
+            assertTrue(Mango9ApiHttpTransport().execute(request).retryAfterSeconds!! in 55..60)
             assertEquals(2, server.requestCount)
         }
     }

@@ -24,6 +24,14 @@ import org.json.JSONObject
 import org.linphone.core.tools.Log
 
 sealed class Mango9ApiException(val userMessage: String) : Exception(userMessage) {
+    data object SessionExpired : Mango9ApiException("Your Mango9 login has expired. Sign in again.")
+
+    data object SecureStorage : Mango9ApiException("Mango9 couldn’t safely access saved account data. Unlock your phone and try again.")
+
+    data object DeviceAuthorization : Mango9ApiException("Device authorization could not be verified. Check your phone’s date and time, then try again.")
+
+    data class RetryAfter(val seconds: Long) : Mango9ApiException("Mango9 is temporarily unavailable. Please try again shortly.")
+
     data object InvalidEmail : Mango9ApiException("Enter a valid email address.")
 
     data object InvalidOrExpiredCode : Mango9ApiException("That code is invalid or expired. Request a new code and try again.")
@@ -42,7 +50,7 @@ sealed class Mango9ApiException(val userMessage: String) : Exception(userMessage
 
     data object CrmUnavailable : Mango9ApiException("The CRM is temporarily unavailable. Please try again.")
 
-    data object Unauthorized : Mango9ApiException("Your saved Mango9 session has expired. Enter your password to connect again.")
+    data object Unauthorized : Mango9ApiException("Mango9 couldn’t verify this request. Please try again.")
 
     data object Forbidden : Mango9ApiException("Your CRM account does not have permission to perform this action.")
 
@@ -72,6 +80,8 @@ internal class Mango9ApiClient(context: Context) {
     )
 
     suspend fun signIn(username: String, password: String): Mango9LoginResponse {
+        val keyId = Mango9DeviceProof.create()
+        try {
         val response = postProvisioning(
             "v1/mobile/login",
             JSONObject().apply {
@@ -79,10 +89,11 @@ internal class Mango9ApiClient(context: Context) {
                 put("password", password)
                 put("device_id", deviceId)
                 put("platform", "android")
+                put("device_proof", Mango9DeviceProof.proof(keyId, Mango9Configuration.PROVISIONING_BASE_URL.trimEnd('/') + "/v1/mobile/login"))
             },
         )
         return try {
-            parseLoginResponse(response)
+            parseLoginResponse(response, keyId)
         } catch (error: Mango9ApiException.InvalidResponse) {
             Log.e(
                 "$TAG Login succeeded but the response contract was invalid" +
@@ -90,6 +101,7 @@ internal class Mango9ApiClient(context: Context) {
             )
             throw error
         }
+        } catch (error: Exception) { Mango9DeviceProof.remove(keyId); throw error }
     }
 
     suspend fun requestLoginCode(email: String): Int {
@@ -105,6 +117,8 @@ internal class Mango9ApiClient(context: Context) {
     }
 
     suspend fun verifyLoginCode(email: String, code: String): Mango9LoginResponse {
+        val keyId = Mango9DeviceProof.create()
+        try {
         val response = postProvisioning(
             "v1/mobile/login-code/verify",
             JSONObject().apply {
@@ -112,9 +126,11 @@ internal class Mango9ApiClient(context: Context) {
                 put("code", code)
                 put("device_id", deviceId)
                 put("platform", "android")
+                put("device_proof", Mango9DeviceProof.proof(keyId, Mango9Configuration.PROVISIONING_BASE_URL.trimEnd('/') + "/v1/mobile/login-code/verify"))
             },
         )
-        return parseLoginResponse(response)
+        return parseLoginResponse(response, keyId)
+        } catch (error: Exception) { Mango9DeviceProof.remove(keyId); throw error }
     }
 
     suspend fun fetchEnrollment(enrollmentUrl: String): Mango9SipEnrollment {
@@ -156,14 +172,41 @@ internal class Mango9ApiClient(context: Context) {
             url,
             "POST",
             JSONObject().put("refresh_token", session.refreshToken).toString().toByteArray(),
+            purpose = RequestPurpose.Refresh,
+            proof = session.proofKeyId?.let { Mango9DeviceProof.proof(it, url.toString()) },
         )
         val envelope = JSONObject(response.body.toString(Charsets.UTF_8))
-        if (!envelope.optBoolean("success", false)) throw Mango9ApiException.Unauthorized
+        if (!envelope.optBoolean("success", false)) throw Mango9ApiException.InvalidResponse
         val tokens = envelope.requiredObject("data").requiredObject("tokens")
+        session.proofKeyId?.let {
+            checkBoundTokens(tokens, it)
+            if (tokens.optionalString("session_id") != session.sessionFamilyId) throw Mango9ApiException.InvalidResponse
+        }
         return session.copy(
+            sessionFamilyId = tokens.optionalString("session_id") ?: session.sessionFamilyId,
+            logoutToken = tokens.optionalString("logout_token") ?: session.logoutToken,
             accessToken = tokens.requiredString("access_token"),
             refreshToken = tokens.requiredString("refresh_token"),
         )
+    }
+
+    internal fun checkBoundTokens(tokens: JSONObject, keyId: String) {
+        if (tokens.optInt("refresh_protocol") != 2 || tokens.optionalString("session_id") == null ||
+            tokens.optionalString("logout_token") == null || tokens.optionalString("dpop_jkt") != Mango9DeviceProof.thumbprint(keyId)
+        ) {
+            throw Mango9ApiException.InvalidResponse
+        }
+    }
+
+    suspend fun revokeSession(session: Mango9Session): Boolean {
+        val capability = session.logoutToken ?: return false
+        val base = Mango9Configuration.verifiedHttpsUrl(session.crmApiBaseUrl) ?: throw Mango9ApiException.InvalidResponse
+        val response = request(
+            URL(base.toString().trimEnd('/') + "/auth/logout"), "POST",
+            JSONObject().put("cleanup_token", capability).toString().toByteArray()
+        )
+        val data = JSONObject(response.body.toString(Charsets.UTF_8))
+        return data.optBoolean("success") && data.optJSONObject("data")?.optBoolean("completed") == true
     }
 
     suspend fun dashboard(session: Mango9Session): Mango9CrmDashboard {
@@ -439,7 +482,7 @@ internal class Mango9ApiClient(context: Context) {
         val url = Mango9Configuration.verifiedProvisioningUrl(
             "${Mango9Configuration.PROVISIONING_BASE_URL}/${path.trimStart('/')}",
         ) ?: throw Mango9ApiException.InvalidResponse
-        val response = request(url, "POST", body.toString().toByteArray())
+        val response = request(url, "POST", body.toString().toByteArray(), purpose = RequestPurpose.Authentication)
         return try {
             JSONObject(response.body.toString(Charsets.UTF_8))
         } catch (_: Exception) {
@@ -447,10 +490,11 @@ internal class Mango9ApiClient(context: Context) {
         }
     }
 
-    private fun parseLoginResponse(json: JSONObject): Mango9LoginResponse {
+    private fun parseLoginResponse(json: JSONObject, keyId: String): Mango9LoginResponse {
         val crm = json.requiredObject("crm")
         val services = json.requiredObject("services")
         val tokens = json.requiredObject("tokens")
+        checkBoundTokens(tokens, keyId)
         val user = json.requiredObject("user")
         val expiresIn = json.optInt("expires_in", -1)
         if (expiresIn < 0) throw Mango9ApiException.InvalidResponse
@@ -469,6 +513,9 @@ internal class Mango9ApiClient(context: Context) {
             connectWebsocket = services.requiredString("connect_websocket"),
             enrollmentExpiresAtEpochSeconds = System.currentTimeMillis() / 1000 + expiresIn,
             sipIdentity = null,
+            proofKeyId = keyId,
+            sessionFamilyId = tokens.requiredString("session_id"),
+            logoutToken = tokens.requiredString("logout_token"),
         )
         return Mango9LoginResponse(
             enrollmentUrl = json.requiredString("enrollment_url"),
@@ -484,19 +531,23 @@ internal class Mango9ApiClient(context: Context) {
         bearerToken: String? = null,
         accept: String = "application/json",
         purpose: RequestPurpose = RequestPurpose.Json,
+        proof: String? = null,
     ): HttpResponse = withContext(Dispatchers.IO) {
         val verifiedUrl = Mango9Configuration.verifiedHttpsUrl(url.toString())
             ?: throw Mango9ApiException.InvalidResponse
         val payload = body ?: if (method in setOf("POST", "PUT", "PATCH")) ByteArray(0) else null
         val request = Request.Builder().url(verifiedUrl).header("Accept", accept)
             .header("User-Agent", "Mango9Android/1.0")
-            .apply { if (bearerToken != null) header("Authorization", "Bearer $bearerToken") }
+            .apply {
+                if (bearerToken != null) header("Authorization", "Bearer $bearerToken"); if (proof != null) header("DPoP", proof)
+            }
             .method(method, payload?.toRequestBody("application/json".toMediaType())).build()
         val result = try {
             transport.execute(request)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Mango9ApiException) { throw error } catch (_: IOException) { throw Mango9ApiException.Network }
+        if (result.status == 429 || result.status == 503) throw Mango9ApiException.RetryAfter(result.retryAfterSeconds ?: 2)
         if (result.status !in 200..299) throw mapHttpError(result.status, result.body, verifiedUrl, purpose)
         HttpResponse(result.status, result.body)
     }
@@ -519,6 +570,14 @@ internal class Mango9ApiClient(context: Context) {
                 supportReference(errorEnvelope),
         )
         return when {
+            purpose == RequestPurpose.Refresh && status in setOf(400, 401) -> when {
+                serverError in setOf("invalid_grant", "stale_refresh_generation") ||
+                    errorEnvelope?.optString("message")?.lowercase() == "invalid or expired refresh token" -> Mango9ApiException.SessionExpired
+                serverError == "invalid_dpop_proof" -> Mango9ApiException.DeviceAuthorization
+                else -> Mango9ApiException.CrmUnavailable
+            }
+            serverError == "invalid_dpop_proof" -> Mango9ApiException.DeviceAuthorization
+            status == 403 && purpose == RequestPurpose.Refresh -> Mango9ApiException.Forbidden
             purpose == RequestPurpose.Enrollment &&
                 status in setOf(
                     HttpURLConnection.HTTP_UNAUTHORIZED,
@@ -528,7 +587,8 @@ internal class Mango9ApiClient(context: Context) {
                 ) -> Mango9ApiException.EnrollmentUnavailable
             status == HttpURLConnection.HTTP_UNAUTHORIZED && serverError == "invalid_or_expired_code" ->
                 Mango9ApiException.InvalidOrExpiredCode
-            status == HttpURLConnection.HTTP_FORBIDDEN && purpose == RequestPurpose.Crm -> Mango9ApiException.Forbidden
+            status == HttpURLConnection.HTTP_FORBIDDEN && purpose != RequestPurpose.Authentication -> Mango9ApiException.Forbidden
+            status == HttpURLConnection.HTTP_UNAUTHORIZED && purpose != RequestPurpose.Authentication -> Mango9ApiException.Unauthorized
             status == HttpURLConnection.HTTP_UNAUTHORIZED || status == HttpURLConnection.HTTP_FORBIDDEN ->
                 Mango9ApiException.InvalidCredentials
             status == HttpURLConnection.HTTP_BAD_REQUEST && serverError == "invalid_email" ->
@@ -550,7 +610,7 @@ internal class Mango9ApiClient(context: Context) {
             val existing = devicePreferences.getString(KEY_DEVICE_ID, null)
             if (!existing.isNullOrBlank()) return existing
             return UUID.randomUUID().toString().also {
-                devicePreferences.edit(commit = true) { putString(KEY_DEVICE_ID, it) }
+                if (!devicePreferences.edit().putString(KEY_DEVICE_ID, it).commit()) throw Mango9ApiException.SecureStorage
             }
         }
 
@@ -566,6 +626,8 @@ internal class Mango9ApiClient(context: Context) {
     private data class HttpResponse(val status: Int, val body: ByteArray)
 
     private enum class RequestPurpose(val logName: String) {
+        Authentication("authentication"),
+        Refresh("refresh"),
         Json("json"),
         Enrollment("enrollment"),
         Crm("crm"),

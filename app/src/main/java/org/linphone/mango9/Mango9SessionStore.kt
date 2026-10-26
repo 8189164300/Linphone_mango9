@@ -18,17 +18,23 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 
 @Suppress("DEPRECATION")
-class Mango9SessionStore internal constructor(context: Context, private val scheduleCleanup: (Context) -> Unit) : Mango9SessionAccess, Mango9LoginAccess {
-    constructor(context: Context) : this(context, Mango9PushCleanupJob::schedule)
+class Mango9SessionStore internal constructor(context: Context, private val scheduleCleanup: (Context) -> Unit, private val secretsOverride: SharedPreferences?) : Mango9SessionAccess, Mango9LoginAccess, Mango9RenewalOwner {
+    constructor(context: Context) : this(context, Mango9PushCleanupJob::schedule, null)
+    internal constructor(context: Context, scheduleCleanup: (Context) -> Unit) : this(context, scheduleCleanup, null)
 
+    override val renewalOwner: Any get() = sessionLock
     private val appContext = context.applicationContext
     private val metadata = appContext.getSharedPreferences(METADATA_FILE, Context.MODE_PRIVATE)
     private val lineIdentities = Mango9LineIdentityStore(appContext)
     private val encrypted: SharedPreferences by lazy {
+        secretsOverride ?: createEncryptedStore()
+    }
+
+    private fun createEncryptedStore(): SharedPreferences {
         val masterKey = MasterKey.Builder(appContext, MASTER_KEY_ALIAS)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
-        EncryptedSharedPreferences.create(
+        return EncryptedSharedPreferences.create(
             appContext,
             SECRETS_FILE,
             masterKey,
@@ -40,11 +46,12 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
     var rememberLogin: Boolean
         get() = metadata.getBoolean(KEY_REMEMBER_LOGIN, true)
         set(value) = synchronized(sessionLock) {
-            metadata.edit { putBoolean(KEY_REMEMBER_LOGIN, value) }
-            if (!value) {
-                encrypted.edit { storedIdentities().forEach { remove(sessionKey(it)) } }
-            }
+            if (!value) commitSecrets { storedIdentities().forEach { putString(sessionKey(it), tombstone()) } }
+            checkMetadata { putBoolean(KEY_REMEMBER_LOGIN, value) }
         }
+
+    val lastStorageError: Mango9ApiException?
+        get() = synchronized(sessionLock) { storageErrors[activeIdentity] }
 
     val activeIdentity: String?
         get() = normalizedIdentity(metadata.getString(KEY_ACTIVE_IDENTITY, null))
@@ -57,35 +64,54 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
     ) = synchronized(sessionLock) {
         val identity = normalizedIdentity(sipIdentity ?: session.sipIdentity ?: activeIdentity)
             ?: throw IllegalArgumentException("A SIP identity is required")
-        val associated = session.associatedWith(identity)
-        invalidateNotificationLogin(identity)
+        val previous = load(identity)
+        val associated = session.associatedWith(identity).copy(loginEpoch = UUID.randomUUID().toString())
+        commitSecrets {
+            putString(sessionKey(identity), if (persist) record(associated) else tombstone())
+            if (previous?.logoutToken != null && previous.sessionFamilyId != associated.sessionFamilyId) {
+                putString("push_retirement.${UUID.randomUUID()}", previous.toJson().toString())
+            }
+        }
+        // The secure record is authoritative even when the later UI metadata commit fails.
+        // Fence the previous login immediately so its renewal cannot overwrite this generation.
         generations.loginChanged(identity)
-        if (makeActive && activeIdentity != identity) generations.selectionChanged()
-        volatileSessions[identity] = associated
-        metadata.edit {
-            putStringSet(KEY_IDENTITIES, storedIdentities() + identity)
-            if (makeActive) putString(KEY_ACTIVE_IDENTITY, identity)
+        volatileSessions.remove(identity)
+        if (makeActive) generations.selectionChanged()
+        try {
+            invalidateNotificationLogin(identity, previous?.loginEpoch)
+            checkMetadata {
+                putStringSet(KEY_IDENTITIES, storedIdentities() + identity)
+                if (makeActive) putString(KEY_ACTIVE_IDENTITY, identity)
+            }
+            volatileSessions[identity] = associated
+            if (makeActive) lineIdentities.activate(identity)
+        } finally {
+            if (previous?.logoutToken != null) runCatching { scheduleCleanup(appContext) }
+            contextVersion.value = contextVersion.value + 1
         }
-        if (makeActive) lineIdentities.activate(identity)
-        if (persist) {
-            encrypted.edit(commit = true) { putString(sessionKey(identity), associated.toJson().toString()) }
-        } else {
-            encrypted.edit(commit = true) { remove(sessionKey(identity)) }
-        }
-        contextVersion.value = contextVersion.value + 1
     }
 
     fun load(identityValue: String? = activeIdentity): Mango9Session? = synchronized(sessionLock) {
         val identity = normalizedIdentity(identityValue) ?: return null
+        storageErrors.remove(identity)
         volatileSessions[identity]?.let { return it }
         if (!rememberLogin) return null
-        val rawValue = encrypted.getString(sessionKey(identity), null) ?: return null
         return try {
-            Mango9Session.fromJson(JSONObject(rawValue)).associatedWith(identity).also {
+            val rawValue = encrypted.getString(sessionKey(identity), null) ?: return null
+            val json = JSONObject(rawValue)
+            if (json.optBoolean("revoked", false)) return null
+            val payload = if (json.has("version")) {
+                if (json.getInt("version") != 1) throw Mango9ApiException.SecureStorage
+                json.getJSONObject("session")
+            } else {
+                json
+            }
+            Mango9Session.fromJson(payload).also {
+                if (normalizedIdentity(it.sipIdentity) != identity) throw Mango9ApiException.SecureStorage
                 volatileSessions[identity] = it
             }
-        } catch (_: Exception) {
-            encrypted.edit { remove(sessionKey(identity)) }
+        } catch (error: Exception) {
+            storageErrors[identity] = Mango9ApiException.SecureStorage
             null
         }
     }
@@ -110,7 +136,7 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
         val current = currentLogin(login) ?: return null
         val identity = current.sipIdentity ?: return null
         val key = notificationKey(identity)
-        val nonce = metadata.getString(key, null) ?: UUID.randomUUID().toString().also {
+        val nonce = current.loginEpoch ?: metadata.getString(key, null) ?: UUID.randomUUID().toString().also {
             // Do not show an action whose ownership cannot survive process recreation.
             if (!metadata.edit().putString(key, it).commit()) return null
         }
@@ -120,8 +146,9 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
     internal fun resolveNotificationLogin(push: Mango9MessagePush): Mango9LoginLease? = synchronized(sessionLock) {
         val identity = normalizedIdentity(push.sipIdentity) ?: return null
         val nonce = push.notificationLogin ?: return null
-        if (nonce != metadata.getString(notificationKey(identity), null)) return null
-        resolvePushLogin(push)
+        val login = resolvePushLogin(push) ?: return null
+        if (nonce != (login.session.loginEpoch ?: metadata.getString(notificationKey(identity), null))) return null
+        login
     }
 
     /** Publication and logout are serialized; logout cancels only this login's notifications. */
@@ -131,10 +158,10 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
         true
     }
 
-    private fun invalidateNotificationLogin(identity: String) {
+    private fun invalidateNotificationLogin(identity: String, epoch: String? = volatileSessions[identity]?.loginEpoch) {
         val key = notificationKey(identity)
-        val previous = metadata.getString(key, null)
-        check(metadata.edit().remove(key).commit()) { "Unable to retire notification ownership" }
+        val previous = epoch ?: metadata.getString(key, null)
+        if (!metadata.edit().remove(key).commit()) throw Mango9ApiException.SecureStorage
         previous?.let { Mango9MessageNotifications.cancelLogin(appContext, it) }
     }
 
@@ -157,16 +184,8 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
 
     fun remove(identityValue: String): Unit = synchronized(sessionLock) {
         val identity = normalizedIdentity(identityValue) ?: return
-        invalidateNotificationLogin(identity)
-        generations.loginChanged(identity)
-        if (activeIdentity == identity) generations.selectionChanged()
-        volatileSessions.remove(identity)
-        encrypted.edit(commit = true) { remove(sessionKey(identity)) }
-        lineIdentities.clear(identity)
-        metadata.edit {
-            putStringSet(KEY_IDENTITIES, storedIdentities() - identity)
-            if (activeIdentity == identity) remove(KEY_ACTIVE_IDENTITY)
-        }
+        commitSecrets { putString(sessionKey(identity), tombstone()) }
+        removeLocalState(identity)
         contextVersion.value = contextVersion.value + 1
     }
 
@@ -184,7 +203,7 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
     }
 
     override fun currentLogin(lease: Mango9LoginLease): Mango9Session? = synchronized(sessionLock) {
-        if (generations.matchesLogin(lease)) load(lease.session.sipIdentity) else null
+        if (generations.matchesLogin(lease)) load(lease.session.sipIdentity)?.takeIf { sameLogin(it, lease.session) } else null
     }
 
     internal val selectionVersion: Long get() = synchronized(sessionLock) { generations.selectionVersion }
@@ -258,19 +277,21 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
     ): Boolean =
         synchronized(sessionLock) {
             val current = currentLogin(lease) ?: return false
-            if (journalPushCleanup && Mango9PushOwner.from(current) != null) {
-                // One encrypted commit records revocation before destroying its credentials.
-                val id = UUID.randomUUID().toString()
-                check(
-                    encrypted.edit().putString("push_retirement.$id", current.toJson().toString())
-                    .remove(sessionKey(requireNotNull(current.sipIdentity))).commit()
-                ) { "Unable to save account cleanup" }
-                // A scheduling failure must not interrupt local removal after its durable commit.
-                // Startup/reconnect retries scheduling from the journal, which stays intact.
-                runCatching { scheduleCleanup(appContext) }
+            val identity = current.sipIdentity ?: return false
+            // Journal and tombstone commit together, before any SDK account is removed.
+            commitSecrets {
+                if (journalPushCleanup && Mango9PushOwner.from(current) != null) {
+                    putString("push_retirement.${UUID.randomUUID()}", current.toJson().toString())
+                }
+                putString("local_logout.$identity", current.loginEpoch ?: "legacy")
+                putString(sessionKey(identity), tombstone())
             }
-            remove(current.sipIdentity ?: return false)
+            val metadataFailure = runCatching { removeLocalState(identity) }.exceptionOrNull()
+            contextVersion.value = contextVersion.value + 1
+            runCatching { scheduleCleanup(appContext) }
             onRemoval(current)
+            acknowledgeLocalRemoval(identity)
+            if (metadataFailure != null) throw metadataFailure
             true
         }
 
@@ -284,12 +305,12 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
         val key = "push_retirement.$id"
         val raw = encrypted.getString(key, null) ?: return@synchronized
         check(Mango9Session.fromJson(JSONObject(raw)) == before)
-        check(after == before.copy(accessToken = after.accessToken, refreshToken = after.refreshToken))
-        check(encrypted.edit().putString(key, after.toJson().toString()).commit())
+        check(validTokenUpdate(before, after))
+        commitSecrets { putString(key, after.toJson().toString()) }
     }
 
     internal fun acknowledgePushRemoval(id: String) = synchronized(sessionLock) {
-        check(encrypted.edit().remove("push_retirement.$id").commit())
+        commitSecrets { remove("push_retirement.$id") }
     }
 
     /** Finish/cancel a completed job before a simultaneous logout schedules the next one. */
@@ -298,7 +319,13 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
     }
 
     override fun currentSession(lease: Mango9SessionLease): Mango9Session? = synchronized(sessionLock) {
-        if (generations.matches(lease, activeIdentity)) load(lease.session.sipIdentity) else null
+        if (generations.matches(lease, activeIdentity)) {
+            load(lease.session.sipIdentity)?.takeIf {
+            sameLogin(it, lease.session)
+        }
+        } else {
+            null
+        }
     }
 
     override fun replaceTokens(
@@ -323,19 +350,83 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
     private fun persistTokens(current: Mango9Session, expected: Mango9Session, refreshed: Mango9Session): Boolean {
         if (current != expected) return false
         // A refresh endpoint may rotate tokens, but must never change tenant, user, or routing.
-        val tokenUpdate = current.copy(accessToken = refreshed.accessToken, refreshToken = refreshed.refreshToken)
-        if (tokenUpdate != refreshed || refreshed.accessToken.isBlank() || refreshed.refreshToken.isBlank()) return false
+        if (!validTokenUpdate(current, refreshed)) return false
         val identity = current.sipIdentity ?: return false
-        encrypted.edit(commit = true) {
-            if (rememberLogin) {
-                putString(sessionKey(identity), tokenUpdate.toJson().toString())
-            } else {
-                remove(sessionKey(identity))
-            }
-        }
-        volatileSessions[identity] = tokenUpdate
+        commitSecrets { putString(sessionKey(identity), if (rememberLogin) record(refreshed) else tombstone()) }
+        volatileSessions[identity] = refreshed
         return true
     }
+
+    internal fun retainsProofKey(id: String): Boolean = synchronized(sessionLock) {
+        if (volatileSessions.values.any { it.proofKeyId == id }) return true
+        try {
+            encrypted.all.filterKeys { it.startsWith("session.") || it.startsWith("push_retirement.") }.values.any { raw ->
+                val json = JSONObject(raw as String)
+                (json.optJSONObject("session") ?: json).optionalString("proof_key_id") == id
+            }
+        } catch (_: Exception) { true }
+    }
+
+    private fun sameLogin(current: Mango9Session, captured: Mango9Session): Boolean =
+        current.loginEpoch == captured.loginEpoch && current.crmId == captured.crmId &&
+            current.crmApiBaseUrl == captured.crmApiBaseUrl && current.userId == captured.userId
+
+    private fun validTokenUpdate(before: Mango9Session, after: Mango9Session): Boolean =
+        before.copy(
+            accessToken = after.accessToken, refreshToken = after.refreshToken,
+            sessionFamilyId = after.sessionFamilyId, logoutToken = after.logoutToken
+        ) == after &&
+            (before.sessionFamilyId == null || before.sessionFamilyId == after.sessionFamilyId) &&
+            after.accessToken.isNotBlank() && after.refreshToken.isNotBlank()
+
+    private fun record(session: Mango9Session) = JSONObject().put("version", 1).put("revoked", false).put("session", session.toJson()).toString()
+
+    private fun tombstone() = JSONObject().put("version", 1).put("revoked", true).toString()
+
+    /** SharedPreferences changes its memory cache even when commit returns false. Restore it too. */
+    private fun commitSecrets(change: SharedPreferences.Editor.() -> Unit) {
+        try {
+            val before = encrypted.all
+            try {
+                if (!encrypted.edit().apply(change).commit()) throw Mango9ApiException.SecureStorage
+            } catch (error: Exception) {
+                runCatching {
+                    encrypted.edit().clear().apply { before.forEach { (key, value) -> putString(key, value as String) } }.commit()
+                }
+                throw error
+            }
+        } catch (error: Exception) { throw Mango9ApiException.SecureStorage }
+    }
+
+    private fun checkMetadata(change: SharedPreferences.Editor.() -> Unit) {
+        if (!metadata.edit().apply(change).commit()) throw Mango9ApiException.SecureStorage
+    }
+
+    private fun removeLocalState(identity: String) {
+        // Once the secure tombstone exists, even a metadata failure cannot revive this login.
+        val epoch = volatileSessions[identity]?.loginEpoch
+        volatileSessions.remove(identity)
+        generations.loginChanged(identity)
+        if (activeIdentity == identity) generations.selectionChanged()
+        invalidateNotificationLogin(identity, epoch)
+        lineIdentities.clear(identity)
+        checkMetadata {
+            putStringSet(KEY_IDENTITIES, storedIdentities() - identity)
+            if (activeIdentity == identity) remove(KEY_ACTIVE_IDENTITY)
+        }
+    }
+
+    internal fun recoverLocalRemovals(removeAccount: (String) -> Unit) = synchronized(sessionLock) {
+        encrypted.all.keys.filter { it.startsWith("local_logout.") }.forEach { key ->
+            val identity = key.removePrefix("local_logout.")
+            val current = load(identity)
+            storageErrors[identity]?.let { throw it }
+            if (current == null) removeAccount(identity)
+            acknowledgeLocalRemoval(identity)
+        }
+    }
+
+    private fun acknowledgeLocalRemoval(identity: String) { commitSecrets { remove("local_logout.$identity") } }
 
     private fun storedIdentities(): Set<String> =
         metadata.getStringSet(KEY_IDENTITIES, emptySet()).orEmpty().mapNotNull(::normalizedIdentity).toSet()
@@ -349,6 +440,8 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
         private const val KEY_REMEMBER_LOGIN = "remember_login"
         private const val KEY_ACTIVE_IDENTITY = "active_sip_identity"
         private const val KEY_IDENTITIES = "crm_session_identities"
+
+        private val storageErrors = mutableMapOf<String, Mango9ApiException>()
         private val volatileSessions = ConcurrentHashMap<String, Mango9Session>()
         private val sessionLock = Any()
         private val generations = Mango9SessionGenerations()

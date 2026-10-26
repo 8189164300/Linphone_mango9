@@ -8,6 +8,8 @@ import android.content.Context
 
 /** Every screen operation uses the login that supplied its displayed data. */
 internal interface Mango9CrmScreenAccess {
+    fun sessionStorageError(): Mango9ApiException? = null
+
     fun captureSession(): Mango9SessionLease?
 
     fun isCurrent(lease: Mango9SessionLease): Boolean
@@ -40,6 +42,8 @@ internal interface Mango9CrmScreenAccess {
 
 internal class Mango9CrmScreenRepository(context: Context) : Mango9CrmScreenAccess {
     private val repository = Mango9CrmRepository(context)
+
+    override fun sessionStorageError() = repository.sessionStorageError()
 
     override fun captureSession() = repository.captureSession()
 

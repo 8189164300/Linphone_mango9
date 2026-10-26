@@ -814,6 +814,8 @@ class CoreContext
         return super.quitSafely()
     }
 
+    private var logoutRecoveryAttempts = 0
+
     @WorkerThread
     fun startCore() {
         Log.i("$TAG Starting Core")
@@ -835,11 +837,28 @@ class CoreContext
 
         computeUserAgent()
         Log.i("$TAG Core has been configured with user-agent [${core.userAgent}], starting it")
+        try {
+            Mango9SessionStore(context).recoverLocalRemovals { identity ->
+                core.accountList.filter {
+                    Mango9SessionStore.normalizedIdentity(it.params.identityAddress?.asStringUriOnly()) == identity
+                }.forEach { org.linphone.mango9.Mango9AccountRemoval.remove(core, it) }
+                check(core.config.sync() == 0) { "Account removal could not be saved" }
+            }
+            logoutRecoveryAttempts = 0
+        } catch (_: Exception) {
+            Log.w("[Mango9] Voice startup waits for saved logout cleanup")
+            if (logoutRecoveryAttempts < 6) {
+                logoutRecoveryAttempts++
+                postOnCoreThreadDelayed({ startCore() }, minOf(1000L shl logoutRecoveryAttempts, 30_000L))
+            }
+            return
+        }
         core.start()
     }
 
     @WorkerThread
     fun onCoreStarted() {
+
         Log.i("$TAG Core started, updating configuration if required")
         core.videoCodecPriorityPolicy = CodecPriorityPolicy.Auto
 

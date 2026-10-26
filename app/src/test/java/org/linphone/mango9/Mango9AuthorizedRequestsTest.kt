@@ -26,7 +26,7 @@ class Mango9AuthorizedRequestsTest {
             "new-access",
             requests.execute {
             attempts++
-            if (attempts == 1) throw Mango9ApiException.InvalidCredentials
+            if (attempts == 1) throw Mango9ApiException.Unauthorized
             it.accessToken
         }
         )
@@ -124,18 +124,25 @@ class Mango9AuthorizedRequestsTest {
     }
 
     @Test
-    fun cancellationDoesNotSaveOrRetry() = runBlocking {
+    fun cancellationStillSavesButDoesNotRetryScreenAction() = runBlocking {
         val store = MemorySessions()
         val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
         val requests = Mango9AuthorizedRequests(store) {
             started.complete(Unit)
-            CompletableDeferred<Unit>().await()
+            finish.await()
             it.renewed()
         }
         val job = launch { requests.execute<Unit> { throw Mango9ApiException.InvalidCredentials } }
         started.await()
         job.cancelAndJoin()
-        assertEquals(0, store.writes)
+        finish.complete(Unit)
+        val result = requests.execute {
+            if (it.accessToken == "old-access") throw Mango9ApiException.InvalidCredentials
+            it.accessToken
+        }
+        assertEquals("new-access", result)
+        assertEquals(1, store.writes)
     }
 
     @Test

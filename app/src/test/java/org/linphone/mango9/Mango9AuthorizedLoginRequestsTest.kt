@@ -28,7 +28,7 @@ class Mango9AuthorizedLoginRequestsTest {
         assertEquals(
             "new-access",
             requests.execute(login) {
-            if (it.accessToken == "old-access") throw Mango9ApiException.InvalidCredentials
+            if (it.accessToken == "old-access") throw Mango9ApiException.Unauthorized
             it.accessToken
         }
         )
@@ -66,16 +66,27 @@ class Mango9AuthorizedLoginRequestsTest {
         assertNotNull(sessions.currentSession(uiLease)); assertNotNull(sessions.currentLogin(login))
     }
 
-    @Test fun cancelledBackgroundRefreshDoesNotPersistTokens() = runBlocking {
+    @Test fun cancelledBackgroundWaiterStillPersistsRenewal() = runBlocking {
         val sessions = Mango9PushTestSessions(pushTestSession())
         val started = CompletableDeferred<Unit>()
-        val job = async {
-            Mango9AuthorizedLoginRequests(sessions) {
-                started.complete(Unit); CompletableDeferred<Unit>().await(); it
-            }.execute<Unit>(sessions.captureLogins().single()) { throw Mango9ApiException.InvalidCredentials }
+        val finish = CompletableDeferred<Unit>()
+        val updated = sessions.captureLogins().single().session.copy(accessToken = "finished-access", refreshToken = "finished-refresh")
+        val requests = Mango9AuthorizedLoginRequests(sessions) {
+            started.complete(Unit); finish.await(); updated
         }
-        started.await(); job.cancelAndJoin()
-        assertEquals(0, sessions.writes)
+        val job = async {
+            requests.execute(sessions.captureLogins().single()) {
+                if (it.accessToken != updated.accessToken) throw Mango9ApiException.InvalidCredentials
+                it
+            }
+        }
+        started.await(); job.cancelAndJoin(); finish.complete(Unit)
+        val result = requests.execute(sessions.captureLogins().single()) {
+            if (it.accessToken != updated.accessToken) throw Mango9ApiException.InvalidCredentials
+            it
+        }
+        assertEquals(updated.accessToken, result.accessToken)
+        assertEquals(1, sessions.writes)
     }
 
     @Test fun removedLoginCannotDispatchAnyBackgroundRequest() = runBlocking {

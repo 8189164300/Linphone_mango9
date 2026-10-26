@@ -18,7 +18,10 @@ internal object Mango9AccountRemoval {
 
     @WorkerThread
     fun remove(core: Core, account: Account) {
-        if (core.accountList.none { it.nativePointer == account.nativePointer }) return
+        if (core.accountList.none { it.nativePointer == account.nativePointer }) {
+            check(core.config.sync() == 0) { "Account removal could not be saved" }
+            return
+        }
         val auth = account.findAuthInfo()
         // Snapshot only this account's data before removing its association from Core.
         val rooms = account.chatRooms
@@ -27,6 +30,7 @@ internal object Mango9AccountRemoval {
         // Core removes it from the public account list immediately and sends authenticated
         // unREGISTER using its deleted-account lifecycle. Do not erase auth before that exchange.
         core.removeAccount(account)
+        check(core.config.sync() == 0) { "Account removal could not be saved" }
         rooms.forEach(core::deleteChatRoom)
         conferences.forEach(core::deleteConferenceInformation)
         callLogs.forEach(core::removeCallLog)
@@ -50,5 +54,6 @@ internal object Mango9AccountRemoval {
         val retained = core.authInfoList.firstOrNull { it.nativePointer == pointer } ?: return
         if (core.accountList.any { it.findAuthInfo()?.nativePointer == pointer }) return
         core.removeAuthInfo(retained)
+        core.config.sync()
     }
 }

@@ -31,10 +31,18 @@ data class Mango9Session(
     val connectWebsocket: String,
     val enrollmentExpiresAtEpochSeconds: Long,
     val sipIdentity: String?,
+    val loginEpoch: String? = null,
+    val proofKeyId: String? = null,
+    val sessionFamilyId: String? = null,
+    val logoutToken: String? = null,
 ) {
     fun associatedWith(identity: String): Mango9Session = copy(sipIdentity = identity)
 
     fun toJson(): JSONObject = JSONObject().apply {
+        put("login_epoch", loginEpoch ?: JSONObject.NULL)
+        put("proof_key_id", proofKeyId ?: JSONObject.NULL)
+        put("session_family_id", sessionFamilyId ?: JSONObject.NULL)
+        put("logout_token", logoutToken ?: JSONObject.NULL)
         put("crm_id", crmId)
         put("crm_base_url", crmBaseUrl)
         put("crm_api_base_url", crmApiBaseUrl)
@@ -53,6 +61,10 @@ data class Mango9Session(
 
     companion object {
         fun fromJson(json: JSONObject): Mango9Session = Mango9Session(
+            loginEpoch = json.optionalString("login_epoch"),
+            proofKeyId = json.optionalString("proof_key_id"),
+            sessionFamilyId = json.optionalString("session_family_id"),
+            logoutToken = json.optionalString("logout_token"),
             crmId = json.requiredString("crm_id"),
             crmBaseUrl = json.requiredString("crm_base_url"),
             crmApiBaseUrl = json.requiredString("crm_api_base_url"),

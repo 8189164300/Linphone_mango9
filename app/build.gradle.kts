@@ -16,7 +16,7 @@ plugins {
 }
 
 val packageName = "com.mango9.phone"
-val useDifferentPackageNameForDebugBuild = false
+val useDifferentPackageNameForDebugBuild = providers.gradleProperty("Mango9IsolatedDebug").orNull == "true"
 val mango9VersionName = "6.2.9"
 val mango9VersionCode = 602041
 val mango9ReleaseTag = "android-$mango9VersionName-build-$mango9VersionCode"
@@ -28,8 +28,8 @@ val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
 val googleServices = File(projectDir.absolutePath + "/mango9-google-services.json")
 val linphoneLibs = File("$sdkPath/libs/")
 val linphoneDebugLibs = File("$sdkPath/libs-debug/")
-val firebaseCloudMessagingAvailable = googleServices.exists()
-val crashlyticsAvailable = googleServices.exists() && linphoneLibs.exists() && linphoneDebugLibs.exists()
+val firebaseCloudMessagingAvailable = googleServices.exists() && !useDifferentPackageNameForDebugBuild
+val crashlyticsAvailable = firebaseCloudMessagingAvailable && linphoneLibs.exists() && linphoneDebugLibs.exists()
 val defaultMango9SourceCodeUrl =
     "https://github.com/8189164300/Linphone_mango9/tree/$mango9ReleaseTag"
 val mango9SourceCodeUrl = providers.gradleProperty("Mango9SourceCodeUrl")
