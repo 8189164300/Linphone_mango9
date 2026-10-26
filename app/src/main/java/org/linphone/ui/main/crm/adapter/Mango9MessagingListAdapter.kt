@@ -20,11 +20,12 @@ import org.linphone.mango9.Mango9ChatState
 import org.linphone.mango9.Mango9ChatUser
 import org.linphone.mango9.Mango9SmsParty
 import org.linphone.mango9.Mango9SocialThread
+import org.linphone.mango9.humanMemberIds
 
 sealed class Mango9MessagingListItem(val stableId: String) {
     data class Social(val thread: Mango9SocialThread, val preview: String = "Loading preview…", val previewEpoch: Long = 0) : Mango9MessagingListItem("social:${thread.id}")
 
-    data class Group(val room: Mango9ChatRoom, val title: String) : Mango9MessagingListItem("group:${room.id}")
+    data class Group(val room: Mango9ChatRoom, val title: String, val memberCount: Int = room.userIds.size + 1) : Mango9MessagingListItem("group:${room.id}")
 
     data class User(
         val user: Mango9ChatUser,
@@ -71,8 +72,8 @@ object Mango9MessagingListItems {
         val groups = state.rooms
             .filter { !it.isDirect && !isConversationDeleted(it.id) }
             .sortedWith(compareByDescending<Mango9ChatRoom> { Mango9ConversationRecency.time(it.latest) }.thenBy { it.id })
-            .map { Mango9MessagingListItem.Group(it, roomTitle(it)) }
-        val people = state.users.map { user ->
+            .map { Mango9MessagingListItem.Group(it, roomTitle(it), it.humanMemberIds(state.users).size + 1) }
+        val people = state.users.filterNot { it.isSystem }.map { user ->
             val room = directRooms[user.id]
             Mango9MessagingListItem.User(user, room, state.onlineUserIds.contains(user.id))
         }.sortedWith(
@@ -136,7 +137,7 @@ class Mango9MessagingListAdapter(
                 is Mango9MessagingListItem.Group -> {
                     title = item.title
                     preview = item.room.lastMessage.ifBlank {
-                        context.getString(R.string.mango9_chat_group_status, item.room.userIds.size + 1, 0)
+                        context.getString(R.string.mango9_chat_group_status, item.memberCount, 0)
                     }
                     unread = item.room.unread
                     online = null
@@ -145,7 +146,7 @@ class Mango9MessagingListAdapter(
                 is Mango9MessagingListItem.User -> {
                     title = item.user.name
                     preview = item.room?.lastMessage?.takeIf(String::isNotBlank)
-                        ?: item.user.category.replaceFirstChar(Char::uppercase).ifBlank {
+                        ?: item.user.roleLabel.ifBlank {
                             context.getString(
                                 if (item.online) R.string.mango9_chat_online_label else R.string.mango9_chat_offline_label,
                             )
@@ -163,7 +164,12 @@ class Mango9MessagingListAdapter(
                 }
             }
             binding.title.text = title
+            binding.role.visibility = if (item is Mango9MessagingListItem.User) View.VISIBLE else View.GONE
+            binding.role.text = (item as? Mango9MessagingListItem.User)?.let {
+                it.user.roleLabel + if (it.online) " · Online" else ""
+            }.orEmpty()
             binding.preview.text = preview
+            binding.preview.visibility = if (item is Mango9MessagingListItem.User && item.room?.lastMessage.isNullOrBlank()) View.GONE else View.VISIBLE
             binding.avatar.text = initials
             binding.online.visibility = if (online == null) View.GONE else View.VISIBLE
             binding.online.setBackgroundResource(

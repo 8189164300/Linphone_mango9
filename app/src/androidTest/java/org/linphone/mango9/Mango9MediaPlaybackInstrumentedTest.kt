@@ -43,6 +43,25 @@ class Mango9MediaPlaybackInstrumentedTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
 
+    @Test fun voiceMediaUsesLoudspeakerWithoutChangingCallMode() = withFixtures { valid, _ ->
+        val audio = context.getSystemService(android.media.AudioManager::class.java)
+        val mode = audio.mode
+        org.junit.Assume.assumeTrue(Mango9MediaPlaybackRoute.preferSpeaker(mode,
+            audio.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).map { it.type }))
+        withPlayer { model, _ ->
+            main { model.loadFile(valid.path); model.play() }
+            await { (model.position.value ?: 0) > 0 }
+            main {
+                val player = MediaViewModel::class.java.getDeclaredField("mediaPlayer").apply {
+                    isAccessible = true
+                }.get(model) as MediaPlayer
+                assertEquals(android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, player.routedDevice?.type)
+                assertEquals(mode, audio.mode)
+                model.pause()
+            }
+        }
+    }
+
     @Test fun corruptMediaFailsSafelyAndTheNextFileCanPlay() = withFixtures { valid, corrupt ->
         withPlayer { model, _ ->
             main { model.loadFile(corrupt.path); model.play() }

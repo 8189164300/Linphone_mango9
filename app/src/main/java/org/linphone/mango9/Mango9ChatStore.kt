@@ -648,7 +648,7 @@ class Mango9ChatStore private constructor(context: Context) {
     fun roomTitle(room: Mango9ChatRoom): String {
         if (room.isDirect) return room.userIds.firstOrNull()?.let(::userName) ?: "Teammate"
         if (room.groupName.isNotBlank()) return room.groupName
-        val names = room.userIds.map(::userName).filterNot { it == "Teammate" }
+        val names = room.humanMemberIds(state.value.users).map(::userName).filterNot { it == "Teammate" }
         return names.takeIf(List<String>::isNotEmpty)?.joinToString(", ") ?: "Team group"
     }
 
@@ -1277,6 +1277,9 @@ class Mango9ChatStore private constructor(context: Context) {
                 json.optString("name").trim().ifBlank { "User $id" },
                 json.optString("avatar"),
                 json.optString("category"),
+                json.optString("role").ifBlank { json.optString("agentType").ifBlank { json.optString("agent_type") } },
+                json.optBoolean("isSystem", false),
+                json.optBoolean("canJoinGroups", true),
             )
         }
 

@@ -329,7 +329,7 @@ class Mango9MessagingListFragment : GenericMainFragment() {
 
     private fun showCreateGroupDialog() {
         val session = viewModel.navigationSession() ?: return
-        val users = viewModel.state.value?.users.orEmpty()
+        val users = viewModel.state.value?.users.orEmpty().filter { it.canJoinGroups }
         if (users.size < 2) {
             MaterialAlertDialogBuilder(requireContext())
                 .setMessage(R.string.mango9_chat_choose_two)
@@ -340,7 +340,7 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         val selected = mutableSetOf<Int>()
         val dialog = MaterialAlertDialogBuilder(requireContext())
             .setTitle(R.string.mango9_chat_new_group_title)
-            .setMultiChoiceItems(users.map { it.name }.toTypedArray(), null) { _, which, checked ->
+            .setMultiChoiceItems(users.map { "${it.name} — ${it.roleLabel}" }.toTypedArray(), null) { _, which, checked ->
                 if (checked) selected.add(users[which].id) else selected.remove(users[which].id)
             }
             .setNegativeButton(android.R.string.cancel, null)

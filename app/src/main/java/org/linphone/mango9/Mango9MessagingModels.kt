@@ -29,7 +29,28 @@ data class Mango9ChatUser(
     val name: String,
     val avatar: String,
     val category: String,
-)
+    val role: String = "",
+    val systemAccount: Boolean = false,
+    val groupEligible: Boolean = true,
+) {
+    val isSystem: Boolean get() = systemAccount || category.equals("system", ignoreCase = true)
+    val canJoinGroups: Boolean get() = !isSystem && groupEligible
+    val roleLabel: String get() = when (val value = role.ifBlank { category }.lowercase(java.util.Locale.ROOT)) {
+        "super_agent" -> "Super Agent"
+        "lead_buyer", "buyer_agent" -> "Buyer Agent"
+        "agent" -> "Agent"
+        "client" -> "Client"
+        "admin", "administrator" -> "Administrator"
+        "system" -> "System"
+        "" -> "Teammate"
+        else -> value.split('_').joinToString(" ") { it.replaceFirstChar(Char::uppercase) }
+    }
+}
+
+fun Mango9ChatRoom.humanMemberIds(users: List<Mango9ChatUser>): List<Int> {
+    val systemIds = users.filter { it.isSystem }.map { it.id }.toSet()
+    return userIds.filterNot(systemIds::contains)
+}
 
 data class Mango9ChatRoom(
     val id: String,

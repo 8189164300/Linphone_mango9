@@ -6,6 +6,8 @@
  */
 package org.linphone.ui.main.crm.fragment
 
+import org.linphone.mango9.humanMemberIds
+
 import org.linphone.mango9.Mango9AttachmentExports
 import org.linphone.ui.main.crm.viewmodel.Mango9AttachmentExportViewModel
 import org.linphone.utils.hideKeyboard
@@ -529,18 +531,24 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         if (room != null && !room.isDirect) binding.title.text = viewModel.roomTitle(room)
         val direct = directUserId(state)
         val blocked = direct?.let(viewModel.moderation::isBlocked) == true
-        val typingNames = room?.userIds.orEmpty().filter(state.typingUserIds::contains).map(viewModel::userName)
-        val online = direct?.let(state.onlineUserIds::contains) == true || room?.userIds?.any(state.onlineUserIds::contains) == true
+        val memberIds = room?.humanMemberIds(state.users).orEmpty()
+        val typingNames = memberIds.filter(state.typingUserIds::contains).map(viewModel::userName)
+        val online = direct?.let(state.onlineUserIds::contains) == true || memberIds.any(state.onlineUserIds::contains)
         binding.status.text = when {
             blocked -> getString(R.string.mango9_chat_blocked)
             typingNames.isNotEmpty() -> getString(R.string.mango9_chat_typing, typingNames.joinToString(", "))
             room != null && !room.isDirect -> getString(
                 R.string.mango9_chat_group_status,
-                room.userIds.size + 1,
-                room.userIds.count(state.onlineUserIds::contains),
+                memberIds.size + 1,
+                memberIds.count(state.onlineUserIds::contains),
             )
             online -> getString(R.string.mango9_chat_online)
             else -> getString(R.string.mango9_chat_offline)
+        }
+        if (direct != null && !blocked && typingNames.isEmpty()) {
+            state.users.firstOrNull { it.id == direct }?.let {
+                binding.status.text = "${it.roleLabel} · ${binding.status.text}"
+            }
         }
         binding.statusDot.setBackgroundResource(
             if (online && !blocked) R.drawable.mango9_chat_online_background else R.drawable.mango9_chat_offline_background,
@@ -1118,12 +1126,12 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
     }
 
     private fun showGroupMembers(room: Mango9ChatRoom) {
-        val users = viewModel.currentState().users
+        val users = viewModel.currentState().users.filter { !it.isSystem && (it.canJoinGroups || room.userIds.contains(it.id)) }
         val selected = room.userIds.toMutableSet()
         val checked = users.map { selected.contains(it.id) }.toBooleanArray()
         val dialog = MaterialAlertDialogBuilder(requireContext())
             .setTitle(R.string.mango9_chat_manage_members)
-            .setMultiChoiceItems(users.map { it.name }.toTypedArray(), checked) { _, which, enabled ->
+            .setMultiChoiceItems(users.map { "${it.name} — ${it.roleLabel}" }.toTypedArray(), checked) { _, which, enabled ->
                 if (enabled) selected.add(users[which].id) else selected.remove(users[which].id)
             }
             .setNegativeButton(android.R.string.cancel, null)

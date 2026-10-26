@@ -55,6 +55,10 @@
                 android:textSize="14sp"
                 tools:text="Ani Paytyan" />
 
+            <TextView android:id="@+id/role" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:visibility="gone"
+                android:maxLines="1" android:ellipsize="end" android:textSize="11sp"
+                android:textColor="?attr/color_main2_500" />
             <TextView
                 android:id="@+id/preview"
                 style="@style/default_text_style"

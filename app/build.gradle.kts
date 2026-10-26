@@ -18,7 +18,7 @@ plugins {
 val packageName = "com.mango9.phone"
 val useDifferentPackageNameForDebugBuild = providers.gradleProperty("Mango9IsolatedDebug").orNull == "true"
 val mango9VersionName = "6.2.9"
-val mango9VersionCode = 602043
+val mango9VersionCode = 602044
 val mango9ReleaseTag = "android-$mango9VersionName-build-$mango9VersionCode"
 
 val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
