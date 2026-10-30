@@ -7,8 +7,8 @@ and Firebase Cloud Messaging support.
 
 This repository is the public corresponding-source location displayed by the
 Mango9 app. The immutable release tag
-[`android-6.2.9-build-602044`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.9-build-602044)
-corresponds to Mango9 Android version 6.2.9, version code 602044.
+[`android-6.2.10-build-602045`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.10-build-602045)
+corresponds to Mango9 Android version 6.2.10, version code 602045.
 
 Mango9 modified the upstream Linphone Android application in 2026. Mango9 is
 not affiliated with or endorsed by Belledonne Communications SARL.
@@ -47,7 +47,7 @@ dependency license information.
 ## Source relationship
 
 - Mango9 release source:
-  [`android-6.2.9-build-602044`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.9-build-602044)
+  [`android-6.2.10-build-602045`](https://github.com/8189164300/Linphone_mango9/tree/android-6.2.10-build-602045)
 - Upstream Linphone Android tag: [`6.2.6`](https://github.com/BelledonneCommunications/linphone-android/tree/6.2.6)
 - Upstream application commit:
   [`42b1fcce3c8037e6f5a891cf8d108eb47e308386`](https://github.com/BelledonneCommunications/linphone-android/commit/42b1fcce3c8037e6f5a891cf8d108eb47e308386)
@@ -57,6 +57,14 @@ dependency license information.
 
 This branch contains the complete modified application source and build scripts,
 not only a patch against upstream.
+
+## Supervisor
+
+Account owners can open Supervisor from the AI button in Conversations to read
+saved history, chat, review proposed actions, or start voice explicitly. AI
+sharing requires account-specific consent and can be turned off from AI privacy.
+Voice includes mute, native echo cancellation where supported, and a fallback
+that suppresses microphone transmission during playback on unsupported devices.
 
 ## Building
 

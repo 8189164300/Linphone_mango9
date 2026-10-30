@@ -605,6 +605,15 @@ class ConversationsListFragment : AbstractMainFragment() {
             R.id.conversationsListFragment
         )
 
+        binding.topBar.showExtraAction = mango9Sessions.captureSession() != null
+        binding.topBar.extraActionEnabled = true
+        binding.topBar.extraActionContentDescription = "Open Supervisor"
+        binding.topBar.extraActionIcon = ContextCompat.getDrawable(requireContext(), R.drawable.mango9_supervisor_ai)
+        binding.topBar.extraAction.imageTintList = null
+        binding.topBar.extraActionClickListener = View.OnClickListener {
+            org.linphone.ui.main.crm.fragment.Mango9SupervisorFragment.open(this)
+        }
+
         // Handle intent params if any
 
         val args = arguments
