@@ -1,6 +1,5 @@
-• A cleaner sign-in page with Mango9 colors and simpler controls.
-• Improved Team Chat layout with grouped dates and clearer document and voice-message cards.
-• Voice messages play through the loudspeaker by default and respect connected headphones and active calls.
-• More accurate team member roles and cleaner people and group-member lists.
-• More reliable session recovery, reconnecting and sign-out.
-• Improved Settings navigation and protected manual connection settings.
+• Supervisor chat and voice for eligible Mango9 account owners.
+• Review AI data-sharing details and choose whether to enable the assistant.
+• Start voice only when you tap Connect, with mute controls and echo cancellation.
+• Open full links to relevant pages and review actions before approval.
+• More reliable handling of interruptions, account changes and unconfirmed requests.

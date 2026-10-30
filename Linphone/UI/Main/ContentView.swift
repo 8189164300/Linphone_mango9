@@ -214,6 +214,8 @@ struct ContentView: View {
 
 				Text(String(localized: sharedMainViewModel.indexView == 0 ? "bottom_navigation_contacts_label" : (sharedMainViewModel.indexView == 1 ? "bottom_navigation_calls_label" : (sharedMainViewModel.indexView == 2 ? "bottom_navigation_conversations_label" : "bottom_navigation_meetings_label"))))
 					.default_text_style_white_800(styleSize: 20)
+					.lineLimit(1)
+					.minimumScaleFactor(0.8)
 					.padding(.leading, 2)
 
 				Spacer()
@@ -230,7 +232,9 @@ struct ContentView: View {
 						.frame(width: 25, height: 25, alignment: .leading)
 						.padding(.all, 10)
 				}
-				.padding(.trailing, sharedMainViewModel.indexView == 2 ? 10 : 0)
+				if sharedMainViewModel.indexView == 2 {
+					Mango9SupervisorLauncher().padding(.trailing, 10)
+				}
 
 				if sharedMainViewModel.indexView == 0 {
 					Menu {
