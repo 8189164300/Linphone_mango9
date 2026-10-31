@@ -9,6 +9,38 @@ struct Mango9SupervisorLink: Identifiable {
     var id: String { url.absoluteString }
 }
 
+struct Mango9SupervisorCreation {
+    let status: String
+    let links: [Mango9SupervisorLink]
+    let recipients: [String]
+    init?(_ detail: [String: Any], baseURL: String) {
+        guard detail["state"] as? String == "SUCCEEDED", let recap = detail["recap"] as? [String: Any],
+              let proof = recap["creation"] as? [String: Any], proof["version"] as? Int == 1,
+              let status = proof["statusText"] as? String, !status.isEmpty, status.count <= 100,
+              let raw = proof["links"] as? [[String: Any]], !raw.isEmpty, raw.count <= 4 else { return nil }
+        let links = raw.compactMap { link -> Mango9SupervisorLink? in
+            guard let title = link["label"] as? String, !title.isEmpty, title.count <= 100,
+                  let href = link["href"] as? String, href.hasPrefix("/app/"), !href.contains("\\"),
+                  let url = Mango9SupervisorReplyFormatting.webURL(href, baseURL: baseURL),
+                  url.host == URL(string: baseURL)?.host else { return nil }
+            return .init(title: title, url: url)
+        }
+        guard links.count == raw.count else { return nil }
+        self.status = status; self.links = links
+        recipients = (proof["recipients"] as? [[String: Any]] ?? []).prefix(30).compactMap { row in
+            guard let name = row["name"] as? String, let email = row["email"] as? String,
+                  !email.isEmpty, email.count <= 254, email.contains("@"), !email.contains("\n") else { return nil }
+            return name.isEmpty ? email : name + " · " + email
+        }
+    }
+    static func nativeTaskID(_ url: URL) -> Int? {
+        let parts = url.path.split(separator: "/")
+        guard parts.count == 3, parts[0] == "app", parts[1] == "tasks",
+              parts[2].allSatisfy({ $0.isASCII && $0.isNumber }), let id = Int(parts[2]), id > 0 else { return nil }
+        return id
+    }
+}
+
 struct Mango9SupervisorFormattedReply {
     let body: String
     let links: [Mango9SupervisorLink]
@@ -85,7 +117,7 @@ struct Mango9SupervisorFailure: LocalizedError {
         case "pilot_reauthentication_required", "voice_authentication_required": return "Voice authorization ended. Start voice again to reconnect securely."
         case "voice_connection_lost", "voice_connection_failed", "voice_provider_unavailable": return "Voice disconnected. Your saved conversation is kept. Tap the microphone to reconnect."
         case "voice_interrupted": return "Voice was interrupted by an audio change. Tap the microphone to reconnect."
-        case "history_pending": return "The last request has not been confirmed. Refresh history and review Actions before sending another request."
+        case "history_pending": return "The last request has not been confirmed. Check its saved status before sending another request."
         case "invalid_pilot_chat": return "Enter a message of no more than 8,000 UTF-8 bytes."
         default:
             if status == 401 { return "Your Mango9 sign-in needs attention. Reconnect your account to continue." }
@@ -97,18 +129,24 @@ struct Mango9SupervisorFailure: LocalizedError {
     }
 }
 
-struct Mango9SupervisorMessage: Identifiable, Equatable {
+struct Mango9SupervisorMessage: Identifiable, Equatable, Codable {
     let id: String
     let role: String
     let text: String
     let requestID: String?
+    let actionIDs: [String]
     let createdAt: Date?
+    let creationData: Data?
     init?(_ raw: [String: Any]) {
         guard let id = raw["id"] as? String, let role = raw["role"] as? String,
               ["user", "assistant"].contains(role) else { return nil }
         self.id = id; self.role = role
         text = (raw["parts"] as? [[String: Any]] ?? []).filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined(separator: "\n")
         let metadata = raw["metadata"] as? [String: Any] ?? [:]
+        if role == "assistant", let proofs = metadata["creations"] as? [[String: Any]], proofs.count <= 16 {
+            creationData = try? JSONSerialization.data(withJSONObject: proofs, options: [.sortedKeys])
+        } else { creationData = nil }
+        actionIDs = role == "assistant" ? Array(Set((metadata["actionIds"] as? [String] ?? []).filter { UUID(uuidString: $0) != nil })).sorted() : []
         requestID = metadata["requestId"] as? String
         let value = metadata["createdAt"] as? String ?? ""
         let date = ISO8601DateFormatter(); date.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -116,12 +154,43 @@ struct Mango9SupervisorMessage: Identifiable, Equatable {
     }
 }
 
-struct Mango9SupervisorConversation: Identifiable {
+struct Mango9SupervisorConversation: Identifiable, Codable {
     let id: String
     let title: String
+    let updatedAt: Date?
+    let messageCount: Int
+    let hasVoice: Bool
     init?(_ raw: [String: Any]) {
         guard let id = raw["id"] as? String, UUID(uuidString: id) != nil else { return nil }
         self.id = id; title = raw["title"] as? String ?? "Supervisor conversation"
+        let date = ISO8601DateFormatter(); date.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let stamp = raw["updatedAt"] as? String ?? raw["createdAt"] as? String ?? ""
+        updatedAt = date.date(from: stamp) ?? ISO8601DateFormatter().date(from: stamp)
+        messageCount = max(0, (raw["messageCount"] as? NSNumber)?.intValue ?? 0)
+        hasVoice = raw["hasVoice"] as? Bool == true
+    }
+}
+
+enum Mango9SupervisorHistoryFilter: String, CaseIterable, Identifiable {
+    case all, text, voice
+    var id: String { rawValue }
+    var title: String { switch self { case .all: return "All"; case .text: return "Text only"; case .voice: return "With voice" } }
+}
+
+enum Mango9SupervisorHistoryDate {
+    static func label(_ date: Date?, now: Date = Date(), calendar: Calendar = .autoupdatingCurrent) -> String {
+        guard let date else { return "" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "h:mm a"
+        let time = formatter.string(from: date)
+        if calendar.isDate(date, inSameDayAs: now) { return "Today, " + time }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) { return "Yesterday, " + time }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
+        formatter.dateFormat = days > 1 && days < 7 ? "EEEE" : "MM/dd/yyyy"
+        return formatter.string(from: date) + ", " + time
     }
 }
 
@@ -208,6 +277,101 @@ struct Mango9SupervisorPendingStore {
     var write: (Mango9SupervisorCommand?) throws -> Void
     static func keychain(_ account: String) -> Self {
         .init(read: { try Mango9SupervisorPersistence.pending(account) }, write: { try Mango9SupervisorPersistence.save($0, account: account) })
+    }
+}
+
+/// A read-only display snapshot, not a saved command or permission to apply changes.
+struct Mango9SupervisorSavedConfiguration: Codable {
+    let savedAt: Date
+    private let data: Data
+    var detail: [String: Any]? { (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] }
+    init?(_ detail: [String: Any], now: Date = Date()) {
+        guard let id = detail["id"] as? String, UUID(uuidString: id) != nil,
+              let state = detail["state"] as? String,
+              let recap = detail["recap"] as? [String: Any], recap["version"] as? Int == 1,
+              let fields = recap["fields"] as? [[String: Any]], fields.count <= 64,
+              fields.allSatisfy({ $0["label"] is String && $0["value"] is String }) else { return nil }
+        var display: [String: Any] = ["version": 1]
+        for key in ["title", "effect", "question", "statusText"] {
+            if let text = recap[key] as? String { display[key] = String(text.prefix(1000)) }
+        }
+        display["fields"] = fields.map { row -> [String: Any] in
+            ["label": String((row["label"] as? String ?? "").prefix(160)),
+             "value": String((row["value"] as? String ?? "").prefix(2048)), "incomplete": row["incomplete"] as? Bool == true]
+        }
+        if let proof = recap["creation"] as? [String: Any], proof["version"] as? Int == 1 {
+            let links: [[String: String]] = (proof["links"] as? [[String: Any]] ?? []).prefix(4).map {
+                ["label": String(($0["label"] as? String ?? "").prefix(100)), "href": String(($0["href"] as? String ?? "").prefix(1000))]
+            }
+            let recipients: [[String: String]] = (proof["recipients"] as? [[String: Any]] ?? []).prefix(30).map {
+                ["name": String(($0["name"] as? String ?? "").prefix(160)), "email": String(($0["email"] as? String ?? "").prefix(254))]
+            }
+            let creation: [String: Any] = ["version": 1, "statusText": String((proof["statusText"] as? String ?? "").prefix(100)), "links": links, "recipients": recipients]
+            display["creation"] = creation
+        }
+        // Deliberately exclude approvalDigest, arguments, provider output and credentials.
+        guard let data = try? JSONSerialization.data(withJSONObject: ["id": id, "state": state, "summaryOnly": true, "recap": display]) else { return nil }
+        self.data = data; savedAt = now
+    }
+}
+
+struct Mango9SupervisorSavedChat: Codable {
+    let id: String
+    let savedAt: Date
+    let conversation: Mango9SupervisorConversation?
+    let messages: [Mango9SupervisorMessage]
+    let configurations: [String: Mango9SupervisorSavedConfiguration]
+}
+
+/// Bounded, device-protected, backup-excluded storage. Its scope includes the login
+/// generation: a new login, role, tenant, server or account cannot reuse this data.
+struct Mango9SupervisorLocalStore {
+    var read: () throws -> [Mango9SupervisorSavedChat]
+    var write: ([Mango9SupervisorSavedChat]) throws -> Void
+    static let maximumBytes = 2_097_152
+    static func scope(_ session: Mango9Session) -> String {
+        let parts = [session.crmApiBaseUrl, session.crmId, session.userId, session.parentClientId, session.role,
+                     session.sipIdentity ?? "", session.loginGeneration ?? session.refreshToken]
+        return SHA256.hash(data: Data(parts.joined(separator: "|").utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+    private static func directory(_ identity: String) -> URL {
+        let key = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("SupervisorLocal", isDirectory: true).appendingPathComponent(key, isDirectory: true)
+    }
+    static func remove(for identity: String) {
+        // Only this identity's dedicated display cache; never the pending outbox.
+        try? FileManager.default.removeItem(at: directory(identity))
+    }
+    static func device(_ session: Mango9Session, root: URL? = nil) -> Self {
+        let folder = root ?? directory(session.sipIdentity ?? "")
+        let file = folder.appendingPathComponent(scope(session) + ".json")
+        return .init(read: {
+            guard FileManager.default.fileExists(atPath: file.path) else { return [] }
+            let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+            guard (attributes[.size] as? NSNumber)?.intValue ?? Int.max <= maximumBytes else { return [] }
+            let saved = try JSONDecoder().decode([Mango9SupervisorSavedChat].self, from: Data(contentsOf: file))
+            return bounded(saved)
+        }, write: { saved in
+            var saved = bounded(saved)
+            var data = try JSONEncoder().encode(saved)
+            while data.count > maximumBytes, !saved.isEmpty {
+                saved.removeLast(); data = try JSONEncoder().encode(saved)
+            }
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
+                                                    attributes: [.protectionKey: FileProtectionType.complete])
+            var folder = folder; var values = URLResourceValues(); values.isExcludedFromBackup = true
+            try folder.setResourceValues(values)
+            try data.write(to: file, options: [.atomic, .completeFileProtection])
+        })
+    }
+    static func bounded(_ saved: [Mango9SupervisorSavedChat], now: Date = Date()) -> [Mango9SupervisorSavedChat] {
+        var seen = Set<String>()
+        return Array(saved.sorted { $0.savedAt > $1.savedAt }.filter {
+            UUID(uuidString: $0.id) != nil && $0.savedAt <= now.addingTimeInterval(60) &&
+            now.timeIntervalSince($0.savedAt) < 30 * 24 * 3600 && $0.messages.count <= 200 &&
+            $0.configurations.count <= 200 && ($0.conversation == nil || $0.conversation?.id == $0.id) && seen.insert($0.id).inserted
+        }.prefix(20))
     }
 }
 

@@ -1258,6 +1258,7 @@ enum Mango9SessionStore {
 		// A checked secure tombstone survives a crash and defeats late renewal callbacks.
 		try write(nil, account: identity, persist: false)
 		setVolatileSession(nil, for: identity)
+		Mango9SupervisorLocalStore.remove(for: identity)
 		var identities = storedIdentities
 		identities.remove(identity)
 		storeIdentities(identities)

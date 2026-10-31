@@ -1,5 +1,126 @@
 import SwiftUI
 
+enum Mango9InboxTypography {
+	// Match Social's typeface and Dynamic Type scaling in Live Chat as well.
+	static let message = Font.custom("NotoSans-Regular", size: 14)
+}
+
+enum Mango9ChatScrollMetrics {
+	static func reachedLatest(bottom: CGFloat?, viewportHeight: CGFloat) -> Bool {
+		guard let bottom, bottom.isFinite, viewportHeight.isFinite, viewportHeight > 0 else { return false }
+		// A short conversation or bottom rubber-band has no newer content below it.
+		return bottom <= viewportHeight + 1
+	}
+	static func hasMoreBelow(bottom: CGFloat?, viewportHeight: CGFloat) -> Bool {
+		guard let bottom, bottom.isFinite, viewportHeight.isFinite, viewportHeight > 0 else { return false }
+		return bottom > viewportHeight + 1
+	}
+}
+
+struct Mango9LatestMessagesButton: View {
+	let action: () -> Void
+	var body: some View {
+		Button(action: action) {
+			Image("caret-double-down").renderingMode(.template).resizable().scaledToFit()
+				.frame(width: 32 / 1.5, height: 32 / 1.5).foregroundStyle(.white)
+				.frame(width: 60, height: 60).background(Color.orangeMain500).clipShape(Circle())
+				.shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
+		}.buttonStyle(.plain).accessibilityLabel("Latest messages").accessibilityIdentifier("chat.latest")
+	}
+}
+
+private struct Mango9ChatBottomPreference: PreferenceKey {
+	static var defaultValue: CGFloat?
+	static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+		if let next = nextValue() { value = next }
+	}
+}
+
+private struct Mango9ChatContentSizePreference: PreferenceKey {
+	static var defaultValue: CGSize?
+	static func reduce(value: inout CGSize?, nextValue: () -> CGSize?) {
+		if let next = nextValue() { value = next }
+	}
+}
+
+/// Place outside the lazy message stack: appearance callbacks include offscreen
+/// prefetched rows and cannot tell whether the latest message is actually visible.
+struct Mango9ChatBottomMarker: View {
+	var body: some View {
+		Color.clear.frame(height: 1).background(GeometryReader { geometry in
+			Color.clear.preference(key: Mango9ChatBottomPreference.self,
+				value: geometry.frame(in: .named("mango9.chat.viewport")).maxY)
+		}).accessibilityHidden(true)
+	}
+}
+
+private struct Mango9LatestMessagesControl: ViewModifier {
+	let proxy: ScrollViewProxy
+	let bottomID: String
+	@Binding var following: Bool
+	@State private var bottom: CGFloat?
+	@State private var dragging = false
+	@State private var settling = false
+	@State private var contentSize: CGSize?
+	@State private var scrollTask: Task<Void, Never>?
+	func body(content: Content) -> some View {
+		GeometryReader { viewport in
+			content.coordinateSpace(name: "mango9.chat.viewport")
+				.onPreferenceChange(Mango9ChatContentSizePreference.self) { size in
+					guard let size, size != contentSize else { return }
+					contentSize = size; followLatest()
+				}
+				.onChange(of: viewport.size) { _ in followLatest() }
+				.onDisappear { scrollTask?.cancel() }
+				.onPreferenceChange(Mango9ChatBottomPreference.self) { value in
+					bottom = value
+					guard !dragging else { return }
+					if Mango9ChatScrollMetrics.reachedLatest(bottom: value, viewportHeight: viewport.size.height) {
+						following = true; settling = false
+					} else if settling { following = false }
+				}
+				.simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in
+					dragging = true; settling = true; following = false; scrollTask?.cancel()
+				}.onEnded { _ in
+					dragging = false
+					if Mango9ChatScrollMetrics.reachedLatest(bottom: bottom, viewportHeight: viewport.size.height) {
+						following = true; settling = false
+					}
+				})
+				.overlay(alignment: .bottomTrailing) {
+					if Mango9ChatScrollMetrics.hasMoreBelow(bottom: bottom, viewportHeight: viewport.size.height) {
+						Mango9LatestMessagesButton {
+							following = true; settling = false
+							proxy.scrollTo(bottomID, anchor: .bottom)
+						}.padding(20)
+					}
+				}
+		}
+	}
+	private func followLatest() {
+		guard following, !dragging, !settling else { return }
+		scrollTask?.cancel()
+		scrollTask = Task { @MainActor in
+			await Task.yield()
+			guard !Task.isCancelled, following, !dragging, !settling else { return }
+			// Reconcile only actual content/viewport resizing, never scrolling
+			// position updates, which would fight the user's drag or rubber-band.
+			proxy.scrollTo(bottomID, anchor: .bottom)
+		}
+	}
+}
+
+extension View {
+	func mango9ChatContentSize() -> some View {
+		background(GeometryReader { geometry in
+			Color.clear.preference(key: Mango9ChatContentSizePreference.self, value: geometry.size)
+		})
+	}
+	func mango9LatestMessages(proxy: ScrollViewProxy, bottomID: String, following: Binding<Bool>) -> some View {
+		modifier(Mango9LatestMessagesControl(proxy: proxy, bottomID: bottomID, following: following))
+	}
+}
+
 enum Mango9TeamChatStart: Equatable {
 	case direct(Mango9ChatUser)
 	case group(Set<Int>)

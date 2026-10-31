@@ -1,5 +1,5 @@
-• Supervisor chat and voice for eligible Mango9 account owners.
-• Review AI data-sharing details and choose whether to enable the assistant.
-• Start voice only when you tap Connect, with mute controls and echo cancellation.
-• Open full links to relevant pages and review actions before approval.
-• More reliable handling of interruptions, account changes and unconfirmed requests.
+• More reliable Supervisor chat loading, scrolling and readable message text.
+• Search and filter Supervisor history, with clearer dates and swipe-to-delete controls.
+• Review simple settings summaries in chat, with links to created items and saved local settings.
+• Open supported social profiles directly from a conversation.
+• Consistent latest-message controls across Team, Social and Live Chat.

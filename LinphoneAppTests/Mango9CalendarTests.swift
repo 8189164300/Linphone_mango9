@@ -563,7 +563,11 @@ final class Mango9CalendarTests: XCTestCase {
 			if #available(iOS 18.0, *) {
 				let table = try XCTUnwrap(self.descendants(window).compactMap { $0 as? UITableView }.first { $0.bounds.height > 200 })
 				XCTAssertTrue(table.isPagingEnabled)
-				XCTAssertEqual(table.contentOffset.y.truncatingRemainder(dividingBy: table.rowHeight), 0, accuracy: 1)
+				// A pixel-rounded offset just below a page boundary has a remainder
+				// almost equal to rowHeight, not zero. Compare the nearest boundary.
+				XCTAssertGreaterThan(table.rowHeight, 0)
+				let nearestPage = (table.contentOffset.y / table.rowHeight).rounded() * table.rowHeight
+				XCTAssertEqual(table.contentOffset.y, nearestPage, accuracy: 1)
 			}
 		}
 	}

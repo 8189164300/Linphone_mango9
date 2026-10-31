@@ -252,7 +252,8 @@ enum Mango9SocialReadError {
 			}
 		}
 		switch error {
-		case Mango9CRMAPIError.unauthorized, Mango9CRMAPIError.invalidConfiguration:
+		case Mango9CRMAPIError.unauthorized, Mango9CRMAPIError.invalidConfiguration,
+			Mango9CRMAPIError.sessionExpired, Mango9CRMAPIError.staleSession, Mango9CRMAPIError.retryAfter:
 			return error.localizedDescription
 		case Mango9MessagingError.scopeChanged:
 			return "Your active account changed. Reopen Social conversations."
@@ -324,6 +325,73 @@ struct Mango9SocialAccount: Decodable, Identifiable, Equatable {
 enum Mango9SocialPlatform {
 	static let all = ["facebook", "instagram", "tiktok"]
 	static func title(_ value: String) -> String { ["facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok"][value] ?? "Social" }
+}
+
+/// A public username is not a display name, conversation URL, PSID or open_id.
+/// Only the provider-supplied handle fields may enter this resolver.
+enum Mango9SocialProfileLink {
+	static func url(platform: String, handle: String?) -> URL? {
+		guard let handle, !handle.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+		let value = handle.trimmingCharacters(in: .whitespaces)
+		guard value.hasPrefix("@") else { return nil }
+		let username = String(value.dropFirst())
+		let host: String, pattern: String, reserved: Set<String>
+		switch platform {
+		case "instagram":
+			host = "www.instagram.com"; pattern = "^[A-Za-z0-9_.]{1,30}$"
+			reserved = ["accounts", "about", "api", "developer", "developers", "direct", "explore", "legal", "p", "reel", "reels", "stories", "web"]
+		case "facebook":
+			host = "www.facebook.com"; pattern = "^[A-Za-z0-9.]{5,50}$"
+			reserved = ["about", "ads", "business", "checkpoint", "dialog", "events", "friends", "gaming", "groups", "help", "home", "login", "logout", "marketplace", "messages", "notifications", "pages", "people", "plugins", "policies", "privacy", "profile.php", "recover", "reel", "reels", "search", "settings", "share", "sharer", "sharer.php", "watch"]
+			// Numeric Facebook messaging IDs are not public profile identifiers.
+			guard username.contains(where: { $0.isASCII && $0.isLetter }) else { return nil }
+		case "tiktok":
+			host = "www.tiktok.com"; pattern = "^[A-Za-z0-9_.]{1,24}$"; reserved = []
+		default: return nil
+		}
+		guard username.range(of: pattern, options: .regularExpression) != nil,
+			!username.hasPrefix("."), !username.hasSuffix("."), !username.contains(".."), !reserved.contains(username.lowercased()) else { return nil }
+		var components = URLComponents(); components.scheme = "https"; components.host = host
+		components.path = "/" + (platform == "tiktok" ? "@" : "") + username + (platform == "tiktok" ? "" : "/")
+		return components.url
+	}
+	static func url(thread: Mango9SocialThread, direction: String? = nil) -> URL? {
+		guard thread.deleted != true else { return nil }
+		let handle: String?
+		switch direction {
+		case nil, "incoming", "inbound": handle = thread.participantHandle
+		case "outgoing", "outbound": handle = thread.accountHandle
+		default: return nil
+		}
+		return url(platform: thread.platform, handle: handle)
+	}
+	static func isProfileURL(_ url: URL) -> Bool {
+		guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false), components.scheme == "https",
+			components.user == nil, components.password == nil, components.port == nil, components.query == nil, components.fragment == nil else { return false }
+		let platform: String
+		switch components.host {
+		case "www.instagram.com": platform = "instagram"
+		case "www.facebook.com": platform = "facebook"
+		case "www.tiktok.com": platform = "tiktok"
+		default: return false
+		}
+		let parts = components.path.split(separator: "/")
+		guard parts.count == 1 else { return false }
+		let handle = platform == "tiktok" ? String(parts[0]) : "@" + parts[0]
+		return self.url(platform: platform, handle: handle)?.absoluteString == url.absoluteString
+	}
+	/// Apple universal links let the platform app handle its HTTPS URL. If no app
+	/// accepts it, open the same public URL normally. No private schemes or SDK login.
+	/// https://developer.apple.com/documentation/uikit/uiapplication/openexternalurloptionskey/universallinksonly
+	@MainActor static func open(_ url: URL, stillCurrent: @MainActor () -> Bool,
+		launcher: @MainActor (URL, Bool) async -> Bool = { url, appOnly in
+			await UIApplication.shared.open(url, options: appOnly ? [.universalLinksOnly: true] : [:])
+		}) async -> Bool {
+		guard isProfileURL(url), stillCurrent(), !Task.isCancelled else { return false }
+		if await launcher(url, true) { return true }
+		guard stillCurrent(), !Task.isCancelled else { return false }
+		return await launcher(url, false)
+	}
 }
 
 /// Match SMS: today's inbox entries show a time; older entries show a date.
@@ -1041,6 +1109,11 @@ struct Mango9SocialInboxRow: View {
 
 struct Mango9SocialConversation: View {
 	let original: Mango9SocialThread
+	private var profileThread: Mango9SocialThread {
+		guard let current = store.thread, current.id == original.id, current.sourceId == original.sourceId,
+			current.platform == original.platform, current.accountId == original.accountId else { return original }
+		return current
+	}
 	private var visibleMessages: [Mango9SocialMessage] {
 		store.messages.filter { !moderation.isHidden(socialHiddenID($0.id)) &&
 			!visibility.isHidden(String($0.id), channel: .social, thread: original.id) }
@@ -1064,6 +1137,9 @@ struct Mango9SocialConversation: View {
 	@State private var previewURL: URL?
 	@State private var voicePreviewOwner = UUID()
 	@State private var localError: String?
+	@State private var profileNotice: String?
+	@State private var openingProfile = false
+	@State private var profileViewVisible = false
 	@ObservedObject private var moderation = Mango9ChatModerationStore.shared
 	init(thread: Mango9SocialThread, session: Mango9Session, api: Mango9MessagingAPI? = nil) {
 		original = thread
@@ -1075,6 +1151,7 @@ struct Mango9SocialConversation: View {
 		VStack(spacing: 0) {
 		ScrollViewReader { proxy in
 		ScrollView {
+			VStack(spacing: 0) {
 			LazyVStack(alignment: .leading, spacing: 14) {
 				HStack(spacing: 8) {
 					Mango9SocialPlatformLogo(platform: original.platform, size: 18)
@@ -1091,10 +1168,13 @@ struct Mango9SocialConversation: View {
 						if message.outgoing { Spacer(minLength: 52) }
 						VStack(alignment: .trailing, spacing: 4) {
 						VStack(alignment: .leading, spacing: 4) {
-							if let name = message.senderName, !name.isEmpty { Text(name).font(.caption).foregroundStyle(.secondary) }
+							if let name = message.senderName, !name.isEmpty {
+								profileName(name, direction: message.direction).font(.caption)
+									.accessibilityIdentifier("social.message.profile.\(message.id)")
+							}
 							if message.deleted || !message.text.isEmpty || (message.attachments ?? []).isEmpty {
 							Text(message.deleted ? "Message deleted" : message.text.isEmpty ? "Content unavailable" : message.text)
-								.font(.custom("NotoSans-Regular", size: 14))
+								.font(Mango9InboxTypography.message)
 								.fixedSize(horizontal: false, vertical: true).layoutPriority(1)
 								.padding(.horizontal, 13).padding(.vertical, 9).foregroundStyle(message.outgoing ? Color.white : Color.primary)
 								.background(message.outgoing ? Color.orangeMain500 : Color(uiColor: .secondarySystemGroupedBackground))
@@ -1127,7 +1207,7 @@ struct Mango9SocialConversation: View {
 				}, id: \.sendId) { receipt in
 					HStack { Spacer(minLength: 52)
 						VStack(alignment: .trailing, spacing: 5) {
-							Text(receipt.message).font(.custom("NotoSans-Regular", size: 14))
+							Text(receipt.message).font(Mango9InboxTypography.message)
 								.fixedSize(horizontal: false, vertical: true)
 								.padding(.horizontal, 13).padding(.vertical, 9).foregroundStyle(.white).background(Color.orangeMain500).clipShape(RoundedRectangle(cornerRadius: 20))
 							Text(receipt.statusLabel).font(.caption).foregroundStyle(.secondary)
@@ -1135,10 +1215,12 @@ struct Mango9SocialConversation: View {
 					}
 				}
 				if store.busy && store.messages.isEmpty { ProgressView("Loading messages…") }
-				Color.clear.frame(height: 1).id("latest")
-					.onAppear { atBottom = true }.onDisappear { atBottom = false }
 			}.padding()
-		}.onAppear { if !store.messages.isEmpty { proxy.scrollTo("latest", anchor: .bottom); scrolledInitially = true } }
+			Mango9ChatBottomMarker().id("latest")
+			}.mango9ChatContentSize()
+		}.accessibilityIdentifier("social.messages")
+		.mango9LatestMessages(proxy: proxy, bottomID: "latest", following: $atBottom)
+		.onAppear { if !store.messages.isEmpty { proxy.scrollTo("latest", anchor: .bottom); scrolledInitially = true } }
 		.onChange(of: store.messages.last?.id) { _ in
 			if !scrolledInitially || atBottom { proxy.scrollTo("latest", anchor: .bottom); scrolledInitially = true }
 		}
@@ -1151,8 +1233,12 @@ struct Mango9SocialConversation: View {
 				.background(Color(uiColor: .systemBackground).ignoresSafeArea(.container, edges: .bottom))
 		}
 		.background(Color(uiColor: .systemGroupedBackground)).tint(Color.orangeMain500)
-		.navigationTitle(original.title).navigationBarTitleDisplayMode(.inline)
+		.navigationTitle(profileThread.title).navigationBarTitleDisplayMode(.inline)
 		.toolbar {
+			ToolbarItem(placement: .principal) {
+				profileName(profileThread.title).font(.headline).lineLimit(1).frame(minHeight: 44)
+					.accessibilityIdentifier("social.conversation.profile")
+			}
 			ToolbarItem(placement: .navigationBarTrailing) {
 				if let muted = store.muted {
 					Button {
@@ -1165,6 +1251,8 @@ struct Mango9SocialConversation: View {
 		}
 		.mango9ConversationNavigationHidden()
 		.navigationBarHidden(false)
+		.onAppear { profileViewVisible = true }
+		.onDisappear { profileViewVisible = false; profileNotice = nil }
 		.mango9Attachments(request: $attachmentRequest, selected: $store.selectedMedia, limit: 1, error: { localError = $0 })
 		.quickLookPreview($previewURL)
 		.modifier(Mango9VoicePreviewLifecycle(owner: voicePreviewOwner, url: $previewURL))
@@ -1177,6 +1265,9 @@ struct Mango9SocialConversation: View {
 		}
 		#endif
 		.alert("Message", isPresented: Binding(get: { localError != nil }, set: { if !$0 { localError = nil } })) { Button("OK", role: .cancel) {} } message: { Text(localError ?? "") }
+		.alert("Social profile", isPresented: Binding(get: { profileNotice != nil }, set: { if !$0 { profileNotice = nil } })) {
+			Button("OK", role: .cancel) {}
+		} message: { Text(profileNotice ?? "") }
 		.confirmationDialog("Delete for me on all my devices? Other staff and the recipient will keep their copies. This does not unsend the message.", isPresented: $confirmingDelete, titleVisibility: .visible) {
 			Button("Delete for me", role: .destructive) {
 				guard !deletingMessages else { return }; deletingMessages = true
@@ -1200,7 +1291,7 @@ struct Mango9SocialConversation: View {
 		.alert("Reaction", isPresented: Binding(get: { reactionActions.notice != nil }, set: { if !$0 { reactionActions.notice = nil } })) {
 			Button("OK", role: .cancel) {}
 		} message: { Text(reactionActions.notice ?? "") }
-		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in previewURL = nil; forwardingText = nil; forwardingAttachments = []; dismiss() }
+		.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in previewURL = nil; forwardingText = nil; forwardingAttachments = []; profileNotice = nil; dismiss() }
 		.onReceive(NotificationCenter.default.publisher(for: .mango9SocialInboxDidChange)) { note in
 			guard let target = note.object as? Mango9SocialPushTarget, target.matches(store.session), target.id == original.id, phase == .active else { return }
 			Task { await refresh() }
@@ -1214,6 +1305,37 @@ struct Mango9SocialConversation: View {
 				await store.pollThread(id: original.id)
 			}
 		}
+	}
+	private func profileName(_ name: String, direction: String? = nil) -> some View {
+		let url = Mango9SocialProfileLink.url(thread: profileThread, direction: direction)
+		let platform = Mango9SocialPlatform.title(profileThread.platform)
+		return Button {
+			guard profileViewVisible, Mango9SessionStore.isActive(store.session), !selectionMode else { return }
+			guard let url else {
+				profileNotice = "\(platform) hasn’t provided a public profile link for this account."
+				return
+			}
+			composerFocused = false
+			Task { @MainActor in
+				guard !openingProfile else { return }; openingProfile = true
+				defer { openingProfile = false }
+				let opened = await Mango9SocialProfileLink.open(url, stillCurrent: {
+					profileViewVisible && !selectionMode && Mango9SessionStore.isActive(store.session)
+						&& Mango9SocialProfileLink.url(thread: profileThread, direction: direction) == url
+				})
+				if !opened, profileViewVisible, Mango9SessionStore.isActive(store.session) {
+					profileNotice = "Couldn’t open this profile. Please try again."
+				}
+			}
+		} label: {
+			HStack(spacing: 4) {
+				Text(name)
+				if url != nil { Image(systemName: "arrow.up.right").font(.caption2).accessibilityHidden(true) }
+			}.contentShape(Rectangle())
+		}.buttonStyle(.plain).foregroundStyle(url == nil ? Color.secondary : Color.orangeMain500)
+			.disabled(selectionMode || openingProfile)
+			.accessibilityLabel(name)
+			.accessibilityHint(url == nil ? "Public profile unavailable" : "Opens this \(platform) profile in the app or browser")
 	}
 	@ViewBuilder private var composer: some View {
 		if preparingMedia { ProgressView("Preparing attachment…").padding(8) }

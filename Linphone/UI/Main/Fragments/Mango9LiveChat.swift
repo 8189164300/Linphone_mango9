@@ -377,6 +377,7 @@ struct Mango9LiveChatConversation: View {
 	@State private var selectedMessages = Set<Int>()
 	@State private var copiedMessage: Int?
 	@State private var atBottom = true
+	@State private var scrolledInitially = false
 	init(conversation: Mango9LiveConversation, session: Mango9Session, initialText: String = "", initialAttachments: [Attachment] = []) {
 		_draft = State(initialValue: initialText); _selectedMedia = State(initialValue: initialAttachments)
 		_store = StateObject(wrappedValue: Mango9LiveThreadStore(conversation: conversation, session: session))
@@ -389,15 +390,21 @@ struct Mango9LiveChatConversation: View {
 			}
 			ScrollViewReader { proxy in
 				ScrollView {
+					VStack(spacing: 0) {
 					LazyVStack(spacing: 12) {
 						if store.hasMore { Button("Earlier messages") { Task { await store.load(more: true) } }.disabled(store.busy) }
 						if store.busy && store.messages.isEmpty { ProgressView().padding() }
 						ForEach(visibleMessages) { message in bubble(message).id(message.id) }
 						if store.visitorTyping { Text("Visitor is typing…").font(.caption).foregroundStyle(.secondary) }
-						Color.clear.frame(height: 1).id("bottom").onAppear { atBottom = true }.onDisappear { atBottom = false }
 					}.padding(16)
+					Mango9ChatBottomMarker().id("bottom")
+					}.mango9ChatContentSize()
 				}.background(Color(UIColor.systemGroupedBackground))
-				.onChange(of: store.messages.last?.id) { _ in if atBottom { proxy.scrollTo("bottom", anchor: .bottom) } }
+				.accessibilityIdentifier("live.messages")
+				.mango9LatestMessages(proxy: proxy, bottomID: "bottom", following: $atBottom)
+				.onChange(of: store.messages.last?.id) { _ in
+					if !scrolledInitially || atBottom { proxy.scrollTo("bottom", anchor: .bottom); scrolledInitially = true }
+				}
 			}
   }.frame(maxWidth: .infinity, maxHeight: .infinity)
   .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -519,7 +526,7 @@ struct Mango9LiveChatConversation: View {
 			VStack(alignment: message.direction == "outgoing" ? .trailing : .leading, spacing: 4) {
 				Text(message.sender + (message.direction == "note" ? " · Private note" : "")).font(.caption).foregroundStyle(.secondary)
 				if !message.text.isEmpty {
-					Text(message.text).font(.system(size: 14))
+					Text(message.text).font(Mango9InboxTypography.message)
 						.fixedSize(horizontal: false, vertical: true).padding(.horizontal, 13).padding(.vertical, 9)
 						.foregroundStyle(message.direction == "outgoing" ? Color.white : Color.primary)
 						.background(message.direction == "outgoing" ? Color.orangeMain500 : Color(uiColor: .secondarySystemGroupedBackground))

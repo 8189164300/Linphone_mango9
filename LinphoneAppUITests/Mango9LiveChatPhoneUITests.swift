@@ -2,6 +2,53 @@ import XCTest
 
 /// Physical-phone checks. Mutations target only the named temporary internal fixture; no visitor messages are sent.
 final class Mango9LiveChatPhoneUITests: XCTestCase {
+	func testLatestArrowInTeamChat() throws { try checkLatestArrow(channel: "team") }
+	func testLatestArrowInSocialChat() throws { try checkLatestArrow(channel: "social") }
+	func testLatestArrowInLiveChat() throws { try checkLatestArrow(channel: "live") }
+	private func checkLatestArrow(channel: String) throws {
+		continueAfterFailure = false
+		defer { XCUIDevice.shared.orientation = .portrait }
+		XCUIDevice.shared.orientation = .portrait
+		let app = XCUIApplication(); app.launch()
+		let conversations = app.buttons["Conversations"].firstMatch
+		XCTAssertTrue(conversations.waitForExistence(timeout: 30)); conversations.tap()
+		let tab = app.buttons["conversations.tab." + channel]
+		XCTAssertTrue(tab.waitForExistence(timeout: 10)); tab.tap()
+		let prefix = channel == "live" ? "livechat.thread." : channel + ".thread."
+		let rows = app.descendants(matching: .any).matching(NSPredicate(format:
+			"identifier BEGINSWITH %@ AND NOT (identifier CONTAINS %@)", prefix, "team.thread.user."))
+		guard rows.firstMatch.waitForExistence(timeout: 25) else { throw XCTSkip("No existing " + channel + " conversation; do not create one.") }
+		rows.firstMatch.tap()
+		let scroll = app.scrollViews[channel + ".messages"].firstMatch
+		XCTAssertTrue(scroll.waitForExistence(timeout: 20))
+		let composer = app.descendants(matching: .any)["chat.composer"].firstMatch
+		XCTAssertTrue(composer.waitForExistence(timeout: 20))
+		let arrow = app.buttons["chat.latest"]
+		let initiallyHidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !arrow.exists }, object: nil)
+		XCTAssertEqual(XCTWaiter.wait(for: [initiallyHidden], timeout: 5), .completed)
+		for _ in 0..<3 { if arrow.exists { break }; scroll.swipeDown() }
+		if !arrow.exists {
+			// A short real conversation may fit in portrait. Use the smaller
+			// landscape viewport to exercise the same control without sending data.
+			XCUIDevice.shared.orientation = .landscapeLeft
+			let rotated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width > app.frame.height }, object: nil)
+			XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 10), .completed)
+			for _ in 0..<3 { if arrow.exists { break }; scroll.swipeDown() }
+		}
+		if arrow.exists {
+			XCTAssertTrue(arrow.isHittable)
+			XCTAssertEqual(arrow.frame.width, 60, accuracy: 1)
+			capture(app, channel + " latest arrow above composer")
+			for _ in 0..<15 { if !arrow.exists { break }; scroll.swipeUp() }
+			XCTAssertFalse(arrow.exists, "Manual return to latest must clear the arrow")
+			scroll.swipeDown(); XCTAssertTrue(arrow.waitForExistence(timeout: 5)); arrow.tap()
+			let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !arrow.exists }, object: nil)
+			XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+		} else { print("LATEST_ARROW_SHORT_HISTORY " + channel + ": all messages fit; arrow correctly hidden") }
+		for _ in 0..<3 { scroll.swipeUp(); XCTAssertFalse(arrow.exists, "Bottom bounce must keep the arrow hidden") }
+		XCTAssertTrue(composer.isHittable)
+		capture(app, channel + " latest messages without arrow")
+	}
 	func testLiveInboxDoesNotShowEmptyBeforeExistingConversationsLoad() {
 		continueAfterFailure = false
 		XCUIDevice.shared.orientation = .portrait

@@ -59,6 +59,10 @@ final class Mango9LogoutTests: XCTestCase {
 		await coordinator(memory).retryPending()
 		XCTAssertEqual(memory.records.count, 1)
 		memory.fails = false
+		XCTAssertGreaterThan(try XCTUnwrap(memory.records[0].retryAfter), Date())
+		await coordinator(memory).retryPending()
+		XCTAssertEqual(memory.requests.count, 1, "Restart must respect persisted retry backoff")
+		memory.records[0].retryAfter = .distantPast
 		await coordinator(memory).retryPending()
 		XCTAssertTrue(memory.records.isEmpty)
 		XCTAssertEqual(memory.requests.count, 2)
@@ -101,17 +105,19 @@ final class Mango9LogoutTests: XCTestCase {
 
 	func testFreshLoginRevokesOldLeaseBeforeActivatingNewGeneration() async throws {
 		let memory = Memory(); let old = record(pending: true); memory.records = [old]
-		try await coordinator(memory).prepareLogin(identity: identity, token: token, session: session())
+		try await coordinator(memory).prepareLogin(identity: identity, token: token, session: session(), freshAuthentication: true)
 		XCTAssertEqual(memory.requests.map { $0.url!.lastPathComponent }, ["logout", "push-lease"])
 		XCTAssertEqual(memory.records.count, 1)
 		XCTAssertNotEqual(memory.records[0].id, old.id)
 		XCTAssertFalse(memory.records[0].pendingLogout)
 	}
 
-	func testLoginDoesNotBypassOfflineCleanup() async {
+	func testLoginDoesNotBypassOfflineCleanup() async throws {
 		let memory = Memory(); memory.records = [record(pending: true)]; memory.fails = true
+		let active = try Mango9SessionStore.save(session(), persist: false)
+		defer { try? Mango9SessionStore.remove(for: identity) }
 		do {
-			try await coordinator(memory).prepareLogin(identity: identity, token: token, session: session())
+			try await coordinator(memory).prepareLogin(identity: identity, token: token, session: active)
 			XCTFail("A previous cleanup must not race new registration")
 		} catch {}
 		XCTAssertEqual(memory.requests.map { $0.url!.lastPathComponent }, ["logout"])
@@ -129,8 +135,8 @@ final class Mango9LogoutTests: XCTestCase {
 
 	func testLeaseCreationIsIdempotentAndNeverSendsSIPCredentials() async throws {
 		let memory = Memory(); let coordinator = coordinator(memory)
-		try await coordinator.prepareLogin(identity: identity, token: token, session: session())
-		try await coordinator.prepareLogin(identity: identity, token: token, session: session())
+		try await coordinator.prepareLogin(identity: identity, token: token, session: session(), freshAuthentication: true)
+		try await coordinator.prepareLogin(identity: identity, token: token, session: session(), freshAuthentication: true)
 		XCTAssertEqual(memory.requests.count, 1)
 		let body = String(data: memory.requests[0].httpBody!, encoding: .utf8)!
 		XCTAssertFalse(body.contains("password"))
@@ -140,13 +146,25 @@ final class Mango9LogoutTests: XCTestCase {
 
 	func testLostActivationResponseReusesPersistedGeneration() async throws {
 		let memory = Memory(); memory.fails = true
-		do { try await coordinator(memory).prepareLogin(identity: identity, token: token, session: session()) }
+		do { try await coordinator(memory).prepareLogin(identity: identity, token: token, session: session(), freshAuthentication: true) }
 		catch {}
 		let generation = try XCTUnwrap(memory.records.first?.id)
 		memory.fails = false
-		try await coordinator(memory).prepareLogin(identity: identity, token: token, session: session())
+		try await coordinator(memory).prepareLogin(identity: identity, token: token, session: session(), freshAuthentication: true)
 		XCTAssertEqual(memory.records[0].id, generation)
 		XCTAssertNotNil(memory.records[0].cleanupToken)
+	}
+
+	func testRestoreAfterLogoutCannotActivateLease() async throws {
+		let memory = Memory()
+		let old = try Mango9SessionStore.save(session(), persist: false)
+		try Mango9SessionStore.remove(for: identity)
+		do {
+			try await coordinator(memory).prepareLogin(identity: identity, token: token, session: old)
+			XCTFail("A stale restore cannot reactivate a signed-out account")
+		} catch Mango9CRMAPIError.staleSession { }
+		XCTAssertTrue(memory.requests.isEmpty)
+		XCTAssertTrue(memory.records.isEmpty)
 	}
 
 	func testInterruptedOlderTokenActivationDoesNotBlockLogoutForever() async throws {

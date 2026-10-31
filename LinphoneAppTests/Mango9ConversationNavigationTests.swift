@@ -20,6 +20,7 @@ final class Mango9ConversationNavigationTests: XCTestCase {
 		let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
 		let window = UIWindow(windowScene: scene)
 		defer { window.isHidden = true; window.rootViewController = nil }
+		var listBrightness: Double?
 		for open in [false, true] {
 			let host = UIHostingController(rootView: ConversationPanelSurfaceFixture(open: open))
 			host.overrideUserInterfaceStyle = .light
@@ -29,7 +30,11 @@ final class Mango9ConversationNavigationTests: XCTestCase {
 			host.view.layoutIfNeeded()
 			try await Task.sleep(nanoseconds: 500_000_000)
 			let boundary = window.bounds.height - host.view.safeAreaInsets.bottom
-			let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+			// Pixel thresholds use SDR sRGB. The device's extended-range default
+			// can tone-map pure white below 1 when sampled into an 8-bit context.
+			let format = UIGraphicsImageRendererFormat()
+			format.preferredRange = .standard
+			let image = UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
 				window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
 			}
 			let attachment = XCTAttachment(image: image)
@@ -39,8 +44,10 @@ final class Mango9ConversationNavigationTests: XCTestCase {
 			if open {
 				XCTAssertGreaterThan(brightness, 0.99, "No panel shadow may bleed below the composer")
 				XCTAssertGreaterThan(try pixelBrightness(image, at: CGPoint(x: 30, y: boundary + 24)), 0.99)
+				XCTAssertLessThan(try XCTUnwrap(listBrightness), brightness - 1.0 / 255.0,
+					"Control: the list retains a visible shadow relative to the unshadowed chat")
 			} else {
-				XCTAssertLessThan(brightness, 0.98, "Control: the list retains its original shadow")
+				listBrightness = brightness
 			}
 		}
 	}
@@ -50,7 +57,7 @@ final class Mango9ConversationNavigationTests: XCTestCase {
 		let pixelImage = try XCTUnwrap(cgImage.cropping(to: CGRect(x: point.x * image.scale, y: point.y * image.scale, width: 1, height: 1)))
 		var pixel = [UInt8](repeating: 0, count: 4)
 		let context = try XCTUnwrap(CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
-			space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+			space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
 		context.draw(pixelImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
 		return (Double(pixel[0]) + Double(pixel[1]) + Double(pixel[2])) / 765
 	}

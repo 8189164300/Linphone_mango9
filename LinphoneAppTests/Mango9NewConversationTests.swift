@@ -92,17 +92,22 @@ import XCTest
 	func testNewConversationRecyclesTwentyThousandContactsAndSurvivesRefresh() async throws {
 		let manager = ContactsManager.shared
 		let original = manager.avatarListModel
+		let originalSuggestions = manager.lastSearchSuggestions
 		let originalFilter = MagicSearchSingleton.shared.currentFilter
 		let contacts = (0..<20_000).map {
 			ContactAvatarModel(friend: nil, name: String(format: "Contact %05d", $0), address: "", withPresence: false)
 		}
 		manager.avatarListModel = contacts
+		// Isolate the synthetic directory. Existing SIP suggestions otherwise sit
+		// below it, so jumping to the final row skips the contact paging trigger.
+		manager.lastSearchSuggestions = []
 		MagicSearchSingleton.shared.currentFilter = ""
 		let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
 		let window = UIWindow(windowScene: scene)
 		defer {
 			window.isHidden = true; window.rootViewController = nil
 			manager.avatarListModel = original
+			manager.lastSearchSuggestions = originalSuggestions
 			MagicSearchSingleton.shared.currentFilter = originalFilter
 		}
 		window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)

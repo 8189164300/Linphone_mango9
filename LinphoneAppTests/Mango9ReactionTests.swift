@@ -3,6 +3,103 @@ import ImageIO
 import UIKit
 @testable import LinphoneApp
 
+final class Mango9SocialProfileTests: XCTestCase {
+	func testPublicProviderHandlesResolveToCanonicalProfiles() throws {
+		for (platform, handle, expected) in [
+			("instagram", "@example.person_1", "https://www.instagram.com/example.person_1/"),
+			("facebook", "@Example.Person", "https://www.facebook.com/Example.Person/"),
+			("tiktok", "@example_person.1", "https://www.tiktok.com/@example_person.1")
+		] {
+			let url = try XCTUnwrap(Mango9SocialProfileLink.url(platform: platform, handle: handle))
+			XCTAssertEqual(url.absoluteString, expected); XCTAssertTrue(Mango9SocialProfileLink.isProfileURL(url))
+		}
+	}
+	func testNamesScopedIDsAndUnsafeHandlesNeverBecomeProfiles() {
+		for platform in Mango9SocialPlatform.all {
+			for handle in [nil, "", "Example Person", "Example.Person", "123456789012345", "@@example", "@../person",
+				"@person/path", "@person?token=secret", "@person#fragment", "@person%2Fpath", "@person\\path",
+				"@person@example.com", "@https://example.com", "@person\n", "@per\u{202E}son", "@person♥", "@.person", "@person..name", "@person."] as [String?] {
+				XCTAssertNil(Mango9SocialProfileLink.url(platform: platform, handle: handle), "\(platform): \(handle ?? "nil")")
+			}
+		}
+		XCTAssertNil(Mango9SocialProfileLink.url(platform: "facebook", handle: "@123456789012345"))
+		XCTAssertNil(Mango9SocialProfileLink.url(platform: "unknown", handle: "@example"))
+		XCTAssertNil(Mango9SocialProfileLink.url(platform: "instagram", handle: "@" + String(repeating: "a", count: 31)))
+		XCTAssertNil(Mango9SocialProfileLink.url(platform: "tiktok", handle: "@" + String(repeating: "a", count: 25)))
+	}
+	func testNavigationAndAuthenticationRoutesAreNotProfiles() {
+		for (platform, handles) in [("instagram", ["@direct", "@accounts", "@explore", "@p", "@reels"]),
+			("facebook", ["@login", "@profile.php", "@messages", "@business", "@sharer.php", "@settings"])] {
+			for handle in handles { XCTAssertNil(Mango9SocialProfileLink.url(platform: platform, handle: handle)) }
+		}
+		for raw in ["http://www.instagram.com/example/", "https://instagram.com.evil.invalid/example/",
+			"https://www.instagram.com@example.invalid/example/", "https://user:secret@www.instagram.com/example/",
+			"https://www.instagram.com:8443/example/", "https://www.instagram.com/example/?access_token=secret",
+			"https://www.instagram.com/example/#secret", "https://www.instagram.com/direct/t/123/",
+			"https://www.facebook.com/messages/t/123", "https://www.facebook.com/profile.php?id=123",
+			"https://www.tiktok.com/@example/video/123", "https://www.tiktok.com/example", "fb://profile/123"] {
+			XCTAssertFalse(Mango9SocialProfileLink.isProfileURL(URL(string: raw)!), raw)
+		}
+	}
+	func testParticipantAndConnectedAccountAreNotMixed() throws {
+		let raw: [String: Any] = ["id": "thread", "version": 1, "sourceId": "source", "platform": "instagram",
+			"name": "Display Name", "participantHandle": "@participant.example", "accountHandle": "@business.example",
+			"unread": false, "connectionCurrent": true, "canReply": true]
+		func decode(_ raw: [String: Any]) throws -> Mango9SocialThread {
+			try JSONDecoder().decode(Mango9SocialThread.self, from: JSONSerialization.data(withJSONObject: raw))
+		}
+		let thread = try decode(raw)
+		XCTAssertEqual(Mango9SocialProfileLink.url(thread: thread)?.absoluteString, "https://www.instagram.com/participant.example/")
+		XCTAssertEqual(Mango9SocialProfileLink.url(thread: thread, direction: "incoming")?.absoluteString, "https://www.instagram.com/participant.example/")
+		XCTAssertEqual(Mango9SocialProfileLink.url(thread: thread, direction: "outgoing")?.absoluteString, "https://www.instagram.com/business.example/")
+		XCTAssertNil(Mango9SocialProfileLink.url(thread: thread, direction: "unknown"))
+		var missing = raw; missing.removeValue(forKey: "participantHandle")
+		XCTAssertNil(Mango9SocialProfileLink.url(thread: try decode(missing)), "Never fall back to the business handle or display name")
+		var deleted = raw; deleted["deleted"] = true
+		XCTAssertNil(Mango9SocialProfileLink.url(thread: try decode(deleted)))
+	}
+	@MainActor func testInstalledAppSuccessDoesNotAlsoOpenBrowser() async throws {
+		let url = try XCTUnwrap(Mango9SocialProfileLink.url(platform: "instagram", handle: "@example"))
+		var attempts: [Bool] = []
+		let result = await Mango9SocialProfileLink.open(url, stillCurrent: { true }, launcher: { actual, appOnly in
+			XCTAssertEqual(actual, url); attempts.append(appOnly); return true
+		})
+		XCTAssertTrue(result); XCTAssertEqual(attempts, [true])
+	}
+	@MainActor func testNoAppFallsBackToTheExactPublicURL() async throws {
+		for platform in Mango9SocialPlatform.all {
+			let url = try XCTUnwrap(Mango9SocialProfileLink.url(platform: platform, handle: "@example"))
+			var attempts: [Bool] = []
+			let result = await Mango9SocialProfileLink.open(url, stillCurrent: { true }, launcher: { actual, appOnly in
+				XCTAssertEqual(actual, url); XCTAssertNil(URLComponents(url: actual, resolvingAgainstBaseURL: false)?.query)
+				attempts.append(appOnly); return !appOnly
+			})
+			XCTAssertTrue(result); XCTAssertEqual(attempts, [true, false])
+		}
+	}
+	@MainActor func testAccountChangeStopsBrowserFallback() async throws {
+		let url = try XCTUnwrap(Mango9SocialProfileLink.url(platform: "tiktok", handle: "@example"))
+		var active = true, attempts = 0
+		let result = await Mango9SocialProfileLink.open(url, stillCurrent: { active }, launcher: { _, _ in
+			attempts += 1; active = false; return false
+		})
+		XCTAssertFalse(result); XCTAssertEqual(attempts, 1)
+	}
+	@MainActor func testInvalidURLOrStaleAccountNeverLaunches() async {
+		var attempts = 0
+		let launcher: @MainActor (URL, Bool) async -> Bool = { _, _ in attempts += 1; return true }
+		let bad = await Mango9SocialProfileLink.open(URL(string: "https://evil.invalid/")!, stillCurrent: { true }, launcher: launcher)
+		let stale = await Mango9SocialProfileLink.open(URL(string: "https://www.instagram.com/example/")!, stillCurrent: { false }, launcher: launcher)
+		XCTAssertFalse(bad); XCTAssertFalse(stale); XCTAssertEqual(attempts, 0)
+	}
+	@MainActor func testFailedAppAndBrowserOpeningReportsFailure() async throws {
+		let url = try XCTUnwrap(Mango9SocialProfileLink.url(platform: "facebook", handle: "@example"))
+		var attempts = 0
+		let result = await Mango9SocialProfileLink.open(url, stillCurrent: { true }, launcher: { _, _ in attempts += 1; return false })
+		XCTAssertFalse(result); XCTAssertEqual(attempts, 2)
+	}
+}
+
 final class Mango9ReactionTests: XCTestCase {
 	@MainActor func testConversationDeletionAcrossDevicesAndLostResponseRetryPreservesNewArrivals() async throws {
 		let active = session(), prior = Mango9SessionStore.load()
@@ -557,8 +654,8 @@ final class Mango9ReactionTests: XCTestCase {
 		XCTAssertEqual(calls, 1)
 	}
 	@MainActor func testExpiredCRMTokenRefreshesAndRetriesIdenticalSocialCommand() async throws {
-		let active = session(); let previous = Mango9SessionStore.load()
-		try Mango9SessionStore.save(active, persist: false, makeActive: true)
+		let previous = Mango9SessionStore.load()
+		let active = try Mango9SessionStore.save(session(), persist: false, makeActive: true)
 		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); if let previous { try? Mango9SessionStore.save(previous, makeActive: true) } }
 		let target = Mango9ReactionTarget(account: Mango9ReactionTarget.accountKey(active), channel: .social, conversation: "thread", message: "1")
 		let command = Mango9ReactionCommand(target: target, version: 3, emoji: "👍🏽", remove: false)
@@ -583,8 +680,8 @@ final class Mango9ReactionTests: XCTestCase {
 		return Mango9MessagingAPI(transport: URLSession(configuration: config))
 	}
 	@MainActor func testExpiredChatTokenRefreshUsesChatActorAndNeverSMSSend() async throws {
-		let active = session(); let previous = Mango9SessionStore.load()
-		try Mango9SessionStore.save(active, persist: false, makeActive: true)
+		let previous = Mango9SessionStore.load()
+		let active = try Mango9SessionStore.save(session(), persist: false, makeActive: true)
 		defer { XCTAssertNoThrow(try Mango9SessionStore.remove(for: active.sipIdentity!)); if let previous { try? Mango9SessionStore.save(previous, makeActive: true) } }
 		var commands: [[String: Any]] = []; var bootstraps = 0; var refreshes = 0
 		ReactionMockProtocol.handler = { request in
@@ -675,7 +772,8 @@ final class Mango9ReactionTests: XCTestCase {
 	func testSocialReadErrorsDistinguishConnectionSessionAndServerWithoutLeakingCodes() {
 		XCTAssertTrue(Mango9SocialReadError.message(URLError(.timedOut)).contains("taking too long"))
 		XCTAssertTrue(Mango9SocialReadError.message(URLError(.networkConnectionLost)).contains("internet connection"))
-		XCTAssertTrue(Mango9SocialReadError.message(Mango9CRMAPIError.unauthorized).contains("Sign in again"))
+		XCTAssertFalse(Mango9SocialReadError.message(Mango9CRMAPIError.unauthorized).contains("Sign in again"))
+		XCTAssertTrue(Mango9SocialReadError.message(Mango9CRMAPIError.sessionExpired).contains("Sign in again"))
 		XCTAssertTrue(Mango9SocialReadError.message(Mango9CRMAPIError.invalidConfiguration).contains("Settings"))
 		XCTAssertTrue(Mango9SocialReadError.message(Mango9MessagingError.rejected(429, "internal_rate_code")).contains("Wait a moment"))
 		for error: Error in [Mango9CRMAPIError.server, Mango9CRMAPIError.serverMessage("private upstream diagnostic"),
@@ -809,7 +907,11 @@ final class Mango9ReactionTests: XCTestCase {
 			expired = true; await store.loadInbox()
 			XCTAssertEqual(store.threads.count, 1); XCTAssertEqual(store.draft, "Keep this draft")
 			XCTAssertFalse(store.error!.contains("Mango9CRMAPIError"))
-			refreshAvailable = true; await store.loadInbox()
+			refreshAvailable = true
+			// A temporary refresh outage backs off for up to two seconds on its
+			// first failure. Recovery must not bypass that production safeguard.
+			try await Task.sleep(nanoseconds: 2_100_000_000)
+			await store.loadInbox()
 			XCTAssertNil(store.error); XCTAssertEqual(store.threads.count, 1)
 		}
 	}
@@ -1011,9 +1113,9 @@ final class Mango9ReactionTests: XCTestCase {
 		reopened.finish(pending); XCTAssertNil(reopened.pending(account: "account", thread: "thread"))
 	}
 	@MainActor private func withSocialStore(_ body: (Mango9SocialInboxStore, Mango9SocialSendJournal) async throws -> Void) async throws {
-		let active = session(); let previous = Mango9SessionStore.load()
+		let previous = Mango9SessionStore.load()
 		let name = "social-send-test-" + UUID().uuidString; let defaults = UserDefaults(suiteName: name)!
-		try Mango9SessionStore.save(active, persist: false, makeActive: true)
+		let active = try Mango9SessionStore.save(session(), persist: false, makeActive: true)
 		defer {
 			defaults.removePersistentDomain(forName: name)
 			ReactionMockProtocol.responseDelay = nil

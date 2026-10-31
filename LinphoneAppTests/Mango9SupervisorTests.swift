@@ -1,9 +1,196 @@
 import XCTest
 import AVFoundation
 import Security
+import SwiftUI
+import Combine
 @testable import LinphoneApp
 
+final class Mango9ChatScrollTests: XCTestCase {
+    func testLatestArrowClearsAtBottomAndDuringBottomOverscroll() {
+        for bottom in [CGFloat(701), 700, 686, 640, 320, 0, -80] {
+            XCTAssertTrue(Mango9ChatScrollMetrics.reachedLatest(bottom: bottom, viewportHeight: 700))
+            XCTAssertFalse(Mango9ChatScrollMetrics.hasMoreBelow(bottom: bottom, viewportHeight: 700))
+        }
+    }
+    func testOlderMessagesKeepTheLatestArrowAvailable() {
+        for bottom in [CGFloat(702), 750, 1000, 20000] {
+            XCTAssertFalse(Mango9ChatScrollMetrics.reachedLatest(bottom: bottom, viewportHeight: 700))
+            XCTAssertTrue(Mango9ChatScrollMetrics.hasMoreBelow(bottom: bottom, viewportHeight: 700))
+        }
+    }
+    func testUnmeasuredOrTransientViewportDoesNotFlashArrowOrResumeFollowing() {
+        for bottom: CGFloat? in [nil, .infinity, -.infinity, .nan] {
+            XCTAssertFalse(Mango9ChatScrollMetrics.hasMoreBelow(bottom: bottom, viewportHeight: 700))
+            XCTAssertFalse(Mango9ChatScrollMetrics.reachedLatest(bottom: bottom, viewportHeight: 700))
+        }
+        for height in [CGFloat(0), -1, .infinity, .nan] {
+            XCTAssertFalse(Mango9ChatScrollMetrics.hasMoreBelow(bottom: 900, viewportHeight: height))
+            XCTAssertFalse(Mango9ChatScrollMetrics.reachedLatest(bottom: 300, viewportHeight: height))
+        }
+    }
+    func testArrowUsesCurrentViewportAfterKeyboardOrRotation() {
+        XCTAssertFalse(Mango9ChatScrollMetrics.hasMoreBelow(bottom: 680, viewportHeight: 700))
+        XCTAssertTrue(Mango9ChatScrollMetrics.hasMoreBelow(bottom: 680, viewportHeight: 400))
+        XCTAssertFalse(Mango9ChatScrollMetrics.hasMoreBelow(bottom: 390, viewportHeight: 400))
+    }
+    func testLiveAndSocialShareTheSameScalableMessageFont() {
+        XCTAssertEqual(Mango9InboxTypography.message, Font.custom("NotoSans-Regular", size: 14))
+        XCTAssertNotEqual(Mango9InboxTypography.message, Font.system(size: 14))
+    }
+}
+
 final class Mango9SupervisorTests: XCTestCase {
+    func testTopOrMiddleLayoutDoesNotReenableFollowingTheLatestReply() {
+        for bottom in [CGFloat(-10), 0, 20, 350, 659, 900, .infinity, .nan] {
+            XCTAssertFalse(Mango9SupervisorScrollLayout.isNearBottom(bottom, viewportHeight: 700))
+        }
+        for bottom in [CGFloat(660), 700, 729, 740] {
+            XCTAssertTrue(Mango9SupervisorScrollLayout.isNearBottom(bottom, viewportHeight: 700))
+        }
+        XCTAssertFalse(Mango9SupervisorScrollLayout.isNearBottom(0, viewportHeight: 0))
+    }
+    private func windowMessages(_ ids: Range<Int>) -> [Mango9SupervisorMessage] {
+        ids.compactMap { Mango9SupervisorMessage(["id": "message-\($0)", "role": "assistant", "parts": [["type": "text", "text": "Saved reply \($0)"]]]) }
+    }
+    func testInitialRenderedPageIsBoundedAndIncludesTheLatestReply() {
+        let window = Mango9SupervisorMessageWindow(), messages = windowMessages(0..<200)
+        let visible = window.visible(in: messages)
+        XCTAssertEqual(visible.count, 40)
+        XCTAssertEqual(visible.first?.id, "message-160")
+        XCTAssertEqual(visible.last?.id, "message-199")
+        XCTAssertTrue(window.visible(in: []).isEmpty)
+    }
+    func testOlderPagesRemainAccessibleWithoutRenderingAllHistoryAtOpen() {
+        var window = Mango9SupervisorMessageWindow()
+        let messages = windowMessages(0..<121)
+        window.preserve(in: messages)
+        window.expand(in: messages)
+        XCTAssertEqual(window.visible(in: messages).count, 80)
+        window.expand(in: messages)
+        XCTAssertEqual(window.visible(in: messages).count, 120)
+        window.expand(in: messages)
+        XCTAssertEqual(window.visible(in: messages), messages)
+    }
+    func testRenderedWindowPreservesItsTopAcrossIncomingAndOlderMessages() {
+        var window = Mango9SupervisorMessageWindow()
+        window.preserve(in: windowMessages(40..<120))
+        XCTAssertEqual(window.firstID, "message-80")
+        XCTAssertEqual(window.visible(in: windowMessages(0..<121)).first?.id, "message-80")
+        XCTAssertEqual(window.visible(in: windowMessages(0..<121)).last?.id, "message-120")
+        window.expand(in: windowMessages(0..<121))
+        XCTAssertEqual(window.firstID, "message-40")
+    }
+    func testReplacedOrClearedHistoryDoesNotLeaveAnEmptyRenderedWindow() {
+        var window = Mango9SupervisorMessageWindow()
+        window.preserve(in: windowMessages(0..<100))
+        XCTAssertEqual(window.visible(in: windowMessages(200..<250)).count, 40)
+        XCTAssertEqual(window.visible(in: windowMessages(200..<250)).last?.id, "message-249")
+        window.preserve(in: [])
+        XCTAssertNil(window.firstID)
+        XCTAssertEqual(window.visible(in: windowMessages(0..<1)).count, 1)
+    }
+    func testNativeBottomPaddingDoesNotTriggerRepeatedScrollCorrections() {
+        for bottom in [CGFloat(700), 699.5, 685, 671, 660] {
+            let layout = Mango9SupervisorScrollLayout(id: "last", frame: CGRect(x: 0, y: bottom - 100, width: 320, height: 100))
+            XCTAssertFalse(Mango9SupervisorScrollLayout.needsAlignment(target: "last", layout: layout, viewportHeight: 700))
+        }
+    }
+    func testOffscreenOrUnmeasuredLastMessageStillGetsOneAlignment() {
+        XCTAssertTrue(Mango9SupervisorScrollLayout.needsAlignment(target: "last", layout: nil, viewportHeight: 700))
+        for bottom in [CGFloat(-20), 40, 500, 702, 900] {
+            let layout = Mango9SupervisorScrollLayout(id: "last", frame: CGRect(x: 0, y: bottom - 100, width: 320, height: 100))
+            XCTAssertTrue(Mango9SupervisorScrollLayout.needsAlignment(target: "last", layout: layout, viewportHeight: 700))
+        }
+        let stale = Mango9SupervisorScrollLayout(id: "previous-conversation", frame: CGRect(x: 0, y: 600, width: 320, height: 100))
+        XCTAssertTrue(Mango9SupervisorScrollLayout.needsAlignment(target: "last", layout: stale, viewportHeight: 700))
+    }
+    func testTransientPresentationSizesDoNotMoveTheScrollView() {
+        for height in [CGFloat(0), -1, .nan, .infinity] {
+            XCTAssertFalse(Mango9SupervisorScrollLayout.needsAlignment(target: "last", layout: nil, viewportHeight: height))
+        }
+    }
+    func testScrollMovementDoesNotFeedBackIntoAnotherScrollRequest() {
+        let original = Mango9SupervisorScrollLayout(id: "last", frame: CGRect(x: 0, y: 600, width: 320, height: 100))
+        for y in [CGFloat(610), 650, 600, 550, -10] {
+            let shifted = Mango9SupervisorScrollLayout(id: "last", frame: CGRect(x: 0, y: y, width: 320, height: 100))
+            XCTAssertFalse(Mango9SupervisorScrollLayout.contentChanged(from: original, to: shifted))
+        }
+        let expandedCard = Mango9SupervisorScrollLayout(id: "last", frame: CGRect(x: 0, y: 600, width: 320, height: 200))
+        XCTAssertTrue(Mango9SupervisorScrollLayout.contentChanged(from: original, to: expandedCard))
+        let newReply = Mango9SupervisorScrollLayout(id: "new", frame: original.frame)
+        XCTAssertTrue(Mango9SupervisorScrollLayout.contentChanged(from: original, to: newReply))
+        XCTAssertTrue(Mango9SupervisorScrollLayout.contentChanged(from: nil, to: original))
+        XCTAssertFalse(Mango9SupervisorScrollLayout.contentChanged(from: original, to: original))
+    }
+    func testInitialScrollTargetsVisibleContentRatherThanAnEmptyLazyFooter() throws {
+        let last = try XCTUnwrap(Mango9SupervisorMessage(["id": "last-reply", "role": "assistant", "parts": [["type": "text", "text": "Latest reply"]]]))
+        let pending = Mango9SupervisorCommand(conversationID: UUID().uuidString.lowercased(), text: "New question")
+        XCTAssertEqual(Mango9SupervisorScrollTarget.id(messages: [last], pending: nil, sending: false), last.id)
+        XCTAssertEqual(Mango9SupervisorScrollTarget.id(messages: [last], pending: pending, sending: false), pending.messageID)
+        XCTAssertEqual(Mango9SupervisorScrollTarget.id(messages: [last], pending: pending, sending: true), Mango9SupervisorScrollTarget.thinking)
+        let savedPending = try XCTUnwrap(Mango9SupervisorMessage(["id": pending.messageID, "role": "user", "parts": [["type": "text", "text": pending.text]]]))
+        XCTAssertEqual(Mango9SupervisorScrollTarget.id(messages: [savedPending, last], pending: pending, sending: false), last.id)
+        XCTAssertEqual(Mango9SupervisorScrollTarget.id(messages: [], pending: nil, sending: false), Mango9SupervisorScrollTarget.empty)
+    }
+    func testCreationCardsRequireSucceededReceiptAndSameServerPageLinks() throws {
+        let proof: [String: Any] = ["version": 1, "statusText": "Task created.", "links": [["label": "View task", "href": "/app/tasks/42"]], "recipients": [["name": "Assigned person", "email": "person@example.invalid"]]]
+        var detail: [String: Any] = ["state": "SUCCEEDED", "recap": ["creation": proof]]
+        let card = try XCTUnwrap(Mango9SupervisorCreation(detail, baseURL: "https://crm.example.invalid/app/"))
+        XCTAssertEqual(card.status, "Task created.")
+        XCTAssertEqual(card.recipients, ["Assigned person · person@example.invalid"])
+        let message = try XCTUnwrap(Mango9SupervisorMessage(["id": "created", "role": "assistant", "metadata": ["creations": [proof]]]))
+        XCTAssertNotNil(message.creationData)
+        let user = try XCTUnwrap(Mango9SupervisorMessage(["id": "created", "role": "user", "metadata": ["creations": [proof]]]))
+        XCTAssertNil(user.creationData)
+        XCTAssertEqual(card.links.first?.url.absoluteString, "https://crm.example.invalid/app/tasks/42")
+        XCTAssertEqual(card.links.first.flatMap { Mango9SupervisorCreation.nativeTaskID($0.url) }, 42)
+        for state in ["PENDING_APPROVAL", "APPROVED", "EXECUTING", "FAILED", "OUTCOME_UNKNOWN"] {
+            detail["state"] = state; XCTAssertNil(Mango9SupervisorCreation(detail, baseURL: "https://crm.example.invalid"))
+        }
+        detail["state"] = "SUCCEEDED"
+        for target in ["https://foreign.invalid/app/tasks/42", "/app/api/v2/tasks/42", "/app/../api/tasks", "javascript:alert(1)"] {
+            var invalid = proof; invalid["links"] = [["label": "View task", "href": target]]
+            detail["recap"] = ["creation": invalid]
+            XCTAssertNil(Mango9SupervisorCreation(detail, baseURL: "https://crm.example.invalid"))
+        }
+        for target in ["/app/tasks/42/edit", "/app/tasks/new", "/app/workflow/42"] {
+            XCTAssertNil(Mango9SupervisorCreation.nativeTaskID(try XCTUnwrap(URL(string: "https://crm.example.invalid" + target))))
+        }
+    }
+    func testHistoryTimestampsUseLocalDaysAndUSDatesAfterAWeek() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        let parse = ISO8601DateFormatter()
+        let now = try XCTUnwrap(parse.date(from: "2026-10-31T06:45:00Z"))
+        func label(_ value: String) throws -> String { Mango9SupervisorHistoryDate.label(try XCTUnwrap(parse.date(from: value)), now: now, calendar: calendar) }
+        XCTAssertEqual(try label("2026-10-31T06:30:00Z"), "Today, 11:30 PM")
+        XCTAssertEqual(try label("2026-10-30T06:30:00Z"), "Yesterday, 11:30 PM")
+        XCTAssertEqual(try label("2026-10-29T06:30:00Z"), "Wednesday, 11:30 PM")
+        XCTAssertEqual(try label("2026-10-24T06:30:00Z"), "10/23/2026, 11:30 PM")
+        XCTAssertEqual(Mango9SupervisorHistoryDate.label(nil, now: now, calendar: calendar), "")
+    }
+    func testHistoryParsesFractionalDatesVoiceAndMessageCounts() throws {
+        let row = try XCTUnwrap(Mango9SupervisorConversation(["id": UUID().uuidString, "title": "Example", "updatedAt": "2026-10-31T06:30:00.123Z", "messageCount": 4, "hasVoice": true]))
+        XCTAssertNotNil(row.updatedAt); XCTAssertEqual(row.messageCount, 4); XCTAssertTrue(row.hasVoice)
+    }
+    func testMessagesUseNativeCalloutTypographyInsteadOfAFixedPointSize() {
+        XCTAssertEqual(Mango9SupervisorTypography.message, Font.callout)
+        XCTAssertNotEqual(Mango9SupervisorTypography.message, Font.system(size: 16))
+    }
+    @MainActor func testMessageTypographyRespondsToAccessibilityTextSizes() throws {
+        guard #available(iOS 16.0, *) else { throw XCTSkip("Requires native hosting layout measurement.") }
+        let sample = "A message should use your iPhone’s text size and wrap naturally without clipping its contents."
+        func height(_ category: ContentSizeCategory) -> CGFloat {
+            let host = UIHostingController(rootView: Text(sample)
+                .font(Mango9SupervisorTypography.message)
+                .environment(\.sizeCategory, category)
+                .fixedSize(horizontal: false, vertical: true))
+            return host.sizeThatFits(in: CGSize(width: 280, height: 10000)).height
+        }
+        let normal = height(.large)
+        XCTAssertGreaterThan(normal, 0)
+        XCTAssertGreaterThan(height(.accessibilityExtraExtraExtraLarge), normal)
+    }
     private func session(host: String = "crm.example.invalid", userID: String = "7") -> Mango9Session {
         Mango9Session(crmId: "fixture", crmBaseUrl: "https://" + host, crmApiBaseUrl: "https://" + host + "/app/api/v2",
             userId: userID, parentClientId: "7", role: "client", loginId: "fixture@example.invalid", displayName: "Fixture",
@@ -155,6 +342,7 @@ final class Mango9SupervisorTests: XCTestCase {
 }
 
 private final class SupervisorPendingFixture {
+    let local = SupervisorLocalFixture()
     var command: Mango9SupervisorCommand?
     var readFails = false
     var deleteFails = false
@@ -164,6 +352,12 @@ private final class SupervisorPendingFixture {
         }, write: { [self] value in
             if value == nil && deleteFails { throw Mango9SupervisorFailure(status: 0, code: "storage_unavailable") }; command = value
         })
+    }
+}
+private final class SupervisorLocalFixture {
+    var chats: [Mango9SupervisorSavedChat] = []
+    var store: Mango9SupervisorLocalStore {
+        .init(read: { [self] in chats }, write: { [self] in chats = $0 })
     }
 }
 @MainActor private final class SupervisorClientFixture: Mango9SupervisorClient {
@@ -192,12 +386,329 @@ private final class SupervisorPendingFixture {
 }
 
 final class Mango9SupervisorReliabilityTests: XCTestCase {
+    private static func settings(_ id: String, state: String = "PENDING_APPROVAL") -> [String: Any] {
+        ["id": id, "state": state, "approvalDigest": String(repeating: "a", count: 64),
+         "arguments": ["private": "not-for-local-storage"], "recap": ["version": 1, "title": "Create task",
+         "fields": [["label": "Owner", "value": "Example owner"], ["label": "Task", "value": "Follow up"]],
+         "creation": ["version": 1, "statusText": "Task created.", "links": [["label": "View task", "href": "/app/tasks/42"]],
+                      "recipients": [["name": "Example owner", "email": "owner@example.invalid"]]]]]
+    }
+    private static func settingsMessage(_ id: String) -> Mango9SupervisorMessage {
+        Mango9SupervisorMessage(["id": "reply-settings", "role": "assistant", "parts": [["type": "text", "text": "Your settings"]], "metadata": ["actionIds": [id]]])!
+    }
+    @MainActor func testSettingsAndMessagesRestoreOfflineWithoutPermissionToApply() async throws {
+        try await withModel(start: false) { model, client, vault in
+            let id = UUID().uuidString.lowercased(), raw = Self.settings(id)
+            let saved = try XCTUnwrap(Mango9SupervisorSavedConfiguration(raw))
+            let row = try XCTUnwrap(Mango9SupervisorConversation(["id": model.conversationID, "title": "Saved task", "messageCount": 1]))
+            vault.local.chats = [.init(id: model.conversationID, savedAt: Date(), conversation: row,
+                                      messages: [Self.settingsMessage(id)], configurations: [id: saved])]
+            client.handler = { _, _ in throw URLError(.notConnectedToInternet) }
+            await model.start()
+            XCTAssertFalse(model.authorized); XCTAssertTrue(model.usingSavedHistory)
+            XCTAssertEqual(model.messages.first?.text, "Your settings")
+            XCTAssertEqual(model.configurationDetails[id]?["state"] as? String, "PENDING_APPROVAL")
+            XCTAssertTrue(model.savedConfigurationIDs.contains(id)); XCTAssertFalse(model.canSend)
+            XCTAssertNil(model.configurationDetails[id]?["approvalDigest"])
+            await model.decide("approve", expected: try XCTUnwrap(Mango9SupervisorApproval(raw)))
+            XCTAssertFalse(client.calls.contains { $0.hasSuffix("/decision") })
+            try await model.loadConversations(query: "saved", channel: "text")
+            XCTAssertEqual(model.conversations.count, 1); XCTAssertTrue(model.canBrowseHistory); XCTAssertFalse(model.canManageHistory)
+        }
+    }
+    @MainActor func testSuccessfulSettingsFetchPersistsAndNetworkFailureDoesNotEraseIt() async throws {
+        try await withModel { model, client, vault in
+            let id = UUID().uuidString.lowercased(), raw = Self.settings(id, state: "SUCCEEDED")
+            model.messages = [Self.settingsMessage(id)]
+            client.handler = { _, _ in raw }
+            await model.loadConfiguration(id)
+            XCTAssertFalse(model.savedConfigurationIDs.contains(id))
+            let saved = try XCTUnwrap(vault.local.chats.first?.configurations[id])
+            XCTAssertEqual(saved.detail?["state"] as? String, "SUCCEEDED")
+            let creation = try XCTUnwrap(Mango9SupervisorCreation(try XCTUnwrap(saved.detail), baseURL: client.original.crmBaseUrl))
+            XCTAssertEqual(creation.links.first?.url.path, "/app/tasks/42")
+            XCTAssertEqual(creation.recipients, ["Example owner · owner@example.invalid"])
+            client.handler = { _, _ in throw URLError(.timedOut) }
+            await model.loadConfiguration(id)
+            XCTAssertEqual(model.configurationDetails[id]?["state"] as? String, "SUCCEEDED")
+            XCTAssertTrue(model.savedConfigurationIDs.contains(id))
+            model.close(); await model.start()
+            XCTAssertTrue(model.usingSavedHistory)
+            XCTAssertEqual(model.configurationDetails[id]?["state"] as? String, "SUCCEEDED")
+            XCTAssertEqual(model.messages.first?.text, "Your settings")
+        }
+    }
+    @MainActor func testFreshServerStateReplacesCachedSettingsBeforeApply() async throws {
+        try await withModel(start: false) { model, client, vault in
+            let id = UUID().uuidString.lowercased(), raw = Self.settings(id)
+            vault.local.chats = [.init(id: model.conversationID, savedAt: Date(), conversation: nil,
+                                      messages: [Self.settingsMessage(id)], configurations: [id: try XCTUnwrap(.init(raw))])]
+            client.handler = { path, body in
+                if path == "authorize" { return ["enabled": true] }
+                if path == "actions/" + id { return Self.settings(id, state: "SUCCEEDED") }
+                if body?["action"] as? String == "list" { return ["items": []] }
+                return ["messages": [["id": "reply-settings", "role": "assistant", "parts": [["type": "text", "text": "Your settings"]], "metadata": ["actionIds": [id]]]], "cursor": "1"]
+            }
+            await model.start()
+            for _ in 0..<20 { await Task.yield() }
+            await model.loadConfiguration(id)
+            XCTAssertFalse(model.savedConfigurationIDs.contains(id))
+            XCTAssertEqual(model.configurationDetails[id]?["state"] as? String, "SUCCEEDED")
+            await model.decide("approve", expected: try XCTUnwrap(Mango9SupervisorApproval(raw)))
+            XCTAssertFalse(client.calls.contains { $0.hasSuffix("/decision") })
+        }
+    }
+    @MainActor func testRevokedAccessPurgesLocalSettingsInsteadOfUsingOfflineFallback() async throws {
+        try await withModel(start: false) { model, client, vault in
+            let id = UUID().uuidString.lowercased()
+            vault.local.chats = [.init(id: model.conversationID, savedAt: Date(), conversation: nil,
+                                      messages: [Self.settingsMessage(id)], configurations: [id: try XCTUnwrap(.init(Self.settings(id)))])]
+            client.handler = { _, _ in throw Mango9SupervisorFailure(status: 403, code: "forbidden") }
+            await model.start()
+            XCTAssertTrue(model.messages.isEmpty); XCTAssertTrue(model.configurationDetails.isEmpty)
+            XCTAssertTrue(vault.local.chats.isEmpty); XCTAssertFalse(model.usingSavedHistory); XCTAssertFalse(model.authorized)
+        }
+    }
+    @MainActor func testSettingsDeniedOrDeletedOnServerDoNotRemainCached() async throws {
+        try await withModel { model, client, vault in
+            let id = UUID().uuidString.lowercased()
+            model.messages = [Self.settingsMessage(id)]; client.handler = { _, _ in Self.settings(id) }
+            await model.loadConfiguration(id)
+            client.handler = { _, _ in throw Mango9SupervisorFailure(status: 404, code: "not_found") }
+            await model.loadConfiguration(id)
+            XCTAssertNil(model.configurationDetails[id]); XCTAssertNil(vault.local.chats.first?.configurations[id])
+        }
+    }
+    @MainActor func testLateSettingsFetchCannotCrossConversationScope() async throws {
+        try await withModel { model, client, vault in
+            let id = UUID().uuidString.lowercased(), gate = SupervisorDeferredFixture()
+            model.messages = [Self.settingsMessage(id)]
+            client.handler = { path, _ in
+                if path == "actions/" + id { return await gate.wait() }
+                return ["messages": [], "cursor": "0"]
+            }
+            let request = Task { await model.loadConfiguration(id) }
+            await fulfillment(of: [gate.entered], timeout: 3)
+            await model.select(UUID().uuidString.lowercased())
+            gate.resume(Self.settings(id)); await request.value
+            XCTAssertNil(model.configurationDetails[id]); XCTAssertTrue(vault.local.chats.isEmpty)
+        }
+    }
+    func testDisplaySnapshotOmitsCommandSecretsAndCannotBecomeAnApproval() throws {
+        let id = UUID().uuidString, saved = try XCTUnwrap(Mango9SupervisorSavedConfiguration(Self.settings(id)))
+        let detail = try XCTUnwrap(saved.detail)
+        XCTAssertNil(detail["arguments"]); XCTAssertNil(detail["approvalDigest"])
+        XCTAssertEqual(detail["summaryOnly"] as? Bool, true); XCTAssertNil(Mango9SupervisorApproval(detail))
+        XCTAssertEqual((detail["recap"] as? [String: Any])?["title"] as? String, "Create task")
+        XCTAssertNil(Mango9SupervisorSavedConfiguration(["id": id, "state": "SUCCEEDED", "recap": ["version": 1, "fields": [["value": "Missing label"]]]]))
+    }
+    @MainActor func testDeviceCacheRoundTripProtectionAndLoginIsolation() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("supervisor-cache-fixture-" + UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var session = SupervisorClientFixture().original; session.loginGeneration = "login-one"
+        let store = Mango9SupervisorLocalStore.device(session, root: root), id = UUID().uuidString
+        let saved = Mango9SupervisorSavedChat(id: UUID().uuidString, savedAt: Date(), conversation: nil,
+            messages: [Self.settingsMessage(id)], configurations: [id: try XCTUnwrap(.init(Self.settings(id)))])
+        try store.write([saved]); XCTAssertEqual(try store.read().first?.id, saved.id)
+        let files = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        let file = try XCTUnwrap(files.first), attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+#if !targetEnvironment(simulator)
+        // Data Protection is enforced and reported on hardware, not by the
+        // simulator's host filesystem. Keep this assertion in device runs.
+        XCTAssertEqual(attributes[.protectionKey] as? FileProtectionType, .complete)
+#endif
+        XCTAssertEqual(try root.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
+        for key in ["loginGeneration", "crmId", "crmApiBaseUrl", "userId", "parentClientId", "role", "sipIdentity"] {
+            var raw = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(session)) as? [String: Any])
+            raw[key] = "different"
+            let different = try JSONDecoder().decode(Mango9Session.self, from: JSONSerialization.data(withJSONObject: raw))
+            XCTAssertNotEqual(Mango9SupervisorLocalStore.scope(session), Mango9SupervisorLocalStore.scope(different), key)
+            XCTAssertTrue(try Mango9SupervisorLocalStore.device(different, root: root).read().isEmpty, key)
+        }
+        let expired = Mango9SupervisorSavedChat(id: saved.id, savedAt: Date().addingTimeInterval(-31 * 86400), conversation: nil, messages: saved.messages, configurations: saved.configurations)
+        XCTAssertTrue(Mango9SupervisorLocalStore.bounded([expired]).isEmpty)
+        try store.write([]); XCTAssertTrue(try store.read().isEmpty)
+    }
+    @MainActor func testForegroundTailRejectsAnOlderPageFromBeforeBackgrounding() async throws {
+        try await withModel(start: false) { model, client, _ in
+            let gate = SupervisorDeferredFixture(); var tails = 0
+            client.handler = { path, body in
+                if path == "authorize" { return ["enabled": true] }
+                if body?["action"] as? String == "list" { return ["items": []] }
+                if body?["before"] != nil { return await gate.wait() }
+                tails += 1
+                return ["messages": [Self.reply(tails == 1 ? "old-window" : "fresh-window", "Reply")], "cursor": tails == 1 ? "40" : "100", "olderCursor": tails == 1 ? "10" : "80"]
+            }
+            await model.start()
+            let old = Task { await model.loadOlderHistory() }
+            await fulfillment(of: [gate.entered], timeout: 3)
+            await model.refreshHistory(latest: true)
+            gate.resume(["messages": [Self.reply("stale-page", "Old page")], "olderCursor": "1"])
+            await old.value
+            XCTAssertEqual(model.messages.map(\.id), ["fresh-window"]); XCTAssertTrue(model.moreMessages)
+        }
+    }
+    @MainActor func testHistoryOpensNewestPageAndOlderPagesPreserveTheLiveCursor() async throws {
+        try await withModel(start: false) { model, client, _ in
+            client.handler = { path, body in
+                if path == "authorize" { return ["enabled": true] }
+                if body?["action"] as? String == "list" { return ["items": []] }
+                if body?["latest"] as? Bool == true { return ["messages": [Self.reply("newest", "Latest reply")], "cursor": "50", "olderCursor": "10"] }
+                if let before = body?["before"] as? String { XCTAssertEqual(before, "10"); return ["messages": [Self.reply("older", "Earlier reply")], "cursor": "9"] }
+                XCTAssertEqual(body?["after"] as? String, "50")
+                return ["messages": [Self.reply("incoming", "Incoming reply")], "cursor": "51"]
+            }
+            await model.start(); XCTAssertEqual(model.messages.map(\.id), ["newest"]); XCTAssertTrue(model.moreMessages)
+            await model.loadOlderHistory(); XCTAssertEqual(model.messages.map(\.id), ["older", "newest"]); XCTAssertFalse(model.moreMessages)
+            await model.refreshHistory(); XCTAssertEqual(model.messages.map(\.id), ["older", "newest", "incoming"])
+        }
+    }
+    @MainActor func testExhaustedHistoryAndForegroundKeepTheOlderMessagesBeingRead() async throws {
+        try await withModel(start: false) { model, client, _ in
+            var tailReads = 0, olderReads = 0
+            client.handler = { path, body in
+                if path == "authorize" { return ["enabled": true] }
+                if body?["action"] as? String == "list" { return ["items": []] }
+                if body?["latest"] as? Bool == true {
+                    tailReads += 1
+                    return ["messages": [Self.reply("latest", "Latest")], "cursor": "50", "olderCursor": "10"]
+                }
+                if body?["before"] != nil {
+                    olderReads += 1
+                    return ["messages": [Self.reply("first", "Oldest")]]
+                }
+                XCTAssertEqual(body?["after"] as? String, "50")
+                return ["messages": [], "cursor": "50"]
+            }
+            await model.start(); await model.loadOlderHistory()
+            XCTAssertFalse(model.moreMessages)
+            for _ in 0..<3 { await model.loadOlderHistory() }
+            model.background(); await model.resume(latest: false)
+            XCTAssertEqual(olderReads, 1)
+            XCTAssertEqual(tailReads, 1, "Reading older history must not be replaced with the newest page on foreground")
+            XCTAssertEqual(model.messages.map(\.id), ["first", "latest"])
+        }
+    }
+    @MainActor func testOpeningCachedHistoryNeverPublishesAnEmptyIntermediateList() async throws {
+        try await withModel(start: false) { model, client, vault in
+            let cached = try XCTUnwrap(Mango9SupervisorMessage(Self.reply("cached", "Saved reply")))
+            vault.local.chats = [.init(id: model.conversationID, savedAt: Date(), conversation: nil,
+                                      messages: [cached], configurations: [:])]
+            client.handler = { path, body in
+                if path == "authorize" { return ["enabled": true] }
+                if body?["action"] as? String == "list" { return ["items": []] }
+                return ["messages": [Self.reply("cached", "Saved reply"), Self.reply("newest", "Latest reply")], "cursor": "2"]
+            }
+            var snapshots: [[String]] = []
+            let observer = model.$messages.dropFirst().sink { snapshots.append($0.map(\.id)) }
+            defer { observer.cancel() }
+            await model.start()
+            XCTAssertEqual(model.messages.map(\.id), ["cached", "newest"])
+            XCTAssertFalse(snapshots.contains([]), "Refreshing the saved chat must not remove its ScrollView between cached and server history")
+            XCTAssertEqual(snapshots, [["cached"], ["cached", "newest"]], "Publish the server page once, not one message at a time")
+        }
+    }
+    @MainActor func testLatestHistoryReplacesVisibleRowsAtomicallyAndKeepsServerOrder() async throws {
+        try await withModel { model, client, _ in
+            model.messages = [try XCTUnwrap(Mango9SupervisorMessage(Self.reply("old", "Earlier reply")))]
+            client.handler = { _, _ in
+                ["messages": [Self.reply("first", "First"), Self.reply("last", "Last"), Self.reply("last", "Updated last")], "cursor": "5"]
+            }
+            var snapshots: [[String]] = []
+            let observer = model.$messages.dropFirst().sink { snapshots.append($0.map(\.id)) }
+            defer { observer.cancel() }
+            await model.refreshHistory(latest: true)
+            XCTAssertEqual(snapshots, [["first", "last"]])
+            XCTAssertEqual(model.messages.last?.text, "Updated last")
+        }
+    }
+    @MainActor func testAnEarlierConfirmedPendingTurnDoesNotReplayWhenOutsideTheLatestPage() async throws {
+        try await withModel(start: false) { model, client, vault in
+            let command = Mango9SupervisorCommand(conversationID: UUID().uuidString.lowercased(), text: "Earlier request")
+            vault.command = command
+            client.handler = { path, body in
+                if path == "authorize" { return ["enabled": true] }
+                if body?["action"] as? String == "list" { return ["items": []] }
+                XCTAssertEqual(body?["latest"] as? Bool, true); XCTAssertEqual(body?["requestId"] as? String, command.requestID)
+                return ["messages": [Self.reply("recent", "Recent reply")], "cursor": "100", "confirmedRequestId": command.requestID]
+            }
+            await model.start(); XCTAssertNil(model.pending); XCTAssertNil(vault.command)
+            XCTAssertEqual(client.calls.filter { $0 == "chat" }.count, 0)
+        }
+    }
+    @MainActor func testForegroundRefreshReplacesAStaleWindowWithTheLatestPage() async throws {
+        try await withModel { model, client, _ in
+            model.messages = [try XCTUnwrap(Mango9SupervisorMessage(Self.reply("stale", "Old window")))]
+            client.handler = { _, body in
+                XCTAssertEqual(body?["latest"] as? Bool, true)
+                return ["messages": [Self.reply("latest", "Current window")], "cursor": "100", "olderCursor": "80"]
+            }
+            await model.refreshHistory(latest: true)
+            XCTAssertEqual(model.messages.map(\.id), ["latest"]); XCTAssertTrue(model.moreMessages)
+        }
+    }
+    @MainActor func testAnOlderPendingReadCannotOverwriteSuccessfulApply() async throws {
+        try await withModel { model, client, _ in
+            let id = UUID().uuidString.lowercased(), gate = SupervisorDeferredFixture()
+            let pending: [String: Any] = ["id": id, "approvalDigest": String(repeating: "a", count: 64), "state": "PENDING_APPROVAL"]
+            let done: [String: Any] = ["id": id, "approvalDigest": String(repeating: "a", count: 64), "state": "SUCCEEDED"]
+            model.messages = [try XCTUnwrap(Mango9SupervisorMessage(["id": UUID().uuidString, "role": "assistant", "parts": [["type": "text", "text": "Settings"]], "metadata": ["actionIds": [id]]]))]
+            model.configurationDetails[id] = pending
+            var reads = 0, decisions = 0
+            client.handler = { path, _ in
+                if path.hasSuffix("/decision") { decisions += 1; return done }
+                if path == "actions/" + id { reads += 1; if reads == 1 { return await gate.wait() }; return done }
+                return ["messages": [], "items": [], "cursor": "0"]
+            }
+            let old = Task { await model.loadConfiguration(id) }
+            await fulfillment(of: [gate.entered], timeout: 3)
+            await model.decide("approve", expected: try XCTUnwrap(Mango9SupervisorApproval(pending)))
+            gate.resume(pending); await old.value
+            XCTAssertEqual(model.configurationDetails[id]?["state"] as? String, "SUCCEEDED")
+            XCTAssertEqual(decisions, 1); XCTAssertTrue(model.configurationFlights.isEmpty)
+        }
+    }
+    @MainActor func testHistorySearchRejectsAnOlderListResponse() async throws {
+        try await withModel { model, client, _ in
+            let gate = SupervisorDeferredFixture(), fresh = UUID().uuidString
+            client.handler = { _, body in
+                if body?["query"] as? String == "old" { return await gate.wait() }
+                XCTAssertEqual(body?["query"] as? String, "new")
+                XCTAssertEqual(body?["channel"] as? String, "voice")
+                return ["items": [["id": fresh, "title": "New result"]]]
+            }
+            let old = Task { try await model.loadConversations(query: "old") }
+            await fulfillment(of: [gate.entered], timeout: 3)
+            try await model.loadConversations(query: "new", channel: "voice")
+            gate.resume(["items": [["id": UUID().uuidString, "title": "Old result"]]])
+            try await old.value
+            XCTAssertEqual(model.conversations.map(\.id), [fresh]); XCTAssertFalse(model.loadingConversations)
+        }
+    }
+    @MainActor func testDeletingCurrentHistoryStartsAnEmptyChatWithoutRepeatingCommands() async throws {
+        try await withModel { model, client, _ in
+            let old = model.conversationID
+            model.conversations = [try XCTUnwrap(Mango9SupervisorConversation(["id": old, "title": "Example"]))]
+            var deletes = 0
+            client.handler = { path, body in
+                XCTAssertEqual(path, "history")
+                if body?["action"] as? String == "delete" {
+                    deletes += 1; XCTAssertEqual(body?["conversationId"] as? String, old)
+                    XCTAssertNil(body?["userId"]); return ["deleted": true, "id": old]
+                }
+                return ["items": [], "messages": [], "cursor": "0"]
+            }
+            await model.deleteConversation(old)
+            XCTAssertEqual(deletes, 1); XCTAssertNotEqual(model.conversationID, old)
+            XCTAssertTrue(model.conversations.isEmpty); XCTAssertTrue(model.messages.isEmpty)
+        }
+    }
     @MainActor private func withModel(start: Bool = true, _ body: (Mango9SupervisorModel, SupervisorClientFixture, SupervisorPendingFixture) async throws -> Void) async throws {
         let name = "supervisor-model-fixture-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         let client = SupervisorClientFixture(), vault = SupervisorPendingFixture()
         Mango9SupervisorConsent.allow(client.original, defaults: defaults)
-        let model = Mango9SupervisorModel(session: client.original, client: client, defaults: defaults, pendingStore: vault.store)
+        let model = Mango9SupervisorModel(session: client.original, client: client, defaults: defaults, pendingStore: vault.store, localStore: vault.local.store)
         defer { model.close(); defaults.removePersistentDomain(forName: name) }
         if start { await model.start(); XCTAssertTrue(model.authorized) }
         try await body(model, client, vault)

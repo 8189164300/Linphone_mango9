@@ -2550,6 +2550,7 @@ struct Mango9ChatFragment: View {
 		ScrollViewReader { proxy in
 			let messages = visibleMessages
 			ScrollView {
+				VStack(spacing: 0) {
 				LazyVStack(spacing: 12) {
 					if isDirectUserBlocked {
 						Label(
@@ -2601,13 +2602,18 @@ struct Mango9ChatFragment: View {
 							if !selectedIDs.insert(message.id).inserted { selectedIDs.remove(message.id) }
 						}
 					}
-					Color.clear.frame(height: 1).id("chat.latest")
-						.onAppear { atMessageBottom = true }.onDisappear { atMessageBottom = false }
 				}
 				.padding(.horizontal, 18)
 				.padding(.vertical, 14)
+				Mango9ChatBottomMarker().id("chat.latest")
+				}.mango9ChatContentSize()
 			}
 			.background(Color(uiColor: .systemGroupedBackground))
+			.accessibilityIdentifier("team.messages")
+			.mango9LatestMessages(proxy: proxy, bottomID: "chat.latest", following: $atMessageBottom)
+			.onAppear {
+				if !messages.isEmpty { proxy.scrollTo("chat.latest", anchor: .bottom); initiallyScrolled = true }
+			}
 			.onChange(of: store.messages.last?.id) { _ in
 				guard !store.messages.isEmpty, !initiallyScrolled || atMessageBottom else { return }
 				// Open at the latest message without flying through the entire history.
