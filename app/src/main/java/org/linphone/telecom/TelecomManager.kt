@@ -145,12 +145,10 @@ class TelecomManager
         Log.i("$TAG Call to [${call.remoteAddress.asStringUriOnly()}] created in state [${call.state}]")
 
         val address = call.callLog.remoteAddress
-        val pushedIdentity = if (call.state == Call.State.PushIncomingReceived) {
-            Mango9PushCallerIdentityCache.get(call.callLog.callId)
-        } else {
-            null
-        }
-        val uri = if (pushedIdentity?.handle?.startsWith('+') == true) {
+        val pushedIdentity = Mango9PushCallerIdentityCache.forCall(call)
+        val uri = if (pushedIdentity?.handle == "Anonymous") {
+            "sip:anonymous@anonymous.invalid".toUri()
+        } else if (pushedIdentity?.handle?.startsWith('+') == true) {
             "tel:${pushedIdentity.handle}".toUri()
         } else {
             address.asStringUriOnly().toUri()

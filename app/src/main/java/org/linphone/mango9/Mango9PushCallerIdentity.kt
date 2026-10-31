@@ -6,7 +6,6 @@
  */
 package org.linphone.mango9
 
-import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -14,6 +13,7 @@ data class Mango9PushCallerIdentity(
     val callId: String,
     val handle: String,
     val displayName: String,
+    val recipient: String? = null,
 ) {
     companion object {
         fun parse(payload: String): Mango9PushCallerIdentity? {
@@ -23,6 +23,7 @@ data class Mango9PushCallerIdentity(
             val dictionaries = listOf(root, aps, alert)
             val callId = firstString(dictionaries, listOf("call-id", "call_id", "callId"))
                 ?: return null
+            if (callId.length > 512 || callId.any(Char::isISOControl)) return null
             val locationArguments = stringValues(aps.optJSONArray("loc-args"))
                 .ifEmpty { stringValues(alert.optJSONArray("loc-args")) }
             val fromValue = firstString(
@@ -33,6 +34,7 @@ data class Mango9PushCallerIdentity(
                 dictionaries,
                 listOf("display-name", "display_name", "caller-name", "caller_name"),
             )
+            if (fromValue != null && Mango9CallerIdentity.normalizedLabel(fromValue) == null) return null
             val identityValue = Mango9CallerIdentity.normalizedLabel(fromValue)
                 ?: Mango9CallerIdentity.normalizedLabel(pushedDisplayName)
                 ?: return null
@@ -43,6 +45,7 @@ data class Mango9PushCallerIdentity(
                 displayName = Mango9CallerIdentity.normalizedLabel(pushedDisplayName)
                     ?: phoneNumber?.let(Mango9CallerIdentity::formattedPhoneNumber)
                     ?: identityValue,
+                recipient = firstString(dictionaries, listOf("to-uri", "to_uri")),
             )
         }
 
@@ -50,7 +53,7 @@ data class Mango9PushCallerIdentity(
             for (dictionary in dictionaries) {
                 for (key in keys) {
                     if (!dictionary.has(key) || dictionary.isNull(key)) continue
-                    dictionary.optString(key).trim().takeIf(String::isNotEmpty)?.let {
+                    (dictionary.opt(key) as? String)?.trim()?.takeIf(String::isNotEmpty)?.let {
                         return it
                     }
                 }
@@ -86,12 +89,12 @@ object Mango9CallerIdentity {
 
     fun normalizedLabel(rawValue: String?): String? {
         val value = rawValue?.trim().orEmpty()
-        if (value.isEmpty()) return null
+        if (value.isEmpty() || value.length > 512 || value.any(Char::isISOControl)) return null
         val lowercase = value.lowercase()
-        val uri = lowercase.removePrefix("sip:")
+        val uri = lowercase.substringAfter('<').substringBefore('>').removePrefix("sips:").removePrefix("sip:")
         val uriUser = uri.substringBefore('@')
         return value.takeUnless {
-            lowercase in unusableLabels || uriUser == "anonymous" || uriUser == "anonimous"
+            lowercase in unusableLabels || uriUser in unusableLabels || uriUser == "anonimous"
         }
     }
 
@@ -130,36 +133,9 @@ object Mango9CallerIdentity {
     }
 
     private fun removeSipPrefix(value: String): String =
-        if (value.startsWith("sip:", ignoreCase = true)) value.drop(4) else value
-}
-
-object Mango9PushCallerIdentityCache {
-    private data class Cached(val identity: Mango9PushCallerIdentity, val receivedAt: Long)
-
-    private val identities = ConcurrentHashMap<String, Cached>()
-
-    fun cache(payload: String, nowMillis: Long = System.currentTimeMillis()): Mango9PushCallerIdentity? {
-        val identity = Mango9PushCallerIdentity.parse(payload) ?: return null
-        prune(nowMillis)
-        identities[identity.callId] = Cached(identity, nowMillis)
-        return identity
-    }
-
-    fun get(callId: String?, nowMillis: Long = System.currentTimeMillis()): Mango9PushCallerIdentity? {
-        if (callId.isNullOrBlank()) return null
-        prune(nowMillis)
-        return identities[callId]?.identity
-    }
-
-    fun remove(callId: String?) {
-        if (!callId.isNullOrBlank()) identities.remove(callId)
-    }
-
-    internal fun clear() = identities.clear()
-
-    private fun prune(nowMillis: Long) {
-        identities.entries.removeIf { nowMillis - it.value.receivedAt >= MAX_AGE_MS }
-    }
-
-    private const val MAX_AGE_MS = 120_000L
+        when {
+            value.startsWith("sips:", ignoreCase = true) -> value.drop(5)
+            value.startsWith("sip:", ignoreCase = true) -> value.drop(4)
+            else -> value
+        }
 }

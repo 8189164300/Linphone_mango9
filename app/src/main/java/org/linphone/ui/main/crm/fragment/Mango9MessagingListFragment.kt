@@ -6,6 +6,8 @@
  */
 package org.linphone.ui.main.crm.fragment
 
+import androidx.core.widget.doAfterTextChanged
+
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -48,6 +50,7 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     private lateinit var social: Mango9SocialViewModel
     private var settingFilters = false
     private var accountIds = emptyList<String>()
+    private var accountLabels = emptyList<String>()
     private var mode = Mango9MessagingTab.Sms
     private lateinit var liveInbox: Mango9LiveInbox
     private fun visibleTabs() {
@@ -68,6 +71,9 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         viewModel = ViewModelProvider(this)[Mango9MessagingViewModel::class.java]
         social = ViewModelProvider(this)[Mango9SocialViewModel::class.java]
         social.bind(Mango9SessionStore(requireContext()).captureSession())
+        binding.socialSearch.setText(social.current().search)
+        binding.socialSearch.doAfterTextChanged { social.search(it?.toString().orEmpty()) }
+        binding.errorMessage.setOnClickListener { if (mode == Mango9MessagingTab.Social) social.inbox() }
         liveInbox = Mango9LiveInbox(this, ViewModelProvider(this)[org.linphone.ui.main.crm.viewmodel.Mango9LiveChatViewModel::class.java]) { Mango9LiveChatFragment.open(this, it.id) }
         binding.mango9LiveHost.addView(liveInbox.view, android.widget.FrameLayout.LayoutParams(-1, -1))
         mode = when (savedInstanceState?.getString(ARG_INITIAL_TAB) ?: arguments?.getString(ARG_INITIAL_TAB)) {
@@ -126,7 +132,7 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         })
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (true) { if (mode == Mango9MessagingTab.Social) social.inbox(); delay(15_000) }
+            while (true) { if (mode == Mango9MessagingTab.Social) social.inbox(forceAccounts = false); delay(15_000) }
         }
         }
         viewModel.openedRoomEvent.observe(viewLifecycleOwner) { event ->
@@ -221,18 +227,17 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         binding.swipeRefresh.isRefreshing = false
         binding.empty.setText(R.string.mango9_social_empty)
         binding.empty.visibility = if (!value.loading && value.threads.isEmpty() && value.error == null) View.VISIBLE else View.GONE
-        binding.errorMessage.text = value.error.orEmpty()
-        binding.errorCard.visibility = if (value.error == null) View.GONE else View.VISIBLE
+        binding.errorMessage.text = value.error ?: value.accountWarning.orEmpty()
+        binding.errorCard.visibility = if (value.error == null && value.accountWarning == null) View.GONE else View.VISIBLE
         binding.connectionStatus.setText(R.string.mango9_social)
         val accounts = value.accounts.filter { value.platform.isBlank() || it.platform == value.platform }
         val ids = listOf("") + accounts.map { it.id }
-        if (ids != accountIds || binding.accountFilter.adapter == null) {
-            settingFilters = true; accountIds = ids
+        val labels = listOf(getString(R.string.mango9_all_accounts)) + accounts.map { it.name }
+        if (ids != accountIds || labels != accountLabels || binding.accountFilter.adapter == null) {
+            settingFilters = true; accountIds = ids; accountLabels = labels
             binding.accountFilter.adapter = ArrayAdapter(
                 requireContext(), android.R.layout.simple_spinner_dropdown_item,
-                listOf(getString(R.string.mango9_all_accounts)) + accounts.map {
-                it.name
-            }
+                labels
             )
             binding.accountFilter.setSelection(ids.indexOf(value.account).coerceAtLeast(0)); settingFilters = false
         }

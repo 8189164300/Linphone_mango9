@@ -366,10 +366,9 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         }
 
         if (isSocial) {
-            requestedRoomId?.let { social.open(it) }
             viewLifecycleOwner.lifecycleScope.launch {
                 viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                while (true) { requestedRoomId?.let { social.open(it) }; delay(15_000) }
+                while (true) { requestedRoomId?.let { social.poll(it) }; delay(15_000) }
             }
             }
         } else if (isSms) {

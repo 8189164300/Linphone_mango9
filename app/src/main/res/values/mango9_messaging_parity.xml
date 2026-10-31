@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="mango9_social_search">Search social conversations</string>
     <string name="mango9_activities_title">Events &amp; tasks</string>
     <string name="mango9_calendar_standalone">Calendar</string>
     <string name="mango9_social">Social</string>

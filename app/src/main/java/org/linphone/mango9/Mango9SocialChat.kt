@@ -70,6 +70,13 @@ data class Mango9SocialMessage(
 
 internal data class Mango9SocialPage<T>(val items: List<T>, val next: String?)
 
+internal object Mango9SocialSearch {
+    fun normalize(value: String): String {
+        val text = value.trim()
+        return text.substring(0, text.offsetByCodePoints(0, minOf(200, text.codePointCount(0, text.length))))
+    }
+}
+
 /** Provider summaries are shared; personal deletion must be applied to saved history first. */
 internal object Mango9SocialPreview {
     fun text(messages: List<Mango9SocialMessage>, hidden: Set<String>, hasOlder: Boolean): String {
@@ -101,7 +108,9 @@ internal enum class Mango9SocialSendOutcome(val notice: String?) {
 
 internal object Mango9SocialPages {
     fun inbox(previous: List<Mango9SocialThread>, page: Mango9SocialPage<Mango9SocialThread>, more: Boolean): List<Mango9SocialThread> {
-        val retained = if (!more && page.next == null) emptyList() else previous
+        // A refresh replaces the visible query window, not the server history.
+        // Older pages remain available through the fresh cursor, as on iOS.
+        val retained = if (more) previous else emptyList()
         val observed = previous.associateBy { it.id }
         return (
             retained + page.items.map {
@@ -113,8 +122,7 @@ internal object Mango9SocialPages {
 
     fun cursor(previous: String?, page: Mango9SocialPage<*>, more: Boolean, hadRows: Boolean): String? = when {
         more -> page.next?.takeUnless { it == previous }
-        !hadRows || page.next == null -> page.next
-        else -> previous // A head refresh must not rewind already-loaded pagination.
+        else -> page.next
     }
 }
 
@@ -137,9 +145,8 @@ internal object Mango9SocialMediaPolicy {
     }
 }
 
-internal class Mango9SocialRepository(context: Context) {
+internal class Mango9SocialRepository(context: Context, private val api: Mango9MessagingApi = Mango9MessagingApi(context)) {
     private val sessions = Mango9SessionStore(context)
-    private val api = Mango9MessagingApi(context)
     private val intents = context.applicationContext.getSharedPreferences("mango9_social_send_intents", Context.MODE_PRIVATE)
     private val channel = Mango9MessageChannel.social
 
@@ -151,10 +158,11 @@ internal class Mango9SocialRepository(context: Context) {
         }
         .filter { it.platform in setOf("facebook", "instagram", "tiktok") }
 
-    suspend fun inbox(lease: Mango9SessionLease, platform: String = "", account: String = "", before: String? = null): Mango9SocialPage<Mango9SocialThread> {
+    suspend fun inbox(lease: Mango9SessionLease, platform: String = "", account: String = "", before: String? = null, search: String = ""): Mango9SocialPage<Mango9SocialThread> {
         val query = mutableMapOf("kind" to "dms", "limit" to "50")
         if (platform.isNotBlank()) query["platform"] = platform
         if (account.isNotBlank()) query["accountId"] = account
+        Mango9SocialSearch.normalize(search).takeIf { it.isNotEmpty() }?.let { query["search"] = it }
         before?.let { query["before"] = it }
         val page = api.request(lease, channel, listOf("inbox"), query)
         return Mango9SocialPage(

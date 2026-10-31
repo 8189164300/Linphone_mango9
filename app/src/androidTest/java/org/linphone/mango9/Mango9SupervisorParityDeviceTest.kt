@@ -47,6 +47,10 @@ import java.util.concurrent.TimeUnit
 /** Runs on a physical phone in the isolated package. No live AI, email, task or deletion. */
 @RunWith(AndroidJUnit4::class)
 class Mango9SupervisorParityDeviceTest {
+    private fun onView(matcher: org.hamcrest.Matcher<android.view.View>): androidx.test.espresso.ViewInteraction {
+        Mango9UiTestSynchronization.awaitNativeWindow()
+        return androidx.test.espresso.Espresso.onView(matcher)
+    }
     private val instrument = InstrumentationRegistry.getInstrumentation()
     private val context = instrument.targetContext
     private val chatId = "62000000-0000-4000-8000-000000000001"

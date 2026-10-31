@@ -57,8 +57,9 @@ import org.linphone.ui.main.crm.fragment.Mango9ReminderBanner
 @RunWith(AndroidJUnit4::class)
 class Mango9CalendarEditorInstrumentedTest {
     // Event forms are full pages now; native date/time/confirmation dialogs still use their own roots.
-    private fun onView(matcher: org.hamcrest.Matcher<View>): androidx.test.espresso.ViewInteraction =
-        androidx.test.espresso.Espresso.onView(
+    private fun onView(matcher: org.hamcrest.Matcher<View>): androidx.test.espresso.ViewInteraction {
+        Mango9UiTestSynchronization.awaitNativeWindow()
+        return androidx.test.espresso.Espresso.onView(
             org.hamcrest.Matchers.allOf(
                 matcher,
                 object : org.hamcrest.TypeSafeMatcher<View>() {
@@ -76,6 +77,7 @@ class Mango9CalendarEditorInstrumentedTest {
         }
             )
         )
+    }
 
     private fun isDialog(): org.hamcrest.Matcher<androidx.test.espresso.Root> = object : org.hamcrest.TypeSafeMatcher<androidx.test.espresso.Root>() {
         override fun describeTo(description: org.hamcrest.Description) {
@@ -568,12 +570,18 @@ class Mango9CalendarEditorInstrumentedTest {
         try {
             onView(withContentDescription(R.string.mango9_calendar_add)).perform(click())
             onView(withTagValue(`is`("appointment-notes" as Any))).inRoot(isDialog()).perform(
-                replaceText("A long appointment note that must keep its position during screen reflow. ".repeat(35)), closeSoftKeyboard()
+                scrollTo(), replaceText("A long appointment note that must keep its position during screen reflow. ".repeat(35)), closeSoftKeyboard()
             )
             val edit = f.model.edits.active as Mango9AppointmentEdit
             val originalNotes = edit.draft.notes
             val scroll = view("calendar.form.scroll") as android.widget.ScrollView
-            instrumentation.runOnMainSync { scroll.scrollTo(0, (250 * scroll.resources.displayMetrics.density).toInt()) }
+            val notes = view("appointment-notes")
+            instrumentation.runOnMainSync {
+                val body = scroll.getChildAt(0) as android.view.ViewGroup
+                val bounds = android.graphics.Rect(0, 0, notes.width, notes.height)
+                body.offsetDescendantRectToMyCoords(notes, bounds)
+                scroll.scrollTo(0, bounds.top + (250 * scroll.resources.displayMetrics.density).toInt())
+            }
             instrumentation.waitForIdleSync()
             val oldWidth = scroll.width
             val oldPosition = scroll.scrollY
@@ -704,6 +712,49 @@ class Mango9CalendarEditorInstrumentedTest {
                 assertFalse(body.has("start_at")); assertFalse(body.has("end_at")); assertFalse(body.has("timezone"))
             }
         }
+    }
+
+    @Test fun groupedEditorKeepsAllOptionsAndChosenTeamAccessAcrossRecreation() = fixture { scenario, f ->
+        val people = JSONArray().put(JSONObject().put("id", 77).put("name", "QA Teammate"))
+        f.metadata.put("share_recipients", people).put("assignees", people)
+        instrumentation.runOnMainSync { f.model.screen.refresh() }
+        await { f.model.screen.state.value.metadata?.shareRecipients?.size == 1 }
+        onView(withContentDescription(R.string.mango9_calendar_add)).perform(click())
+        val headings = listOf("event", "notes", "contact", "sharing", "assignment", "reminder")
+        var previousIndex = -1
+        for (name in headings) {
+            val heading = view("appointment.section.$name")
+            val parent = heading.parent as android.view.ViewGroup
+            val index = parent.indexOfChild(heading)
+            assertTrue(index > previousIndex); previousIndex = index
+            assertTrue(androidx.core.view.ViewCompat.isAccessibilityHeading(heading))
+            assertTrue(parent.getChildAt(index + 1) is com.google.android.material.card.MaterialCardView)
+        }
+        val title = view("appointment-title") as android.widget.TextView
+        val start = view("appointment.starts") as com.google.android.material.button.MaterialButton
+        assertEquals(title.textSize, start.textSize, 0.1f)
+        assertEquals(0, start.strokeWidth)
+        assertNotNull(start.icon)
+        capture("calendar-grouped-editor-top.png", "appointment-title")
+        onView(withTagValue(`is`("appointment-title" as Any))).perform(replaceText("Grouped event QA"), closeSoftKeyboard())
+        onView(withText(R.string.mango9_calendar_shares)).perform(scrollTo(), click())
+        onView(withText("QA Teammate")).inRoot(isDialog()).perform(click())
+        onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+        val edit = f.model.edits.active as Mango9AppointmentEdit
+        assertEquals(setOf(77), edit.draft.shares)
+        onView(withText(org.hamcrest.Matchers.startsWith(context.getString(R.string.mango9_calendar_assign) + ":")))
+            .perform(scrollTo(), click())
+        onView(withText("QA Teammate")).inRoot(isDialog()).perform(click())
+        assertEquals(77, edit.draft.assignee)
+        val draft = edit.draft
+        scenario.recreate()
+        onView(withText(R.string.mango9_calendar_channels)).perform(scrollTo()).check(matches(isEnabled()))
+        assertSame(edit, f.model.edits.active); assertEquals(draft, edit.draft)
+        capture("calendar-grouped-editor-options.png", "calendar.form.scroll")
+        assertTrue(f.writes.isEmpty())
+        onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click())
+        await { f.model.edits.active == null }
+        assertTrue(f.writes.isEmpty())
     }
 
     private fun fixture(test: (ActivityScenario<MainActivity>, Fixture) -> Unit) {

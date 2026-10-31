@@ -25,16 +25,16 @@ class Mango9SocialPresentationTest {
         }
     }
 
-    @Test fun refreshingInboxRetainsLoadedPagesAndUpdatesExistingRows() {
+    @Test fun refreshingInboxReplacesTheQueryWindowAndResetsItsCursor() {
         val previous = (1..125).map { thread(it) }
         val updated = thread(80, "2026-10-17T14:00:00Z").copy(summary = "new text", version = 2)
         val page = Mango9SocialPage(listOf(updated, thread(126, "2026-10-17T13:00:00Z")), "head-cursor")
         val merged = Mango9SocialPages.inbox(previous, page, false)
-        assertEquals(126, merged.size)
+        assertEquals(2, merged.size)
         assertEquals(updated, merged.first())
-        assertEquals(126, merged.map { it.id }.distinct().size)
-        assertEquals("older-cursor", Mango9SocialPages.cursor("older-cursor", page, false, true))
-        assertNull(Mango9SocialPages.cursor(null, page, false, true))
+        assertEquals(2, merged.map { it.id }.distinct().size)
+        assertEquals("head-cursor", Mango9SocialPages.cursor("older-cursor", page, false, true))
+        assertEquals("head-cursor", Mango9SocialPages.cursor(null, page, false, true))
         assertEquals("head-cursor", Mango9SocialPages.cursor(null, page, false, false))
     }
 

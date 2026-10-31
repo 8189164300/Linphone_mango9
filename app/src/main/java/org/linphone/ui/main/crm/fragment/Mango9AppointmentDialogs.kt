@@ -22,6 +22,7 @@ import androidx.core.widget.doAfterTextChanged
 import androidx.core.view.doOnLayout
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.card.MaterialCardView
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import java.time.Instant
@@ -116,6 +117,42 @@ internal class Mango9AppointmentDialogs(
         val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]))
         val body = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(6), dp(18), dp(12))
+        }
+        val groupedEditor = edit is Mango9AppointmentEdit
+        private var sectionBody: LinearLayout? = null
+
+        fun section(label: Int, key: String) {
+            val heading = TextView(context).apply {
+                text = title(label); textSize = 13f
+                setTextColor(context.getColor(R.color.mango9_calendar_secondary))
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                tag = "appointment.section.$key"
+                androidx.core.view.ViewCompat.setAccessibilityHeading(this, true)
+                setPadding(dp(12), dp(20), dp(12), dp(8))
+            }
+            body.addView(heading, LinearLayout.LayoutParams(-1, -2))
+            val content = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+            val card = MaterialCardView(context).apply {
+                radius = dp(14).toFloat(); cardElevation = 0f
+                strokeWidth = dp(1); setStrokeColor(context.getColor(R.color.mango9_calendar_separator))
+                setCardBackgroundColor(context.getColor(R.color.mango9_calendar_surface))
+                addView(content, ViewGroup.LayoutParams(-1, -2))
+            }
+            body.addView(card, LinearLayout.LayoutParams(-1, -2))
+            sectionBody = content
+        }
+
+        fun endSection() { sectionBody = null }
+
+        fun addControl(view: View) {
+            val target = sectionBody ?: body
+            if (sectionBody != null && target.childCount > 0) {
+                target.addView(View(context).apply {
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    setBackgroundColor(context.getColor(R.color.mango9_calendar_separator))
+                }, LinearLayout.LayoutParams(-1, dp(1)).apply { marginStart = dp(14); marginEnd = dp(14) })
+            }
+            target.addView(view, LinearLayout.LayoutParams(-1, -2))
         }
         val error = TextView(context).apply {
             tag = "calendar.error"
@@ -296,7 +333,10 @@ internal class Mango9AppointmentDialogs(
 
         fun info(value: String): TextView = TextView(context).apply {
             tag = "calendar.info:${infoNumber++}"
-            text = value; textSize = 14f; setPadding(0, dp(6), 0, dp(6)); body.addView(this)
+            text = value; textSize = if (groupedEditor) 13f else 14f
+            if (groupedEditor) setTextColor(context.getColor(R.color.mango9_calendar_secondary))
+            setPadding(if (groupedEditor) dp(14) else 0, dp(if (groupedEditor) 8 else 6), if (groupedEditor) dp(14) else 0, dp(if (groupedEditor) 8 else 6))
+            addControl(this)
         }
 
         fun button(caption: String, action: () -> Unit): Button = MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
@@ -312,7 +352,20 @@ internal class Mango9AppointmentDialogs(
             setOnClickListener {
                 if (permissionRules[this]?.invoke() != false) bound()
             }
-            body.addView(this, LinearLayout.LayoutParams(-1, -2))
+            if (groupedEditor) {
+                textSize = 16f; minHeight = dp(52)
+                typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
+                setTextColor(ColorStateList(arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()),
+                    intArrayOf(context.getColor(R.color.mango9_calendar_ink), context.getColor(R.color.mango9_calendar_secondary))))
+                gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
+                cornerRadius = 0; strokeWidth = 0; insetTop = 0; insetBottom = 0
+                backgroundTintList = ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                icon = androidx.appcompat.content.res.AppCompatResources.getDrawable(context, R.drawable.caret_right)
+                iconGravity = MaterialButton.ICON_GRAVITY_END; iconSize = dp(16)
+                iconTint = ColorStateList.valueOf(context.getColor(R.color.mango9_calendar_secondary))
+            }
+            addControl(this)
         }
 
     }
@@ -714,15 +767,11 @@ internal class Mango9AppointmentDialogs(
             Form(lease, title(if (event == null) R.string.mango9_calendar_add else R.string.mango9_calendar_edit), true, edit)
         val canEdit = event?.permissions?.canEdit != false
         val owner = event == null || event.ownerId.toString() == lease.session.userId
+        form.section(R.string.mango9_event_section, "event")
         input(form, R.string.mango9_calendar_title_field, draft.title).apply {
             tag = "appointment-title"; isEnabled = canEdit
             doAfterTextChanged { draft = draft.copy(title = it.toString()) }
         }
-        input(form, R.string.mango9_calendar_notes, draft.notes, true).apply {
-            tag = "appointment-notes"; isEnabled = canEdit
-            doAfterTextChanged { draft = draft.copy(notes = it.toString()) }
-        }
-        form.info(context.getString(R.string.mango9_calendar_zone, zone.id))
         lateinit var start: Button
         lateinit var end: Button
 
@@ -741,6 +790,7 @@ internal class Mango9AppointmentDialogs(
             dateTime(form, draft.end, zone) { draft = draft.copy(end = it); updateDates() }
         }.apply { isEnabled = canEdit; tag = "appointment.ends" }
         updateDates()
+        form.info(context.getString(R.string.mango9_calendar_zone, zone.id))
 
         fun field(label: Int, options: List<String>, initial: String, enabled: Boolean, selected: (String) -> Unit) {
             var current = initial
@@ -750,12 +800,6 @@ internal class Mango9AppointmentDialogs(
                     current = options[index]; selected(current); button.text = fieldText(label, Mango9CalendarLegend.humanize(current))
                 }
             }.apply { isEnabled = enabled && options.isNotEmpty() }
-        }
-        field(R.string.mango9_calendar_activity, metadata.activities, draft.activity, canEdit) {
-            draft = draft.copy(activity = it)
-        }
-        field(R.string.mango9_calendar_priority_field, metadata.priorities, draft.priority, canEdit) {
-            draft = draft.copy(priority = it)
         }
         val statuses = listOf(title(R.string.mango9_calendar_no_status)) + metadata.statuses.map { it.name }
         lateinit var status: Button
@@ -772,6 +816,18 @@ internal class Mango9AppointmentDialogs(
             ) { index -> draft = draft.copy(status = metadata.statuses.getOrNull(index - 1)?.id); updateStatus() }
         }.apply { isEnabled = canEdit }
         updateStatus()
+        field(R.string.mango9_calendar_activity, metadata.activities, draft.activity, canEdit) {
+            draft = draft.copy(activity = it)
+        }
+        field(R.string.mango9_calendar_priority_field, metadata.priorities, draft.priority, canEdit) {
+            draft = draft.copy(priority = it)
+        }
+        form.section(R.string.mango9_calendar_notes, "notes")
+        input(form, R.string.mango9_calendar_notes, draft.notes, true).apply {
+            tag = "appointment-notes"; isEnabled = canEdit
+            doAfterTextChanged { draft = draft.copy(notes = it.toString()) }
+        }
+        form.section(R.string.mango9_event_contact_section, "contact")
         lateinit var contact: Button
 
         fun updateContact() {
@@ -784,6 +840,7 @@ internal class Mango9AppointmentDialogs(
         }.apply { isEnabled = event?.permissions?.canChangeContact != false }
         updateContact()
         if (event?.permissions?.canShare != false && metadata.shareRecipients.isNotEmpty()) {
+            form.section(R.string.mango9_event_sharing_section, "sharing")
             form.button(title(R.string.mango9_calendar_shares)) {
             multiChoice(
                 form, title(R.string.mango9_calendar_shares),
@@ -802,6 +859,7 @@ internal class Mango9AppointmentDialogs(
         }
         }
         if ((event?.permissions?.canAssign ?: metadata.capabilities.assign) && metadata.assignees.isNotEmpty()) {
+            form.section(R.string.mango9_event_assignment_section, "assignment")
             lateinit var assign: Button
             assign = form.button("${title(R.string.mango9_calendar_assign)}: ${metadata.assignees.firstOrNull { it.id == draft.assignee }?.name ?: title(R.string.mango9_calendar_keep_owner)}") {
                 choice(
@@ -817,6 +875,7 @@ internal class Mango9AppointmentDialogs(
             }
         }
         if (owner && canEdit) {
+            form.section(R.string.mango9_event_reminder_section, "reminder")
             val minutes = listOf(-1) + metadata.reminderMinutes
             lateinit var reminder: Button
 
@@ -844,6 +903,7 @@ internal class Mango9AppointmentDialogs(
                 ) { indices -> draft = draft.copy(channels = indices.map { metadata.reminderChannels[it] }) }
             }
         }
+        form.endSection()
         form.show()
         val validation = form.info("").apply {
             setTextColor(context.getColor(R.color.mango9_calendar_error)); tag = "appointment-validation"
@@ -862,11 +922,22 @@ internal class Mango9AppointmentDialogs(
 
     private fun input(form: Form, label: Int, value: String, multiline: Boolean = false): TextInputEditText {
         val layout = TextInputLayout(context).apply {
-            hint = title(label); form.body.addView(this, LinearLayout.LayoutParams(-1, -2))
+            hint = title(label)
+            if (form.groupedEditor) boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_NONE
+            form.addControl(this)
         }
         return TextInputEditText(context).apply {
             tag = "calendar.input.$label"
             setText(value); inputType = InputType.TYPE_CLASS_TEXT or if (multiline) InputType.TYPE_TEXT_FLAG_MULTI_LINE else InputType.TYPE_TEXT_FLAG_CAP_SENTENCES; if (multiline) minLines = 3; layout.addView(this, LinearLayout.LayoutParams(-1, -2))
+            if (form.groupedEditor) {
+                // Material's hint setter requires the editor to be attached first.
+                layout.isHintEnabled = false
+                hint = title(label); background = null; textSize = 16f
+                setTextColor(context.getColor(R.color.mango9_calendar_ink))
+                setHintTextColor(context.getColor(R.color.mango9_calendar_secondary))
+                setPadding(dp(14), dp(14), dp(14), dp(14)); minHeight = dp(52)
+                if (multiline) { minLines = 4; gravity = android.view.Gravity.TOP or android.view.Gravity.START }
+            }
         }
     }
 

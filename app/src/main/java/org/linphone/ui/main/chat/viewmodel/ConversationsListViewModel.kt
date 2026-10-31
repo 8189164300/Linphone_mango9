@@ -67,6 +67,7 @@ class ConversationsListViewModel
     val fetchInProgress = MutableLiveData<Boolean>()
 
     val mango9MessagesAvailable = MutableLiveData(false)
+    val filterText = MutableLiveData("")
 
     val chatRoomCreatedEvent: MutableLiveData<Event<Mango9NativeConversationRoute>> by lazy {
         MutableLiveData()
@@ -200,6 +201,7 @@ class ConversationsListViewModel
 
     @UiThread
     override fun filter() {
+        filterText.value = currentFilter
         suspended = false
         refresh(debounce = true)
     }

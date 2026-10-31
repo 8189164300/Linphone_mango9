@@ -415,6 +415,9 @@ class CoreContext
                     Log.w("$TAG Incoming push did not contain a usable caller identity")
                 } else {
                     Log.i("$TAG Cached incoming caller identity for Call-ID [${identity.callId}]")
+                    core.calls.filter { it.callLog.callId == identity.callId }.forEach {
+                        Mango9PushCallerIdentityCache.capture(it)
+                    }
                 }
             }
 
@@ -432,6 +435,11 @@ class CoreContext
             message: String
         ) {
             val currentState = call.state
+            if (currentState in setOf(Call.State.End, Call.State.Error, Call.State.Released)) {
+                Mango9PushCallerIdentityCache.finish(call)
+            } else {
+                Mango9PushCallerIdentityCache.capture(call)
+            }
             Log.i(
                 "$TAG Call [${call.remoteAddress.asStringUriOnly()}] state changed [$currentState]"
             )
@@ -536,7 +544,7 @@ class CoreContext
                     )
                 }
                 Call.State.Released -> {
-                    Mango9PushCallerIdentityCache.remove(call.callLog.callId)
+                    // Display-only identity was persisted and retired above.
                 }
                 else -> {
                 }

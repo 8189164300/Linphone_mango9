@@ -203,7 +203,8 @@
                                     android:contentDescription="@null"
                                     android:padding="9dp"
                                     android:src="@drawable/users_three"
-                                    app:tint="@color/bc_white" />
+                                    android:backgroundTint="@color/mango9_crm_leads_surface"
+                                    app:tint="@color/mango9_crm_leads" />
 
                                 <LinearLayout
                                     android:layout_width="0dp"
@@ -250,7 +251,8 @@
                                     android:contentDescription="@null"
                                     android:padding="9dp"
                                     android:src="@drawable/address_book"
-                                    app:tint="@color/bc_white" />
+                                    android:backgroundTint="@color/mango9_crm_clients_surface"
+                                    app:tint="@color/mango9_crm_clients" />
 
                                 <LinearLayout
                                     android:layout_width="0dp"
@@ -288,6 +290,7 @@
 
                         <LinearLayout
                             android:id="@+id/leads_row"
+                            style="@style/Mango9.Crm.WorkspaceRow"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="12dp"
@@ -307,7 +310,8 @@
                                 android:contentDescription="@null"
                                 android:padding="10dp"
                                 android:src="@drawable/users_three"
-                                app:tint="@color/orange_main_500" />
+                                android:backgroundTint="@color/mango9_crm_leads_surface"
+                                app:tint="@color/mango9_crm_leads" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -332,10 +336,12 @@
                                     android:textColor="?attr/color_main2_500"
                                     android:textSize="11sp" />
                             </LinearLayout>
+                            <ImageView style="@style/Mango9.Crm.Chevron" />
                         </LinearLayout>
 
                         <LinearLayout
                             android:id="@+id/clients_row"
+                            style="@style/Mango9.Crm.WorkspaceRow"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="12dp"
@@ -355,7 +361,8 @@
                                 android:contentDescription="@null"
                                 android:padding="10dp"
                                 android:src="@drawable/address_book"
-                                app:tint="@color/orange_main_500" />
+                                android:backgroundTint="@color/mango9_crm_clients_surface"
+                                app:tint="@color/mango9_crm_clients" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -380,14 +387,15 @@
                                     android:textColor="?attr/color_main2_500"
                                     android:textSize="11sp" />
                             </LinearLayout>
+                            <ImageView style="@style/Mango9.Crm.Chevron" />
                         </LinearLayout>
 
                         <LinearLayout
                             android:id="@+id/team_chat_row"
+                            style="@style/Mango9.Crm.WorkspaceRow"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="12dp"
-                            android:layout_marginBottom="28dp"
                             android:background="@drawable/shape_squircle_white_background"
                             android:clickable="true"
                             android:focusable="true"
@@ -404,7 +412,8 @@
                                 android:contentDescription="@null"
                                 android:padding="10dp"
                                 android:src="@drawable/chat_teardrop_text"
-                                app:tint="@color/orange_main_500" />
+                                android:backgroundTint="@color/mango9_crm_conversations_surface"
+                                app:tint="@color/mango9_crm_conversations" />
 
                             <LinearLayout
                                 android:layout_width="0dp"
@@ -444,11 +453,49 @@
                                 android:textColor="@color/bc_white"
                                 android:textSize="10sp"
                                 android:visibility="gone" />
+                            <ImageView style="@style/Mango9.Crm.Chevron" />
                         </LinearLayout>
                     </LinearLayout>
 
                     <LinearLayout
+                        android:id="@+id/calendar_row"
+                        style="@style/Mango9.Crm.WorkspaceRow">
+                        <ImageView
+                            android:layout_width="45dp"
+                            android:layout_height="45dp"
+                            android:background="@drawable/mango9_crm_icon_background"
+                            android:backgroundTint="@color/mango9_crm_calendar_surface"
+                            android:contentDescription="@null"
+                            android:padding="10dp"
+                            android:src="@drawable/calendar"
+                            app:tint="@color/mango9_crm_calendar" />
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="12dp"
+                            android:orientation="vertical">
+                            <TextView
+                                style="@style/default_text_style_700"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/mango9_calendar_standalone"
+                                android:textSize="14sp" />
+                            <TextView
+                                style="@style/default_text_style"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="3dp"
+                                android:text="@string/mango9_crm_calendar_description"
+                                android:textColor="?attr/color_main2_500"
+                                android:textSize="11sp" />
+                        </LinearLayout>
+                        <ImageView style="@style/Mango9.Crm.Chevron" />
+                    </LinearLayout>
+
+                    <LinearLayout
                         android:id="@+id/appointments_row"
+                        style="@style/Mango9.Crm.WorkspaceRow"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:background="@drawable/shape_squircle_white_background"
@@ -465,8 +512,9 @@
                             android:background="@drawable/mango9_crm_icon_background"
                             android:contentDescription="@null"
                             android:padding="10dp"
-                            android:src="@drawable/calendar"
-                            app:tint="@color/orange_main_500" />
+                            android:src="@drawable/check_square_offset"
+                            android:backgroundTint="@color/mango9_crm_activities_surface"
+                            app:tint="@color/mango9_crm_activities" />
                         <LinearLayout
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
@@ -483,20 +531,13 @@
                                 style="@style/default_text_style"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:text="@string/mango9_calendar_subtitle"
+                                android:layout_marginTop="3dp"
+                                android:text="@string/mango9_crm_activities_description"
+                                android:textColor="?attr/color_main2_500"
                                 android:textSize="11sp" />
                         </LinearLayout>
+                        <ImageView style="@style/Mango9.Crm.Chevron" />
                     </LinearLayout>
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/calendar_row"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:minHeight="56dp"
-                        android:layout_marginTop="10dp"
-                        android:text="@string/mango9_calendar_standalone"
-                        app:icon="@drawable/calendar" />
                     <LinearLayout
                         android:id="@+id/sign_in_card"
                         android:layout_width="match_parent"

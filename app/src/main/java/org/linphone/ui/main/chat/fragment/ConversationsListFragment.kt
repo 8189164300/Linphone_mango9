@@ -99,6 +99,7 @@ class ConversationsListFragment : AbstractMainFragment() {
     private lateinit var socialAdapter: Mango9MessagingListAdapter
     private lateinit var social: Mango9SocialViewModel
     private var socialAccountIds = emptyList<String>()
+    private var socialAccountLabels = emptyList<String>()
     private var changingSocialFilters = false
 
     private var mango9Tab = Mango9MessagingTab.Sms
@@ -281,6 +282,9 @@ class ConversationsListFragment : AbstractMainFragment() {
         listViewModel = ViewModelProvider(this)[ConversationsListViewModel::class.java]
         social = ViewModelProvider(this)[Mango9SocialViewModel::class.java]
         social.bind(mango9Sessions.captureSession())
+        listViewModel.filterText.observe(viewLifecycleOwner) { query ->
+            if (mango9Tab == Mango9MessagingTab.Social) social.search(query)
+        }
         adapter.onNearEnd = listViewModel::revealMoreContacts
 
         binding.lifecycleOwner = viewLifecycleOwner
@@ -297,6 +301,9 @@ class ConversationsListFragment : AbstractMainFragment() {
 
         binding.mango9MessagesList.layoutManager = LinearLayoutManager(requireContext())
         binding.mango9MessagesList.adapter = mango9SmsMessagesAdapter
+        binding.mango9MessagesStatus.setOnClickListener {
+            if (mango9Tab == Mango9MessagingTab.Social) social.inbox()
+        }
         liveInbox = org.linphone.ui.main.crm.fragment.Mango9LiveInbox(this,
             ViewModelProvider(this)[org.linphone.ui.main.crm.viewmodel.Mango9LiveChatViewModel::class.java]) { item ->
             org.linphone.ui.main.crm.fragment.Mango9LiveChatFragment.open(this, item.id)
@@ -312,6 +319,7 @@ class ConversationsListFragment : AbstractMainFragment() {
                     renderMango9Messages(mango9ChatStore.state.value)
                     viewLifecycleOwner.lifecycleScope.launch {
                         if (mango9Tab == Mango9MessagingTab.Social) {
+                            social.search(listViewModel.filterText.value.orEmpty())
                             social.inbox()
                         } else if (mango9Tab == Mango9MessagingTab.Sms) {
                             mango9ChatStore.refreshSmsDirectory()
@@ -323,7 +331,9 @@ class ConversationsListFragment : AbstractMainFragment() {
 
                 override fun onTabUnselected(tab: TabLayout.Tab) = Unit
 
-                override fun onTabReselected(tab: TabLayout.Tab) = Unit
+                override fun onTabReselected(tab: TabLayout.Tab) {
+                    if (!rebuildingTabs && mango9Tab == Mango9MessagingTab.Social) social.inbox()
+                }
             },
         )
         val platforms = listOf("", "facebook", "instagram", "tiktok")
@@ -355,7 +365,7 @@ class ConversationsListFragment : AbstractMainFragment() {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 while (true) {
                     social.bind(mango9Sessions.captureSession())
-                    if (mango9Tab == Mango9MessagingTab.Social) social.inbox()
+                    if (mango9Tab == Mango9MessagingTab.Social) social.inbox(forceAccounts = false)
                     delay(15_000)
                 }
             }
@@ -781,20 +791,20 @@ class ConversationsListFragment : AbstractMainFragment() {
         }
         )
         updateTabBadge(Mango9MessagingTab.Social, value.threads.count { it.unread })
-        binding.mango9MessagesStatus.visibility = if (value.error != null || (value.loading && value.threads.isEmpty())) View.VISIBLE else View.GONE
-        binding.mango9MessagesStatus.text = value.error ?: if (value.loading) getString(R.string.mango9_chat_connecting) else getString(R.string.mango9_social)
+        binding.mango9MessagesStatus.visibility = if (value.error != null || value.accountWarning != null || (value.loading && value.threads.isEmpty())) View.VISIBLE else View.GONE
+        binding.mango9MessagesStatus.text = value.error ?: value.accountWarning ?: if (value.loading) getString(R.string.mango9_chat_connecting) else getString(R.string.mango9_social)
         binding.mango9MessagesEmpty.setText(R.string.mango9_social_empty)
         binding.mango9MessagesEmpty.visibility = if (!value.loading && value.threads.isEmpty() && value.error == null) View.VISIBLE else View.GONE
         val accounts = value.accounts.filter { value.platform.isBlank() || it.platform == value.platform }
         val ids = listOf("") + accounts.map { it.id }
-        if (ids != socialAccountIds || binding.socialAccount.adapter == null) {
+        val labels = listOf(getString(R.string.mango9_all_accounts)) + accounts.map { it.name }
+        if (ids != socialAccountIds || labels != socialAccountLabels || binding.socialAccount.adapter == null) {
             changingSocialFilters = true
             socialAccountIds = ids
+            socialAccountLabels = labels
             binding.socialAccount.adapter = ArrayAdapter(
                 requireContext(), android.R.layout.simple_spinner_dropdown_item,
-                listOf(getString(R.string.mango9_all_accounts)) + accounts.map {
-                it.name
-            }
+                labels
             )
             binding.socialAccount.setSelection(ids.indexOf(value.account).coerceAtLeast(0))
             changingSocialFilters = false

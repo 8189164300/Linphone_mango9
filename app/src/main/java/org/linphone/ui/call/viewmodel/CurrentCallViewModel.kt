@@ -335,6 +335,7 @@ class CurrentCallViewModel
 
         @WorkerThread
         override fun onStateChanged(call: Call, state: Call.State, message: String) {
+            if (!LinphoneUtils.isCallEnding(state)) updateCallerPresentation(call)
             Log.i("$TAG Call [${call.remoteAddress.asStringUriOnly()}] state changed [$state]")
             if (LinphoneUtils.isCallOutgoing(call.state)) {
                 isVideoEnabled.postValue(call.params.isVideoEnabled)
@@ -1234,48 +1235,7 @@ class CurrentCallViewModel
         isPausedByRemote.postValue(state == Call.State.PausedByRemote)
         canBePaused.postValue(canCallBePaused())
 
-        val address = call.callLog.remoteAddress
-        val pushedIdentity = if (state == Call.State.PushIncomingReceived) {
-            Mango9PushCallerIdentityCache.get(call.callLog.callId)
-        } else {
-            null
-        }
-        val uri = if (corePreferences.onlyDisplaySipUriUsername) {
-            address.username ?: ""
-        } else {
-            LinphoneUtils.getAddressAsCleanStringUriOnly(address)
-        }
-        displayedAddress.postValue(pushedIdentity?.handle ?: uri)
-
-        val model = if (conferenceInfo != null) {
-            coreContext.contactsManager.getContactAvatarModelForConferenceInfo(conferenceInfo)
-        } else if (pushedIdentity != null) {
-            val fakeFriend = coreContext.core.createFriend()
-            fakeFriend.name = pushedIdentity.displayName
-            fakeFriend.address = address
-            ContactAvatarModel(fakeFriend, address)
-        } else {
-            // Do not use contact avatar model from ContactsManager to be able to show
-            // ZRTP verification status with the device that will answer the call
-            val friend = coreContext.contactsManager.findContactByAddress(address)
-            if (friend != null) {
-                ContactAvatarModel(friend, address)
-            } else {
-                val fakeFriend = coreContext.core.createFriend()
-                fakeFriend.name = LinphoneUtils.getDisplayName(address)
-                fakeFriend.address = address
-                val localAccount = coreContext.core.accountList.find {
-                    it.params.identityAddress?.weakEqual(address) == true
-                }
-                if (localAccount != null) {
-                    fakeFriend.photo = localAccount.params.pictureUri
-                }
-                ContactAvatarModel(fakeFriend, address)
-            }
-        }
-
-        contact.postValue(model)
-        displayedName.postValue(model.contactName)
+        updateCallerPresentation(call)
 
         val recording = call.params.isRecording
         isRecording.postValue(recording)
@@ -1315,6 +1275,49 @@ class CurrentCallViewModel
                 }
             }.launchIn(viewModelScope)
         }
+    }
+
+    @WorkerThread
+    private fun updateCallerPresentation(call: Call) {
+        val conferenceInfo = LinphoneUtils.getConferenceInfoIfAny(call)
+        val address = call.callLog.remoteAddress
+        val pushedIdentity = Mango9PushCallerIdentityCache.forCall(call)
+        val uri = if (corePreferences.onlyDisplaySipUriUsername) {
+            address.username ?: ""
+        } else {
+            LinphoneUtils.getAddressAsCleanStringUriOnly(address)
+        }
+        displayedAddress.postValue(pushedIdentity?.handle ?: uri)
+
+        val model = if (conferenceInfo != null) {
+            coreContext.contactsManager.getContactAvatarModelForConferenceInfo(conferenceInfo)
+        } else if (pushedIdentity != null) {
+            val fakeFriend = coreContext.core.createFriend()
+            fakeFriend.name = pushedIdentity.displayName
+            fakeFriend.address = address
+            ContactAvatarModel(fakeFriend, address)
+        } else {
+            // Do not use contact avatar model from ContactsManager to be able to show
+            // ZRTP verification status with the device that will answer the call
+            val friend = coreContext.contactsManager.findContactByAddress(address)
+            if (friend != null) {
+                ContactAvatarModel(friend, address)
+            } else {
+                val fakeFriend = coreContext.core.createFriend()
+                fakeFriend.name = LinphoneUtils.getDisplayName(address)
+                fakeFriend.address = address
+                val localAccount = coreContext.core.accountList.find {
+                    it.params.identityAddress?.weakEqual(address) == true
+                }
+                if (localAccount != null) {
+                    fakeFriend.photo = localAccount.params.pictureUri
+                }
+                ContactAvatarModel(fakeFriend, address)
+            }
+        }
+
+        contact.postValue(model)
+        displayedName.postValue(model.contactName)
     }
 
     @WorkerThread

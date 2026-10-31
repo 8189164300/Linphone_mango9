@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mango9_event_section">Event</string>
+    <string name="mango9_event_contact_section">Lead or client</string>
+    <string name="mango9_event_sharing_section">Team access</string>
+    <string name="mango9_event_assignment_section">Assignment</string>
+    <string name="mango9_event_reminder_section">Reminder</string>
+</resources>

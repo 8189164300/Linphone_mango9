@@ -46,8 +46,18 @@ class CallLogModel
     val address = callLog.remoteAddress
 
     val sipUri = address.asStringUriOnly()
+    private val savedPresentation = if (callLog.dir == org.linphone.core.Call.Dir.Incoming) {
+        org.linphone.mango9.Mango9CallHistoryPresentation.decode(callLog.refKey)?.takeIf { it.source != "sip" }
+    } else null
 
     val displayedAddress: String
+
+    fun matchesCallerFilter(filter: String): Boolean {
+        val visibleName = avatarModel.contactName ?: LinphoneUtils.getDisplayName(address)
+        if (visibleName.contains(filter, ignoreCase = true) || displayedAddress.contains(filter, ignoreCase = true)) return true
+        if (savedPresentation?.source == "withheld") return false
+        return savedPresentation?.handle?.contains(filter, ignoreCase = true) == true || sipUri.contains(filter, ignoreCase = true)
+    }
 
     val avatarModel: ContactAvatarModel
 
@@ -91,6 +101,13 @@ class CallLogModel
 
             friendRefKey = null
             friendExists = false
+        } else if (savedPresentation != null) {
+            val displayFriend = coreContext.core.createFriend()
+            displayFriend.address = address
+            displayFriend.name = savedPresentation.name
+            avatarModel = ContactAvatarModel(displayFriend, address)
+            friendRefKey = null
+            friendExists = false
         } else {
             avatarModel = coreContext.contactsManager.getContactAvatarModelForAddress(address)
             if (avatarModel.nativeContact != null) {
@@ -102,7 +119,10 @@ class CallLogModel
                 friendExists = coreContext.contactsManager.isContactAvailable(friend)
             }
         }
-        displayedAddress = if (corePreferences.onlyDisplaySipUriUsername) {
+        displayedAddress = savedPresentation?.let {
+            if (it.source == "withheld") it.name else org.linphone.mango9.Mango9CallerIdentity.externalPhoneNumber(it.handle)
+                ?.let(org.linphone.mango9.Mango9CallerIdentity::formattedPhoneNumber) ?: it.handle
+        } ?: if (corePreferences.onlyDisplaySipUriUsername) {
             address.username ?: ""
         } else {
             sipUri

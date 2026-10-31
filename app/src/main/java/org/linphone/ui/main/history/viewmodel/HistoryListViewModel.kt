@@ -265,8 +265,7 @@ class HistoryListViewModel
     private fun isCallLogMatchingFilter(model: CallLogModel, filter: String): Boolean {
         if (filter.isEmpty()) return true
 
-        val friendName = model.avatarModel.contactName ?: LinphoneUtils.getDisplayName(model.address)
-        return friendName.contains(filter, ignoreCase = true) || model.address.asStringUriOnly().contains(filter, ignoreCase = true)
+        return model.matchesCallerFilter(filter)
     }
 
 }

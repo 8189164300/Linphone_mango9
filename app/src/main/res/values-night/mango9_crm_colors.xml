@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mango9_crm_leads">#BF5AF2</color>
+    <color name="mango9_crm_leads_surface">#1FBF5AF2</color>
+    <color name="mango9_crm_clients">#FF9F0A</color>
+    <color name="mango9_crm_clients_surface">#1FFF9F0A</color>
+    <color name="mango9_crm_conversations">#FF375F</color>
+    <color name="mango9_crm_conversations_surface">#1FFF375F</color>
+    <color name="mango9_crm_calendar">#A8B4FF</color>
+    <color name="mango9_crm_calendar_surface">#1FA8B4FF</color>
+    <color name="mango9_crm_activities">#5E5CE6</color>
+    <color name="mango9_crm_activities_surface">#1F5E5CE6</color>
+</resources>

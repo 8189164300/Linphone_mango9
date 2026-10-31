@@ -1430,11 +1430,7 @@ class NotificationsManager
         val conference = call.conference
         val conferenceInfo = LinphoneUtils.getConferenceInfoIfAny(call)
         val isConference = conference != null || conferenceInfo != null
-        val pushedIdentity = if (call.state == Call.State.PushIncomingReceived) {
-            Mango9PushCallerIdentityCache.get(call.callLog.callId)
-        } else {
-            null
-        }
+        val pushedIdentity = Mango9PushCallerIdentityCache.forCall(call)
 
         val caller = if (isConference) {
             val subject = conferenceInfo?.subject ?: conference?.subject ?: LinphoneUtils.getDisplayName(

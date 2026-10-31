@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Same semantic palette as the iOS CRM workspace. -->
+    <color name="mango9_crm_leads">#AF52DE</color>
+    <color name="mango9_crm_leads_surface">#1FAF52DE</color>
+    <color name="mango9_crm_clients">#FF9500</color>
+    <color name="mango9_crm_clients_surface">#1FFF9500</color>
+    <color name="mango9_crm_conversations">#FF2D55</color>
+    <color name="mango9_crm_conversations_surface">#1FFF2D55</color>
+    <color name="mango9_crm_calendar">#4053C8</color>
+    <color name="mango9_crm_calendar_surface">#1F4053C8</color>
+    <color name="mango9_crm_activities">#5856D6</color>
+    <color name="mango9_crm_activities_surface">#1F5856D6</color>
+</resources>

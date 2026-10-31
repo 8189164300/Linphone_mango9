@@ -54,19 +54,21 @@ class CallModel
         override fun onStateChanged(call: Call, state: Call.State, message: String) {
             this@CallModel.state.postValue(LinphoneUtils.callStateToString(state))
             isPaused.postValue(LinphoneUtils.isCallPaused(state))
+            if (!LinphoneUtils.isCallEnding(state)) updateCallerPresentation()
         }
     }
 
     init {
         call.addListener(callListener)
+        updateCallerPresentation()
+        state.postValue(LinphoneUtils.callStateToString(call.state))
+        isPaused.postValue(LinphoneUtils.isCallPaused(call.state))
+    }
 
+    private fun updateCallerPresentation() {
         val conferenceInfo = coreContext.core.findConferenceInformationFromUri(call.remoteAddress)
         val remoteAddress = call.callLog.remoteAddress
-        val pushedIdentity = if (call.state == Call.State.PushIncomingReceived) {
-            Mango9PushCallerIdentityCache.get(call.callLog.callId)
-        } else {
-            null
-        }
+        val pushedIdentity = Mango9PushCallerIdentityCache.forCall(call)
         val avatarModel = if (conferenceInfo != null) {
             coreContext.contactsManager.getContactAvatarModelForConferenceInfo(conferenceInfo)
         } else if (pushedIdentity != null) {
@@ -86,8 +88,6 @@ class CallModel
                 ?: LinphoneUtils.getDisplayName(remoteAddress)
         )
 
-        state.postValue(LinphoneUtils.callStateToString(call.state))
-        isPaused.postValue(LinphoneUtils.isCallPaused(call.state))
     }
 
     @WorkerThread
