@@ -27,6 +27,29 @@ import org.json.JSONObject
 /** Synthetic views only: no account changes, live reaction writes, or preference resets. */
 @RunWith(AndroidJUnit4::class)
 class Mango9ReactionParityInstrumentedTest {
+    @Test fun publicProfileLinkDoesNotLeakIntoSelectionOrRecycledMessages() {
+        val opened = mutableListOf<String>()
+        val item = Mango9MessageListItem.Social(Mango9SocialMessage.parse(JSONObject("""{"id":8,"text":"Profile fixture","senderName":"QA profile","direction":"inbound"}""")), emptyList())
+        val adapter = Mango9MessageAdapter({}, {}).apply {
+            socialProfile = { "https://www.instagram.com/test.user/" }
+            openProfile = { opened += it }
+        }
+        instrumentation.runOnMainSync { adapter.submitList(listOf(item)) }
+        instrumentation.waitForIdleSync()
+        instrumentation.runOnMainSync {
+            val holder = adapter.onCreateViewHolder(FrameLayout(context), 0)
+            adapter.onBindViewHolder(holder, 0)
+            val sender = holder.itemView.findViewById<TextView>(R.id.sender)
+            assertTrue(sender.isClickable); sender.performClick()
+            assertEquals(listOf("https://www.instagram.com/test.user/"), opened)
+            adapter.select(emptySet()); adapter.onBindViewHolder(holder, 0)
+            assertFalse(sender.isClickable); sender.performClick(); assertEquals(1, opened.size)
+            adapter.select(null); adapter.socialProfile = { null }; adapter.onBindViewHolder(holder, 0)
+            assertFalse(sender.isClickable); assertNull(sender.contentDescription)
+            sender.performClick(); assertEquals(1, opened.size)
+        }
+    }
+
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context get() = ContextThemeWrapper(instrumentation.targetContext, R.style.Theme_Linphone)
 

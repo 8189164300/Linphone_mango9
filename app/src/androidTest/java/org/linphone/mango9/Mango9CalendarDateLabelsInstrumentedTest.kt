@@ -152,10 +152,21 @@ class Mango9CalendarDateLabelsInstrumentedTest {
                                 val provider = view.accessibilityNodeProvider!!
                                 val host = requireNotNull(provider.createAccessibilityNodeInfo(android.view.View.NO_ID))
                                 val nodes = (0 until host.childCount).mapNotNull { provider.createAccessibilityNodeInfo(it) }
+                                if (mode == Mango9CalendarMode.Month) {
+                                    val count = ctx.resources.getQuantityString(org.linphone.R.plurals.mango9_calendar_count, 1, 1)
+                                    assertTrue(
+                                        "Month exposes the event count instead of titles",
+                                        nodes.any {
+                                        it.contentDescription?.contains(count) == true
+                                    }
+                                    )
+                                    assertFalse(nodes.any { it.contentDescription?.contains(event.title) == true })
+                                } else {
                                 val title = nodes.single { it.contentDescription?.contains(event.title) == true }.contentDescription.toString()
                                 val native = DateFormat.getTimeFormat(ctx).apply { timeZone = TimeZone.getTimeZone(utc) }
                                 assertTrue("$mode/$clock event time", spaces(title).contains(spaces(native.format(Date.from(event.startAt)))))
                                 assertTrue("$mode/$clock event end", spaces(title).contains(spaces(native.format(Date.from(event.endAt)))))
+                                }
                                 if (mode != Mango9CalendarMode.Month) {
                                     val slot = nodes.firstOrNull {
                                         it.actionList.any { action -> action.id == android.view.accessibility.AccessibilityNodeInfo.ACTION_LONG_CLICK }

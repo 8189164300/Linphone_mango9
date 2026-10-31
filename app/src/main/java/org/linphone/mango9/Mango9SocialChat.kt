@@ -20,6 +20,7 @@ data class Mango9SocialThread(
     val summary: String, val accountId: String?, val accountName: String, val activityAt: String,
     val unread: Boolean, val connected: Boolean, val canReply: Boolean, val deleted: Boolean,
     val capabilities: Mango9ReactionCapabilities?, val readThrough: Int?, val openSend: Boolean,
+    val participantHandle: String? = null, val accountHandle: String? = null,
 ) {
     // Preparing a local draft does not authorize a provider send. Keep those gates separate,
     // like SMS/Team, so an unavailable reply window does not make the attachment button inert.
@@ -39,7 +40,8 @@ data class Mango9SocialThread(
             j.stringOrNull("accountId"), j.stringOrNull("accountHandle") ?: j.optJSONObject("source")?.stringOrNull("accountName") ?: "Connected account",
             j.stringOrNull("activityAt").orEmpty(), j.opt("unread") == true, j.opt("connectionCurrent") == true,
             j.opt("canReply") == true, j.opt("deleted") == true, Mango9ReactionCapabilities.parse(j.optJSONObject("reactionCapabilities")),
-            if (j.isNull("readThrough")) null else j.getInt("readThrough"), j.optJSONObject("openSend") != null
+            if (j.isNull("readThrough")) null else j.getInt("readThrough"), j.optJSONObject("openSend") != null,
+            j.stringOrNull("participantHandle"), j.stringOrNull("accountHandle")
         )
     }
 }

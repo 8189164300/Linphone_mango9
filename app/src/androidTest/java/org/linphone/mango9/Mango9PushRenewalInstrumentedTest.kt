@@ -55,7 +55,9 @@ class Mango9PushRenewalInstrumentedTest {
         sessions.remove(b.sipIdentity)
         sessions.save(b, persist = false)
         assertFalse(sessions.replaceLoginTokens(login, b, b.copy(accessToken = "stale")))
-        assertEquals(b, sessions.load(b.sipIdentity))
+        val replacement = requireNotNull(sessions.load(b.sipIdentity))
+        assertNotEquals(b.loginEpoch, replacement.loginEpoch)
+        assertEquals(b.copy(loginEpoch = replacement.loginEpoch), replacement)
     }
 
     @Test fun removingSharedAliasRetargetsRemainingInactiveLoginWithinRealRemovalBoundary() = withSessions { a, originalB ->
@@ -98,7 +100,7 @@ class Mango9PushRenewalInstrumentedTest {
         try {
             sessions.save(a, persist = false, makeActive = true)
             sessions.save(b, persist = false)
-            test(a, b)
+            test(requireNotNull(sessions.load(a.sipIdentity!!)), requireNotNull(sessions.load(b.sipIdentity!!)))
         } finally {
             sessions.remove(a.sipIdentity!!); sessions.remove(b.sipIdentity!!)
             sessions.activate(old?.takeIf(sessions::hasSession))

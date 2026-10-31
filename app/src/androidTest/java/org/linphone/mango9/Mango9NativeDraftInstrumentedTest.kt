@@ -93,7 +93,7 @@ class Mango9NativeDraftInstrumentedTest {
     }
 
     @Test fun activityRecreationKeepsTheSameInFlightExternalShare() = fixture { _ ->
-        val uri = android.net.Uri.parse("content://com.mango9.phone.test.outgoing/file?mode=stream&bytes=500000")
+        val uri = android.net.Uri.parse("content://${InstrumentationRegistry.getInstrumentation().context.packageName}.outgoing/file?mode=stream&bytes=500000")
         val intent = android.content.Intent(context, org.linphone.ui.main.MainActivity::class.java).apply {
             action = android.content.Intent.ACTION_SEND
             type = "application/octet-stream"

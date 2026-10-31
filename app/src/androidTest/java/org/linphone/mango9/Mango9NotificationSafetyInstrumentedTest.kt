@@ -205,6 +205,6 @@ class Mango9NotificationSafetyInstrumentedTest {
             "https://chat.example.invalid/api", "wss://chat.example.invalid/socket", 1_900_000_000, "sip:notification-safety@crm.example.invalid"
             )
         sessions.save(session, persist = false)
-        try { test(session) } finally { sessions.remove(session.sipIdentity!!) }
+        try { test(requireNotNull(sessions.load(session.sipIdentity!!))) } finally { sessions.remove(session.sipIdentity!!) }
     }
 }

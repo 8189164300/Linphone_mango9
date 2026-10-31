@@ -89,6 +89,28 @@ internal class Mango9SupervisorStore(context: Context) {
 
     fun conversation(session: Mango9Session, id: String) = put("conversation.", session, id)
 
+    private fun displayKey(session: Mango9Session) = "display." + Mango9SupervisorConsent.key(session) + "." +
+        MessageDigest.getInstance("SHA-256").digest((session.loginEpoch ?: session.refreshToken).toByteArray()).joinToString("") {
+            "%02x".format(it)
+        }
+
+    fun savedChats(session: Mango9Session): List<JSONObject> = runCatching {
+        Mango9SupervisorPresentation.objects(org.json.JSONArray(prefs.getString(displayKey(session), "[]")))
+    }.getOrDefault(emptyList())
+
+    fun savedChats(session: Mango9Session, chats: List<JSONObject>) {
+        val bounded = chats.take(10).toMutableList()
+        while (bounded.isNotEmpty() && org.json.JSONArray(bounded).toString().toByteArray().size > 3 * 1024 * 1024) bounded.removeAt(bounded.lastIndex)
+        if (!prefs.edit().putString(displayKey(session), org.json.JSONArray(bounded).toString()).commit()) throw Mango9SupervisorFailure("storage_unavailable")
+    }
+
+    fun clearDisplay(session: Mango9Session) {
+        val prefix = "display." + Mango9SupervisorConsent.key(session) + "."
+        val edit = prefs.edit()
+        prefs.all.keys.filter { it.startsWith(prefix) }.forEach { edit.remove(it) }
+        if (!edit.commit()) throw Mango9SupervisorFailure("storage_unavailable")
+    }
+
     private fun put(prefix: String, session: Mango9Session, value: String?) {
         val key = prefix + Mango9SupervisorConsent.key(session)
         val edit = prefs.edit(); if (value == null) edit.remove(key) else edit.putString(key, value)
@@ -137,7 +159,10 @@ internal object Mango9SupervisorWire {
     fun webUrl(raw: String, origin: String): String? = runCatching {
         if (raw.startsWith("//") || raw.contains("..") || raw.contains('\\')) return null
         val base = origin.toHttpUrl(); val url = if (raw.startsWith("/app/")) base.resolve(raw) else raw.toHttpUrl()
-        url?.takeIf { it.username.isEmpty() && it.password.isEmpty() && !it.encodedPath.contains("/api/") }?.toString()
+        url?.takeIf {
+            it.username.isEmpty() && it.password.isEmpty() &&
+                it.pathSegments.flatMap { segment -> segment.split('/') }.none { segment -> segment.equals("api", true) }
+        }?.toString()
     }.getOrNull()
 
     fun fullLinks(text: String, origin: String): String = Regex("\\[([^]\\n]+)]\\(([^)\\s]+)\\)").replace(text) {

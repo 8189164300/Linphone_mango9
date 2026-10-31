@@ -22,6 +22,7 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
     private val activity: ComponentActivity = generateSequence(context) { (it as? ContextWrapper)?.baseContext }
         .filterIsInstance<ComponentActivity>().first()
     private val root = LinearLayout(context).apply {
+        tag = "mango9.fullpage"
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(context.getColor(R.color.mango9_calendar_background))
         isClickable = true; isFocusableInTouchMode = true
@@ -73,6 +74,11 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
 
     private fun button(id: Int, label: Int, action: ((DialogInterface, Int) -> Unit)?) = apply {
         val button = Button(context, null, android.R.attr.borderlessButtonStyle).apply {
+            this.id = when (id) {
+                DialogInterface.BUTTON_POSITIVE -> android.R.id.button1
+                DialogInterface.BUTTON_NEGATIVE -> android.R.id.button2
+                else -> android.R.id.button3
+            }
             setText(label); isAllCaps = false; minHeight = dp(48); minimumWidth = dp(48)
             setTextColor(context.getColor(if (id == DialogInterface.BUTTON_NEUTRAL) R.color.mango9_calendar_error else R.color.mango9_calendar_accent))
             setOnClickListener { action?.invoke(this@Mango9FullPage, id); dismiss() }

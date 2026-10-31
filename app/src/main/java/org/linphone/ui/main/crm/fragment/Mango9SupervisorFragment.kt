@@ -23,6 +23,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.view.isVisible
+import androidx.core.view.doOnNextLayout
+import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -30,6 +34,8 @@ import androidx.navigation.fragment.findNavController
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 import org.linphone.R
 import org.linphone.mango9.*
@@ -61,6 +67,17 @@ class Mango9SupervisorFragment : GenericMainFragment() {
     private lateinit var mute: TextView
     private lateinit var pending: LinearLayout
     private var rendered = ""
+    private var renderedConversation = ""
+    private var visibleMessageCount = 40
+    private var followingLatest = true
+    private var aligningMessages = false
+    private var layoutVersion = 0
+    private lateinit var latest: ImageButton
+    private var historyList: RecyclerView? = null
+    private var historyRows = listOf<JSONObject>()
+    private var historySearch: Job? = null
+    private var historySignature = ""
+    private val historyFilters = mutableMapOf<String, TextView>()
     private var privacyPrompted = false
     private var restorePrivacy = false
     private var privacyDialog: BottomSheetDialog? = null
@@ -105,7 +122,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             hideKeyboard(); if (!model.accepted) privacy() else if (model.voicePage) model.endVoice() else model.showVoice()
         }.apply { contentDescription = "Supervisor voice or chat" }
         header.addView(mode, LinearLayout.LayoutParams(-2, ui.dp(44)).apply { marginEnd = ui.dp(8) })
-        ai = pill("AI", Color.WHITE, BLUE) { menu(header) }.apply { contentDescription = "Supervisor options" }
+        ai = pill("AI", Color.WHITE, BLUE) { menu(ai) }.apply { contentDescription = "Supervisor options" }
         header.addView(ai, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
         root.addView(header)
         notice = button("") {
@@ -147,7 +164,10 @@ class Mango9SupervisorFragment : GenericMainFragment() {
 
     override fun onStop() { if (!requireActivity().isChangingConfigurations) model.background(); super.onStop() }
 
+    override fun onStart() { super.onStart(); model.foreground() }
+
     override fun onDestroyView() {
+        layoutVersion++; historySearch?.cancel(); historyList = null
         spinner?.cancel(); spinner = null; privacyDialog?.dismiss(); toolsDialog?.dismiss(); privacyDialog = null; toolsDialog = null; toolsBody = null; super.onDestroyView()
     }
 
@@ -165,7 +185,35 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         chat = ui.column(); body.addView(chat, FrameLayout.LayoutParams(-1, -1))
         messages = ui.column().apply { setPadding(ui.dp(12), ui.dp(14), ui.dp(12), ui.dp(14)) }
         chatScroll = ScrollView(ui.context).apply { isFillViewport = true; addView(messages) }
-        chat.addView(chatScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        val viewport = FrameLayout(ui.context)
+        viewport.addView(chatScroll, FrameLayout.LayoutParams(-1, -1))
+        latest = Mango9ChatNavigation.button(ui.context) {
+            followingLatest = true; chatScroll.scrollTo(0, messages.height); updateLatest()
+        }
+        viewport.addView(
+            latest,
+            FrameLayout.LayoutParams(ui.dp(44), ui.dp(44), Gravity.END or Gravity.BOTTOM).apply {
+            marginEnd = ui.dp(12); bottomMargin = ui.dp(12)
+        }
+        )
+        chat.addView(viewport, LinearLayout.LayoutParams(-1, 0, 1f))
+        chatScroll.setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_MOVE) followingLatest = false
+            false
+        }
+        chatScroll.setOnScrollChangeListener { _: View, _: Int, _: Int, _: Int, _: Int ->
+            if (!aligningMessages) {
+                if (!chatScroll.canScrollVertically(1)) followingLatest = true
+                updateLatest()
+            }
+        }
+        chatScroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (!aligningMessages && followingLatest) {
+                chatScroll.post {
+                if (view != null && followingLatest) { chatScroll.scrollTo(0, messages.height); updateLatest() }
+            }
+            }
+        }
         pending = ui.column(); chat.addView(pending)
         bottom = ui.column().apply {
             setBackgroundColor(Color.WHITE); setPadding(ui.dp(10), ui.dp(6), ui.dp(10), ui.dp(6))
@@ -180,9 +228,11 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             }
         }
         send = pill("↑", BLUE, Color.WHITE) {
-            hideKeyboard(); model.send()
+            followingLatest = true; hideKeyboard(); model.send()
         }.apply { contentDescription = "Send to Supervisor"; textSize = 26f }
     }
+
+    private fun updateLatest() { latest.isVisible = !aligningMessages && chatScroll.canScrollVertically(1) }
 
     private fun buildVoice() {
         voice = ui.column(); body.addView(voice, FrameLayout.LayoutParams(-1, -1))
@@ -254,14 +304,31 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         orb.contentDescription = if (model.voice.running) "Mute or unmute Supervisor microphone" else "Connect Supervisor voice"
         val diameter = ui.dp(if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 170 else 276)
         if (orb.layoutParams.height != diameter) { orb.layoutParams.height = diameter; orb.requestLayout() }
-        val signature = model.messages.joinToString { it.toString() } + model.loading + model.moreMessages
+        if (renderedConversation != model.conversation) {
+            renderedConversation = model.conversation; visibleMessageCount = 40; followingLatest = true; rendered = ""
+        }
+        val signature = model.messages.joinToString {
+            it.toString()
+        } + model.loading + model.moreMessages + model.configurationDetails.toString() + model.actionBusy + model.loadingOlder + visibleMessageCount + model.savedConfigurationIds
         if (signature != rendered) {
-            rendered = signature; val nearEnd = chatScroll.scrollY + chatScroll.height >= messages.height - ui.dp(100)
+            rendered = signature
+            val anchor = (0 until messages.childCount).map {
+                messages.getChildAt(it)
+            }.firstOrNull { it.bottom > chatScroll.scrollY && it.tag is String }
+            val anchorId = anchor?.tag; val offset = (anchor?.top ?: 0) - chatScroll.scrollY
+            val previousY = chatScroll.scrollY; val layout = ++layoutVersion
+            aligningMessages = true
             messages.removeAllViews()
-            if (model.moreMessages) {
+            if (model.moreMessages || visibleMessageCount < model.messages.size) {
                 messages.addView(
-                    button("Load more messages") {
-                viewLifecycleOwner.lifecycleScope.launch { model.refresh() }
+                    button(if (model.loadingOlder) "Loading earlier messages…" else "Load earlier messages") {
+                followingLatest = false
+                if (visibleMessageCount < model.messages.size) { visibleMessageCount += 40; render() } else {
+                    viewLifecycleOwner.lifecycleScope.launch {
+                    val previous = model.messages.size; model.loadOlder()
+                    visibleMessageCount += (model.messages.size - previous).coerceAtLeast(0); render()
+                }
+                }
             }
                 )
             }
@@ -272,8 +339,17 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             }
                 )
             }
-            model.messages.forEach { bubble(it) }
-            if (nearEnd) chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+            model.messages.takeLast(visibleMessageCount).forEach { bubble(it) }
+            messages.doOnNextLayout {
+                chatScroll.post {
+                    if (view == null || layout != layoutVersion) return@post
+                    val restored = (0 until messages.childCount).map {
+                        messages.getChildAt(it)
+                    }.firstOrNull { it.tag == anchorId && anchorId != null }
+                    chatScroll.scrollTo(0, if (followingLatest) messages.height else restored?.let { it.top - offset } ?: previousY)
+                    aligningMessages = false; updateLatest()
+                }
+            }
         }
         val expected = if (model.accepted) "composer" else "consent"
         if (bottom.tag != expected) {
@@ -318,7 +394,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             )
             row.addView(
                 button("Start new chat") {
-                MaterialAlertDialogBuilder(ui.context).setMessage("This does not cancel work already received by the server. Review Actions first. Start a new chat without retrying?").setNegativeButton("Cancel", null).setPositiveButton("Start new chat") { _, _ -> model.leavePending() }.show()
+                MaterialAlertDialogBuilder(ui.context).setMessage("This does not cancel work already received by the server. Check the saved request status first. Start a new chat without retrying?").setNegativeButton("Cancel", null).setPositiveButton("Start new chat") { _, _ -> model.leavePending() }.show()
             },
                 LinearLayout.LayoutParams(0, -2, 1f)
             ); pending.addView(row)
@@ -332,7 +408,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
     private fun bubble(row: JSONObject) {
         val outgoing = row.optString("role") == "user"
         val raw = Mango9SupervisorWire.fullLinks(Mango9SupervisorWire.messageText(row), model.lease?.session?.crmBaseUrl.orEmpty())
-        val group = ui.column(); val message = text(raw, 16f).apply {
+        val group = ui.column(); val message = text(raw, 15f).apply {
             background = ui.round(if (outgoing) TINT else Color.WHITE, 18); setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(12))
             setTextIsSelectable(true); movementMethod = LinkMovementMethod.getInstance(); setLinkTextColor(BLUE)
         }
@@ -349,6 +425,19 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             }
         }
         message.text = display; group.addView(message)
+        if (!outgoing) {
+            val ids = row.optJSONObject("metadata")?.optJSONArray("actionIds")
+            for (index in 0 until (ids?.length() ?: 0)) {
+                val id = ids?.optString(index).orEmpty()
+                if (runCatching { java.util.UUID.fromString(id) }.isSuccess) group.addView(configuration(id))
+            }
+            Mango9SupervisorPresentation.objects(row.optJSONObject("metadata")?.optJSONArray("creations")).forEach { proof ->
+                val detail = JSONObject().put("state", "SUCCEEDED").put("recap", JSONObject().put("creation", proof))
+                Mango9SupervisorPresentation.creation(detail, model.lease?.session?.crmBaseUrl.orEmpty())?.let {
+                    group.addView(creation(it))
+                }
+            }
+        }
         val footer = ui.row().apply { gravity = Gravity.END }
         val stamp = row.optJSONObject("metadata")?.optString("createdAt") ?: row.optString("createdAt")
         val time = runCatching {
@@ -361,9 +450,113 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         }.apply { textSize = 11f; contentDescription = "Copy Supervisor message" }
         )
         group.addView(footer)
-        val cell = FrameLayout(ui.context)
-        cell.addView(group, FrameLayout.LayoutParams((resources.displayMetrics.widthPixels * .86f).toInt(), -2, if (outgoing) Gravity.END else Gravity.START))
+        val cell = FrameLayout(ui.context).apply { tag = row.optString("id") }
+        cell.addView(
+            group,
+            FrameLayout.LayoutParams(-1, -2, if (outgoing) Gravity.END else Gravity.START).apply {
+            if (outgoing) marginStart = ui.dp(28) else marginEnd = ui.dp(16)
+        }
+        )
         messages.addView(cell, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(8) })
+    }
+
+    private fun configuration(id: String): View {
+        val box = ui.column().apply {
+            background = ui.round(0xffeaf6ff.toInt(), 16); setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(12))
+        }
+        val detail = model.configurationDetails[id]
+        val saved = id in model.savedConfigurationIds || detail?.optBoolean("summaryOnly") == true
+        val recap = detail?.optJSONObject("recap")
+        val fields = recap?.optJSONArray("fields")
+        var readable = recap?.optInt("version") == 1 && fields != null
+        var complete = readable
+        box.addView(text(recap?.optString("title", "Settings") ?: "Settings", 16f, true))
+        recap?.optString("effect")?.takeIf {
+            it.isNotBlank()
+        }?.let { box.addView(text(it, 13f).apply { setTextColor(SECONDARY) }) }
+        val additional = ui.column().apply { visibility = View.GONE }
+        for (index in 0 until (fields?.length() ?: 0)) {
+            val field = fields?.optJSONObject(index)
+            if (field == null || field.opt("label") !is String || field.opt("value") !is String) {
+                readable = false; complete = false; continue
+            }
+            if (field.optBoolean("incomplete")) complete = false
+            val line = ui.row().apply { gravity = Gravity.TOP; setPadding(0, ui.dp(5), 0, ui.dp(5)) }
+            line.addView(
+                text(field.optString("label"), 13f).apply {
+                setTextColor(SECONDARY)
+            },
+                LinearLayout.LayoutParams(0, -2, 1f)
+            )
+            line.addView(
+                text(field.optString("value"), 13f).apply {
+                setTextIsSelectable(true)
+            },
+                LinearLayout.LayoutParams(0, -2, 2f)
+            )
+            if (index < 5) box.addView(line) else additional.addView(line)
+        }
+        if ((fields?.length() ?: 0) > 5) {
+            val more =
+                button("More settings") {
+                    additional.visibility = if (additional.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                }
+            more.textSize = 12f; box.addView(more); box.addView(additional)
+        }
+        if (readable && detail != null) {
+            if (!complete) box.addView(text("Some settings couldn’t load. Refresh before applying.", 12f))
+            if (detail.optString("state") == "PENDING_APPROVAL") {
+                box.addView(text(recap?.optString("question", "Does this look right?") ?: "Does this look right?", 13f))
+                val controls = ui.row()
+                controls.addView(
+                    button("Change") {
+                    model.draft = "I’d like to change these settings."; composer.setText(model.draft); composer.requestFocus(); model.decide("reject", detail)
+                }.apply { isEnabled = !saved && model.authorized && !model.actionBusy && !model.sending }
+                )
+                controls.addView(
+                    button("Apply") {
+                    model.decide("approve", detail)
+                }.apply { isEnabled = !saved && model.authorized && complete && !model.actionBusy && !model.sending && model.accepted }
+                )
+                box.addView(controls)
+                if (saved) box.addView(text("Saved on this device. Refresh before applying.", 12f))
+            } else {
+                val created = Mango9SupervisorPresentation.creation(detail, model.lease?.session?.crmBaseUrl.orEmpty())
+                if (created != null) {
+                    box.addView(creation(created))
+                } else {
+                    box.addView(
+                    text(
+                        recap?.optString("statusText")?.takeIf {
+                    it.isNotBlank()
+                } ?: "Check the result before trying again.",
+                    12f
+                    )
+                )
+                }
+            }
+        } else {
+            box.addView(text("Couldn’t load settings. You can refresh or keep chatting.", 13f))
+        }
+        if (saved || detail?.optString("state") != "PENDING_APPROVAL" || !complete) {
+            box.addView(
+            button("Refresh") {
+            if (model.authorized) model.loadConfiguration(id, true) else model.retry()
+        }.apply { isEnabled = !model.actionBusy; textSize = 12f }
+        )
+        }
+        box.post { model.loadConfiguration(id) }
+        return box
+    }
+
+    private fun creation(value: Mango9SupervisorPresentation.Creation): View = ui.column().apply {
+        background = ui.round(0xffeaf6ff.toInt(), 16); setPadding(ui.dp(12), ui.dp(8), ui.dp(12), ui.dp(8))
+        addView(text("✓ ${value.status}", 15f, true).apply { setTextColor(0xff237c3b.toInt()) })
+        value.links.forEach { (label, url) -> addView(button(label) { openLink(url) }.apply { gravity = Gravity.START }) }
+        if (value.recipients.isNotEmpty()) {
+            addView(text("Confirmation email", 12f, true))
+            value.recipients.forEach { addView(text(it, 12f).apply { setTextIsSelectable(true) }) }
+        }
     }
 
     private fun openLink(url: String) {
@@ -427,7 +620,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
 
     private fun menu(anchor: View) {
         hideKeyboard(); val popup = PopupMenu(ui.context, anchor, Gravity.END)
-        listOf("AI privacy", "History", "New chat", "Actions & activity").forEach { popup.menu.add(it) }
+        listOf("AI privacy", "History", "New chat").forEach { popup.menu.add(it) }
         popup.setOnMenuItemClickListener {
             when (it.title.toString()) {
                 "AI privacy" -> privacy()
@@ -437,20 +630,106 @@ class Mango9SupervisorFragment : GenericMainFragment() {
                     }
                 }
                 "New chat" -> model.newConversation()
-                else -> { showTools("Actions & activity"); model.actions() }
+                else -> Unit
             }; true
         }; popup.show()
     }
 
     private fun showTools(title: String) {
+        if (title != "History") return
         val (dialog, layout) = sheet(title); toolsDialog = dialog; toolsMode = title; toolsBody = ui.column()
-        layout.addView(
-            ScrollView(ui.context).apply {
-            addView(toolsBody)
-        },
-            LinearLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * .65).toInt())
-        )
+        val search = EditText(ui.context).apply {
+            hint = "Search conversation titles"; contentDescription = "Search conversation titles"; textSize = 15f; setSingleLine()
+            setText(model.historyQuery)
+            doAfterTextChanged {
+                historySearch?.cancel()
+                val query = it.toString()
+                historySearch = viewLifecycleOwner.lifecycleScope.launch { delay(250); model.loadConversations(query = query) }
+            }
+        }
+        layout.addView(search)
+        val filters = ui.row()
+        historyFilters.clear()
+        listOf("all" to "All", "text" to "Text only", "voice" to "With voice").forEach { (key, label) ->
+            filters.addView(
+                button(label) {
+                historySearch?.cancel()
+                viewLifecycleOwner.lifecycleScope.launch { model.loadConversations(query = search.text.toString(), channel = key) }
+            }.apply { contentDescription = "History filter: $label"; textSize = 13f; historyFilters[key] = this },
+                LinearLayout.LayoutParams(0, ui.dp(44), 1f)
+            )
+        }
+        layout.addView(filters); layout.addView(toolsBody)
+        val list = RecyclerView(ui.context).apply {
+            layoutManager = LinearLayoutManager(ui.context); itemAnimator = null; contentDescription = "Supervisor history"
+        }
+        list.adapter = object : RecyclerView.Adapter<HistoryHolder>() {
+            override fun getItemCount() = historyRows.size
+
+            override fun onCreateViewHolder(parent: ViewGroup, type: Int) = HistoryHolder(ui.column())
+
+            override fun onBindViewHolder(holder: HistoryHolder, position: Int) {
+                val row = historyRows[position]; val cell = holder.cell; cell.removeAllViews(); cell.setPadding(0, ui.dp(9), 0, ui.dp(9))
+                val line = ui.row()
+                line.addView(
+                    text(row.optString("title").ifBlank { "Supervisor conversation" }, 15f, true).apply {
+                    maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
+                },
+                    LinearLayout.LayoutParams(0, -2, 1f)
+                )
+                line.addView(
+                    ui.icon(R.drawable.trash, "Delete conversation") {
+                    confirmDelete(row)
+                }.apply { isEnabled = model.canManageHistory() }
+                )
+                cell.addView(line)
+                val metadata = ui.row(); val count = row.optInt("messageCount").coerceAtLeast(0)
+                metadata.addView(
+                    text((if (row.optBoolean("hasVoice")) "Voice · " else "Text · ") + "$count " + if (count == 1) "message" else "messages", 11f).apply {
+                    setTextColor(SECONDARY)
+                }
+                )
+                metadata.addView(
+                    text(Mango9SupervisorPresentation.date(row.optString("updatedAt", row.optString("createdAt"))), 11f).apply {
+                    setTextColor(SECONDARY); gravity = Gravity.END
+                },
+                    LinearLayout.LayoutParams(0, -2, 1f)
+                )
+                cell.addView(metadata); cell.addView(ui.line())
+                cell.setOnClickListener {
+                    if (!model.loading && !model.sending && !model.actionBusy && model.pending == null) {
+                        model.select(row.optString("id")); dialog.dismiss()
+                    }
+                }
+                cell.setOnLongClickListener { confirmDelete(row); true }
+            }
+        }
+        ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
+            override fun getSwipeDirs(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) = if (model.canManageHistory()) super.getSwipeDirs(recyclerView, viewHolder) else 0
+
+            override fun onMove(recyclerView: RecyclerView, holder: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder) = false
+
+            override fun onSwiped(holder: RecyclerView.ViewHolder, direction: Int) {
+                val index = holder.bindingAdapterPosition
+                historyRows.getOrNull(index)?.let(::confirmDelete)
+                if (index >= 0) list.adapter?.notifyItemChanged(index)
+            }
+        }).attachToRecyclerView(list)
+        historyList = list; historySignature = ""
+        layout.addView(list, LinearLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * .50).toInt()))
+        dialog.setOnDismissListener { historySearch?.cancel(); historyList = null; toolsBody = null }
         dialog.show(); renderTools()
+    }
+
+    private class HistoryHolder(val cell: LinearLayout) : RecyclerView.ViewHolder(cell) {
+        init { cell.layoutParams = RecyclerView.LayoutParams(-1, -2) }
+    }
+
+    private fun confirmDelete(row: JSONObject) {
+        if (!model.canManageHistory()) return
+        MaterialAlertDialogBuilder(ui.context).setTitle("Delete this conversation?")
+            .setMessage("This removes the saved chat. Tasks and changes already applied are not undone.")
+            .setNegativeButton("Cancel", null).setPositiveButton("Delete") { _, _ -> model.deleteConversation(row.optString("id")) }.show()
     }
 
     private fun renderTools() {
@@ -458,17 +737,20 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         if (toolsDialog?.isShowing != true) return
         content.removeAllViews()
         if (toolsMode == "History") {
-            model.conversations.forEach { row ->
-                content.addView(
-                    button(
-                        row.optString("title").ifBlank {
-                "Supervisor conversation"
+            historyFilters.forEach { (key, control) ->
+                control.isSelected = model.historyChannel == key
+                control.background = ui.round(if (control.isSelected) TINT else Color.TRANSPARENT, 18)
             }
-                    ) {
-                if (!model.sending && model.pending == null) {
-                    model.select(row.optString("id")); toolsDialog?.dismiss()
+            val signature = model.conversations.toString() + model.canManageHistory()
+            if (signature != historySignature) {
+                historySignature = signature; historyRows = model.conversations; historyList?.adapter?.notifyDataSetChanged()
+            }
+            if (model.loadingConversations) content.addView(text("Loading history…", 12f))
+            model.historyError?.let {
+                content.addView(
+                    button(it + " Tap to refresh.") {
+                    viewLifecycleOwner.lifecycleScope.launch { model.loadConversations() }
                 }
-            }.apply { gravity = Gravity.START; isEnabled = !model.loading && !model.sending && model.pending == null }
                 )
             }
             if (model.moreConversations) {
@@ -478,48 +760,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             }
                 )
             }
-            if (model.conversations.isEmpty()) content.addView(text("No saved conversations yet."))
-        } else {
-            if (model.actionBusy) content.addView(text("Loading…"))
-            model.error?.let { content.addView(text(it, 13f)) }
-            val detail = model.detail
-            if (detail != null) {
-                content.addView(button("Back to actions") { model.actions() })
-                content.addView(text(detail.optString("effect", "Review proposed changes"), 18f, true))
-                content.addView(text(detail.optString("state"), 12f))
-                for (key in listOf("review", "arguments")) detail.opt(key)?.takeUnless { it == JSONObject.NULL }?.let { value ->
-                    content.addView(
-                        text(if (value is JSONObject) value.toString(2) else value.toString(), 13f).apply {
-                        setTextIsSelectable(true); setPadding(0, ui.dp(8), 0, ui.dp(8))
-                    }
-                    )
-                }
-                if (detail.optString("state") == "PENDING_APPROVAL" && !detail.optBoolean("summaryOnly")) {
-                    content.addView(
-                        button("Approve") {
-                        MaterialAlertDialogBuilder(ui.context).setTitle("Approve these changes?").setMessage("Only the exact reviewed changes will be approved.").setNegativeButton("Cancel", null).setPositiveButton("Approve") { _, _ -> model.decide("approve") }.show()
-                    }.apply { isEnabled = !model.actionBusy && model.accepted }
-                    )
-                    content.addView(button("Reject") { model.decide("reject") }.apply { isEnabled = !model.actionBusy })
-                }
-            } else {
-                model.actions.forEach { row ->
-                    content.addView(
-                        button(row.optString("effect", "Review action") + "\n" + row.optString("state")) {
-                    model.review(row.optString("id"))
-                }.apply { gravity = Gravity.START; isEnabled = !model.actionBusy }
-                    )
-                }
-                if (model.actions.isEmpty() && !model.actionBusy) content.addView(text("No actions to review."))
-                if (model.activity.isNotEmpty()) content.addView(text("Recent activity", 17f, true))
-                model.activity.forEach { row ->
-                    content.addView(
-                        text(row.optString("summary", row.optString("title", row.optString("status", "Supervisor activity"))), 13f).apply {
-                    setPadding(0, ui.dp(8), 0, ui.dp(8))
-                }
-                    )
-                }
-            }
+            if (model.conversations.isEmpty() && !model.loadingConversations) content.addView(text(if (model.historyQuery.isEmpty() && model.historyChannel == "all") "No saved conversations yet." else "No matching conversations.", 13f))
         }
     }
 

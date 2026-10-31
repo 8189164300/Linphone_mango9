@@ -21,7 +21,7 @@ import org.junit.runner.RunWith
 class Mango9OutgoingAttachmentsInstrumentedTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
-    private fun provider(query: String = "") = Uri.parse("content://com.mango9.phone.test.outgoing/file?$query")
+    private fun provider(query: String = "") = Uri.parse("content://${InstrumentationRegistry.getInstrumentation().context.packageName}.outgoing/file?$query")
 
     @Test fun unknownAndIncorrectProviderSizesUseBoundedActualBytes() = fixture { root ->
         for (declared in listOf(-1, 1, 999999)) {

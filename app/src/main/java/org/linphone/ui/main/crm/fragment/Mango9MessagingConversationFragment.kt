@@ -169,7 +169,9 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val density = resources.displayMetrics.density
         if (landscape) {
-            listOf(binding.back, binding.title).forEach { it.layoutParams = it.layoutParams.apply { height = (48 * density).toInt() } }
+            listOf(binding.back, binding.title).forEach {
+                it.layoutParams = it.layoutParams.apply { height = (48 * density).toInt() }
+            }
             binding.statusBar.layoutParams = binding.statusBar.layoutParams.apply { height = (24 * density).toInt() }
             binding.sender.layoutParams = binding.sender.layoutParams.apply { height = (36 * density).toInt() }
         }
@@ -234,19 +236,65 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
             { searchBack.isEnabled = it }, thumbnails,
         )
         binding.title.text = targetName
+        val latestButton = Mango9ChatNavigation.button(requireContext()) {
+            if (adapter.itemCount > 0) binding.messages.scrollToPosition(adapter.itemCount - 1)
+        }
+        val latestSize = (44 * resources.displayMetrics.density).toInt()
+        (binding.root as androidx.constraintlayout.widget.ConstraintLayout).addView(
+            latestButton,
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(latestSize, latestSize).apply {
+                endToEnd = binding.messages.id; bottomToBottom = binding.messages.id
+                marginEnd = latestSize / 4; bottomMargin = latestSize / 4
+            }
+        )
+        Mango9ChatNavigation.bind(binding.messages, latestButton)
+        adapter.socialProfile = { message ->
+            if (isSocial && viewModel.isCurrentConversation()) org.linphone.mango9.Mango9SocialProfileLink.url(social.current().thread, message.outgoing) else null
+        }
+        adapter.openProfile = { url ->
+            val currentProfiles = listOfNotNull(
+                org.linphone.mango9.Mango9SocialProfileLink.url(social.current().thread),
+                org.linphone.mango9.Mango9SocialProfileLink.url(social.current().thread, true)
+            )
+            if (isSocial && !adapter.selectionMode && viewModel.isCurrentConversation() &&
+                viewLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) && url in currentProfiles
+            ) {
+                runCatching {
+                startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE))
+            }.onFailure {
+                MaterialAlertDialogBuilder(requireContext()).setMessage("Couldn’t open this profile. Please try again.").setPositiveButton(android.R.string.ok, null).show()
+            }
+            }
+        }
+        binding.title.setOnClickListener {
+            if (isSocial && !adapter.selectionMode && viewModel.isCurrentConversation()) {
+                org.linphone.mango9.Mango9SocialProfileLink.url(social.current().thread)?.let { adapter.openProfile?.invoke(it) }
+            }
+        }
+        binding.title.isClickable = false // Enabled only after a valid current Social profile is loaded.
         binding.transportLabel.setText(if (isSocial) R.string.mango9_social else if (isSms) R.string.mango9_sms_transport else R.string.mango9_chat_transport)
         binding.sender.visibility = if (isSms) View.VISIBLE else View.GONE
         binding.back.setOnClickListener { if (adapter.selectionMode) adapter.select(null) else goBack() }
         binding.more.setOnClickListener { showConversationOptions() }
         binding.renameGroup.setOnClickListener {
-            if (viewModel.isCurrentConversation() && !adapter.selectionMode) currentRoom(viewModel.currentState())?.takeUnless { it.isDirect }?.let { renameGroup(it.id) }
+            if (viewModel.isCurrentConversation() && !adapter.selectionMode) {
+                currentRoom(viewModel.currentState())?.takeUnless {
+                it.isDirect
+            }?.let { renameGroup(it.id) }
+            }
         }
         binding.groupMembers.setOnClickListener {
-            if (viewModel.isCurrentConversation() && !adapter.selectionMode) currentRoom(viewModel.currentState())?.takeUnless { it.isDirect }?.let(::showGroupMembers)
+            if (viewModel.isCurrentConversation() && !adapter.selectionMode) {
+                currentRoom(viewModel.currentState())?.takeUnless {
+                it.isDirect
+            }?.let(::showGroupMembers)
+            }
         }
         binding.attach.contentDescription = "Add to message"
         binding.attach.setOnClickListener { showAttachmentMenu() }
-        Mango9TemplatesFragment.listen(this, { viewModel.mediaSession() }, { viewModel.isCurrentConversation() }, { binding.message })
+        Mango9TemplatesFragment.listen(this, {
+            viewModel.mediaSession()
+        }, { viewModel.isCurrentConversation() }, { binding.message })
         binding.loadEarlier.setOnClickListener { requestedRoomId?.let { social.open(it, more = true) } }
         binding.microphone.setOnClickListener { toggleRecording() }
         binding.send.setOnClickListener { sendMessage() }
@@ -429,6 +477,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         if (isSms) renderSmsSenders(state)
         if (isSocial) {
             if (!adapter.selectionMode) binding.title.text = socialState.thread?.title ?: targetName
+            binding.title.isClickable = !adapter.selectionMode && org.linphone.mango9.Mango9SocialProfileLink.url(socialState.thread) != null
             binding.status.text = when {
                 socialState.pending -> "Delivery unconfirmed — refresh to check"
                 socialState.thread == null && socialState.loading -> "Loading conversation…"
@@ -490,14 +539,21 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         binding.more.contentDescription = getString(R.string.mango9_chat_options)
         binding.title.textSize = if (group) 20f else 17f
         binding.status.textSize = if (group) 13f else 11f
-        val ink = if (group) androidx.core.content.ContextCompat.getColor(requireContext(), R.color.mango9_team_ink)
-            else com.google.android.material.color.MaterialColors.getColor(binding.title, R.attr.color_main1_500)
+        val ink = if (group) {
+            androidx.core.content.ContextCompat.getColor(requireContext(), R.color.mango9_team_ink)
+        } else {
+            com.google.android.material.color.MaterialColors.getColor(binding.title, R.attr.color_main1_500)
+        }
         binding.title.setTextColor(ink)
         binding.back.imageTintList = android.content.res.ColorStateList.valueOf(ink)
-        binding.groupActions.background = if (group) android.graphics.drawable.GradientDrawable().apply {
+        binding.groupActions.background = if (group) {
+            android.graphics.drawable.GradientDrawable().apply {
             cornerRadius = 24 * resources.displayMetrics.density
             setColor(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.mango9_team_card))
-        } else null
+        }
+        } else {
+            null
+        }
     }
 
     private fun renderHeader(state: Mango9ChatState) {

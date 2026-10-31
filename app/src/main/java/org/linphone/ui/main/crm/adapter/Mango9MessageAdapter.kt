@@ -86,6 +86,8 @@ class Mango9MessageAdapter(
     var selected = emptySet<String>()
         private set
     var onSelection: ((Set<String>) -> Unit)? = null
+    var socialProfile: ((Mango9SocialMessage) -> String?)? = null
+    var openProfile: ((String) -> Unit)? = null
 
     fun select(ids: Set<String>?, notify: Boolean = true) {
         selectionMode = ids != null; selected = ids.orEmpty()
@@ -206,6 +208,19 @@ class Mango9MessageAdapter(
             binding.dayHeading.text = team?.dayHeading.orEmpty()
             binding.dayHeading.visibility = if (team?.dayHeading.isNullOrBlank()) View.GONE else View.VISIBLE
             binding.sender.textSize = if (team != null) 14f else 11f
+            val profile = (item as? Mango9MessageListItem.Social)?.message?.let { socialProfile?.invoke(it) }
+            binding.sender.setOnClickListener(
+                if (profile != null && !selectionMode) {
+                View.OnClickListener {
+                openProfile?.invoke(profile)
+            }
+            } else {
+                null
+            }
+            )
+            binding.sender.isClickable = profile != null && !selectionMode
+            binding.sender.contentDescription = if (profile != null) "$sender, open profile" else null
+            binding.sender.setTextColor(if (profile != null) ContextCompat.getColor(binding.root.context, R.color.orange_main_500) else com.google.android.material.color.MaterialColors.getColor(binding.sender, R.attr.color_main2_500))
             binding.message.textSize = if (team != null) 17f else 14f
             binding.footer.textSize = if (team != null) 12f else 11f
             val separateCards = team != null && Mango9ChatMedia.parse(files).isNotEmpty()
@@ -367,26 +382,38 @@ class Mango9MessageAdapter(
                     setColor(ContextCompat.getColor(context, R.color.mango9_team_card))
                     setStroke(dp(1), ContextCompat.getColor(context, R.color.mango9_team_border))
                 }
-                addView(ImageView(context).apply {
+                addView(
+                    ImageView(context).apply {
                     setImageResource(R.drawable.file_text)
                     imageTintList = ColorStateList.valueOf(ContextCompat.getColor(context, R.color.orange_main_500))
                     setPadding(dp(8), dp(8), dp(8), dp(8))
-                    background = GradientDrawable().apply { cornerRadius = dp(9).toFloat(); setColor(ContextCompat.getColor(context, R.color.mango9_team_icon_tile)) }
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(9).toFloat(); setColor(ContextCompat.getColor(context, R.color.mango9_team_icon_tile))
+                    }
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, LinearLayout.LayoutParams(dp(44), dp(44)))
-                addView(LinearLayout(context).apply {
+                },
+                    LinearLayout.LayoutParams(dp(44), dp(44))
+                )
+                addView(
+                    LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
-                    addView(TextView(context).apply {
+                    addView(
+                        TextView(context).apply {
                         text = media.name; textSize = 15f; setTypeface(typeface, Typeface.BOLD)
                         maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
                         setTextColor(ContextCompat.getColor(context, R.color.mango9_team_ink))
-                    })
-                    addView(TextView(context).apply {
+                    }
+                    )
+                    addView(
+                        TextView(context).apply {
                         setText(if (media.name.endsWith(".pdf", true)) R.string.mango9_pdf_document else R.string.mango9_attachment_document)
                         textSize = 12f; setPadding(0, dp(3), 0, 0)
                         setTextColor(ContextCompat.getColor(context, R.color.mango9_team_secondary))
-                    })
-                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) })
+                    }
+                    )
+                },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) }
+                )
             }
         }
 

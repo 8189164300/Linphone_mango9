@@ -18,10 +18,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.fragment.NavHostFragment
 import androidx.test.core.app.ActivityScenario
-import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.*
 import androidx.test.espresso.assertion.ViewAssertions.matches
-import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -58,6 +56,40 @@ import org.linphone.ui.main.crm.fragment.Mango9ReminderBanner
 /** Actual CalendarFragment navigation and dialogs, retained production ViewModel, synthetic HTTP. */
 @RunWith(AndroidJUnit4::class)
 class Mango9CalendarEditorInstrumentedTest {
+    // Event forms are full pages now; native date/time/confirmation dialogs still use their own roots.
+    private fun onView(matcher: org.hamcrest.Matcher<View>): androidx.test.espresso.ViewInteraction =
+        androidx.test.espresso.Espresso.onView(
+            org.hamcrest.Matchers.allOf(
+                matcher,
+                object : org.hamcrest.TypeSafeMatcher<View>() {
+            override fun describeTo(description: org.hamcrest.Description) {
+                description.appendText("the topmost event page or native dialog")
+            }
+
+            override fun matchesSafely(view: View): Boolean {
+                var ancestor: View? = view
+                while (ancestor != null && ancestor.tag != "mango9.fullpage") ancestor = ancestor.parent as? View
+                val page = ancestor ?: return true
+                val host = page.parent as? android.view.ViewGroup ?: return false
+                return (0 until host.childCount).map(host::getChildAt).lastOrNull { it.tag == "mango9.fullpage" } === page
+            }
+        }
+            )
+        )
+
+    private fun isDialog(): org.hamcrest.Matcher<androidx.test.espresso.Root> = object : org.hamcrest.TypeSafeMatcher<androidx.test.espresso.Root>() {
+        override fun describeTo(description: org.hamcrest.Description) {
+            description.appendText("a focused native dialog or full-screen event page")
+        }
+
+        override fun matchesSafely(root: androidx.test.espresso.Root): Boolean {
+            fun page(view: View): Boolean = view.tag == "mango9.fullpage" || view is android.view.ViewGroup && (0 until view.childCount).any {
+                page(view.getChildAt(it))
+            }
+            return root.decorView.hasWindowFocus() && (androidx.test.espresso.matcher.RootMatchers.isDialog().matches(root) || page(root.decorView))
+        }
+    }
+
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
 
@@ -411,6 +443,9 @@ class Mango9CalendarEditorInstrumentedTest {
     @Test fun unconfirmedReminderChannelsAndFormScrollSurviveRecreationWithoutSaving() = fixture { scenario, f ->
         onView(withContentDescription(R.string.mango9_calendar_add)).perform(click())
         onView(withTagValue(`is`("appointment-title" as Any))).inRoot(isDialog()).perform(replaceText("Picker restoration"), closeSoftKeyboard())
+        // A short form fits on large phones now that the editor is a full page.
+        // Force real overflow so this still verifies restoration of a nonzero scroll position.
+        onView(withTagValue(`is`("appointment-notes" as Any))).inRoot(isDialog()).perform(scrollTo(), replaceText("QA scroll restoration\n".repeat(20)), closeSoftKeyboard())
         val edit = f.model.edits.active as Mango9AppointmentEdit
         val before = edit.draft.channels
         onView(withText(R.string.mango9_calendar_channels)).inRoot(isDialog()).perform(scrollTo(), click())

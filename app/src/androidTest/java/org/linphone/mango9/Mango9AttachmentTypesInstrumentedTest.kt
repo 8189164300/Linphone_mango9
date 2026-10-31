@@ -24,7 +24,7 @@ import org.linphone.ui.main.chat.model.FileModel
 @RunWith(AndroidJUnit4::class)
 class Mango9AttachmentTypesInstrumentedTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
-    private val provider = Uri.parse("content://com.mango9.phone.test.outgoing/file")
+    private val provider = Uri.parse("content://${InstrumentationRegistry.getInstrumentation().context.packageName}.outgoing/file")
 
     @Test fun audioOnlyMp4IsNotSentToTheVideoExporterAndKeepsItsBytes() = fixture { root ->
         val original = File(root, "original.m4a")
