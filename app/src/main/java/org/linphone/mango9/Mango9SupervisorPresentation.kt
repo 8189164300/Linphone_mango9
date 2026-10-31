@@ -63,6 +63,16 @@ internal object Mango9SupervisorPresentation {
 
     data class Creation(val status: String, val links: List<Pair<String, String>>, val recipients: List<String>)
 
+    fun nativeTaskId(url: String, origin: String): Int? = runCatching {
+        val link = URI(url); val base = URI(origin)
+        if (link.scheme != "https" || link.host != base.host || link.port != base.port || link.rawUserInfo != null ||
+            link.rawQuery != null || link.rawFragment != null
+        ) {
+            return null
+        }
+        Regex("/app/tasks/([1-9][0-9]*)").matchEntire(link.rawPath)?.groupValues?.get(1)?.toIntOrNull()
+    }.getOrNull()
+
     fun savedConfiguration(detail: JSONObject): JSONObject? {
         val id = detail.optString("id").takeIf(::uuid) ?: return null
         val recap = detail.optJSONObject("recap") ?: return null

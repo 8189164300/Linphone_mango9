@@ -80,7 +80,7 @@ internal class Mango9SupervisorStore(context: Context) {
     fun consent(session: Mango9Session, allow: Boolean) = put("consent.", session, if (allow) Mango9SupervisorConsent.receipt() else null)
 
     fun pending(session: Mango9Session) = prefs.getString("pending." + Mango9SupervisorConsent.key(session), null)?.let {
-        runCatching { JSONObject(it) }.getOrNull()
+        Mango9SupervisorWire.savedCommand(it)
     }
 
     fun pending(session: Mango9Session, command: JSONObject?) = put("pending.", session, command?.toString())
@@ -90,18 +90,14 @@ internal class Mango9SupervisorStore(context: Context) {
     fun conversation(session: Mango9Session, id: String) = put("conversation.", session, id)
 
     private fun displayKey(session: Mango9Session) = "display." + Mango9SupervisorConsent.key(session) + "." +
-        MessageDigest.getInstance("SHA-256").digest((session.loginEpoch ?: session.refreshToken).toByteArray()).joinToString("") {
-            "%02x".format(it)
-        }
+        Mango9SupervisorCache.scope(session)
 
     fun savedChats(session: Mango9Session): List<JSONObject> = runCatching {
-        Mango9SupervisorPresentation.objects(org.json.JSONArray(prefs.getString(displayKey(session), "[]")))
+        Mango9SupervisorCache.decode(prefs.getString(displayKey(session), null))
     }.getOrDefault(emptyList())
 
     fun savedChats(session: Mango9Session, chats: List<JSONObject>) {
-        val bounded = chats.take(10).toMutableList()
-        while (bounded.isNotEmpty() && org.json.JSONArray(bounded).toString().toByteArray().size > 3 * 1024 * 1024) bounded.removeAt(bounded.lastIndex)
-        if (!prefs.edit().putString(displayKey(session), org.json.JSONArray(bounded).toString()).commit()) throw Mango9SupervisorFailure("storage_unavailable")
+        if (!prefs.edit().putString(displayKey(session), Mango9SupervisorCache.encode(chats)).commit()) throw Mango9SupervisorFailure("storage_unavailable")
     }
 
     fun clearDisplay(session: Mango9Session) {
@@ -122,6 +118,19 @@ internal object Mango9SupervisorWire {
     private val actionPath = Regex("actions/[0-9a-fA-F-]{36}(/decision)?")
 
     fun validText(value: String) = value.isNotBlank() && value.toByteArray(Charsets.UTF_8).size <= 8000
+
+    fun savedCommand(raw: String): JSONObject = try {
+        require(raw.toByteArray(Charsets.UTF_8).size <= 64 * 1024)
+        JSONObject(raw).also { command ->
+            require(Mango9SupervisorPresentation.uuid(command.getString("conversationId")))
+            require(Mango9SupervisorPresentation.uuid(command.getString("requestId")))
+            val message = command.getJSONObject("message")
+            require(Mango9SupervisorPresentation.uuid(message.getString("id")) && message.getString("role") == "user")
+            val parts = message.getJSONArray("parts")
+            require(parts.length() == 1 && parts.getJSONObject(0).getString("type") == "text")
+            require(validText(parts.getJSONObject(0).getString("text")))
+        }
+    } catch (_: Exception) { throw Mango9SupervisorFailure("storage_unavailable") }
 
     fun command(conversation: String, text: String) = JSONObject().put("conversationId", conversation)
         .put("requestId", UUID.randomUUID().toString()).put(

@@ -52,12 +52,16 @@ internal class Mango9SupervisorViewModel(
     var actionBusy = false; private set
     val configurationDetails = mutableMapOf<String, JSONObject>()
     private val configurationRequested = mutableSetOf<String>()
-    private val configurationFlights = mutableSetOf<String>()
+    private val configurationFlights = mutableMapOf<String, UUID>()
     private var historyCursor = "0"
     private var listCursor: String? = null
     private var generation = 0
     private var refreshing = false
     private var historyRequested = false
+    private var historyFlight: UUID? = null
+    private var olderFlight: UUID? = null
+    private var preferLatestHistory = false
+    private var storageReady = false
     private var poll: Job? = null
     private var sendJob: Job? = null
     private var loadJob: Job? = null
@@ -71,13 +75,20 @@ internal class Mango9SupervisorViewModel(
 
     fun owner() = lease?.takeIf { sessions.currentSession(it) != null }
 
+    private fun current(stamp: Int, captured: Mango9SessionLease, chat: String = conversation) =
+        stamp == generation && lease == captured && sessions.currentSession(captured) != null && conversation == chat
+
+    private fun invalidateHistory() {
+        historyFlight = null; olderFlight = null; refreshing = false; loadingOlder = false; preferLatestHistory = false
+    }
+
     fun notifyChange() { changed.value = (changed.value ?: 0) + 1 }
 
-    fun canSend() = authorized && accepted && !loading && !sending && pending == null && !voice.running && owner() != null && Mango9SupervisorWire.validText(draft)
+    fun canSend() = storageReady && authorized && accepted && !loading && !sending && pending == null && !voice.running && owner() != null && Mango9SupervisorWire.validText(draft)
 
-    fun canVoice() = authorized && accepted && !loading && !sending && pending == null && owner() != null
+    fun canVoice() = storageReady && authorized && accepted && !loading && !sending && pending == null && owner() != null
 
-    fun canManageHistory() = authorized && !loading && !sending && !actionBusy && !voice.running && pending == null && deletingConversation == null && owner() != null
+    fun canManageHistory() = storageReady && authorized && !loading && !sending && !actionBusy && !voice.running && pending == null && deletingConversation == null && owner() != null
 
     private fun restoreLocal() {
         val saved = savedChats.firstOrNull { it.optString("id") == conversation } ?: return
@@ -98,7 +109,7 @@ internal class Mango9SupervisorViewModel(
             it in ids
         }.values.mapNotNull(Mango9SupervisorPresentation::savedConfiguration)
         val summary = conversations.firstOrNull { it.optString("id") == conversation }
-        val saved = JSONObject().put("id", conversation).put("messages", org.json.JSONArray(rows)).put("configurations", org.json.JSONArray(configs))
+        val saved = JSONObject().put("id", conversation).put("savedAt", System.currentTimeMillis()).put("messages", org.json.JSONArray(rows)).put("configurations", org.json.JSONArray(configs))
         if (summary != null) {
             saved.put(
                 "conversation",
@@ -110,7 +121,7 @@ internal class Mango9SupervisorViewModel(
             (if (rows.isEmpty()) emptyList() else listOf(saved)) + savedChats.filterNot {
             it.optString("id") == conversation
         }
-        ).take(10)
+        ).take(20)
         runCatching {
             store.savedChats(owner.session, savedChats)
         }.onFailure { error = "Couldn’t save a local copy. Your server history is unchanged." }
@@ -128,6 +139,7 @@ internal class Mango9SupervisorViewModel(
         bound = true; lease = value
         if (value == null) { loading = false; error = Mango9SupervisorFailure("scope_changed").message; notifyChange(); return }
         loadJob = viewModelScope.launch {
+            val stamp = generation
             try {
                 withContext(Dispatchers.IO) {
                     accepted = store.accepted(value.session); pending = store.pending(value.session)
@@ -135,6 +147,8 @@ internal class Mango9SupervisorViewModel(
                     if (runCatching { UUID.fromString(conversation) }.isFailure) conversation = UUID.randomUUID().toString()
                     savedChats = store.savedChats(value.session)
                 }
+                if (!current(stamp, value)) return@launch
+                storageReady = true
                 restoreLocal(); notifyChange()
                 reload()
             } catch (e: Exception) {
@@ -155,7 +169,7 @@ internal class Mango9SupervisorViewModel(
     }
 
     private fun clearAccount() {
-        generation++; listFlight++; savedChats = emptyList(); savedConfigurationIds.clear(); configurationDetails.clear(); configurationRequested.clear(); configurationFlights.clear(); detail = null; sendJob?.cancel(); loadJob?.cancel(); actionJob?.cancel(); voice.stop()
+        generation++; listFlight++; invalidateHistory(); storageReady = false; savedChats = emptyList(); savedConfigurationIds.clear(); configurationDetails.clear(); configurationRequested.clear(); configurationFlights.clear(); detail = null; sendJob?.cancel(); loadJob?.cancel(); actionJob?.cancel(); voice.stop()
         authorized = false; accepted = false; loading = false; sending = false; voicePage = false; draft = ""; pending = null
         messages = emptyList(); conversations = emptyList(); actions = emptyList(); activity = emptyList(); detail = null
         error = Mango9SupervisorFailure("scope_changed").message; notifyChange()
@@ -165,10 +179,18 @@ internal class Mango9SupervisorViewModel(
 
     private suspend fun reload() {
         val owner = owner() ?: return
+        val stamp = generation
         loading = true; error = null; notifyChange()
         try {
-            val status = api.authorize(owner); authorized = true; billing = status.optBoolean("billingEnabled")
+            storageReady = false
+            val restored = withContext(Dispatchers.IO) { store.pending(owner.session) }
+            if (!current(stamp, owner)) return
+            pending = restored; storageReady = true
+            val status = api.authorize(owner)
+            if (!current(stamp, owner)) return
+            authorized = true; billing = status.optBoolean("billingEnabled")
             loadConversations()
+            if (!current(stamp, owner)) return
             if (pending == null && store.conversation(owner.session) == null) {
                 conversations.firstOrNull()?.optString("id")?.takeIf {
                 runCatching { UUID.fromString(it) }.isSuccess
@@ -243,10 +265,10 @@ internal class Mango9SupervisorViewModel(
         if (loading || sending || actionBusy || pending != null || runCatching { UUID.fromString(id) }.isFailure) return
         val owner = owner() ?: return
         generation++; configurationDetails.clear(); configurationRequested.clear(); configurationFlights.clear(); detail = null; actionBusy = false; voice.stop(); voicePage = false; conversation = id; messages = emptyList(); historyCursor = "0"; moreMessages = false; error = null
-        listFlight++; savedConfigurationIds.clear(); historyReady = false; olderCursor = null; loadingOlder = false; restoreLocal()
+        listFlight++; invalidateHistory(); preferLatestHistory = false; savedConfigurationIds.clear(); historyReady = false; olderCursor = null; restoreLocal()
         loadJob = viewModelScope.launch {
             try {
-                store.conversation(owner.session, id); loading = true; notifyChange(); while (refreshing) delay(20); refresh()
+                store.conversation(owner.session, id); loading = true; notifyChange(); refresh()
             } catch (e: Exception) {
                 if (e !is CancellationException) error = failure(e)
             } finally { loading = false; notifyChange() }
@@ -263,19 +285,23 @@ internal class Mango9SupervisorViewModel(
         } catch (e: Exception) { error = failure(e); notifyChange() }
     }
 
-    suspend fun refresh() {
+    suspend fun refresh(latest: Boolean = false) {
         val owner = owner() ?: return
         if (!authorized) return
+        if (latest) { preferLatestHistory = true; olderFlight = null; loadingOlder = false }
         if (refreshing) { historyRequested = true; return }
         val stamp = generation; val id = conversation
+        val flight = UUID.randomUUID(); historyFlight = flight
+        val tail = !historyReady || preferLatestHistory
+        preferLatestHistory = false
+        if (tail) { olderFlight = null; loadingOlder = false }
         refreshing = true; historyRequested = false
         try {
-            val tail = !historyReady
             val body = JSONObject().put("action", "read").put("conversationId", id)
             if (tail) body.put("latest", true) else body.put("after", historyCursor)
             pending?.optString("requestId")?.let { body.put("requestId", it) }
             val result = api.request(owner, "history", body)
-            if (stamp != generation || id != conversation) return
+            if (!current(stamp, owner, id) || historyFlight != flight || preferLatestHistory) return
             val rows = result.optJSONArray("messages")?.liveObjects().orEmpty().filter {
                 it.optString("role") in listOf("assistant", "user")
             }
@@ -311,21 +337,27 @@ internal class Mango9SupervisorViewModel(
             Mango9SupervisorPresentation.actionIds(messages).forEach { loadConfiguration(it) }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
+            if (!current(stamp, owner, id) || historyFlight != flight) return
             if (e is Mango9SupervisorFailure && e.status == 404 && e.code == "conversation_not_found") {
                 if (pending != null) error = Mango9SupervisorFailure("history_pending").message
                 if (stamp == generation) { messages = emptyList(); configurationDetails.clear(); persistLocal() }
             } else if (stamp == generation) { error = failure(e); accessFailure(e) }
-        } finally { refreshing = false; notifyChange() }
+        } finally {
+            if (historyFlight == flight) {
+                historyFlight = null; refreshing = false; notifyChange()
+                if (preferLatestHistory && foregroundActive && current(stamp, owner, id)) viewModelScope.launch { refresh() }
+            }
+        }
     }
 
     suspend fun loadOlder() {
         val owner = owner() ?: return
         val cursor = olderCursor ?: return
         if (!authorized || loadingOlder || refreshing) return
-        val stamp = generation; val id = conversation; loadingOlder = true; notifyChange()
+        val stamp = generation; val id = conversation; val flight = UUID.randomUUID(); olderFlight = flight; loadingOlder = true; notifyChange()
         try {
             val result = api.request(owner, "history", JSONObject().put("action", "read").put("conversationId", id).put("before", cursor))
-            if (stamp != generation || id != conversation) return
+            if (!current(stamp, owner, id) || olderFlight != flight) return
             val rows = Mango9SupervisorPresentation.objects(result.optJSONArray("messages")).filter {
                 it.optString("role") in listOf("user", "assistant")
             }
@@ -336,32 +368,36 @@ internal class Mango9SupervisorViewModel(
             persistLocal()
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            if (stamp == generation) { error = failure(e); accessFailure(e) }
-        } finally { if (stamp == generation) { loadingOlder = false; notifyChange() } }
+            if (current(stamp, owner, id) && olderFlight == flight) { error = failure(e); accessFailure(e) }
+        } finally { if (olderFlight == flight) { olderFlight = null; loadingOlder = false; notifyChange() } }
     }
 
     fun send() {
         val owner = owner() ?: return
         if (!canSend()) return
-        val command = Mango9SupervisorWire.command(conversation, draft.trim()); val stamp = generation
+        val chat = conversation; val command = Mango9SupervisorWire.command(chat, draft.trim()); val stamp = generation
         sending = true; error = null; notifyChange()
         sendJob = viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { store.pending(owner.session, command) }
-                ensureActive(); pending = command; draft = ""; notifyChange()
+                ensureActive()
+                if (!current(stamp, owner, chat) || !store.accepted(owner.session)) return@launch
+                pending = command; draft = ""; notifyChange()
                 val reply = api.request(owner, "chat", command)
-                if (stamp != generation) return@launch
+                if (!current(stamp, owner, chat) || !store.accepted(owner.session)) return@launch
                 if (reply.optString("role") != "assistant") throw Mango9SupervisorFailure("invalid_response")
                 refresh()
+                if (!current(stamp, owner, chat) || !store.accepted(owner.session)) return@launch
                 val local = command.getJSONObject("message")
                 if (messages.none { it.optString("id") == local.optString("id") }) messages += local
                 if (messages.none { it.optString("id") == reply.optString("id") }) messages += reply
                 store.pending(owner.session, null); pending = null
                 runCatching { loadConversations() }
+                if (!current(stamp, owner, chat)) return@launch
                 persistLocal()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                if (stamp == generation) { error = failure(e); refresh() }
+                if (current(stamp, owner, chat)) { error = failure(e); refresh() }
             } finally { if (stamp == generation) { sending = false; notifyChange() } }
         }
     }
@@ -371,7 +407,7 @@ internal class Mango9SupervisorViewModel(
         try {
             store.consent(owner.session, allow); accepted = store.accepted(owner.session)
             if (!allow) {
-                generation++; configurationDetails.clear(); configurationRequested.clear(); configurationFlights.clear(); detail = null; sendJob?.cancel(); actionJob?.cancel(); voice.stop(); voicePage = false; sending = false; actionBusy = false
+                generation++; invalidateHistory(); configurationDetails.clear(); configurationRequested.clear(); configurationFlights.clear(); detail = null; sendJob?.cancel(); actionJob?.cancel(); voice.stop(); voicePage = false; sending = false; actionBusy = false
             }
         } catch (e: Exception) { error = failure(e) }
         notifyChange()
@@ -384,19 +420,19 @@ internal class Mango9SupervisorViewModel(
     fun endVoice() { voice.stop(); voicePage = false; notifyChange(); viewModelScope.launch { refresh() } }
 
     fun background() {
-        foregroundActive = false; configurationEpoch++
+        foregroundActive = false; configurationEpoch++; invalidateHistory()
         voice.stop(); voicePage = false
         configurationDetails.replaceAll { _, value -> Mango9SupervisorPresentation.savedConfiguration(value) ?: value }
         savedConfigurationIds.addAll(configurationDetails.keys); configurationRequested.clear(); notifyChange()
     }
 
-    fun foreground() {
+    fun foreground(latest: Boolean = true) {
         foregroundActive = true
         if (!bound || owner() == null || loading) return
         viewModelScope.launch {
             if (!authorized) {
                 reload()
-            } else { refresh(); Mango9SupervisorPresentation.actionIds(messages).forEach { loadConfiguration(it, true) } }
+            } else { refresh(latest); Mango9SupervisorPresentation.actionIds(messages).forEach { loadConfiguration(it, true) } }
         }
     }
 
@@ -435,11 +471,12 @@ internal class Mango9SupervisorViewModel(
             return
         }
         val stamp = generation; val chat = conversation; val epoch = configurationEpoch
-        configurationRequested.add(id); configurationFlights.add(id)
+        val flight = UUID.randomUUID()
+        configurationRequested.add(id); configurationFlights[id] = flight
         viewModelScope.launch {
             try {
                 val result = api.request(owner, "actions/$id")
-                if (stamp == generation && chat == conversation && owner() != null && result.optString("id") == id && !actionBusy) {
+                if (current(stamp, owner, chat) && configurationFlights[id] == flight && result.optString("id") == id && !actionBusy) {
                     if (foregroundActive && epoch == configurationEpoch) {
                         configurationDetails[id] = result; savedConfigurationIds.remove(id)
                     } else {
@@ -449,12 +486,12 @@ internal class Mango9SupervisorViewModel(
                     persistLocal()
                 }
             } catch (e: Exception) {
-                if (stamp == generation && e !is CancellationException) {
+                if (current(stamp, owner, chat) && configurationFlights[id] == flight && e !is CancellationException) {
                     savedConfigurationIds.add(id); error = failure(e); accessFailure(e)
                     if (e is Mango9SupervisorFailure && e.status == 404) { configurationDetails.remove(id); persistLocal() }
                 }
             } finally {
-                if (stamp == generation) {
+                if (current(stamp, owner, chat) && configurationFlights[id] == flight) {
                     configurationFlights.remove(id); notifyChange()
                     if (foregroundActive && epoch != configurationEpoch) loadConfiguration(id, true)
                 }
@@ -474,6 +511,8 @@ internal class Mango9SupervisorViewModel(
                 return
             }
         val stamp = generation
+        // A GET started before Apply must never replace the receipt returned by Apply.
+        configurationFlights.remove(id); configurationRequested.remove(id)
         actionBusy = true; notifyChange()
         actionJob = viewModelScope.launch {
             try {

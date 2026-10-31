@@ -34,6 +34,9 @@ import org.linphone.core.Core
 import org.linphone.core.Factory
 import org.linphone.ui.main.MainActivity
 import org.linphone.ui.main.crm.fragment.Mango9SupervisorFragment
+import org.linphone.ui.main.crm.fragment.Mango9CalendarFragment
+import org.linphone.ui.main.crm.viewmodel.Mango9CalendarViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.linphone.ui.main.crm.viewmodel.Mango9SupervisorViewModel
 import java.io.File
 import java.io.IOException
@@ -69,6 +72,18 @@ class Mango9SupervisorParityDeviceTest {
         var configurationState = "PENDING_APPROVAL"
         lateinit var model: Mango9SupervisorViewModel
         lateinit var fragment: Mango9SupervisorFragment
+
+        val calendar = Mango9CalendarRepository(sessions, { error("No token refresh") }) { request ->
+            requests += JSONObject().put("path", request.url.encodedPath)
+            val value = when (request.url.pathSegments.last()) {
+                "42" -> JSONObject("""{"id":42,"event_id":null,"title":"QA native task details","description":"Read-only task fixture","status":"pending","type":"manual","priority":"normal","execution":"manual","timezone":"UTC","assignees":[{"name":"Alex"}]}""")
+                "settings" -> Mango9AppointmentReminderInstrumentedTest.Fixture().settings
+                "metadata" -> JSONObject("""{"timezone":"UTC","statuses":[],"activities":["appointment"],"priorities":["medium"],"reminder_minutes":[15],"reminder_channels":[],"share_recipients":[],"assignees":[],"capabilities":{"create":false}}""")
+                "events" -> JSONObject().put("events", JSONArray()).put("snapshot", "fixture").put("pagination", JSONObject().put("page", 1).put("limit", 100).put("total", 0).put("has_more", false))
+                else -> JSONObject()
+            }
+            Mango9CalendarResponse(200, JSONObject().put("success", true).put("data", value).toString())
+        }
 
         fun summary(id: String, voice: Boolean) = JSONObject().put("id", id).put("title", if (voice) "QA voice summary" else "QA follow-up task")
             .put("updatedAt", "2026-10-31T17:00:00Z").put("messageCount", if (voice) 1 else 120).put("hasVoice", voice)
@@ -182,6 +197,15 @@ class Mango9SupervisorParityDeviceTest {
                                 }
                                 )[Mango9SupervisorViewModel::class.java]
                                 f.model.bind(f.lease)
+                            } else if (fragment is Mango9CalendarFragment) {
+                                ViewModelProvider(
+                                    fragment,
+                                    object : ViewModelProvider.Factory {
+                                    @Suppress("UNCHECKED_CAST")
+                                    override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                                        Mango9CalendarViewModel(activity.application, f.calendar, MutableStateFlow(0L), MutableStateFlow(0L)) as T
+                                }
+                                )[Mango9CalendarViewModel::class.java]
                             }
                         }
                     },
@@ -303,6 +327,22 @@ class Mango9SupervisorParityDeviceTest {
         SystemClock.sleep(1200)
         assertEquals(1, f.decisionCount)
         assertTrue(f.requests.any { it.optString("path").endsWith("/actions/$actionId") })
+    }
+
+    @Test fun createdTaskLinkLoadsNativeDetailsInItsOriginalAccount() = fixture { scenario, f ->
+        tap(f, "Apply")
+        await { f.model.configurationDetails[actionId]?.optString("state") == "SUCCEEDED" && !f.model.actionBusy }
+        tap(f, "Open task")
+        await { f.requests.any { it.optString("path").endsWith("/tasks/42") } }
+        waitVisible("QA native task details")
+        scenario.onActivity { activity ->
+            val nav = (activity.supportFragmentManager.findFragmentById(R.id.main_nav_container) as NavHostFragment).navController
+            assertEquals(R.id.mango9CalendarFragment, nav.currentDestination?.id)
+            val args = requireNotNull(nav.currentBackStackEntry?.arguments)
+            assertEquals(42, args.getInt("mango9_task_id"))
+            assertEquals(f.lease, Mango9NavigationSession.matching(args, f.lease))
+            assertNull(Mango9NavigationSession.matching(args, f.lease.copy(selectionGeneration = 2)))
+        }
     }
 
     private fun waitVisible(label: String) {

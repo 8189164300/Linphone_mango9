@@ -56,7 +56,6 @@ import org.linphone.mango9.Mango9SessionLease
 import org.linphone.ui.main.crm.viewmodel.Mango9CalendarViewModel
 import org.linphone.ui.main.crm.viewmodel.Mango9TasksViewModel
 import org.linphone.mango9.Mango9ActivityKind
-import org.linphone.mango9.Mango9ManagedTask
 import org.linphone.mango9.task
 import org.linphone.ui.main.fragment.GenericMainFragment
 
@@ -340,6 +339,11 @@ class Mango9CalendarFragment : GenericMainFragment() {
             }
             }
         }
+        val taskId = arguments?.getInt("mango9_task_id", 0) ?: 0
+        if (taskId > 0 && savedInstanceState == null) {
+            val owner = org.linphone.mango9.Mango9NavigationSession.matching(requireArguments(), model.repository.capture())
+            if (owner != null) { activityKind = Mango9ActivityKind.Tasks; openTask(taskId, owner) }
+        }
         agendaAdapter = Mango9AppointmentAgendaAdapter { }
         agenda.adapter = agendaAdapter
         calendar.bind(viewLifecycleOwner.lifecycleScope); calendar.setZoom(model.zoom)
@@ -429,7 +433,7 @@ class Mango9CalendarFragment : GenericMainFragment() {
         // change observer or a replacement layout has had a chance to run.
         fun current() = lease != null && model.repository.isCurrent(lease)
         agendaAdapter = Mango9AppointmentAgendaAdapter { event -> open(event, lease) }
-        agendaAdapter.onTask = { task -> openTask(task, lease) }
+        agendaAdapter.onTask = { task -> openTask(task.id, lease) }
         agendaAdapter.onMore = {
             tasksModel.load(lease, model.screen.state.value.query, more = tasksModel.state.value?.error == null)
         }
@@ -555,11 +559,11 @@ class Mango9CalendarFragment : GenericMainFragment() {
             .setPositiveButton(R.string.mango9_calendar_done, null).show()
     }
 
-    private fun openTask(task: Mango9ManagedTask, lease: Mango9SessionLease?) {
+    private fun openTask(taskId: Int, lease: Mango9SessionLease?) {
         if (lease == null || !model.repository.isCurrent(lease)) return
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val full = model.repository.task(lease, task.id)
+                val full = model.repository.task(lease, taskId)
                 if (!model.repository.isCurrent(lease)) return@launch
                 val body = listOf(
                     full.description, "Status: ${full.status}", "Type: ${full.type}", "Priority: ${full.priority}",
@@ -579,8 +583,9 @@ class Mango9CalendarFragment : GenericMainFragment() {
                             findNavController().navigate(
                                 R.id.action_global_mango9CalendarFragment,
                             Bundle().apply {
+                                org.linphone.mango9.Mango9NavigationSession.bind(this, lease)
                                 putString("presentation", "calendar"); full.eventId?.let {
-                                    org.linphone.mango9.Mango9NavigationSession.bind(this, lease); putInt("mango9_event_id", it)
+                                    putInt("mango9_event_id", it)
                                 }
                             }
                             )

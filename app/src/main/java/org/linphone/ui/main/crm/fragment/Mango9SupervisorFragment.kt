@@ -164,7 +164,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
 
     override fun onStop() { if (!requireActivity().isChangingConfigurations) model.background(); super.onStop() }
 
-    override fun onStart() { super.onStart(); model.foreground() }
+    override fun onStart() { super.onStart(); model.foreground(latest = followingLatest) }
 
     override fun onDestroyView() {
         layoutVersion++; historySearch?.cancel(); historyList = null
@@ -550,9 +550,29 @@ class Mango9SupervisorFragment : GenericMainFragment() {
     }
 
     private fun creation(value: Mango9SupervisorPresentation.Creation): View = ui.column().apply {
+        val owner = model.owner()
         background = ui.round(0xffeaf6ff.toInt(), 16); setPadding(ui.dp(12), ui.dp(8), ui.dp(12), ui.dp(8))
         addView(text("✓ ${value.status}", 15f, true).apply { setTextColor(0xff237c3b.toInt()) })
-        value.links.forEach { (label, url) -> addView(button(label) { openLink(url) }.apply { gravity = Gravity.START }) }
+        value.links.forEach { (label, url) ->
+            addView(
+                button(label) {
+            if (owner != null && model.owner() == owner) {
+                val task = Mango9SupervisorPresentation.nativeTaskId(url, owner.session.crmApiBaseUrl)
+                if (task != null) {
+                    findNavController().navigate(
+                        R.id.action_global_mango9CalendarFragment,
+                        Bundle().apply {
+                        Mango9NavigationSession.bind(this, owner)
+                        putString("presentation", "activities"); putInt("mango9_task_id", task)
+                    }
+                    )
+                } else {
+                    openLink(url)
+                }
+            }
+        }.apply { gravity = Gravity.START }
+            )
+        }
         if (value.recipients.isNotEmpty()) {
             addView(text("Confirmation email", 12f, true))
             value.recipients.forEach { addView(text(it, 12f).apply { setTextIsSelectable(true) }) }
