@@ -137,12 +137,16 @@ struct Mango9SupervisorMessage: Identifiable, Equatable, Codable {
     let actionIDs: [String]
     let createdAt: Date?
     let creationData: Data?
+    let attachments: [Mango9AssistantAttachment]?
+    let workflowData: Data?
     init?(_ raw: [String: Any]) {
         guard let id = raw["id"] as? String, let role = raw["role"] as? String,
               ["user", "assistant"].contains(role) else { return nil }
         self.id = id; self.role = role
         text = (raw["parts"] as? [[String: Any]] ?? []).filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        attachments = Array((raw["parts"] as? [[String: Any]] ?? []).compactMap(Mango9AssistantAttachment.init).prefix(3))
         let metadata = raw["metadata"] as? [String: Any] ?? [:]
+        workflowData = (metadata["workflowDesign"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }
         if role == "assistant", let proofs = metadata["creations"] as? [[String: Any]], proofs.count <= 16 {
             creationData = try? JSONSerialization.data(withJSONObject: proofs, options: [.sortedKeys])
         } else { creationData = nil }
@@ -162,7 +166,7 @@ struct Mango9SupervisorConversation: Identifiable, Codable {
     let hasVoice: Bool
     init?(_ raw: [String: Any]) {
         guard let id = raw["id"] as? String, UUID(uuidString: id) != nil else { return nil }
-        self.id = id; title = raw["title"] as? String ?? "Supervisor conversation"
+        self.id = id.lowercased(); title = raw["title"] as? String ?? "Supervisor conversation"
         let date = ISO8601DateFormatter(); date.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let stamp = raw["updatedAt"] as? String ?? raw["createdAt"] as? String ?? ""
         updatedAt = date.date(from: stamp) ?? ISO8601DateFormatter().date(from: stamp)
@@ -186,11 +190,11 @@ enum Mango9SupervisorHistoryDate {
         formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "h:mm a"
         let time = formatter.string(from: date)
-        if calendar.isDate(date, inSameDayAs: now) { return "Today, " + time }
-        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) { return "Yesterday, " + time }
+        if calendar.isDate(date, inSameDayAs: now) { return time }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) { return "Yesterday" }
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
-        formatter.dateFormat = days > 1 && days < 7 ? "EEEE" : "MM/dd/yyyy"
-        return formatter.string(from: date) + ", " + time
+        formatter.dateFormat = days > 1 && days < 7 ? "EEEE" : (calendar.component(.year, from: date) == calendar.component(.year, from: now) ? "MMMM d" : "MMMM d, yyyy")
+        return formatter.string(from: date)
     }
 }
 
@@ -255,7 +259,7 @@ enum Mango9SupervisorPersistence {
 enum Mango9SupervisorConsent {
     // Change this version whenever the disclosed recipients or purposes change.
     static let version = "2026-10-30.1"
-    static let chatDisclosure = "Mango9 sends your messages, conversation history and relevant account/CRM records to OpenRouter and the configured AI provider: DeepInfra (DeepSeek) or OpenAI. They process this information to answer your requests."
+    static let chatDisclosure = "Mango9 sends your messages, files you attach, conversation history and relevant account/CRM records to OpenRouter and the configured AI provider: DeepInfra (DeepSeek) or OpenAI. They process this information to answer your requests."
     static let voiceDisclosure = "Voice also sends microphone audio, transcripts and conversation context to Google (Gemini) for spoken replies."
     private struct Receipt: Codable { let version: String; let acceptedAt: Date }
     private static func key(_ session: Mango9Session) -> String { "mango9.supervisor.aiConsent." + Mango9SupervisorPersistence.key(session) }
@@ -268,7 +272,7 @@ enum Mango9SupervisorConsent {
     }
     static func revoke(_ session: Mango9Session, defaults: UserDefaults = .standard) { defaults.removeObject(forKey: key(session)) }
     static func required(path: String, body: [String: Any]?) -> Bool {
-        path == "chat" || path == "voice/ticket" || (path.hasPrefix("actions/") && path.hasSuffix("/decision") && body?["decision"] as? String == "approve")
+        path == "chat" || path == "voice/ticket" || (path == "transport" && ["start", "parts", "complete", "attach"].contains(body?["action"] as? String ?? "")) || (path.hasPrefix("actions/") && path.hasSuffix("/decision") && body?["decision"] as? String == "approve")
     }
 }
 
@@ -467,7 +471,7 @@ extension Mango9SupervisorClient {
         return value
     }
     static func validEndpoint(_ path: String) -> Bool {
-        if ["identity", "supervisor", "history", "chat", "actions", "activity", "voice/ticket"].contains(path) { return true }
+        if ["identity", "supervisor", "history", "chat", "actions", "activity", "voice/ticket", "transport", "notifications", "reports"].contains(path) { return true }
         let parts = path.split(separator: "/", omittingEmptySubsequences: false)
         return (parts.count == 2 || (parts.count == 3 && parts[2] == "decision")) &&
             parts.first == "actions" && UUID(uuidString: String(parts[1])) != nil

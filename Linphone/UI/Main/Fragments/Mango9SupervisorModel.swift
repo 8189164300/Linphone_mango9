@@ -1,9 +1,28 @@
 // Copyright (c) 2026 Mango9. SPDX-License-Identifier: GPL-3.0-or-later
 import SwiftUI
+import Combine
 
 @MainActor final class Mango9SupervisorModel: ObservableObject {
     let api: any Mango9SupervisorClient
     let voice = Mango9SupervisorVoice()
+    let transfer: Mango9AssistantTransfer
+    @Published private(set) var replyPhase = "idle"
+    @Published private(set) var unread: [String: Int] = [:]
+    @Published private(set) var bulkBusy = false
+    var readingConversation = true
+    private var foreground = true
+    private var assistantState = Mango9AssistantState()
+    private var stateRestored = false
+    private let stateStore: Mango9AssistantStateStore
+    private let requestedConversation: String?
+    private var draftSave: Task<Void, Never>?
+    private var transferObserver: AnyCancellable?
+    private var readMessageIDs = Set<String>()
+    private var unreadFlight = UUID()
+    var unreadChats: Int { unread.count }
+    var working: Bool { sending || pending != nil || replyPhase != "idle" }
+    var canAttach: Bool { authorized && hasAIConsent && api.hasAIConsent && !loading && !voice.running && !transfer.active && api.active }
+
     @Published var messages: [Mango9SupervisorMessage] = []
     @Published var conversations: [Mango9SupervisorConversation] = []
     @Published var draft = ""
@@ -60,25 +79,30 @@ import SwiftUI
     private var conversationKey: String { "mango9.supervisor.conversation." + account }
 
     init(session: Mango9Session, client: (any Mango9SupervisorClient)? = nil, defaults: UserDefaults = .standard,
-         pendingStore: Mango9SupervisorPendingStore? = nil, localStore: Mango9SupervisorLocalStore? = nil) {
-        api = client ?? Mango9SupervisorAPI(session: session)
+         pendingStore: Mango9SupervisorPendingStore? = nil, localStore: Mango9SupervisorLocalStore? = nil, stateStore: Mango9AssistantStateStore? = nil, conversation: String? = nil) {
+        let connection = client ?? Mango9SupervisorAPI(session: session)
+        api = connection
+        transfer = Mango9AssistantTransfer(api: connection)
         self.defaults = defaults
+        self.stateStore = stateStore ?? .device(Mango9SupervisorPersistence.key(session))
+        requestedConversation = conversation.flatMap { UUID(uuidString: $0) == nil ? nil : $0.lowercased() }
         hasAIConsent = Mango9SupervisorConsent.accepted(session, defaults: defaults)
         account = Mango9SupervisorPersistence.key(session)
         self.pendingStore = pendingStore ?? .keychain(account)
         self.localStore = localStore ?? .device(session)
-        conversationID = defaults.string(forKey: "mango9.supervisor.conversation." + account) ?? UUID().uuidString.lowercased()
+        conversationID = requestedConversation ?? defaults.string(forKey: "mango9.supervisor.conversation." + account) ?? UUID().uuidString.lowercased()
         if UUID(uuidString: conversationID) == nil { conversationID = UUID().uuidString.lowercased() }
+        transferObserver = transfer.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         voice.onHistoryChanged = { [weak self] in
             guard let self else { return }
             self.historyRequested = true
             Task { await self.refreshHistory() }
         }
     }
-    var canSend: Bool { opened && restoredPending && hasAIConsent && api.hasAIConsent && authorized && !loading && !sending && pending == nil && !voice.running && api.active && Mango9SupervisorCommand.valid(draft) }
-    var canStartVoice: Bool { opened && restoredPending && hasAIConsent && api.hasAIConsent && authorized && !loading && !sending && pending == nil && api.active }
-    var canManageHistory: Bool { opened && authorized && api.active && !loading && !sending && pending == nil && !actionBusy && !voice.running && deletingConversation == nil }
-    var canBrowseHistory: Bool { opened && api.active && !loading && !sending && pending == nil && !actionBusy && !voice.running && deletingConversation == nil }
+    var canSend: Bool { opened && restoredPending && hasAIConsent && api.hasAIConsent && authorized && !loading && !sending && pending == nil && !voice.running && api.active && replyPhase == "idle" && !transfer.active && (transfer.draft != nil || Mango9SupervisorCommand.valid(draft)) }
+    var canStartVoice: Bool { opened && restoredPending && hasAIConsent && api.hasAIConsent && authorized && !loading && !sending && pending == nil && !transfer.active && api.active }
+    var canManageHistory: Bool { opened && authorized && api.active && !loading && !sending && pending == nil && !actionBusy && !voice.running && deletingConversation == nil && !bulkBusy && !transfer.active }
+    var canBrowseHistory: Bool { opened && api.active && !loading && !sending && pending == nil && !actionBusy && !voice.running && deletingConversation == nil && !bulkBusy && !transfer.active }
     func acceptAIConsent() {
         guard api.active else { return }
         Mango9SupervisorConsent.allow(api.original, defaults: defaults)
@@ -92,6 +116,7 @@ import SwiftUI
     }
     private func valid(_ stamp: UUID) -> Bool { opened && stamp == operation && api.active && !Task.isCancelled }
     private func invalidateOperations() {
+        transfer.pause(); replyPhase = "idle"; readMessageIDs = []
         operation = UUID(); historyTask?.cancel(); historyTask = nil; historyFlight = nil; listFlight = UUID()
         configurationPrefetch?.cancel(); configurationPrefetch = nil
         configurationDetails = [:]; configurationFlights = []; configurationTokens = [:]; actionDetail = nil
@@ -101,7 +126,7 @@ import SwiftUI
     }
     func start() async {
         guard !starting, !sending else { return }
-        invalidateOperations(); opened = true; starting = true; loading = true; error = nil; authorized = false
+        invalidateOperations(); opened = true; foreground = true; starting = true; loading = true; error = nil; authorized = false
         historyReady = false
         let stamp = operation
         defer { if stamp == operation { loading = false; starting = false } }
@@ -111,6 +136,11 @@ import SwiftUI
                 pending = try pendingStore.read()
                 if let pending { conversationID = pending.conversationID }
                 restoredPending = true
+            }
+            if !stateRestored {
+                assistantState = try stateStore.read(); stateRestored = true
+                if assistantState.deleted.contains(conversationID) { conversationID = UUID().uuidString.lowercased(); pending = nil; try pendingStore.write(nil) }
+                draft = assistantState.drafts[conversationID] ?? draft
             }
             guard valid(stamp) else { clearForAccountChange(); return }
             do { savedChats = try localStore.read(); localStorageNotice = nil }
@@ -122,11 +152,12 @@ import SwiftUI
             // A list outage must not prevent loading the current conversation.
             do { try await loadConversations() } catch { if discardForAccessError(error) { throw error } }
             guard valid(stamp) else { return }
-            if pending == nil, defaults.string(forKey: conversationKey) == nil, let latest = conversations.first {
-                conversationID = latest.id; restoreLocalConversation()
+            if pending == nil, requestedConversation == nil, defaults.string(forKey: conversationKey) == nil, let latest = conversations.first {
+                conversationID = latest.id; draft = assistantState.drafts[conversationID] ?? ""; restoreLocalConversation()
             }
             defaults.set(conversationID, forKey: conversationKey)
-            await refreshHistory()
+            await transfer.configure(conversationID)
+            await refreshHistory(); await refreshUnread()
             guard valid(stamp) else { return }
         } catch {
             guard valid(stamp) else { if !api.active { clearForAccountChange() }; return }
@@ -142,23 +173,25 @@ import SwiftUI
                 guard !Task.isCancelled, let self, self.opened else { return }
                 guard self.api.active else { self.clearForAccountChange(); return }
                 ticks += 1
-                if ticks % 8 == 0 && self.historyTask == nil && (self.pending != nil || self.voice.running || self.historyRequested) {
-                    Task { [weak self] in await self?.refreshHistory() }
+                if self.foreground && ticks % (self.working || self.voice.running || self.historyRequested ? 5 : 15) == 0 && self.historyTask == nil {
+                    Task { [weak self] in await self?.refreshHistory(); await self?.refreshUnread() }
                 }
             }
         }
     }
     func close() {
-        opened = false; invalidateOperations(); poll?.cancel(); poll = nil; voice.stop()
+        saveDraftNow(); opened = false; invalidateOperations(); poll?.cancel(); poll = nil; voice.stop()
         loading = false; starting = false; sending = false; actionBusy = false; showVoice = false; authorized = false
     }
     func background() {
+        foreground = false; saveDraftNow(); transfer.pause()
         voice.stop(); showVoice = false; configurationPrefetch?.cancel()
         configurationTokens = [:]; configurationFlights = []; markConfigurationsSaved()
     }
     func resume(latest: Bool = true) async {
+        foreground = true
         if !authorized { await start() }
-        else { await refreshHistory(latest: latest); prefetchConfigurations() }
+        else { await refreshHistory(latest: latest); await refreshUnread(); prefetchConfigurations() }
     }
     private func clearForAccountChange() {
         close(); hasAIConsent = false; messages = []; conversations = []; actions = []; activity = []; actionDetail = nil; draft = ""; pending = nil
@@ -168,7 +201,7 @@ import SwiftUI
     }
     private func restoreLocalConversation() {
         guard api.active else { return }
-        guard let saved = savedChats.first(where: { $0.id == conversationID }) else {
+        guard !assistantState.deleted.contains(conversationID), let saved = savedChats.first(where: { $0.id == conversationID }) else {
             messages = []; usingSavedHistory = false; return
         }
         messages = saved.messages; usingSavedHistory = !messages.isEmpty
@@ -257,32 +290,68 @@ import SwiftUI
         catch { if valid(stamp), listFlight == flight, !(error is CancellationError) { historyListError = notice(error) }; throw error }
         guard valid(stamp), listFlight == flight else { return }
         let rows = (result["items"] as? [[String: Any]] ?? []).compactMap(Mango9SupervisorConversation.init)
-        conversations = more ? conversations + rows.filter { row in !conversations.contains { $0.id == row.id } } : rows
-        listCursor = result["nextCursor"] as? String; moreConversations = listCursor != nil
+        conversations = Mango9AssistantState.unique((more ? conversations : []) + rows, excluding: Set(assistantState.deleted))
+        let next = result["nextCursor"] as? String
+        listCursor = next?.isEmpty == false && next != listCursor ? next : nil; moreConversations = listCursor != nil
     }
-    func deleteConversation(_ id: String) async {
-        guard canManageHistory, conversations.contains(where: { $0.id == id }), UUID(uuidString: id) != nil else { return }
-        let stamp = operation
-        deletingConversation = id; historyListError = nil; listFlight = UUID(); loadingConversations = false
-        defer { if valid(stamp) { deletingConversation = nil } }
-        do {
-            let result = try await api.request("history", body: ["action": "delete", "conversationId": id])
-            guard valid(stamp), result["deleted"] as? Bool == true, result["id"] as? String == id else { return }
-            conversations.removeAll { $0.id == id }
-            savedChats.removeAll { $0.id == id }; writeLocalConversations()
-            deletingConversation = nil
-            if id == conversationID { await newConversation() }
-            try await loadConversations(query: historyQuery, channel: historyChannel)
-        } catch { if valid(stamp) { historyListError = "Couldn’t confirm deletion. Refresh History before trying again." } }
+    func deleteConversation(_ id: String) async { _ = await deleteConversations([id]) }
+    /// Four independent deletes per batch; publish one result instead of flickering row counters.
+    func deleteConversations(_ ids: Set<String>) async -> Set<String> {
+        guard canManageHistory, !ids.isEmpty, ids.allSatisfy({ UUID(uuidString: $0) != nil }) else { return [] }
+        let stamp = operation; bulkBusy = true; historyListError = nil
+        listFlight = UUID(); loadingConversations = false
+        var removed = Set<String>()
+        let ordered = Array(ids)
+        for offset in stride(from: 0, to: ordered.count, by: 4) {
+            guard valid(stamp) else { break }
+            let batch = Array(ordered[offset..<min(offset + 4, ordered.count)])
+            let confirmed = await withTaskGroup(of: String?.self, returning: [String].self) { group in
+                for id in batch { group.addTask { [api] in
+                    do {
+                        let result = try await api.request("history", body: ["action": "delete", "conversationId": id])
+                        return result["deleted"] as? Bool == true && (result["id"] as? String)?.lowercased() == id ? id : nil
+                    } catch let e as Mango9SupervisorFailure where e.status == 404 && e.code == "conversation_deleted" { return id }
+                    catch { return nil }
+                } }
+                var result: [String] = []; for await id in group { if let id { result.append(id) } }; return result
+            }
+            removed.formUnion(confirmed)
+        }
+        guard valid(stamp) else { bulkBusy = false; return [] }
+        for id in removed { rememberDeleted(id) }
+        bulkBusy = false
+        if removed.contains(conversationID) { await recoverDeleted(conversationID) }
+        if removed.count != ids.count { historyListError = "Some conversations could not be deleted. They remain selected; try again." }
+        return removed
+    }
+    private func rememberDeleted(_ id: String) {
+        assistantState.deleted.removeAll { $0 == id }; assistantState.deleted.append(id)
+        assistantState.deleted = Array(assistantState.deleted.suffix(256))
+        assistantState.drafts[id] = nil; unread[id] = nil
+        conversations.removeAll { $0.id == id }; savedChats.removeAll { $0.id == id }
+        do { try stateStore.write(assistantState) } catch { localStorageNotice = "Couldn’t save the updated chat list on this iPhone." }
+        writeLocalConversations()
+    }
+    private func recoverDeleted(_ id: String) async {
+        guard opened, api.active, conversationID == id else { return }
+        let unsent = draft
+        rememberDeleted(id)
+        do { try pendingStore.write(nil) } catch { self.error = "Couldn’t finish clearing the saved request. Reopen Assistant."; return }
+        pending = nil; sending = false; draft = ""
+        invalidateOperations(); conversationID = UUID().uuidString.lowercased(); defaults.set(conversationID, forKey: conversationKey)
+        messages = []; usingSavedHistory = false; historyCursor = "0"; historyReady = false; olderCursor = nil; moreMessages = false; error = nil
+        draft = unsent; saveDraftNow()
+        await transfer.configure(conversationID)
     }
     func select(_ id: String) async {
         guard opened, api.active, !loading, !sending, !actionBusy, deletingConversation == nil, pending == nil, UUID(uuidString: id) != nil else { return }
-        voice.stop(); showVoice = false; invalidateOperations(); conversationID = id; actionDetail = nil; actionBusy = false
+        guard !assistantState.deleted.contains(id.lowercased()), !transfer.active else { return }
+        saveDraftNow(); voice.stop(); showVoice = false; invalidateOperations(); conversationID = id.lowercased(); draft = assistantState.drafts[conversationID] ?? ""; actionDetail = nil; actionBusy = false
         messages = []; historyCursor = "0"; historyReady = false; olderCursor = nil; moreMessages = false; preferLatestHistory = false; error = nil
         restoreLocalConversation()
         defaults.set(id, forKey: conversationKey)
         let stamp = operation
-        loading = true; await refreshHistory(); if stamp == operation { loading = false }
+        loading = true; await transfer.configure(conversationID); await refreshHistory(); if stamp == operation { loading = false }
     }
     func newConversation() async { await select(UUID().uuidString.lowercased()) }
     /// Explicit user choice only. This does not cancel or repeat the old request.
@@ -304,7 +373,7 @@ import SwiftUI
         }
         historyTask = task; historyFlight = flight
         await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
-        if historyFlight == flight { historyTask = nil; historyFlight = nil }
+        if historyFlight == flight { historyTask = nil; historyFlight = nil; await refreshReplyPhase(id: id, stamp: stamp) }
     }
     private func readHistory(id: String, stamp: UUID) async {
         defer { if stamp == operation { loadingLatestHistory = false } }
@@ -335,12 +404,15 @@ import SwiftUI
             if let command = pending, result["confirmedRequestId"] as? String == command.requestID || messages.contains(where: { $0.role == "assistant" && ($0.id == command.requestID || $0.requestID == command.requestID) }) {
                 try pendingStore.write(nil); pending = nil; error = nil
             }
+            replyPhase = result["pending"] as? Bool == true ? "thinking" : "idle"
             if result["pending"] as? Bool == true || result["nextCursor"] as? String != nil { historyRequested = true }
             let ids = Set(messages.flatMap(\.actionIDs))
             configurationDetails = configurationDetails.filter { ids.contains($0.key) }
             savedConfigurations = savedConfigurations.filter { ids.contains($0.key) }
             savedConfigurationIDs.formIntersection(ids)
-            persistLocalConversation(); prefetchConfigurations()
+            persistLocalConversation(); prefetchConfigurations(); await markVisibleRead()
+        } catch let failure as Mango9SupervisorFailure where failure.status == 404 && failure.code == "conversation_deleted" {
+            if valid(stamp), id == conversationID { await recoverDeleted(id) }
         } catch let failure as Mango9SupervisorFailure where failure.status == 404 && failure.code == "conversation_not_found" {
             // A new conversation is created only by its first text/voice turn.
             if valid(stamp), id == conversationID, pending != nil { error = Mango9SupervisorFailure(status: 0, code: "history_pending").localizedDescription }
@@ -366,10 +438,11 @@ import SwiftUI
     }
     func send() async {
         guard canSend else { return }
+        if transfer.draft != nil { await sendAttachment(); return }
         let command = Mango9SupervisorCommand(conversationID: conversationID, text: draft.trimmingCharacters(in: .whitespacesAndNewlines))
         do { try pendingStore.write(command) }
         catch { self.error = "Couldn’t securely save this request. Your message has not been sent."; return }
-        pending = command; draft = ""; sending = true; error = nil
+        pending = command; draft = ""; saveDraftNow(); sending = true; error = nil
         let stamp = operation
         defer { if stamp == operation { sending = false } }
         do {
@@ -390,6 +463,89 @@ import SwiftUI
             // No automatic POST replay. Saved history is the source of truth after a lost response.
             await refreshHistory()
         }
+    }
+    func draftChanged() {
+        draftSave?.cancel()
+        draftSave = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }; self?.saveDraftNow()
+        }
+    }
+    private func saveDraftNow() {
+        draftSave?.cancel()
+        guard stateRestored, api.active, !assistantState.deleted.contains(conversationID) else { return }
+        if assistantState.drafts.count >= 10, assistantState.drafts[conversationID] == nil, let key = assistantState.drafts.keys.sorted().first { assistantState.drafts[key] = nil }
+        assistantState.drafts[conversationID] = draft.isEmpty ? nil : String(draft.prefix(8000))
+        do { try stateStore.write(assistantState) } catch { localStorageNotice = "Couldn’t save your draft on this iPhone." }
+    }
+    private func sendAttachment() async {
+        let stamp = operation, text = draft
+        sending = true
+        defer { if stamp == operation { sending = false } }
+        guard let receipt = await transfer.send(caption: text), valid(stamp) else { return }
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines) == receipt.caption { draft = ""; saveDraftNow() }
+        replyPhase = "waiting"; historyRequested = true
+        await refreshHistory(); try? await loadConversations()
+    }
+    private func refreshReplyPhase(id: String, stamp: UUID) async {
+        guard foreground, valid(stamp), id == conversationID else { return }
+        do {
+            let value = try await api.request("transport", body: ["action": "replyStatus", "conversationId": id])
+            guard valid(stamp), id == conversationID, value["version"] as? Int == 1,
+                  value["conversationId"] as? String == id, let phase = value["phase"] as? String, ["idle", "waiting", "thinking"].contains(phase) else { return }
+            replyPhase = phase
+        } catch { /* A status outage must never replace readable history with a red banner. */ }
+    }
+    func refreshUnread() async {
+        guard foreground, opened, authorized, api.active else { return }
+        let stamp = operation, flight = UUID(); unreadFlight = flight
+        do {
+            let raw = try await api.request("notifications", body: ["action": "status"])
+            guard valid(stamp), unreadFlight == flight, let status = Mango9AssistantUnread(raw) else { return }
+            unread = status.counts.filter { !assistantState.deleted.contains($0.key) }
+            Mango9InboxUnread.shared.assistant(unread, session: api.original)
+        } catch { /* Keep the last verified count during a temporary outage. */ }
+    }
+    private func markVisibleRead() async {
+        guard readingConversation, foreground, opened, api.active else { return }
+        let ids = Array(messages.filter { $0.role == "assistant" && UUID(uuidString: $0.id) != nil && !readMessageIDs.contains($0.id) }.suffix(120).map(\.id))
+        guard !ids.isEmpty else { return }
+        let id = conversationID, stamp = operation
+        unreadFlight = UUID()
+        do {
+            _ = try await api.request("notifications", body: ["action": "read", "conversationId": id, "messageIds": ids])
+            guard valid(stamp), id == conversationID else { return }
+            readMessageIDs.formUnion(ids); await refreshUnread()
+        } catch { }
+    }
+    func markConversationsRead(_ ids: Set<String>) async {
+        guard canManageHistory, !ids.isEmpty else { return }
+        unreadFlight = UUID()
+        let stamp = operation
+        do {
+            guard let status = Mango9AssistantUnread(try await api.request("notifications", body: ["action": "status"])), valid(stamp) else { return }
+            let rows = Array(ids)
+            for offset in stride(from: 0, to: rows.count, by: 200) {
+                _ = try await api.request("notifications", body: ["action": "read_conversations", "conversationIds": Array(rows[offset..<min(rows.count, offset+200)]), "through": status.through])
+                guard valid(stamp) else { return }
+            }
+            await refreshUnread()
+        } catch { if valid(stamp) { historyListError = "Couldn’t mark these conversations read. Try again." } }
+    }
+    func allHistoryIDs() async -> Set<String> {
+        guard canManageHistory else { return [] }
+        var cursors = Set<String>()
+        while moreConversations, let cursor = listCursor, cursors.insert(cursor).inserted {
+            do { try await loadConversations(more: true) } catch { return [] }
+        }
+        return Set(conversations.map(\.id))
+    }
+    func report(_ message: Mango9SupervisorMessage, reason: String, details: String, reportID: String) async throws {
+        guard opened, api.active, message.role == "assistant", UUID(uuidString: message.id) != nil,
+              ["unsafe", "inappropriate", "incorrect", "privacy", "other"].contains(reason), details.utf8.count <= 2000 else { throw Mango9AssistantMediaContract.invalid() }
+        let id = conversationID, stamp = operation
+        let response = try await api.request("reports", body: ["conversationId": id, "messageId": message.id, "reason": reason, "details": details, "text": String(message.text.prefix(4000)), "reportId": reportID])
+        guard valid(stamp), id == conversationID, response["accepted"] as? Bool == true, response["reportId"] as? String == reportID else { throw Mango9AssistantMediaContract.invalid() }
     }
     func startVoice() async {
         guard canStartVoice else { return }

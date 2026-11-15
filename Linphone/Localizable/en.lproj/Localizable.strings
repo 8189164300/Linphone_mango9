@@ -104,7 +104,7 @@
 "authentication_id" = "Authentication ID (if different)";
 "bottom_navigation_calls_label" = "Calls";
 "bottom_navigation_contacts_label" = "Contacts";
-"bottom_navigation_conversations_label" = "Conversations";
+"bottom_navigation_conversations_label" = "Chat";
 "bottom_navigation_meetings_label" = "Meetings";
 "call_action_attended_transfer" = "Attended transfer";
 "call_action_blind_transfer" = "Transfer";
@@ -577,7 +577,7 @@
 "settings_conversations_auto_download_title" = "Auto-download files";
 "settings_conversations_hide_message_content_in_notif_title" = "Do not show message content in iOS notification⁣";
 "settings_conversations_mark_as_read_when_dismissing_notif_title" = "Mark conversation as read when dismissing message notification";
-"settings_conversations_title" = "Conversations";
+"settings_conversations_title" = "Chat";
 "settings_developer_title" = "Developer settings";
 "settings_developer_show_title" = "Show developer settings";
 "settings_developer_two_more_clicks_required_toast" = "Click 2 more times to enable developer settings";

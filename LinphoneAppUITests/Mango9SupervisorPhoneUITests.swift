@@ -2,11 +2,75 @@ import XCTest
 
 /// Reads the signed-in owner's Supervisor. Does not send messages or record audio.
 final class Mango9SupervisorPhoneUITests: XCTestCase {
+    func testChatChannelIndicatorsAndCRMSwitchRemainVisible() throws {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication(); app.launch()
+        let chat = app.buttons["Chat"].firstMatch
+        XCTAssertTrue(chat.waitForExistence(timeout: 30)); chat.tap()
+        let ai = app.buttons["supervisor.open"]
+        XCTAssertTrue(ai.waitForExistence(timeout: 10))
+        XCTAssertEqual(ai.label, "Open Assistant")
+        XCTAssertTrue((ai.value as? String)?.contains("unread chats") == true)
+        for id in ["sms", "team", "social", "live"] {
+            let tab = app.buttons["conversations.tab." + id]
+            XCTAssertTrue(tab.exists); tab.tap()
+            XCTAssertTrue(ai.isHittable)
+        }
+        let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); capture.name = "Chat indicators"; capture.lifetime = .keepAlways; add(capture)
+        for _ in 0..<3 {
+            app.buttons["bottom_bar_crm_button"].tap()
+            XCTAssertTrue(app.buttons["crm.footer.chat"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["Connect Mango9 account"].exists)
+            app.buttons["crm.footer.chat"].tap()
+            XCTAssertTrue(ai.waitForExistence(timeout: 5)); XCTAssertTrue(ai.isHittable)
+        }
+    }
+
+    func testCRMUsesNativeHeaderFooterAcrossWorkspacePages() throws {
+        continueAfterFailure = false
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication(); app.launch()
+        let entry = app.buttons["bottom_bar_crm_button"].firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 30)); entry.tap()
+        let crm = app.buttons["crm.footer.crm"]
+        XCTAssertTrue(crm.waitForExistence(timeout: 15)); XCTAssertTrue(crm.isHittable)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Conversations'")).firstMatch.exists)
+        for page in ["leads", "clients", "calendar", "tasks"] {
+            let link = app.buttons["crm." + page]
+            XCTAssertTrue(link.waitForExistence(timeout: 20)); link.tap()
+            XCTAssertTrue(crm.isHittable, "CRM footer must remain available in " + page)
+            XCTAssertTrue(app.buttons["crm.footer.chat"].isHittable)
+            let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); capture.name = "CRM " + page; capture.lifetime = .keepAlways; add(capture)
+            if page == "clients" {
+                XCUIDevice.shared.orientation = .landscapeLeft
+                let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in crm.isHittable && app.buttons["crm.footer.chat"].isHittable }, object: nil)
+                let result = XCTWaiter.wait(for: [ready], timeout: 8)
+                let diagnostic = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); diagnostic.name = "CRM rotated settled"; diagnostic.lifetime = .keepAlways; add(diagnostic)
+                XCTAssertEqual(result, .completed)
+                let landscape = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); landscape.name = "CRM landscape"; landscape.lifetime = .keepAlways; add(landscape)
+                XCUIDevice.shared.orientation = .portrait
+            }
+            if page == "leads" || page == "clients" {
+                let record = app.buttons["crm.record." + (page == "leads" ? "lead" : "client")].firstMatch
+                if record.waitForExistence(timeout: 15) {
+                    record.tap()
+                    XCTAssertTrue(crm.isHittable); XCTAssertTrue(app.buttons["crm.footer.chat"].isHittable)
+                    let detail = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); detail.name = "CRM detail " + page; detail.lifetime = .keepAlways; add(detail)
+                }
+            }
+            crm.tap()
+        }
+        app.buttons["crm.footer.chat"].tap()
+        XCTAssertTrue(app.buttons["supervisor.open"].waitForExistence(timeout: 15))
+    }
+
     func testLatestArrowClearsAfterManualScrollAndBottomBounce() throws {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(); app.launch()
-        let conversations = app.buttons["Conversations"].firstMatch
+        let conversations = app.buttons["Chat"].firstMatch
         XCTAssertTrue(conversations.waitForExistence(timeout: 30)); conversations.tap()
         let launcher = app.buttons["supervisor.open"]
         XCTAssertTrue(launcher.waitForExistence(timeout: 10)); launcher.tap()
@@ -33,7 +97,7 @@ final class Mango9SupervisorPhoneUITests: XCTestCase {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(); app.launch()
-        let conversations = app.buttons["Conversations"].firstMatch
+        let conversations = app.buttons["Chat"].firstMatch
         XCTAssertTrue(conversations.waitForExistence(timeout: 30)); conversations.tap()
         let launcher = app.buttons["supervisor.open"]
         XCTAssertTrue(launcher.waitForExistence(timeout: 10)); launcher.tap()
@@ -78,7 +142,7 @@ final class Mango9SupervisorPhoneUITests: XCTestCase {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(); app.launch()
-        let conversations = app.buttons["Conversations"].firstMatch
+        let conversations = app.buttons["Chat"].firstMatch
         XCTAssertTrue(conversations.waitForExistence(timeout: 30)); conversations.tap()
         let launcher = app.buttons["supervisor.open"]
         XCTAssertTrue(launcher.waitForExistence(timeout: 10))
@@ -153,7 +217,7 @@ final class Mango9SupervisorPhoneUITests: XCTestCase {
         defer { XCUIDevice.shared.orientation = .portrait }
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(); app.launch()
-        let conversations = app.buttons["Conversations"].firstMatch
+        let conversations = app.buttons["Chat"].firstMatch
         XCTAssertTrue(conversations.waitForExistence(timeout: 30)); conversations.tap()
         let launcher = app.buttons["supervisor.open"]
         XCTAssertTrue(launcher.waitForExistence(timeout: 10)); launcher.tap()
@@ -175,7 +239,7 @@ final class Mango9SupervisorPhoneUITests: XCTestCase {
             // The row action only opens confirmation. Never confirm a deletion
             // on customer history; cancellation must retain the selected row.
             app.buttons["Delete"].firstMatch.tap()
-            let confirmation = app.alerts["Delete conversation?"]
+            let confirmation = app.alerts["Delete chat?"]
             XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
             XCTAssertTrue(confirmation.buttons["Cancel"].isHittable)
             XCTAssertTrue(confirmation.buttons["Delete"].isHittable)
@@ -200,7 +264,7 @@ final class Mango9SupervisorPhoneUITests: XCTestCase {
         let cancelSearch = historyNavigation.buttons["Cancel"]
         if closeSearch.exists { closeSearch.tap() }
         else if cancelSearch.exists { cancelSearch.tap() }
-        let done = historyNavigation.buttons["Done"]
+        let done = app.buttons["Back to chat"]
         XCTAssertTrue(done.waitForExistence(timeout: 5)); done.tap()
         XCTAssertTrue(options.waitForExistence(timeout: 5))
     }
@@ -209,7 +273,7 @@ final class Mango9SupervisorPhoneUITests: XCTestCase {
         defer { XCUIDevice.shared.orientation = .portrait }
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(); app.launch()
-        let conversations = app.buttons["Conversations"].firstMatch
+        let conversations = app.buttons["Chat"].firstMatch
         XCTAssertTrue(conversations.waitForExistence(timeout: 30)); conversations.tap()
         let launcher = app.buttons["supervisor.open"]
         XCTAssertTrue(launcher.waitForExistence(timeout: 10)); launcher.tap()
@@ -249,7 +313,7 @@ final class Mango9SupervisorPhoneUITests: XCTestCase {
         continueAfterFailure = false
         defer { XCUIDevice.shared.orientation = .portrait }
         let app = XCUIApplication(); XCUIDevice.shared.orientation = .portrait; app.launch()
-        let conversations = app.buttons["Conversations"].firstMatch
+        let conversations = app.buttons["Chat"].firstMatch
         XCTAssertTrue(conversations.waitForExistence(timeout: 30)); conversations.tap()
         let launcher = app.buttons["supervisor.open"]; XCTAssertTrue(launcher.waitForExistence(timeout: 10)); launcher.tap()
         try requireUserAIConsent(app)
@@ -277,7 +341,7 @@ final class Mango9SupervisorPhoneUITests: XCTestCase {
         defer { XCUIDevice.shared.orientation = .portrait }
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(); app.launch()
-        let conversations = app.buttons["Conversations"].firstMatch
+        let conversations = app.buttons["Chat"].firstMatch
         XCTAssertTrue(conversations.waitForExistence(timeout: 30)); conversations.tap()
         let launcher = app.buttons["supervisor.open"]
         XCTAssertTrue(launcher.waitForExistence(timeout: 10)); XCTAssertTrue(launcher.isHittable); launcher.tap()
@@ -306,5 +370,31 @@ final class Mango9SupervisorPhoneUITests: XCTestCase {
         }
         app.buttons["supervisor.close"].tap()
         XCTAssertTrue(launcher.waitForExistence(timeout: 10))
+    }
+    func testAssistantAttachmentMenuAndRecorderWaitForExplicitTap() throws {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication(); app.launch()
+        let chats = app.buttons["Chat"].firstMatch
+        XCTAssertTrue(chats.waitForExistence(timeout: 30)); chats.tap()
+        let launcher = app.buttons["supervisor.open"]; XCTAssertTrue(launcher.waitForExistence(timeout: 10)); launcher.tap()
+        try requireUserAIConsent(app)
+        let add = app.buttons["Add to message"]
+        XCTAssertTrue(add.waitForExistence(timeout: 30))
+        let ready = NSPredicate(format: "enabled == true")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: add)], timeout: 30), .completed)
+        add.tap()
+        XCTAssertTrue(app.buttons["Record video"].waitForExistence(timeout: 5))
+        let record = app.buttons["supervisor.attachment.voice"]; XCTAssertTrue(record.exists)
+        XCTAssertEqual(record.label, "Voice")
+        let menuCapture = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); menuCapture.name = "Assistant add menu"; menuCapture.lifetime = .keepAlways; self.add(menuCapture)
+        record.tap()
+        XCTAssertTrue(app.staticTexts["Tap Record to start"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Start recording"].exists)
+        XCTAssertFalse(app.buttons["Stop recording"].exists)
+        let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); capture.name = "Assistant recorder ready, microphone untouched"; capture.lifetime = .keepAlways; self.add(capture)
+        app.buttons["Discard recording"].tap()
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        app.buttons["supervisor.close"].tap()
     }
 }

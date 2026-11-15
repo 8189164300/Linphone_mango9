@@ -92,15 +92,17 @@ private extension View {
 }
 
 struct Mango9SupervisorLauncher: View {
+    @ObservedObject private var unread = Mango9InboxUnread.shared
     @State private var presentation: Mango9SupervisorPresentation?
     var body: some View {
         Group {
             if Mango9SessionStore.load() != nil {
                 Button {
                     if let session = Mango9SessionStore.load() { presentation = Mango9SupervisorPresentation(session: session) }
-                } label: { Mango9SupervisorMark(working: false) }
+                } label: { Mango9SupervisorMark(working: false).overlay(alignment: .topTrailing) { if unread.count("assistant") > 0 { Mango9CRMNewBadge(count: unread.count("assistant"), color: .redDanger500, itemLabel: "unread Assistant chats").overlay { Capsule().stroke(Color.white, lineWidth: 1.5) }.offset(x: 5, y: -4) } } }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Open Supervisor")
+                .accessibilityLabel("Open Assistant")
+                .accessibilityValue("\(unread.count("assistant")) unread chats")
                 .accessibilityIdentifier("supervisor.open")
                 .fullScreenCover(item: $presentation) { item in
                     Mango9SupervisorView(session: item.session)
@@ -130,6 +132,13 @@ struct Mango9SupervisorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @State private var picker: Mango9AssistantPicker.Kind?
+    @State private var pickedFile: (URL, String)?
+    @State private var recording = false
+    @State private var selectedHistory = Set<String>()
+    @State private var selectingHistory = false
+    @State private var confirmingBulkDelete = false
+    @State private var reportMessage: Mango9SupervisorMessage?
     @StateObject private var model: Mango9SupervisorModel
     @FocusState private var focused: Bool
     @State private var showingHistory = false
@@ -149,13 +158,13 @@ struct Mango9SupervisorView: View {
     @Environment(\.sizeCategory) private var historyTextSize
     private var compact: Bool { verticalSizeClass == .compact }
     private var visibleMessages: [Mango9SupervisorMessage] { messageWindow.visible(in: model.messages) }
-    private var latestScrollTarget: String { Mango9SupervisorScrollTarget.id(messages: model.messages, pending: model.pending, sending: model.sending) }
+    private var latestScrollTarget: String { Mango9SupervisorScrollTarget.id(messages: model.messages, pending: model.pending, sending: model.working) }
     private var latestMessageBottom: CGFloat? {
         guard let latestLayout, latestLayout.id == latestScrollTarget,
               latestLayout.frame.width > 0, latestLayout.frame.height > 0 else { return nil }
         return latestLayout.frame.maxY
     }
-    init(session: Mango9Session) { _model = StateObject(wrappedValue: Mango9SupervisorModel(session: session)) }
+    init(session: Mango9Session, conversation: String? = nil) { _model = StateObject(wrappedValue: Mango9SupervisorModel(session: session, conversation: conversation)) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -178,6 +187,26 @@ struct Mango9SupervisorView: View {
             if phase == .background { focused = false; draggingHistory = false; scrollTask?.cancel(); model.background() }
             else if phase == .active { draggingHistory = false; Task { await model.resume(latest: followingLatest) } }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .mango9AssistantReply)) { notification in
+            guard let target = notification.object as? Mango9AssistantPushTarget, target.matches(model.api.original) else { return }
+            Task { if target.id == model.conversationID { await model.resume(latest: false) }; await model.refreshUnread() }
+        }
+        .onChange(of: model.draft) { _ in model.draftChanged() }
+        .onChange(of: showingHistory) { model.readingConversation = !$0 }
+        .fullScreenCover(item: $picker, onDismiss: importPickedFile) { kind in
+            Mango9AssistantPicker(kind: kind) { result in
+                if let result {
+                    switch result { case .success(let file): pickedFile = file; case .failure(let error): model.transfer.error = error.localizedDescription }
+                }
+                picker = nil
+            }.ignoresSafeArea()
+        }
+        .sheet(isPresented: $recording, onDismiss: importPickedFile) {
+            if #available(iOS 16.0, *) {
+                Mango9AssistantRecordView { pickedFile = ($0, $0.lastPathComponent) }.presentationDetents([.height(420)]).presentationDragIndicator(.visible).preferredColorScheme(.light)
+            } else { Mango9AssistantRecordView { pickedFile = ($0, $0.lastPathComponent) }.preferredColorScheme(.light) }
+        }
+        .sheet(item: $reportMessage) { Mango9AssistantReportView(model: model, message: $0) }
         .sheet(isPresented: $showingHistory) { historySheet.preferredColorScheme(.light) }
         .sheet(item: $createdTask) { task in
             if Mango9SessionStore.isActive(model.api.original) {
@@ -199,8 +228,8 @@ struct Mango9SupervisorView: View {
         HStack(spacing: 8) {
             Button { focused = false; model.close(); dismiss() } label: {
                 Image(systemName: "chevron.left").font(.system(size: 20, weight: .semibold)).frame(width: 44, height: 44)
-            }.accessibilityLabel("Close Supervisor").accessibilityIdentifier("supervisor.close")
-            Text("Supervisor").font(.system(size: compact ? 18 : 20, weight: .semibold)).foregroundColor(.white).lineLimit(1).minimumScaleFactor(0.85)
+            }.accessibilityLabel("Close Assistant").accessibilityIdentifier("supervisor.close")
+            Text("Assistant").font(.system(size: compact ? 18 : 20, weight: .semibold)).foregroundColor(.white).lineLimit(1).minimumScaleFactor(0.85)
             Spacer(minLength: 0)
             if model.authorized {
                 Button {
@@ -219,8 +248,8 @@ struct Mango9SupervisorView: View {
                 Button { focused = false; showingHistory = true } label: { Label("History", systemImage: "clock") }
                 Button { focused = false; Task { await model.newConversation() } } label: { Label("New chat", systemImage: "square.and.pencil") }
                     .disabled(model.sending || model.pending != nil)
-                Button { focused = false; model.close(); dismiss() } label: { Label("Close Supervisor", systemImage: "xmark") }
-            } label: { Mango9SupervisorMark(working: model.loading || model.sending) }
+                Button { focused = false; model.close(); dismiss() } label: { Label("Close Assistant", systemImage: "xmark") }
+            } label: { Mango9SupervisorMark(working: model.loading || model.working) }
                 .accessibilityLabel("Supervisor options").accessibilityIdentifier("supervisor.options")
         }
         .foregroundColor(.white).padding(.horizontal, 8).frame(height: compact ? 46 : 56)
@@ -237,7 +266,7 @@ struct Mango9SupervisorView: View {
                     Button("Refresh") { Task { await model.resume() } }.font(.caption).disabled(model.loading)
                 }.foregroundColor(.grayMain2c500).padding(.horizontal, 16).padding(.vertical, 6)
             }
-            if model.loading && model.messages.isEmpty { Spacer(); ProgressView("Loading Supervisor…").tint(.mango9Primary); Spacer() }
+            if model.loading && model.messages.isEmpty { Spacer(); ProgressView("Loading Assistant…").tint(.mango9Primary); Spacer() }
             else if !model.authorized && model.messages.isEmpty {
                 Spacer()
                 Text("Connect with your Mango9 account to use Supervisor.").font(.subheadline).foregroundColor(.grayMain2c500).multilineTextAlignment(.center).padding()
@@ -276,7 +305,7 @@ struct Mango9SupervisorView: View {
                                 HStack { Spacer(minLength: 36); Text(command.text).font(Mango9SupervisorTypography.message).padding(12).background(Color.mango9Surface).clipShape(RoundedRectangle(cornerRadius: 18)) }
                                     .supervisorScrollTarget(command.messageID, latest: latestScrollTarget)
                             }
-                            if model.sending { ProgressView("Thinking…").tint(.mango9Primary).supervisorScrollTarget(Mango9SupervisorScrollTarget.thinking, latest: latestScrollTarget) }
+                            if model.working && !model.transfer.active { Mango9AssistantWorking(phase: model.replyPhase).supervisorScrollTarget(Mango9SupervisorScrollTarget.thinking, latest: latestScrollTarget) }
                             Color.clear.frame(height: 1).supervisorScrollTarget(Mango9SupervisorScrollTarget.empty, latest: latestScrollTarget)
                                 .background(GeometryReader { geometry in Color.clear.preference(key: SupervisorBottomPosition.self, value: geometry.frame(in: .named("supervisor.viewport")).maxY) })
                         }.padding(.horizontal, compact ? 20 : 14).padding(.vertical, 14)
@@ -316,7 +345,7 @@ struct Mango9SupervisorView: View {
                     }
                     .onChange(of: model.messages.last?.id) { _ in messageWindow.preserve(in: model.messages); requestLatestScroll(proxy, height: viewport.size.height) }
                     .onChange(of: model.pending?.messageID) { _ in requestLatestScroll(proxy, height: viewport.size.height) }
-                    .onChange(of: model.sending) { value in if value { followingLatest = true }; requestLatestScroll(proxy, height: viewport.size.height) }
+                    .onChange(of: model.working) { value in if value { followingLatest = true }; requestLatestScroll(proxy, height: viewport.size.height) }
                     .onChange(of: model.loadingLatestHistory) { value in if !value { requestLatestScroll(proxy, height: viewport.size.height) } }
                     .onChange(of: model.conversationID) { _ in messageWindow = Mango9SupervisorMessageWindow(); draggingHistory = false; waitingForUserScrollToSettle = false; followingLatest = true; requestLatestScroll(proxy, height: viewport.size.height) }
                     .onChange(of: viewport.size.height) { _ in requestLatestScroll(proxy, height: viewport.size.height) }
@@ -330,7 +359,7 @@ struct Mango9SupervisorView: View {
                   }
                 }
             }
-            if model.pending != nil && !model.sending {
+            if model.pending != nil && !model.sending && model.replyPhase == "idle" {
                 VStack(spacing: 6) {
                     Text("Request status is unconfirmed. It won’t be sent again automatically.").font(.caption).foregroundColor(.grayMain2c500)
                     HStack {
@@ -365,29 +394,56 @@ struct Mango9SupervisorView: View {
         var transaction = Transaction(animation: nil); transaction.disablesAnimations = true
         withTransaction(transaction) { proxy.scrollTo(latestScrollTarget, anchor: .bottom) }
     }
+    private func importPickedFile() {
+        guard let (url, name) = pickedFile else { return }; pickedFile = nil
+        let conversation = model.conversationID
+        Task {
+            guard model.canAttach, conversation == model.conversationID else { try? FileManager.default.removeItem(at: url); return }
+            await model.transfer.select(url, name: name)
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+    private func capture(_ kind: Mango9AssistantPicker.Kind) {
+        focused = false
+        guard model.canAttach else { return }
+        if kind == .video || kind == .photo {
+            guard UIImagePickerController.isSourceTypeAvailable(.camera) else { model.transfer.error = "A camera is unavailable on this device."; return }
+        }
+        picker = kind
+    }
     private var composer: some View {
         VStack(spacing: 4) {
-            HStack(alignment: .bottom, spacing: 8) {
+            if model.transfer.draft != nil || model.transfer.active { Mango9AssistantDraftView(transfer: model.transfer) }
+            if let error = model.transfer.error {
+                HStack { Text(error).font(.caption).foregroundColor(.redDanger700); Spacer(); Button { model.transfer.error = nil } label: { Image(systemName: "xmark") }.accessibilityLabel("Dismiss file notice") }.padding(.horizontal, 10)
+            }
+            HStack(alignment: .bottom, spacing: 4) {
+                Menu {
+                    Button { capture(.library) } label: { Label("Photos and videos", systemImage: "photo.on.rectangle") }
+                    Button { capture(.photo) } label: { Label("Take photo", systemImage: "camera") }
+                    Button { capture(.video) } label: { Label("Record video", systemImage: "video") }
+                    Button { capture(.file) } label: { Label("Choose file", systemImage: "doc") }
+                    if model.transfer.allowedTypes.contains("audio/wav") {
+                        Button { focused = false; recording = true } label: { Label("Voice", systemImage: "waveform") }
+                            .accessibilityIdentifier("supervisor.attachment.voice")
+                    }
+                } label: { Image(systemName: "plus.circle.fill").font(.system(size: 27)).frame(width: 44, height: 44).foregroundColor(.mango9Primary) }
+                    .disabled(!model.canAttach || !model.transfer.enabled || model.transfer.draft != nil)
+                    .modifier(Mango9AssistantMenuOrder())
+                    .accessibilityLabel("Add to message").accessibilityIdentifier("supervisor.attach")
                 Group {
-                    if #available(iOS 16.0, *) {
-                        TextField("Message Supervisor…", text: $model.draft, axis: .vertical).lineLimit(1...(compact ? 3 : 5))
-                    } else { TextField("Message Supervisor…", text: $model.draft) }
+                    if #available(iOS 16.0, *) { TextField("Message Assistant…", text: $model.draft, axis: .vertical).lineLimit(1...(compact ? 3 : 5)) }
+                    else { TextField("Message Assistant…", text: $model.draft) }
                 }.font(Mango9SupervisorTypography.message).focused($focused)
                     .padding(.horizontal, 14).padding(.vertical, compact ? 9 : 11).frame(minHeight: 44)
                     .background(Color(uiColor: .secondarySystemBackground)).clipShape(RoundedRectangle(cornerRadius: 22))
-                    .disabled(!model.authorized)
-                    .accessibilityIdentifier("supervisor.composer")
-                Button(action: send) {
-                    Image(systemName: "arrow.up").font(.system(size: 18, weight: .semibold)).foregroundColor(.white)
-                        .frame(width: 34, height: 34).background(model.canSend ? Color.mango9Primary : Color.gray300).clipShape(Circle()).frame(width: 44, height: 44)
-                }.disabled(!model.canSend).accessibilityLabel("Send to Supervisor").accessibilityIdentifier("supervisor.send")
+                    .disabled(!model.authorized).accessibilityIdentifier("supervisor.composer")
+                Button { if model.transfer.active { model.transfer.pause() } else { send() } } label: {
+                    Image(systemName: model.transfer.active ? "pause.fill" : "arrow.up").font(.system(size: 18, weight: .semibold)).foregroundColor(.white)
+                        .frame(width: 34, height: 34).background(model.canSend || model.transfer.active ? Color.mango9Primary : Color.gray300).clipShape(Circle()).frame(width: 44, height: 44)
+                }.disabled(!model.canSend && !model.transfer.active).accessibilityLabel(model.transfer.active ? "Pause upload" : "Send to Assistant").accessibilityIdentifier("supervisor.send")
             }
             if model.draft.utf8.count > 8000 { Text("Please shorten your message before sending.").font(.caption).foregroundColor(.redDanger700) }
-            if model.walletBilling || model.loading {
-                Text("Uses your Mango9 AI credit").font(.caption2).foregroundColor(.grayMain2c500)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 14)
-                    .opacity(model.walletBilling ? 1 : 0).accessibilityHidden(!model.walletBilling)
-            }
         }.padding(.horizontal, 10).padding(.vertical, compact ? 3 : 8).background(Color.white.ignoresSafeArea(.container, edges: .bottom))
             .overlay(alignment: .top) { Color.gray200.frame(height: 1) }
     }
@@ -399,8 +455,9 @@ struct Mango9SupervisorView: View {
         return HStack(alignment: .bottom, spacing: 0) {
             if message.role == "user" { Spacer(minLength: compact ? 80 : 36) }
             VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 5) {
+                if !message.text.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    if message.role == "user" { Text(message.text).textSelection(.enabled) }
+                    if message.role == "user" { if !message.text.isEmpty { Text(message.text).textSelection(.enabled) } }
                     else {
                         if !reply.body.isEmpty {
                             Text((try? AttributedString(markdown: reply.body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(reply.body)).textSelection(.enabled)
@@ -420,17 +477,24 @@ struct Mango9SupervisorView: View {
                 }.font(Mango9SupervisorTypography.message).foregroundColor(.grayMain2c800).tint(.mango9Primary)
                     .padding(12).background(message.role == "user" ? Color.mango9Surface : Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 18))
-                    .contextMenu { Button { UIPasteboard.general.string = message.role == "assistant" ? reply.copyText : message.text } label: { Label("Copy", systemImage: "doc.on.doc") } }
+                }
+                ForEach(message.attachments ?? []) { file in Mango9AssistantFileView(file: file, transfer: model.transfer).id(model.conversationID + ":" + file.id) }
+
+                if let design = Mango9AssistantWorkflow(message.workflowData) { Mango9AssistantWorkflowCard(design: design, model: model) }
+                ForEach(message.actionIDs, id: \.self) { id in configuration(id) }
+                ForEach(Array(creations.enumerated()), id: \.offset) { _, creation in
+                    creationStatus(creation).padding(14).background(Color(red: 0.918, green: 0.965, blue: 1)).clipShape(RoundedRectangle(cornerRadius: 16))
+                }
                 if let date = message.createdAt {
                     Text(date, style: .time).font(.caption2).foregroundColor(.grayMain2c500)
                         .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 4)
                         .accessibilityIdentifier(message.id == model.messages.last?.id ? "supervisor.latest.timestamp" : "supervisor.timestamp")
                 }
-                ForEach(message.actionIDs, id: \.self) { id in configuration(id) }
-                ForEach(Array(creations.enumerated()), id: \.offset) { _, creation in
-                    creationStatus(creation).padding(14).background(Color(red: 0.918, green: 0.965, blue: 1)).clipShape(RoundedRectangle(cornerRadius: 16))
-                }
             }
+                    .contextMenu {
+                        Button { UIPasteboard.general.string = message.role == "assistant" ? reply.copyText : message.text } label: { Label("Copy", systemImage: "doc.on.doc") }
+                        if message.role == "assistant" { Button { reportMessage = message } label: { Label("Report reply", systemImage: "flag") } }
+                    }
         }.frame(maxWidth: .infinity, alignment: message.role == "user" ? .trailing : .leading)
     }
     private func notice(_ text: String) -> some View {
@@ -440,7 +504,7 @@ struct Mango9SupervisorView: View {
     private var historySheet: some View {
         NavigationView {
             VStack(spacing: 0) {
-                Picker("Conversation type", selection: $historyFilter) {
+                Picker("Chat type", selection: $historyFilter) {
                     ForEach(Mango9SupervisorHistoryFilter.allCases) { filter in Text(filter.title).tag(filter) }
                 }.pickerStyle(.segmented).padding(.horizontal).padding(.vertical, 8).accessibilityIdentifier("supervisor.history.filter")
                 List {
@@ -456,15 +520,37 @@ struct Mango9SupervisorView: View {
                         Button(historyQuery.isEmpty ? "Load more" : "Search older history") { Task { try? await model.loadConversations(more: true) } }.disabled(model.loadingConversations)
                     }
                     if model.conversations.isEmpty && !model.loadingConversations && model.historyListError == nil {
-                        Text(historyQuery.isEmpty ? "No saved conversations." : model.moreConversations ? "No matching titles in this page." : "No matching conversations.")
+                        Text(historyQuery.isEmpty ? "No saved chats." : model.moreConversations ? "No matching titles in this page." : "No matching chats.")
                             .font(.subheadline).foregroundColor(.grayMain2c500)
                     }
                 }
                 .listStyle(.insetGrouped)
                 .refreshable { try? await model.loadConversations(query: historyQuery, channel: historyFilter.rawValue) }
             }.navigationTitle("History").navigationBarTitleDisplayMode(.inline)
-                .searchable(text: $historyQuery, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search conversation titles")
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingHistory = false } } }
+                .searchable(text: $historyQuery, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search chat titles")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button { showingHistory = false } label: { Image(systemName: "chevron.left") }.accessibilityLabel("Back to chat") }
+                    ToolbarItem(placement: .primaryAction) {
+                        Menu {
+                            Button { selectingHistory.toggle(); selectedHistory = [] } label: { Label(selectingHistory ? "Cancel selection" : "Select chats", systemImage: "checkmark.circle") }
+                            Button { Task { selectedHistory = await model.allHistoryIDs(); selectingHistory = true } } label: { Label("Select all", systemImage: "checkmark.circle.fill") }
+                            Button { Task { try? await model.loadConversations(query: historyQuery, channel: historyFilter.rawValue); await model.refreshUnread() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
+                            Button { showingHistory = false; Task { await model.newConversation() } } label: { Label("New chat", systemImage: "square.and.pencil") }
+                        } label: { Image(systemName: "ellipsis").frame(width: 36, height: 36).background(Color.white).clipShape(Circle()) }.accessibilityLabel("History options").disabled(model.bulkBusy)
+                    }
+                    ToolbarItemGroup(placement: .bottomBar) {
+                        if selectingHistory {
+                            Text("\(selectedHistory.count) selected").font(.caption); Spacer()
+                            if model.bulkBusy { ProgressView() }
+                            Button { Task { await model.markConversationsRead(selectedHistory) } } label: { Image(systemName: "envelope.open") }.accessibilityLabel("Mark selected read").disabled(selectedHistory.isEmpty || model.bulkBusy)
+                            Button(role: .destructive) { confirmingBulkDelete = true } label: { Image(systemName: "trash") }.accessibilityLabel("Delete selected").disabled(selectedHistory.isEmpty || model.bulkBusy)
+                        }
+                    }
+                }
+                .alert("Delete selected chats?", isPresented: $confirmingBulkDelete) {
+                    Button("Cancel", role: .cancel) { }
+                    Button("Delete", role: .destructive) { Task { let removed = await model.deleteConversations(selectedHistory); selectedHistory.subtract(removed); if selectedHistory.isEmpty { selectingHistory = false } } }
+                } message: { Text("Tasks and other changes will be kept.") }
                 .task(id: historyFilter.rawValue + ":" + historyQuery) {
                     do {
                         if !historyQuery.isEmpty { try await Task.sleep(nanoseconds: 300_000_000) }
@@ -475,7 +561,7 @@ struct Mango9SupervisorView: View {
         }.navigationViewStyle(.stack).tint(.mango9Primary)
             // One sheet-level alert avoids a popover attached to a recycled or
             // still-open swipe row. The selected row is captured for this alert.
-            .alert("Delete conversation?", isPresented: Binding(
+            .alert("Delete chat?", isPresented: Binding(
                 get: { deletingHistoryID != nil },
                 set: { if !$0 { deletingHistoryID = nil } }),
                 presenting: model.conversations.first { $0.id == deletingHistoryID }) { row in
@@ -490,12 +576,15 @@ struct Mango9SupervisorView: View {
     }
     private func historyRow(_ row: Mango9SupervisorConversation) -> some View {
         Button {
+            if selectingHistory { if selectedHistory.contains(row.id) { selectedHistory.remove(row.id) } else { selectedHistory.insert(row.id) }; return }
             guard model.canBrowseHistory else { return }
             showingHistory = false; Task { await model.select(row.id) }
         } label: {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    if row.id == model.conversationID { Circle().fill(Color.mango9Primary).frame(width: 7, height: 7).accessibilityLabel("Current conversation") }
+                    if selectingHistory { Image(systemName: selectedHistory.contains(row.id) ? "checkmark.circle.fill" : "circle").foregroundColor(.mango9Primary) }
+                    if model.unread[row.id] != nil { Circle().fill(Color.mango9Primary).frame(width: 8, height: 8).accessibilityLabel("Unread chat") }
+                    if row.id == model.conversationID { Circle().fill(Color.mango9Primary).frame(width: 7, height: 7).accessibilityLabel("Current chat") }
                     Text(row.title).font(.body).foregroundColor(.grayMain2c800).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 historyMetadata(row)
@@ -504,7 +593,7 @@ struct Mango9SupervisorView: View {
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive) { deletingHistoryID = row.id } label: { Label("Delete", systemImage: "trash") }.disabled(!model.canManageHistory)
             }
-            .contextMenu { Button(role: .destructive) { deletingHistoryID = row.id } label: { Label("Delete conversation", systemImage: "trash") }.disabled(!model.canManageHistory) }
+            .contextMenu { Button(role: .destructive) { deletingHistoryID = row.id } label: { Label("Delete chat", systemImage: "trash") }.disabled(!model.canManageHistory) }
     }
     @ViewBuilder private func historyMetadata(_ row: Mango9SupervisorConversation) -> some View {
         if historyTextSize.isAccessibilityCategory {

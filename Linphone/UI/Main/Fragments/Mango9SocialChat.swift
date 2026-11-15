@@ -765,7 +765,7 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 					let result = try await api.request(Mango9SocialThread.self, session: session, social: true,
 						path: ["inbox-read"], body: ["id": id, "requestId": UUID().uuidString.lowercased(), "readThrough": sequence])
 					guard generation == threadGeneration else { return }
-					if result.id == id { thread = result }
+					if result.id == id { thread = result; Mango9InboxUnread.shared.socialReceipt(result, session: session) }
 				} catch {
 					if Self.requiresClearing(error) { throw error }
 				}
@@ -1053,6 +1053,8 @@ struct Mango9SocialInboxRow: View {
 	let thread: Mango9SocialThread
 	let session: Mango9Session
 	let api: Mango9MessagingAPI
+	@ObservedObject private var unreadState = Mango9InboxUnread.shared
+    private var isUnread: Bool { unreadState.socialUnread(thread, session: session) }
 	@ObservedObject private var visibility = Mango9PersonalMessageVisibility.shared
 	@Environment(\.scenePhase) private var phase
 	@State private var preview = "Loading preview…"
@@ -1072,9 +1074,9 @@ struct Mango9SocialInboxRow: View {
 			Mango9SocialPlatformLogo(platform: thread.platform).frame(width: 46, height: 46)
 			VStack(alignment: .leading, spacing: 4) {
 				HStack {
-					Text(thread.title).font(.custom(thread.unread ? "NotoSans-Bold" : "NotoSans-SemiBold", size: 14)).lineLimit(1)
+					Text(thread.title).font(.custom(isUnread ? "NotoSans-Bold" : "NotoSans-SemiBold", size: 14)).lineLimit(1)
 					Spacer(minLength: 4)
-					if thread.unread { Circle().fill(Color.orangeMain500).frame(width: 7, height: 7).accessibilityLabel("Unread") }
+					if isUnread { Circle().fill(Color.orangeMain500).frame(width: 7, height: 7).accessibilityLabel("Unread") }
 				}
 				Text(resolvedKey == previewKey ? preview : "Loading preview…")
 					.font(.custom("NotoSans-Regular", size: 13)).foregroundStyle(.secondary).lineLimit(2)

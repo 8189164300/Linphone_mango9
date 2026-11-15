@@ -134,6 +134,15 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	
 	func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
 		Log.info("Received background push notification")
+        if let target = Mango9AssistantPushTarget(userInfo: userInfo) {
+            DispatchQueue.main.async {
+                if let session = Mango9SessionStore.load(), target.matches(session) {
+                    NotificationCenter.default.post(name: .mango9AssistantReply, object: target)
+                }
+                completionHandler(.noData)
+            }
+            return
+        }
 		if Mango9LeadPushTarget.isLeadNotification(userInfo) {
 			DispatchQueue.main.async {
 				if let target = Mango9LeadPushTarget(userInfo: userInfo),
@@ -234,6 +243,15 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
 		guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { completionHandler(); return }
 		let userInfo = response.notification.request.content.userInfo
+        if Mango9MessagePushRoute.payload(userInfo)["event"] as? String == "supervisor.reply" {
+            guard let target = Mango9AssistantPushTarget(userInfo: userInfo), let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler(); return }
+            let openID = UUID(); chatPushOpenID = openID
+            activateMango9ChatAccount(identity: target.identity) { [weak self] activated in
+                guard let self, activated, self.chatPushOpenID == openID, let session = Mango9SessionStore.load(), target.matches(session) else { return }
+                Task { @MainActor in Mango9AssistantPushInbox.shared.target = target }
+            }
+            completionHandler(); return
+        }
 		if Mango9LeadPushTarget.isLeadNotification(userInfo) {
 			guard let target = Mango9LeadPushTarget(userInfo: userInfo),
 				let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler(); return }
@@ -299,6 +317,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 	func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
 		let userInfo = notification.request.content.userInfo
 		Log.info("Received push notification in foreground")
+        if Mango9MessagePushRoute.payload(userInfo)["event"] as? String == "supervisor.reply" {
+            guard let target = Mango9AssistantPushTarget(userInfo: userInfo), let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler([]); return }
+            DispatchQueue.main.async { if let session = Mango9SessionStore.load(), target.matches(session) { NotificationCenter.default.post(name: .mango9AssistantReply, object: target) } }
+            completionHandler([.banner, .sound, .badge]); return
+        }
 		if Mango9LeadPushTarget.isLeadNotification(userInfo) {
 			guard let target = Mango9LeadPushTarget(userInfo: userInfo),
 				let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler([]); return }

@@ -252,8 +252,9 @@ struct Mango9LiveChatList: View {
 			if more || before == nil { hasMore = data["hasMore"] as? Bool ?? false; before = data["nextBefore"] as? Int }
 			error = nil
 			// Staff inbox read state is independent of the website's visitor read-receipt setting.
-			if let latest = parsed.last, latest.id > readID {
+			if !more, let latest = parsed.last, latest.id > readID {
 				_ = try await Mango9LiveChatAPI.shared.request("read", session: session, body: ["id": conversation.id, "messageId": latest.id]); readID = latest.id
+                Mango9InboxUnread.shared.didRead(conversation.id, channel: "live", session: session)
 			}
 		} catch { fail(error) }
 	}

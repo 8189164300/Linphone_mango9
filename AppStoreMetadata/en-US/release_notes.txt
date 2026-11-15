@@ -1,5 +1,5 @@
-• More reliable Supervisor chat loading, scrolling and readable message text.
-• Search and filter Supervisor history, with clearer dates and swipe-to-delete controls.
-• Review simple settings summaries in chat, with links to created items and saved local settings.
-• Open supported social profiles directly from a conversation.
-• Consistent latest-message controls across Team, Social and Live Chat.
+• Add photos, videos, files and high-quality voice recordings to Assistant chats, with upload progress and native previews.
+• Improved Assistant history, unread indicators and bulk cleanup.
+• Clearer Chat menus and more reliable unread counts across messaging channels.
+• Consistent CRM navigation with new-lead and new-client indicators.
+• Faster Social read-state updates and smoother navigation.

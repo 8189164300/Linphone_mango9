@@ -291,6 +291,7 @@ struct ConversationsListFragment: View {
 }
 
 struct Mango9ConversationTabs: View {
+    @ObservedObject private var unread = Mango9InboxUnread.shared
 	@ObservedObject private var preferences = Mango9ChatTabPreferences.shared
 	@Binding var selectedTab: Mango9ConversationTab
 	let smsUnreadCount: Int
@@ -307,8 +308,8 @@ struct Mango9ConversationTabs: View {
 				tab: .team,
 				unreadCount: teamUnreadCount
 			) }
-			if preferences.social { Spacer(minLength: 4); tabButton(title: "Social", tab: .social, unreadCount: 0) }
-			if preferences.live { Spacer(minLength: 4); tabButton(title: "Live Chat", tab: .live, unreadCount: 0) }
+			if preferences.social { Spacer(minLength: 4); tabButton(title: "Social", tab: .social, unreadCount: unread.count("social")) }
+			if preferences.live { Spacer(minLength: 4); tabButton(title: "Live Chat", tab: .live, unreadCount: unread.count("live")) }
 		}
 		.padding(.horizontal, 12)
 		.frame(height: 48)
@@ -338,8 +339,9 @@ struct Mango9ConversationTabs: View {
 				HStack(spacing: 5) {
 					Image(systemName: icon(tab)).font(.system(size: 12, weight: .medium)).accessibilityHidden(true)
 					Text(title)
-						.font(.custom("NotoSans-SemiBold", size: 13))
+						.font(.custom("NotoSans-SemiBold", size: 12))
 						.lineLimit(1).minimumScaleFactor(0.8)
+                    Circle().fill(unreadCount > 0 ? Color.mango9Primary : Color.clear).frame(width: 5, height: 5).accessibilityHidden(true)
 				}
 				.foregroundStyle(isSelected ? Color.orangeMain500 : Color.grayMain2c500)
 				.frame(maxHeight: .infinity)
@@ -357,13 +359,6 @@ struct Mango9ConversationTabs: View {
 		.buttonStyle(.plain)
 		.hoverEffect(.highlight)
 		.frame(minWidth: 54, minHeight: 48)
-		.overlay(alignment: .topTrailing) {
-			if unreadCount > 0 {
-				Text(unreadCount < 100 ? String(unreadCount) : "99+").font(.system(size: 8, weight: .bold))
-					.foregroundStyle(.white).padding(.horizontal, 4).frame(minHeight: 12)
-					.background(Color.orangeMain500).clipShape(Capsule()).offset(x: 3, y: 1).accessibilityHidden(true)
-			}
-		}
 		.accessibilityLabel(title)
 		.accessibilityValue(unreadCount > 0 ? "\(unreadCount) unread" : "")
 		.accessibilityIdentifier("conversations.tab." + String(describing: tab))

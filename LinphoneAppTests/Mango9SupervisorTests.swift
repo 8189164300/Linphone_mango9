@@ -163,10 +163,10 @@ final class Mango9SupervisorTests: XCTestCase {
         let parse = ISO8601DateFormatter()
         let now = try XCTUnwrap(parse.date(from: "2026-10-31T06:45:00Z"))
         func label(_ value: String) throws -> String { Mango9SupervisorHistoryDate.label(try XCTUnwrap(parse.date(from: value)), now: now, calendar: calendar) }
-        XCTAssertEqual(try label("2026-10-31T06:30:00Z"), "Today, 11:30 PM")
-        XCTAssertEqual(try label("2026-10-30T06:30:00Z"), "Yesterday, 11:30 PM")
-        XCTAssertEqual(try label("2026-10-29T06:30:00Z"), "Wednesday, 11:30 PM")
-        XCTAssertEqual(try label("2026-10-24T06:30:00Z"), "10/23/2026, 11:30 PM")
+        XCTAssertEqual(try label("2026-10-31T06:30:00Z"), "11:30 PM")
+        XCTAssertEqual(try label("2026-10-30T06:30:00Z"), "Yesterday")
+        XCTAssertEqual(try label("2026-10-29T06:30:00Z"), "Wednesday")
+        XCTAssertEqual(try label("2026-10-24T06:30:00Z"), "October 23")
         XCTAssertEqual(Mango9SupervisorHistoryDate.label(nil, now: now, calendar: calendar), "")
     }
     func testHistoryParsesFractionalDatesVoiceAndMessageCounts() throws {
@@ -263,6 +263,30 @@ final class Mango9SupervisorTests: XCTestCase {
         XCTAssertEqual(result.links.first?.url.absoluteString, "https://crm.example.invalid/app/tasks")
     }
 #if os(iOS)
+    @MainActor func testExistingAttachmentTicketsOnPhysicalDeviceWithoutSending() async throws {
+        guard let session = Mango9SessionStore.load(), session.role == "client", Mango9SessionStore.isActive(session) else { throw XCTSkip("No active owner login on this physical device.") }
+        let api = Mango9SupervisorAPI(session: session)
+        _ = try await api.authorize()
+        let history = try await api.request("history", body: ["action": "list"])
+        var checked = 0
+        for row in (history["items"] as? [[String: Any]] ?? []).prefix(3) {
+            guard let id = row["id"] as? String else { continue }
+            let history = try await api.request("history", body: ["action": "read", "conversationId": id, "latest": true])
+            let files = (history["messages"] as? [[String: Any]] ?? []).compactMap(Mango9SupervisorMessage.init).flatMap { $0.attachments ?? [] }
+            let transfer = Mango9AssistantTransfer(api: api)
+            await transfer.configure(id)
+            for file in files.suffix(3) {
+                do {
+                    let resource = try await transfer.resource(file)
+                    XCTAssertEqual(resource.file.id, file.id)
+                    checked += 1
+                } catch let failure as Mango9SupervisorFailure {
+                    XCTFail("Existing attachment ticket request failed: HTTP \(failure.status), code \(failure.code)")
+                }
+            }
+        }
+        if checked == 0 { throw XCTSkip("No available attachments in the recent chats.") }
+    }
     @MainActor func testSelectedPhysicalDeviceOwnerReadinessWithoutSendingOrOpeningMicrophone() async throws {
         guard let session = Mango9SessionStore.load(), session.role == "client", Mango9SessionStore.isActive(session) else { throw XCTSkip("No active owner login on this physical device.") }
         let api = Mango9SupervisorAPI(session: session)
@@ -270,6 +294,22 @@ final class Mango9SupervisorTests: XCTestCase {
         XCTAssertEqual(status["enabled"] as? Bool, true)
         let history = try await api.request("history", body: ["action": "list"])
         XCTAssertNotNil(history["items"] as? [[String: Any]])
+        let capabilities = try await api.request("transport", body: ["action": "capabilities"])
+        XCTAssertEqual(capabilities["enabled"] as? Bool, true)
+        XCTAssertEqual(capabilities["maxBytes"] as? Int, 500_000_000)
+        XCTAssertEqual(capabilities["partSize"] as? Int, 8_388_608)
+        let types = Set(capabilities["types"] as? [String] ?? [])
+        XCTAssertTrue(types.isSuperset(of: ["video/mp4", "audio/wav", "audio/mpeg"]))
+        let notifications = try await api.request("notifications", body: ["action": "status"])
+        XCTAssertNotNil(Mango9AssistantUnread(notifications))
+        let live = try await Mango9LiveChatAPI.shared.request("list", session: session, query: [.init(name: "limit", value: "1")])
+        if let id = (live["conversations"] as? [[String: Any]])?.first?["id"] as? String {
+            let visibility = try await Mango9LiveChatAPI.shared.request("conversation-visibility", session: session, body: ["conversationIds": [id], "hide": false])
+            XCTAssertEqual(visibility["channel"] as? String, "livechat")
+            XCTAssertEqual(visibility["scope"] as? String, "user")
+            XCTAssertEqual(visibility["state"] as? String, "succeeded")
+            XCTAssertEqual(visibility["conversationIds"] as? [String], [id])
+        }
     }
 #endif
     func testAIConsentIsExplicitAccountScopedAndRevocable() throws {
@@ -365,12 +405,17 @@ private final class SupervisorLocalFixture {
     var active = true
     var hasAIConsent = true
     var calls: [String] = []
+    var handlesAssistantFeatures = false
     var handler: ((String, [String: Any]?) async throws -> [String: Any])?
     func requireAIConsent() throws { if !hasAIConsent { throw Mango9SupervisorFailure(status: 0, code: "ai_consent_required") } }
     func cancelAIRequests() {}
     func authorize() async throws -> [String: Any] { try await request("authorize", body: nil) }
     func request(_ path: String, body: [String: Any]?) async throws -> [String: Any] {
         calls.append(path)
+        if !handlesAssistantFeatures {
+            if path == "transport" { return body?["action"] as? String == "replyStatus" ? ["version": 1, "conversationId": body?["conversationId"] ?? "", "phase": "idle"] : ["version": 1, "enabled": false] }
+            if path == "notifications" { return ["enabled": true, "revision": "1", "unread": 0, "conversations": [String: Int](), "readThrough": "1"] }
+        }
         if let handler { return try await handler(path, body) }
         return ["enabled": true, "items": [], "messages": [], "cursor": "0"]
     }
@@ -386,6 +431,18 @@ private final class SupervisorLocalFixture {
 }
 
 final class Mango9SupervisorReliabilityTests: XCTestCase {
+    @MainActor func testCachedFilePreviewWaitsForRestoredConversationScope() async throws {
+        let client = SupervisorClientFixture()
+        let scoped = Mango9AssistantTransfer(api: client)
+        XCTAssertNil(scoped.previewContext)
+        await scoped.configure(UUID().uuidString.lowercased())
+        XCTAssertNotNil(scoped.previewContext)
+        let first = scoped.previewContext
+        await scoped.configure(UUID().uuidString.lowercased())
+        XCTAssertNotEqual(scoped.previewContext, first)
+        XCTAssertFalse(client.calls.contains("download"))
+    }
+
     private static func settings(_ id: String, state: String = "PENDING_APPROVAL") -> [String: Any] {
         ["id": id, "state": state, "approvalDigest": String(repeating: "a", count: 64),
          "arguments": ["private": "not-for-local-storage"], "recap": ["version": 1, "title": "Create task",
@@ -682,7 +739,7 @@ final class Mango9SupervisorReliabilityTests: XCTestCase {
             try await model.loadConversations(query: "new", channel: "voice")
             gate.resume(["items": [["id": UUID().uuidString, "title": "Old result"]]])
             try await old.value
-            XCTAssertEqual(model.conversations.map(\.id), [fresh]); XCTAssertFalse(model.loadingConversations)
+            XCTAssertEqual(model.conversations.map(\.id), [fresh.lowercased()]); XCTAssertFalse(model.loadingConversations)
         }
     }
     @MainActor func testDeletingCurrentHistoryStartsAnEmptyChatWithoutRepeatingCommands() async throws {
@@ -703,12 +760,57 @@ final class Mango9SupervisorReliabilityTests: XCTestCase {
             XCTAssertTrue(model.conversations.isEmpty); XCTAssertTrue(model.messages.isEmpty)
         }
     }
+    @MainActor func testReplyStatusKeepsFileWorkVisibleUntilServerFinishes() async throws {
+        try await withModel { model, client, _ in
+            client.handlesAssistantFeatures = true
+            var phase = "waiting"
+            client.handler = { path, body in
+                if path == "transport" { return ["version": 1, "conversationId": model.conversationID, "phase": phase] }
+                return ["messages": [], "cursor": "1", "items": []]
+            }
+            await model.refreshHistory(); XCTAssertTrue(model.working); XCTAssertEqual(model.replyPhase, "waiting")
+            model.draft = "Next question"; XCTAssertFalse(model.canSend); XCTAssertEqual(model.draft, "Next question")
+            phase = "idle"; await model.refreshHistory(); XCTAssertFalse(model.working); XCTAssertTrue(model.canSend)
+        }
+    }
+    @MainActor func testDeletedChatNeverReappearsFromStaleListAndKeepsUnsentDraft() async throws {
+        try await withModel { model, client, _ in
+            let old = model.conversationID
+            model.conversations = [Mango9SupervisorConversation(["id": old, "title": "Old"] )!]
+            model.draft = "Unsent text"
+            client.handler = { _, body in
+                if body?["action"] as? String == "delete" { return ["deleted": true, "id": old] }
+                return ["items": [["id": old.uppercased(), "title": "Stale"]], "messages": []]
+            }
+            await model.deleteConversation(old); XCTAssertNotEqual(model.conversationID, old)
+            XCTAssertEqual(model.draft, "Unsent text"); XCTAssertNil(model.error)
+            try await model.loadConversations(); XCTAssertTrue(model.conversations.isEmpty)
+            XCTAssertFalse(client.calls.contains("chat"))
+        }
+    }
+    @MainActor func testBulkDeleteIsBoundedAndKeepsFailedRows() async throws {
+        try await withModel { model, client, _ in
+            let ids = (0..<11).map { _ in UUID().uuidString.lowercased() }, failed = UUID().uuidString.lowercased()
+            model.conversations = (ids + [failed]).map { Mango9SupervisorConversation(["id": $0, "title": "Example"])! }
+            var concurrent = 0, peak = 0
+            client.handler = { _, body in
+                guard body?["action"] as? String == "delete", let id = body?["conversationId"] as? String else { return ["items": []] }
+                concurrent += 1; peak = max(peak, concurrent); defer { concurrent -= 1 }
+                try await Task.sleep(nanoseconds: 1_000_000)
+                if id == failed { throw URLError(.timedOut) }
+                return ["deleted": true, "id": id]
+            }
+            let removed = await model.deleteConversations(Set(ids + [failed]))
+            XCTAssertEqual(removed, Set(ids)); XCTAssertLessThanOrEqual(peak, 4); XCTAssertGreaterThan(peak, 1)
+            XCTAssertEqual(model.conversations.map(\.id), [failed]); XCTAssertFalse(model.bulkBusy)
+        }
+    }
     @MainActor private func withModel(start: Bool = true, _ body: (Mango9SupervisorModel, SupervisorClientFixture, SupervisorPendingFixture) async throws -> Void) async throws {
         let name = "supervisor-model-fixture-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         let client = SupervisorClientFixture(), vault = SupervisorPendingFixture()
         Mango9SupervisorConsent.allow(client.original, defaults: defaults)
-        let model = Mango9SupervisorModel(session: client.original, client: client, defaults: defaults, pendingStore: vault.store, localStore: vault.local.store)
+        let model = Mango9SupervisorModel(session: client.original, client: client, defaults: defaults, pendingStore: vault.store, localStore: vault.local.store, stateStore: .init(read: { .init() }, write: { _ in }))
         defer { model.close(); defaults.removePersistentDomain(forName: name) }
         if start { await model.start(); XCTAssertTrue(model.authorized) }
         try await body(model, client, vault)

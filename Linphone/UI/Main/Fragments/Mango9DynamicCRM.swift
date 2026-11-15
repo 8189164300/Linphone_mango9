@@ -1023,16 +1023,13 @@ final class Mango9ChatStore: ObservableObject {
 				guard room.isDirect, let userId = room.userIds.first else {
 					return true
 				}
-				return !Mango9ChatModerationStore.shared.isBlocked(userId)
+				return users.contains { $0.id == userId && !$0.isSystem } && !Mango9ChatModerationStore.shared.isBlocked(userId)
 			}
-			.reduce(0) { total, room in
-			total + max(0, room.unread)
-		}
+			.filter { $0.unread > 0 }.map(\.id).reduce(into: Set<String>()) { $0.insert($1) }.count
 	}
 
 	var smsUnreadCount: Int {
-		smsParties.filter { !Mango9PersonalConversationVisibility.shared.isHidden($0.phone, channel: .sms) }
-			.reduce(0) { $0 + max(0, $1.unread) }
+		Mango9InboxCountPolicy.ids(smsParties.filter { !Mango9PersonalConversationVisibility.shared.isHidden($0.phone, channel: .sms) }.map { ($0.phone, $0.unread) }, sms: true).count
 	}
 
 	var unreadCount: Int {
@@ -1340,7 +1337,7 @@ final class Mango9ChatStore: ObservableObject {
 
 	private func synchronizeApplicationBadge() {
 		UIApplication.shared.applicationIconBadgeNumber =
-			max(0, SharedMainViewModel.shared.unreadMessages) + unreadCount
+			smsUnreadCount + (Mango9ChatTabPreferences.shared.team ? teamUnreadCount : 0) + Mango9InboxUnread.shared.externalTotal
 	}
 
 	private func directRoom(with userId: Int) -> Mango9ChatRoom? {
@@ -5146,6 +5143,7 @@ struct Mango9LeadPushView: View {
 }
 
 struct Mango9LeadsFragment: View {
+	@ObservedObject private var newRecords = Mango9CRMUnread.shared
 	@Environment(\.presentationMode) private var presentationMode
 	@StateObject private var viewModel = Mango9LeadsViewModel()
 	@State private var isShowingCreateLead = false
@@ -5188,7 +5186,7 @@ struct Mango9LeadsFragment: View {
 								) {
 									leadRow(lead)
 								}
-								.buttonStyle(.plain)
+								.buttonStyle(.plain).accessibilityIdentifier("crm.record.lead")
 								.contextMenu {
 									Mango9CommunicationButtons(
 										target: communicationTarget(for: lead)
@@ -5263,8 +5261,7 @@ struct Mango9LeadsFragment: View {
 			}
 
 			VStack(alignment: .leading, spacing: 1) {
-				Text("Leads")
-					.default_text_style_orange_800(styleSize: 18)
+				HStack(spacing: 6) { Text("Leads").default_text_style_orange_800(styleSize: 18); Mango9CRMNewBadge(count: newRecords.count(.lead)) }
 				Text("\(viewModel.total) in your CRM scope")
 					.default_text_style(styleSize: 11)
 					.foregroundStyle(Color.grayMain2c500)
@@ -5474,7 +5471,10 @@ struct Mango9LeadsFragment: View {
 			.frame(width: 46, height: 46)
 
 			VStack(alignment: .leading, spacing: 4) {
-				Text(lead.name.isEmpty ? "Unnamed lead" : lead.name)
+				HStack(spacing: 5) {
+                    if newRecords.isNew(lead.id, kind: .lead) { Circle().fill(Color.mango9Primary).frame(width: 6, height: 6).accessibilityLabel("New lead") }
+                    Text(lead.name.isEmpty ? "Unnamed lead" : lead.name)
+                }
 					.default_text_style_700(styleSize: 14)
 					.lineLimit(1)
 
@@ -5948,6 +5948,7 @@ final class Mango9ClientsViewModel: ObservableObject {
 }
 
 struct Mango9ClientsFragment: View {
+	@ObservedObject private var newRecords = Mango9CRMUnread.shared
 	@Environment(\.presentationMode) private var presentationMode
 	@StateObject private var viewModel = Mango9ClientsViewModel()
 	@State private var isShowingCreateClient = false
@@ -5991,7 +5992,7 @@ struct Mango9ClientsFragment: View {
 								) {
 									clientRow(client)
 								}
-								.buttonStyle(.plain)
+								.buttonStyle(.plain).accessibilityIdentifier("crm.record.client")
 								.contextMenu {
 									Mango9CommunicationButtons(
 										target: communicationTarget(for: client)
@@ -6068,8 +6069,7 @@ struct Mango9ClientsFragment: View {
 			}
 
 			VStack(alignment: .leading, spacing: 1) {
-				Text("Clients")
-					.default_text_style_orange_800(styleSize: 18)
+				HStack(spacing: 6) { Text("Clients").default_text_style_orange_800(styleSize: 18); Mango9CRMNewBadge(count: newRecords.count(.client)) }
 				Text("\(viewModel.total) in your CRM scope")
 					.default_text_style(styleSize: 11)
 					.foregroundStyle(Color.grayMain2c500)
@@ -6279,7 +6279,10 @@ struct Mango9ClientsFragment: View {
 			.frame(width: 46, height: 46)
 
 			VStack(alignment: .leading, spacing: 4) {
-				Text(client.name.isEmpty ? "Unnamed client" : client.name)
+				HStack(spacing: 5) {
+                    if newRecords.isNew(client.id, kind: .client) { Circle().fill(Color.mango9Primary).frame(width: 6, height: 6).accessibilityLabel("New client") }
+                    Text(client.name.isEmpty ? "Unnamed client" : client.name)
+                }
 					.default_text_style_700(styleSize: 14)
 					.lineLimit(1)
 
@@ -6651,6 +6654,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 		lead = payload.lead
 		values = payload.values
 		originalValues = payload.values
+        Mango9CRMUnread.shared.read(payload.lead.id, kind: recordKind, session: session)
 
 		if schema == nil {
 			if recordKind == .client {

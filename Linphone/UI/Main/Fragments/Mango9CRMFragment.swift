@@ -18,7 +18,7 @@ struct Mango9CRMFragment: View {
 	let onOpenConversations: () -> Void
 
 	@StateObject private var viewModel = Mango9CRMViewModel()
-	@ObservedObject private var chatStore = Mango9ChatStore.shared
+	@ObservedObject private var newRecords = Mango9CRMUnread.shared
 	@State private var pushedLeadId: Int?
 	@State private var showPushedLead: Bool
 
@@ -43,7 +43,6 @@ struct Mango9CRMFragment: View {
 					.ignoresSafeArea()
 
 				VStack(spacing: 0) {
-					header
 
 					ScrollView {
 						VStack(spacing: 16) {
@@ -63,7 +62,7 @@ struct Mango9CRMFragment: View {
 						.padding(.bottom, 24)
 					}
 					.refreshable {
-						await viewModel.reload()
+						await viewModel.reload(); await newRecords.refresh()
 					}
 				}
 			}
@@ -83,13 +82,13 @@ struct Mango9CRMFragment: View {
 		}
 		.navigationViewStyle(StackNavigationViewStyle())
 		.task {
-			await viewModel.reload()
+			await viewModel.reload(); await newRecords.refresh()
 		}
 		.onReceive(
 			NotificationCenter.default.publisher(for: .mango9AccountContextChanged)
 		) { _ in
 			Task {
-				await viewModel.reload()
+				await viewModel.reload(); await newRecords.refresh()
 			}
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9AppointmentDidChange)) { _ in Task { await viewModel.reloadAppointmentCount() } }
@@ -201,10 +200,10 @@ struct Mango9CRMFragment: View {
 					title: "Leads",
 					subtitle: "Your sales pipeline",
 					color: .purple,
-					count: viewModel.dashboard?.leads
+					count: viewModel.dashboard?.leads, unreadCount: newRecords.count(.lead)
 				)
 			}
-			.buttonStyle(.plain)
+			.buttonStyle(.plain).accessibilityIdentifier("crm.leads")
 
 			NavigationLink(destination: Mango9ClientsFragment()) {
 				workspaceRow(
@@ -212,30 +211,19 @@ struct Mango9CRMFragment: View {
 					title: "Clients",
 					subtitle: "Customer records and relationships",
 					color: .orange,
-					count: viewModel.dashboard?.clients
+					count: viewModel.dashboard?.clients, unreadCount: newRecords.count(.client)
 				)
 			}
-			.buttonStyle(.plain)
-
-			Button(action: onOpenConversations) {
-				workspaceRow(
-					icon: "bubble.left.and.bubble.right.fill",
-					title: "Conversations",
-					subtitle: "SMS, Team and Social messages",
-					color: .pink,
-					unreadCount: chatStore.teamUnreadCount
-				)
-			}
-			.buttonStyle(.plain)
+			.buttonStyle(.plain).accessibilityIdentifier("crm.clients")
 
 			NavigationLink(destination: Mango9AppointmentsFragment(presentation: .calendar)) {
 				workspaceRow(icon: "calendar", title: "Calendar",
 					subtitle: "Your schedule by month, week or day", color: .mango9Primary)
-			}.buttonStyle(.plain)
+			}.buttonStyle(.plain).accessibilityIdentifier("crm.calendar")
 			NavigationLink(destination: Mango9AppointmentsFragment(presentation: .activities)) {
 				workspaceRow(icon: "checklist", title: "Events & Tasks",
 					subtitle: "Appointments, events and tasks", color: .indigo)
-			}.buttonStyle(.plain)
+			}.buttonStyle(.plain).accessibilityIdentifier("crm.tasks")
 			NavigationLink(destination: Mango9CRMSettings()) {
 				workspaceRow(icon: "slider.horizontal.3", title: "CRM Settings", subtitle: "Calendar, reminders and message notifications", color: .indigo)
 			}.buttonStyle(.plain)
@@ -281,9 +269,9 @@ struct Mango9CRMFragment: View {
 					.foregroundStyle(Color.white)
 					.frame(minWidth: 22, minHeight: 22)
 					.padding(.horizontal, unreadCount > 9 ? 4 : 0)
-					.background(Color.redDanger500)
+					.background(Color.mango9Primary)
 					.clipShape(Capsule())
-					.accessibilityLabel("\(unreadCount) unread Team Chat messages")
+					.accessibilityLabel("\(unreadCount) new \(title.lowercased())")
 			}
 			Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundColor(.secondary)
 		}
@@ -356,7 +344,7 @@ struct Mango9CRMFragment: View {
 @MainActor
 final class Mango9CRMViewModel: ObservableObject {
 	@Published private(set) var appointmentCount: Int?
-	@Published private(set) var session: Mango9Session?
+	@Published private(set) var session: Mango9Session? = Mango9SessionStore.load()
 	@Published private(set) var dashboard: Mango9CRMDashboard?
 	@Published private(set) var isLoading = false
 	@Published private(set) var errorMessage: String?
