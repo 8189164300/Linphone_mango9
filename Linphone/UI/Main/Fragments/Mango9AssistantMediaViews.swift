@@ -307,7 +307,7 @@ struct Mango9AssistantWorking: View {
     let phase: String
     @State private var label = Mango9AssistantThinking.next()
     var body: some View {
-        HStack(spacing: 10) { ProgressView().tint(.mango9Primary); Text(phase == "waiting" ? "Waiting for a reply…" : label).font(.footnote).foregroundColor(.secondary) }
+        HStack(spacing: 10) { ProgressView().tint(.mango9Primary); Text(label).font(.footnote).foregroundColor(.secondary) }
             .padding(.vertical, 8).accessibilityElement(children: .combine)
     }
 }

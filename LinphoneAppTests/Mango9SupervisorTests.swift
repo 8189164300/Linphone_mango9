@@ -383,6 +383,11 @@ final class Mango9SupervisorTests: XCTestCase {
 
 private final class SupervisorPendingFixture {
     let local = SupervisorLocalFixture()
+    var state = Mango9AssistantState()
+    var stateWriteFails = false
+    var stateStore: Mango9AssistantStateStore { .init(read: { [self] in state }, write: { [self] in
+        if stateWriteFails { throw Mango9SupervisorFailure(status: 0, code: "storage_unavailable") }; state = $0
+    }) }
     var command: Mango9SupervisorCommand?
     var readFails = false
     var deleteFails = false
@@ -416,7 +421,11 @@ private final class SupervisorLocalFixture {
             if path == "transport" { return body?["action"] as? String == "replyStatus" ? ["version": 1, "conversationId": body?["conversationId"] ?? "", "phase": "idle"] : ["version": 1, "enabled": false] }
             if path == "notifications" { return ["enabled": true, "revision": "1", "unread": 0, "conversations": [String: Int](), "readThrough": "1"] }
         }
-        if let handler { return try await handler(path, body) }
+        if let handler {
+            var value = try await handler(path, body)
+            if path == "chat", value["metadata"] == nil { value["metadata"] = ["requestId": body?["requestId"] ?? "", "conversationId": body?["conversationId"] ?? ""] }
+            return value
+        }
         return ["enabled": true, "items": [], "messages": [], "cursor": "0"]
     }
     func ticket(conversationID: String) async throws -> (value: [String: Any], session: Mango9Session) { throw Mango9SupervisorFailure(status: 0, code: "fixture_network_forbidden") }
@@ -769,7 +778,7 @@ final class Mango9SupervisorReliabilityTests: XCTestCase {
                 return ["messages": [], "cursor": "1", "items": []]
             }
             await model.refreshHistory(); XCTAssertTrue(model.working); XCTAssertEqual(model.replyPhase, "waiting")
-            model.draft = "Next question"; XCTAssertFalse(model.canSend); XCTAssertEqual(model.draft, "Next question")
+            model.draft = "Next question"; XCTAssertTrue(model.canSend); XCTAssertEqual(model.draft, "Next question")
             phase = "idle"; await model.refreshHistory(); XCTAssertFalse(model.working); XCTAssertTrue(model.canSend)
         }
     }
@@ -810,7 +819,7 @@ final class Mango9SupervisorReliabilityTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         let client = SupervisorClientFixture(), vault = SupervisorPendingFixture()
         Mango9SupervisorConsent.allow(client.original, defaults: defaults)
-        let model = Mango9SupervisorModel(session: client.original, client: client, defaults: defaults, pendingStore: vault.store, localStore: vault.local.store, stateStore: .init(read: { .init() }, write: { _ in }))
+        let model = Mango9SupervisorModel(session: client.original, client: client, defaults: defaults, pendingStore: vault.store, localStore: vault.local.store, stateStore: vault.stateStore)
         defer { model.close(); defaults.removePersistentDomain(forName: name) }
         if start { await model.start(); XCTAssertTrue(model.authorized) }
         try await body(model, client, vault)
@@ -845,19 +854,15 @@ final class Mango9SupervisorReliabilityTests: XCTestCase {
             XCTAssertEqual(model.conversationID, next); XCTAssertEqual(model.messages.map(\.id), ["new-message"])
         }
     }
-    @MainActor func testAccountChangeDuringSendRefreshDoesNotAppendOldReplyOrDropPendingRequest() async throws {
+    @MainActor func testAccountChangeDuringSendDoesNotAppendLateReplyOrDropReceipt() async throws {
         try await withModel { model, client, vault in
             let gate = SupervisorDeferredFixture()
-            client.handler = { path, body in
-                if path == "chat" { return Self.reply("reply", "Completed") }
-                if body?["action"] as? String == "read" { return await gate.wait() }
-                return ["items": []]
-            }
-            model.draft = "Fixture request"; XCTAssertTrue(model.canSend)
+            client.handler = { path, _ in path == "chat" ? await gate.wait() : ["items": [], "messages": []] }
+            model.draft = "Fixture request"
             let send = Task { await model.send() }
             await fulfillment(of: [gate.entered], timeout: 3)
-            client.active = false; gate.resume(["messages": [], "cursor": "0"]); await send.value
-            XCTAssertTrue(model.messages.isEmpty); XCTAssertNotNil(vault.command)
+            client.active = false; gate.resume(Self.reply("reply", "Completed")); await send.value
+            XCTAssertFalse(model.messages.contains { $0.role == "assistant" }); XCTAssertEqual(vault.state.deliveries?.count, 1)
             XCTAssertEqual(client.calls.filter { $0 == "chat" }.count, 1)
         }
     }
@@ -870,13 +875,42 @@ final class Mango9SupervisorReliabilityTests: XCTestCase {
             XCTAssertTrue(model.authorized); XCTAssertTrue(model.canSend)
         }
     }
-    @MainActor func testFailedKeychainDeletionRetainsPendingAndDoesNotReplayPost() async throws {
+    @MainActor func testFailedDeliveryStorageKeepsDraftAndDoesNotPost() async throws {
         try await withModel { model, client, vault in
-            vault.deleteFails = true
-            client.handler = { path, _ in path == "chat" ? Self.reply("reply", "Completed") : ["messages": [], "items": []] }
-            model.draft = "Fixture request"; await model.send(); await model.send()
-            XCTAssertNotNil(vault.command); XCTAssertNotNil(model.pending); XCTAssertFalse(model.canSend)
-            XCTAssertEqual(client.calls.filter { $0 == "chat" }.count, 1)
+            vault.stateWriteFails = true
+            model.draft = "Fixture request"; await model.send()
+            XCTAssertEqual(model.draft, "Fixture request"); XCTAssertTrue(model.canSend)
+            XCTAssertEqual(client.calls.filter { $0 == "chat" }.count, 0)
+        }
+    }
+    @MainActor func testSlowAndDisconnectedMessagesNeverLockTheNextSend() async throws {
+        try await withModel { model, client, vault in
+            let gate = SupervisorDeferredFixture()
+            var posts = 0
+            client.handler = { path, _ in
+                if path == "chat" { posts += 1; if posts == 1 { return await gate.wait() }; throw URLError(.networkConnectionLost) }
+                return ["items": [], "messages": []]
+            }
+            model.draft = "First"; let first = Task { await model.send() }
+            await fulfillment(of: [gate.entered], timeout: 3)
+            model.draft = "Second"; XCTAssertTrue(model.canSend); await model.send()
+            model.draft = "Third draft"; XCTAssertTrue(model.canSend); XCTAssertEqual(vault.state.deliveries?.count, 2)
+            gate.resume(Self.reply("first-reply", "Completed")); await first.value
+            XCTAssertEqual(model.draft, "Third draft"); XCTAssertTrue(model.canSend); XCTAssertEqual(posts, 2)
+            XCTAssertEqual(vault.state.deliveries?.map { $0.command.text }, ["Second"])
+            XCTAssertEqual(model.delivery(try XCTUnwrap(vault.state.deliveries?.first?.command.messageID)), "Delivery unconfirmed")
+            await model.newConversation(); XCTAssertNotEqual(model.conversationID, vault.state.deliveries?.first?.command.conversationID)
+            XCTAssertEqual(vault.state.deliveries?.count, 1)
+        }
+    }
+    @MainActor func testExactUserMessageConfirmsDeliveryBeforeAssistantReply() async throws {
+        try await withModel { model, client, vault in
+            client.handler = { path, _ in if path == "chat" { throw URLError(.timedOut) }; return ["items": [], "messages": []] }
+            model.draft = "Saved on server"; await model.send()
+            let receipt = try XCTUnwrap(vault.state.deliveries?.first)
+            client.handler = { _, _ in ["messages": [["id": receipt.command.messageID, "role": "user", "parts": [["type": "text", "text": receipt.command.text]]]], "pending": true] }
+            await model.refreshHistory(); XCTAssertNil(model.pending); XCTAssertTrue(vault.state.deliveries?.isEmpty == true)
+            model.draft = "Next message"; XCTAssertTrue(model.canSend)
         }
     }
     @MainActor func testApprovalCannotUseADifferentActionThanTheOneReviewed() async throws {
@@ -926,7 +960,7 @@ final class Mango9SupervisorReliabilityTests: XCTestCase {
             await fulfillment(of: [gate.entered], timeout: 3)
             model.revokeAIConsent(); gate.resume(Self.reply("reply", "Completed")); await send.value
             XCTAssertFalse(model.hasAIConsent); XCTAssertFalse(model.canSend)
-            XCTAssertTrue(model.messages.isEmpty); XCTAssertNotNil(vault.command)
+            XCTAssertFalse(model.messages.contains { $0.role == "assistant" }); XCTAssertEqual(vault.state.deliveries?.count, 1)
         }
     }
     func testKeychainFailuresAndCorruptionAreNotTreatedAsEmptyOutbox() throws {

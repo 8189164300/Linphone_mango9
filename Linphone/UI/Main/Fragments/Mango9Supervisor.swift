@@ -247,7 +247,7 @@ struct Mango9SupervisorView: View {
                 Button { focused = false; showingAIPrivacy = true } label: { Label("AI privacy", systemImage: "hand.raised") }
                 Button { focused = false; showingHistory = true } label: { Label("History", systemImage: "clock") }
                 Button { focused = false; Task { await model.newConversation() } } label: { Label("New chat", systemImage: "square.and.pencil") }
-                    .disabled(model.sending || model.pending != nil)
+                    .disabled(model.sending)
                 Button { focused = false; model.close(); dismiss() } label: { Label("Close Assistant", systemImage: "xmark") }
             } label: { Mango9SupervisorMark(working: model.loading || model.working) }
                 .accessibilityLabel("Supervisor options").accessibilityIdentifier("supervisor.options")
@@ -358,16 +358,6 @@ struct Mango9SupervisorView: View {
                     }
                   }
                 }
-            }
-            if model.pending != nil && !model.sending && model.replyPhase == "idle" {
-                VStack(spacing: 6) {
-                    Text("Request status is unconfirmed. It won’t be sent again automatically.").font(.caption).foregroundColor(.grayMain2c500)
-                    HStack {
-                        Button("Check status") { Task { await model.refreshHistory() } }
-                        Spacer()
-                    }.font(.subheadline).foregroundColor(.mango9Primary)
-                    Button("Start new chat without retrying") { confirmingNewChat = true }.font(.caption).foregroundColor(.mango9Primary)
-                }.padding(12).background(Color.white)
             }
             if model.hasAIConsent { composer }
             else {
@@ -484,6 +474,12 @@ struct Mango9SupervisorView: View {
                 ForEach(message.actionIDs, id: \.self) { id in configuration(id) }
                 ForEach(Array(creations.enumerated()), id: \.offset) { _, creation in
                     creationStatus(creation).padding(14).background(Color(red: 0.918, green: 0.965, blue: 1)).clipShape(RoundedRectangle(cornerRadius: 16))
+                }
+                if let status = model.delivery(message.id) {
+                    HStack(spacing: 8) {
+                        Text(status).font(.caption2).foregroundColor(.secondary)
+                        if status == "Not sent" { Button { Task { await model.retryMessage(message.id) } } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel("Retry message") }
+                    }.frame(maxWidth: .infinity, alignment: .trailing)
                 }
                 if let date = message.createdAt {
                     Text(date, style: .time).font(.caption2).foregroundColor(.grayMain2c500)

@@ -4,7 +4,13 @@ import Combine
 import UIKit
 
 /// Local drafts and confirmed deletions are isolated by login identity.
+struct Mango9AssistantDelivery: Codable {
+    let command: Mango9SupervisorCommand
+    var failed: Bool = false
+    let createdAt: Date
+}
 struct Mango9AssistantState: Codable {
+    var deliveries: [Mango9AssistantDelivery]? = nil
     var drafts: [String: String] = [:]
     var deleted: [String] = []
     static func location(_ account: String) throws -> URL {
@@ -17,7 +23,9 @@ struct Mango9AssistantState: Codable {
         let file = try location(account)
         guard FileManager.default.fileExists(atPath: file.path) else { return .init() }
         let state = try JSONDecoder().decode(Self.self, from: Data(contentsOf: file))
-        guard state.drafts.count <= 10, state.deleted.count <= 256,
+        guard (state.deliveries?.count ?? 0) <= 100,
+              (state.deliveries ?? []).allSatisfy({ UUID(uuidString: $0.command.conversationID) != nil && UUID(uuidString: $0.command.requestID) != nil && UUID(uuidString: $0.command.messageID) != nil && Mango9SupervisorCommand.valid($0.command.text) }),
+              state.drafts.count <= 10, state.deleted.count <= 256,
               state.drafts.allSatisfy({ UUID(uuidString: $0.key) != nil && $0.value.utf8.count <= 32_000 }),
               state.deleted.allSatisfy({ UUID(uuidString: $0) != nil }) else { throw Mango9AssistantMediaContract.invalid() }
         return state

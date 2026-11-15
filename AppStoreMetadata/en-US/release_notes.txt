@@ -3,3 +3,4 @@
 • Clearer Chat menus and more reliable unread counts across messaging channels.
 • Consistent CRM navigation with new-lead and new-client indicators.
 • Faster Social read-state updates and smoother navigation.
+• Keep writing in Assistant chats while an earlier reply is pending, with clearer delivery recovery after connection interruptions.
