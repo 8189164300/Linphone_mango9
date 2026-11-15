@@ -474,6 +474,8 @@ class MainActivity : GenericActivity() {
     }
 
     override fun onPause() {
+        org.linphone.mango9.Mango9InboxUnread.visible(false)
+        org.linphone.mango9.Mango9CrmUnread.visible(false)
         contactsRefreshJob?.cancel()
         contactsRefreshJob = null
         viewModel.enableAccountMonitoring(false)
@@ -508,6 +510,8 @@ class MainActivity : GenericActivity() {
 
     override fun onResume() {
         super.onResume()
+        org.linphone.mango9.Mango9InboxUnread.visible(true)
+        org.linphone.mango9.Mango9CrmUnread.visible(true)
 
         viewModel.enableAccountMonitoring(true)
         viewModel.updateMissingPermissionAlert()
@@ -752,6 +756,14 @@ class MainActivity : GenericActivity() {
                             Mango9ChatTarget(target.userId, target.name, target.roomId), lease,
                         )
                         is Mango9MessagePushTarget.Sms -> openMango9Sms(Mango9SmsTarget(target.phone, target.name), lease)
+                        is Mango9MessagePushTarget.Assistant -> {
+                            findNavController().navigate(
+                                R.id.action_global_mango9SupervisorFragment,
+                                Bundle().apply {
+                                Mango9NavigationSession.bind(this, lease); putString("assistantConversationId", target.conversationId)
+                            }
+                            )
+                        }
                         is Mango9MessagePushTarget.LiveChat -> {
                             val controller = findNavController()
                             if (!controller.popBackStack(R.id.conversationsListFragment, false)) {

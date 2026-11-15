@@ -239,12 +239,12 @@ class Mango9ChatStore private constructor(context: Context) {
     fun teamUnreadCount(snapshot: Mango9ChatState = state.value): Int = snapshot.rooms
         .filterNot { moderation.isConversationDeleted(it.id) }
         .filter { room ->
-            !room.isDirect || room.userIds.firstOrNull()?.let(moderation::isBlocked) != true
+            !room.isDirect || room.userIds.firstOrNull()?.let { id -> snapshot.users.any { it.id == id && !it.isSystem } && !moderation.isBlocked(id) } == true
         }
-        .sumOf { it.unread.coerceAtLeast(0) }
+        .count { it.unread > 0 }
 
     fun smsUnreadCount(snapshot: Mango9ChatState = state.value): Int =
-        snapshot.smsParties.sumOf { it.unread.coerceAtLeast(0) }
+        snapshot.smsParties.filter { it.unread > 0 }.map { it.phone.trimStart('+') }.distinct().size
 
     fun inboxPreviewRoom(snapshot: Mango9ChatState = state.value): Mango9ChatRoom? {
         val visibleRooms = snapshot.rooms.filterNot { moderation.isConversationDeleted(it.id) }

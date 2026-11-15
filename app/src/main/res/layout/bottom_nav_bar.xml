@@ -48,9 +48,9 @@
             android:drawableTop="@drawable/mango9_crm_footer"
             android:background="@drawable/squircle_transparent_button_background"
             android:drawablePadding="4dp"
-            android:drawableTint="@color/main2_600"
+            android:drawableTint="@{viewModel.crmSelected ? @color/main1_500 : @color/main2_600, default=@color/main2_600}"
             android:text="@string/mango9_crm_title"
-            textFont="@{NotoSansFont.NotoSansRegular}"
+            textFont="@{viewModel.crmSelected ? NotoSansFont.NotoSansBold : NotoSansFont.NotoSansRegular}"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toStartOf="@id/calls"
             app:layout_constraintStart_toEndOf="@id/contacts"
@@ -74,6 +74,14 @@
             app:layout_constraintEnd_toStartOf="@id/conversations"
             app:layout_constraintStart_toEndOf="@id/crm"
             app:layout_constraintTop_toTopOf="parent" />
+
+        <androidx.appcompat.widget.AppCompatTextView
+            style="@style/unread_count_text_style" android:id="@+id/crm_new_count"
+            android:layout_width="@dimen/unread_count_indicator_size" android:layout_height="@dimen/unread_count_indicator_size"
+            android:layout_marginStart="50dp" android:layout_marginTop="2dp"
+            android:text="@{viewModel.crmNewCount > 99 ? `99+` : String.valueOf(viewModel.crmNewCount)}"
+            android:visibility="@{viewModel.crmNewCount > 0 ? View.VISIBLE : View.GONE}"
+            app:layout_constraintTop_toTopOf="parent" app:layout_constraintStart_toStartOf="@id/crm" app:layout_constraintEnd_toEndOf="@id/crm" />
 
         <androidx.appcompat.widget.AppCompatTextView
             style="@style/unread_count_text_style"

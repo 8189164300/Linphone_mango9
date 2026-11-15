@@ -16,6 +16,7 @@ import org.linphone.mango9.Mango9CrmRecord
 
 class Mango9CrmRecordAdapter(
     private val onClick: (Mango9CrmRecord) -> Unit,
+    private val isNew: (Mango9CrmRecord) -> Boolean = { false },
 ) : ListAdapter<Mango9CrmRecord, Mango9CrmRecordAdapter.ViewHolder>(DiffCallback) {
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder = ViewHolder(
         Mango9CrmRecordCellBinding.inflate(LayoutInflater.from(parent.context), parent, false),
@@ -27,6 +28,7 @@ class Mango9CrmRecordAdapter(
         RecyclerView.ViewHolder(binding.root) {
         fun bind(record: Mango9CrmRecord) {
             binding.record = record
+            binding.newRecord.visibility = if (isNew(record)) android.view.View.VISIBLE else android.view.View.GONE
             binding.root.setOnClickListener {
                 // Equal-content refreshes don't rebind holders. Resolve the current
                 // snapshot rather than retaining the previous account's row object.

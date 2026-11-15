@@ -68,6 +68,7 @@ import org.linphone.utils.LinphoneUtils
 class Mango9CrmFragment : GenericMainFragment() {
     private lateinit var binding: Mango9CrmFragmentBinding
     private lateinit var viewModel: Mango9CrmViewModel
+    private lateinit var navModel: org.linphone.ui.main.viewmodel.AbstractMainViewModel
     private lateinit var adapter: Mango9CrmRecordAdapter
     private val messagingStore by lazy { Mango9ChatStore.get(requireContext()) }
     private var renderingFilters = false
@@ -99,7 +100,26 @@ class Mango9CrmFragment : GenericMainFragment() {
         super.onViewCreated(view, savedInstanceState)
         viewModel = ViewModelProvider(this)[Mango9CrmViewModel::class.java]
         binding.lifecycleOwner = viewLifecycleOwner
-        adapter = Mango9CrmRecordAdapter(viewModel::openRecord)
+        navModel = ViewModelProvider(this)[org.linphone.ui.main.viewmodel.AbstractMainViewModel::class.java]
+        binding.topBar.viewModel = navModel; binding.bottomNavBar.viewModel = navModel
+        binding.topBar.lifecycleOwner = viewLifecycleOwner; binding.bottomNavBar.lifecycleOwner = viewLifecycleOwner
+        navModel.title.value = "CRM"; navModel.crmSelected.value = true
+        binding.topBar.showExtraAction = true; binding.topBar.extraActionEnabled = true
+        binding.topBar.extraActionContentDescription = getString(R.string.mango9_crm_refresh)
+        binding.topBar.extraActionIcon = AppCompatResources.getDrawable(requireContext(), R.drawable.arrow_clockwise)
+        binding.topBar.extraActionClickListener = View.OnClickListener { viewModel.refresh(); org.linphone.mango9.Mango9CrmUnread.refreshSoon() }
+        navModel.openDrawerMenuEvent.observe(viewLifecycleOwner) { it.consume { dismissRecordDialogs(); (requireActivity() as org.linphone.ui.main.MainActivity).toggleDrawerMenu() } }
+        navModel.navigateToContactsEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.contactsListFragment) } }
+        navModel.navigateToHistoryEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.historyListFragment) } }
+        navModel.navigateToConversationsEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.conversationsListFragment) } }
+        navModel.navigateToMeetingsEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.meetingsListFragment) } }
+        navModel.navigateToCrmEvent.observe(viewLifecycleOwner) { it.consume { dismissRecordDialogs(); viewModel.selectDashboard() } }
+        binding.topBar.searchToggle.setOnClickListener { viewModel.selectLeads(); binding.search.requestFocus() }
+
+        adapter = Mango9CrmRecordAdapter(viewModel::openRecord) { record ->
+            val kind = if (viewModel.recordTitle.value == getString(R.string.mango9_crm_clients)) Mango9RecordKind.Client else Mango9RecordKind.Lead
+            org.linphone.mango9.Mango9CrmUnread.isNew(kind, record.id)
+        }
         binding.records.layoutManager = LinearLayoutManager(requireContext())
         binding.records.adapter = adapter
 
@@ -111,9 +131,6 @@ class Mango9CrmFragment : GenericMainFragment() {
         binding.leadsRow.setOnClickListener { viewModel.selectLeads() }
         binding.clientsMetric.setOnClickListener { viewModel.selectClients() }
         binding.clientsRow.setOnClickListener { viewModel.selectClients() }
-        binding.teamChatRow.setOnClickListener {
-            findNavController().navigate(R.id.action_mango9CrmFragment_to_mango9MessagingListFragment)
-        }
         binding.appointmentsRow.setOnClickListener {
             findNavController().navigate(
                 R.id.action_global_mango9CalendarFragment,
@@ -180,7 +197,11 @@ class Mango9CrmFragment : GenericMainFragment() {
         viewModel.schema.observe(viewLifecycleOwner, ::renderStatusFilters)
         viewModel.groups.observe(viewLifecycleOwner, ::renderGroupFilter)
         viewModel.showDashboard.observe(viewLifecycleOwner) { renderMode() }
-        viewModel.showRecords.observe(viewLifecycleOwner) { renderMode() }
+        val listBack = object : androidx.activity.OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() { viewModel.selectDashboard() }
+        }
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, listBack)
+        viewModel.showRecords.observe(viewLifecycleOwner) { listBack.isEnabled = it == true; renderMode() }
         viewModel.recordTitle.observe(viewLifecycleOwner) { renderMode() }
         viewModel.loading.observe(viewLifecycleOwner) {
             binding.loading.visibility = if (it) View.VISIBLE else View.GONE
@@ -200,22 +221,17 @@ class Mango9CrmFragment : GenericMainFragment() {
         }
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                messagingStore.state.collect { state ->
-                    val unread = messagingStore.teamUnreadCount(state)
-                    binding.teamChatSubtitle.setText(R.string.mango9_crm_team_chat_subtitle)
-                    binding.teamChatUnreadBadge.apply {
-                        visibility = if (unread > 0) View.VISIBLE else View.GONE
-                        text = if (unread < 100) unread.toString() else "99+"
-                        contentDescription = resources.getQuantityString(
-                            R.plurals.mango9_chat_unread_messages,
-                            unread,
-                            unread,
-                        )
+                org.linphone.mango9.Mango9CrmUnread.revision.collect {
+                    val counts = org.linphone.mango9.Mango9CrmUnread.counts.value
+                    for ((kind, badge) in listOf(Mango9RecordKind.Lead to binding.leadsNewBadge, Mango9RecordKind.Client to binding.clientsNewBadge)) {
+                        val count = counts[kind] ?: 0; badge.visibility = if (count > 0) View.VISIBLE else View.GONE
+                        badge.text = if (count > 99) "99+" else count.toString(); badge.contentDescription = "$count new ${kind.path}"
                     }
+                    adapter.notifyDataSetChanged(); renderMode()
                 }
             }
         }
-        viewLifecycleOwner.lifecycleScope.launch { messagingStore.connect() }
+        org.linphone.mango9.Mango9CrmUnread.refreshSoon()
         setupDateFilter()
         if (savedInstanceState == null && arguments?.getInt(ARG_PUSH_RECORD_ID, 0) != 0) {
             val kind = when (arguments?.getString(ARG_PUSH_RECORD_KIND)) {
@@ -237,6 +253,11 @@ class Mango9CrmFragment : GenericMainFragment() {
         viewModel.reloadAccountContext()
     }
 
+    private fun selectAppTab(destination: Int) {
+        dismissRecordDialogs()
+        findNavController().navigate(destination, null, androidx.navigation.NavOptions.Builder().setLaunchSingleTop(true).setPopUpTo(R.id.mango9CrmFragment, true).build())
+    }
+
     private fun renderSession(session: org.linphone.mango9.Mango9Session?) {
         val connected = session != null
         binding.connectedContent.visibility = if (connected) View.VISIBLE else View.GONE
@@ -252,15 +273,24 @@ class Mango9CrmFragment : GenericMainFragment() {
     }
 
     private fun renderMode() {
+        if (!::navModel.isInitialized) return
         val recordsVisible = viewModel.showRecords.value == true
+        binding.back.visibility = if (recordsVisible && recordDialog == null) View.VISIBLE else View.GONE
+        binding.titleBlock.visibility = if (recordsVisible && recordDialog == null) View.VISIBLE else View.GONE
+        binding.refresh.visibility = View.GONE
+
         binding.dashboardScroll.visibility = if (recordsVisible) View.GONE else View.VISIBLE
         binding.appointmentsRow.visibility = if (!recordsVisible && viewModel.activeSession.value != null) View.VISIBLE else View.GONE
         binding.calendarRow.visibility = binding.appointmentsRow.visibility
         binding.recordsContent.visibility = if (recordsVisible) View.VISIBLE else View.GONE
-        binding.addRecord.visibility = if (recordsVisible) View.VISIBLE else View.GONE
+        binding.addRecord.visibility = if (recordsVisible && recordDialog == null) View.VISIBLE else View.GONE
         binding.title.text = if (recordsVisible) viewModel.recordTitle.value else getString(R.string.mango9_crm_title)
         binding.subtitle.text = if (recordsVisible) {
-            getString(R.string.mango9_crm_records_scope)
+            getString(R.string.mango9_crm_records_scope) + run {
+                val kind = if (viewModel.recordTitle.value == getString(R.string.mango9_crm_clients)) Mango9RecordKind.Client else Mango9RecordKind.Lead
+                val count = org.linphone.mango9.Mango9CrmUnread.counts.value[kind] ?: 0
+                if (count > 0) " · $count new" else ""
+            }
         } else {
             getString(R.string.mango9_crm_subtitle)
         }
@@ -367,7 +397,7 @@ class Mango9CrmFragment : GenericMainFragment() {
         }
         form.addView(error)
 
-        val dialog = Mango9FullPage(requireContext())
+        val dialog = Mango9FullPage(requireContext()).setHost(binding.content)
             .setTitle(getString(R.string.mango9_crm_add_named_record, kind.displayName))
             .setView(ScrollView(requireContext()).apply { addView(form) })
             .setNegativeButton(android.R.string.cancel, null)
@@ -410,8 +440,12 @@ class Mango9CrmFragment : GenericMainFragment() {
                 }
             }
         }
+        dialog.setOnDismissListener {
+            if (recordDialog === dialog) { recordDialog = null; if (view === originalView) renderMode() }
+        }
         dismissRecordDialogs()
         recordDialog = dialog
+        renderMode()
         dialog.show()
     }
 
@@ -421,6 +455,7 @@ class Mango9CrmFragment : GenericMainFragment() {
         editing: Boolean = false,
     ) {
         val owner = viewModel.editorOwner(kind, detail.record.id) ?: return
+        org.linphone.mango9.Mango9CrmUnread.read(kind, detail.record.id, owner.lease)
         val originalView = view
         val schema = viewModel.schema.value
         val status = viewModel.quickStatus(kind, detail)
@@ -572,7 +607,7 @@ class Mango9CrmFragment : GenericMainFragment() {
         }
         // Never reveal hidden fields through a raw-values fallback when schema permissions are absent.
         val scroll = ScrollView(requireContext()).apply { addView(container) }
-        dialog = Mango9FullPage(requireContext())
+        dialog = Mango9FullPage(requireContext()).setHost(binding.content)
             .setTitle(
                 getString(
                     if (editing) R.string.mango9_crm_edit_named_record else R.string.mango9_crm_view_named_record,
@@ -642,10 +677,11 @@ class Mango9CrmFragment : GenericMainFragment() {
         dialog.setOnDismissListener {
             statusJob?.cancel()
             recordActionPopup?.dismiss(); recordActionPopup = null
-            if (recordDialog === dialog) { recordChildDialog?.dismiss(); recordChildDialog = null }
+            if (recordDialog === dialog) { recordChildDialog?.dismiss(); recordChildDialog = null; recordDialog = null; if (view === originalView) renderMode() }
         }
         dismissRecordDialogs()
         recordDialog = dialog
+        renderMode()
         dialog.show()
     }
 

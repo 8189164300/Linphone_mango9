@@ -184,13 +184,16 @@ internal class Mango9SocialRepository(context: Context, private val api: Mango9M
         return Mango9SocialPage(page.getJSONArray("items").objects().map(Mango9SocialMessage::parse), page.stringOrNull("next"))
     }
 
-    suspend fun markRead(lease: Mango9SessionLease, thread: Mango9SocialThread) {
-        val readThrough = thread.readThrough ?: return
-        api.request(
+    suspend fun markRead(lease: Mango9SessionLease, thread: Mango9SocialThread): Mango9SocialThread {
+        val readThrough = thread.readThrough ?: return thread
+        val result = Mango9SocialThread.parse(api.request(
             lease, channel, listOf("inbox-read"),
             body = JSONObject().put("id", thread.id)
             .put("requestId", UUID.randomUUID().toString()).put("readThrough", readThrough)
-        )
+        ))
+        require(result.id == thread.id)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { Mango9InboxUnread.socialReceipt(result, lease) }
+        return result
     }
 
     suspend fun refreshMessages(lease: Mango9SessionLease, sourceId: String) {

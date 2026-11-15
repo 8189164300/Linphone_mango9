@@ -101,9 +101,15 @@ internal class Mango9SocialViewModel(
 
     init {
         viewModelScope.launch {
+            Mango9InboxUnread.readChanges.collect {
+                val owner = activeLease() ?: return@collect
+                state.value = current().copy(threads = current().threads.map { Mango9InboxUnread.socialRow(it, owner) })
+            }
+        }
+        viewModelScope.launch {
             Mango9SocialRecency.state.collect {
                 val owner = activeLease() ?: return@collect
-                val rows = Mango9SocialRecency.overlay(owner, current().threads)
+                val rows = Mango9SocialRecency.overlay(owner, current().threads).map { Mango9InboxUnread.socialRow(it, owner) }
                 if (rows != current().threads) state.value = current().copy(threads = rows)
             }
         }
@@ -215,7 +221,7 @@ internal class Mango9SocialViewModel(
             if (more) previous.nextThread?.let { consumedCursors.add(it) } else consumedCursors.clear()
             state.value = current().copy(
                 accounts = accounts, account = account, accountWarning = warning,
-                threads = Mango9SocialRecency.overlay(owner, merged.filterNot { it.id in hidden }),
+                threads = Mango9SocialRecency.overlay(owner, merged.filterNot { it.id in hidden }).map { Mango9InboxUnread.socialRow(it, owner) },
                 nextThread = page.next?.takeUnless { it in consumedCursors }, loading = false
             )
         } catch (e: Exception) { failure(owner, request, e) }
@@ -315,7 +321,8 @@ internal class Mango9SocialViewModel(
                 sendNotice = if (confirmed != null) Mango9SocialSendOutcome.of(confirmed.getString("state")).notice else current().sendNotice
             )
             try {
-                repository.markRead(owner, detail)
+                val receipt = repository.markRead(owner, detail)
+                if (valid(owner, request)) state.value = current().copy(thread = receipt)
             } catch (e: Exception) { if (e is CancellationException || revoked(e)) throw e }
             if (!valid(owner, request)) return
             val visibleIds = current().messages.filterNot { it.deleted }.map { it.id }.toSet()

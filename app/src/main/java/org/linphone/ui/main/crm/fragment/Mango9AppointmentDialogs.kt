@@ -63,6 +63,7 @@ internal class Mango9AppointmentDialogs(
     private val repository: Mango9CalendarRepository,
     private val changed: () -> Unit,
     private val openContact: (Mango9SessionLease, Mango9AppointmentContact) -> Unit,
+    private val pageHost: ViewGroup? = null,
     private val now: () -> Instant = Instant::now,
     private val onAllClosed: () -> Unit = {},
     retainedEdits: Mango9CalendarEdits? = null,
@@ -159,7 +160,7 @@ internal class Mango9AppointmentDialogs(
             setTextColor(context.getColor(R.color.mango9_calendar_error)); visibility = View.GONE; accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
         val scroll = ScrollView(context).apply { addView(body); tag = "calendar.form.scroll" }
-        val dialog: Mango9FullPage = Mango9FullPage(context).setTitle(caption)
+        val dialog: Mango9FullPage = Mango9FullPage(context).apply { pageHost?.let { setHost(it) } }.setTitle(caption)
             .setView(scroll)
             .setNegativeButton(if (save) R.string.mango9_calendar_cancel else R.string.mango9_calendar_done, null)
             .apply { if (save) setPositiveButton(R.string.mango9_calendar_save, null) }.create()

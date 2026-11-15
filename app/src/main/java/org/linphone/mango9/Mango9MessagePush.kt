@@ -28,6 +28,8 @@ sealed interface Mango9MessagePushTarget {
     data class Social(val threadId: String) : Mango9MessagePushTarget
 
     data class LiveChat(val conversationId: String) : Mango9MessagePushTarget
+
+    data class Assistant(val conversationId: String) : Mango9MessagePushTarget
 }
 
 data class Mango9MessagePush(
@@ -65,6 +67,7 @@ data class Mango9MessagePush(
             Mango9MessagePushTarget.Leads -> put("type", "leads")
             is Mango9MessagePushTarget.Appointment -> { put("type", "appointment"); put("event_id", value.id) }
             is Mango9MessagePushTarget.Social -> { put("type", "social"); put("thread_id", value.threadId) }
+            is Mango9MessagePushTarget.Assistant -> { put("type", "assistant"); put("conversation_id", value.conversationId) }
             is Mango9MessagePushTarget.LiveChat -> { put("type", "livechat"); put("conversation_id", value.conversationId) }
         }
     }.toString()
@@ -89,7 +92,7 @@ data class Mango9MessagePush(
             val crm = value("crm_id", "crmId")
             val identity = value("sip_identity", "sipIdentity")
             val recipient = value("recipient_user_id")?.toIntOrNull()?.takeIf { it > 0 }?.toString()
-            if (event in setOf("lead.created", "lead.assigned", "leads.imported", "appointment.booked", "social.message", "livechat.message")) {
+            if (event in setOf("lead.created", "lead.assigned", "leads.imported", "appointment.booked", "social.message", "livechat.message", "supervisor.reply")) {
                 if (crm == null || Mango9SessionStore.normalizedIdentity(identity) == null) return null
                 if (event !in setOf("social.message", "livechat.message") && recipient == null) return null
             }
@@ -133,6 +136,11 @@ data class Mango9MessagePush(
                     }
                     Mango9MessagePushTarget.Social(id.lowercase())
                 }
+                "supervisor.reply" -> {
+                    val id = canonicalConversationId(value("conversation_id", "conversationId")) ?: return null
+                    if (recipient == null) return null
+                    Mango9MessagePushTarget.Assistant(id)
+                }
                 "livechat.message" -> {
                     val id = canonicalConversationId(value("conversation_id")) ?: return null
                     Mango9MessagePushTarget.LiveChat(id)
@@ -172,12 +180,14 @@ data class Mango9MessagePush(
                     runCatching { java.util.UUID.fromString(it).toString() == it }.getOrDefault(false)
                 } ?: return null
                 )
+                "assistant" -> Mango9MessagePushTarget.Assistant(canonicalConversationId(json.optionalString("conversation_id")) ?: return null)
                 "livechat" -> Mango9MessagePushTarget.LiveChat(
                     canonicalConversationId(json.optionalString("conversation_id")) ?: return null,
                 )
                 else -> return null
             }
-            if (target is Mango9MessagePushTarget.LiveChat &&
+            if (target is Mango9MessagePushTarget.Assistant && (json.optionalString("recipient_user_id")?.toIntOrNull() ?: 0) <= 0) return null
+            if ((target is Mango9MessagePushTarget.LiveChat || target is Mango9MessagePushTarget.Assistant) &&
                 (json.optionalString("crm_id") == null || Mango9SessionStore.normalizedIdentity(json.optionalString("sip_identity")) == null)
             ) {
                 return null

@@ -44,7 +44,7 @@ internal class Mango9SupervisorFailure(val code: String, val status: Int = 0) : 
 
 internal object Mango9SupervisorConsent {
     const val VERSION = "2026-10-30.1" // Bump when recipients or purposes change.
-    const val CHAT = "Mango9 sends your messages, conversation history and relevant account/CRM records to OpenRouter and the configured AI provider: DeepInfra (DeepSeek) or OpenAI. They process this information to answer your requests."
+    const val CHAT = "Mango9 sends your messages, files you attach, conversation history and relevant account/CRM records to OpenRouter and the configured AI provider: DeepInfra (DeepSeek) or OpenAI. They process this information to answer your requests."
     const val VOICE = "Voice also sends microphone audio, transcripts and conversation context to Google (Gemini) for spoken replies."
 
     fun key(session: Mango9Session) = MessageDigest.getInstance("SHA-256").digest(
@@ -58,7 +58,7 @@ internal object Mango9SupervisorConsent {
 
     fun receipt(now: Long = System.currentTimeMillis()) = JSONObject().put("version", VERSION).put("acceptedAt", now).toString()
 
-    fun required(path: String, body: JSONObject?) = path == "chat" || path == "voice/ticket" ||
+    fun required(path: String, body: JSONObject?) = path == "chat" || path == "voice/ticket" || (path == "transport" && body?.optString("action") in setOf("start", "parts", "complete", "attach")) ||
         (path.startsWith("actions/") && path.endsWith("/decision") && body?.optString("decision") == "approve")
 }
 
@@ -86,6 +86,10 @@ internal class Mango9SupervisorStore(context: Context) {
     fun pending(session: Mango9Session, command: JSONObject?) = put("pending.", session, command?.toString())
 
     fun conversation(session: Mango9Session): String? = prefs.getString("conversation." + Mango9SupervisorConsent.key(session), null)
+
+    fun state(session: Mango9Session): JSONObject = JSONObject(prefs.getString("state." + Mango9SupervisorConsent.key(session), null) ?: "{}")
+
+    fun state(session: Mango9Session, value: JSONObject) = put("state.", session, value.toString())
 
     fun conversation(session: Mango9Session, id: String) = put("conversation.", session, id)
 
@@ -143,7 +147,7 @@ internal object Mango9SupervisorWire {
         row.optString("supervisorAuth") == "mobile_owner" && row.optString("userId") == session.userId && row.optString("tenantId") == session.userId
 
     fun request(session: Mango9Session, path: String, body: JSONObject? = null): Request {
-        require(path in setOf("identity", "supervisor", "history", "chat", "voice/ticket", "actions", "activity") || actionPath.matches(path))
+        require(path in setOf("identity", "supervisor", "history", "chat", "voice/ticket", "actions", "activity", "transport", "notifications", "reports") || actionPath.matches(path))
         val base = Mango9Configuration.verifiedHttpsUrl(session.crmApiBaseUrl)?.toString()?.toHttpUrl() ?: throw Mango9SupervisorFailure("invalid_configuration")
         require(base.query == null && base.fragment == null && base.username.isEmpty() && base.password.isEmpty())
         val url = base.newBuilder().apply { if (base.pathSegments.lastOrNull() == "") removePathSegment(base.pathSize - 1) }

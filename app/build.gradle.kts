@@ -17,8 +17,8 @@ plugins {
 
 val packageName = "com.mango9.phone"
 val useDifferentPackageNameForDebugBuild = providers.gradleProperty("Mango9IsolatedDebug").orNull == "true"
-val mango9VersionName = "6.2.13"
-val mango9VersionCode = 602048
+val mango9VersionName = "6.2.14"
+val mango9VersionCode = 602049
 val mango9ReleaseTag = "android-$mango9VersionName-build-$mango9VersionCode"
 
 val sdkPath = providers.gradleProperty("LinphoneSdkBuildDir").get()
@@ -613,10 +613,11 @@ val verifyMango9StaticPolicy = tasks.register("verifyMango9StaticPolicy") {
                 crmLayoutText.contains("@string/mango9_crm_leads_subtitle") &&
                 crmLayoutText.contains("@string/mango9_crm_clients") &&
                 crmLayoutText.contains("@string/mango9_crm_clients_subtitle") &&
-                crmLayoutText.contains("@string/mango9_crm_team_chat") &&
-                crmLayoutText.contains("@string/mango9_crm_team_chat_subtitle") &&
-                crmLayoutText.contains("@+id/team_chat_unread_badge"),
-            "Mango9 CRM workspace rows must retain the iOS title-and-subtitle copy",
+                crmLayoutText.contains("@+id/leads_new_badge") &&
+                crmLayoutText.contains("@+id/clients_new_badge") &&
+                !crmLayoutText.contains("@+id/team_chat_row") &&
+                crmLayoutText.contains("@layout/mango9_crm_nav_bar"),
+            "CRM must show leads and clients with new-record badges, without a chat shortcut",
         )
         requirePolicy(
             coreContextText.contains("only_display_sip_uri_username\", true") &&

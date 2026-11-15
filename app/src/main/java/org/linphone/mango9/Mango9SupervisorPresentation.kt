@@ -27,10 +27,10 @@ internal object Mango9SupervisorPresentation {
         val days = ChronoUnit.DAYS.between(stamp.toLocalDate(), now.atZone(zone).toLocalDate())
         val time = stamp.format(DateTimeFormatter.ofPattern("h:mm a", Locale.US))
         return when {
-            days == 0L -> "Today, $time"
-            days == 1L -> "Yesterday, $time"
-            days in 2..6 -> stamp.format(DateTimeFormatter.ofPattern("EEE, h:mm a", Locale.US))
-            else -> stamp.format(DateTimeFormatter.ofPattern("MM/dd/yyyy, h:mm a", Locale.US))
+            days == 0L -> time
+            days == 1L -> "Yesterday"
+            days in 2..6 -> stamp.format(DateTimeFormatter.ofPattern("EEEE", Locale.US))
+            else -> stamp.format(DateTimeFormatter.ofPattern(if (stamp.year == now.atZone(zone).year) "MMMM d" else "MMMM d, yyyy", Locale.US))
         }
     }
 
@@ -114,9 +114,26 @@ internal object Mango9SupervisorPresentation {
         val safe = JSONObject().put("createdAt", metadata.optString("createdAt", row.optString("createdAt")))
             .put("actionIds", JSONArray(actionIds(listOf(row))))
         if (row.optString("role") == "assistant") {
+            metadata.optJSONObject("workflowDesign")?.takeIf {
+                it.toString().length <= 131072
+            }?.let { safe.put("workflowDesign", JSONObject(it.toString())) }
             safe.put("creations", JSONArray(objects(metadata.optJSONArray("creations")).take(16).map(::savedProof)))
         }
         return JSONObject().put("id", row.optString("id").take(200)).put("role", row.optString("role"))
             .put("text", Mango9SupervisorWire.messageText(row).take(32000)).put("metadata", safe)
+            .put(
+                "parts",
+                JSONArray(
+                    objects(row.optJSONArray("parts")).filter {
+                        it.optString("type") == "attachment" && uuid(it.optString("id"))
+                    }.take(3).map { file ->
+                JSONObject().put("type", "attachment").put("id", file.getString("id").lowercase()).apply {
+                    file.optString("name").takeIf { it.isNotEmpty() }?.let { put("name", it.take(240)) }
+                    file.optString("mime").takeIf { it in Mango9AssistantMediaContract.types }?.let { put("mime", it) }
+                    file.optLong("size").takeIf { it in 1..Mango9AssistantMediaContract.maximum }?.let { put("size", it) }
+                }
+            }
+                )
+            )
     }
 }

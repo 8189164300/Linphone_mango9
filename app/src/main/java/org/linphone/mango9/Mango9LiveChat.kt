@@ -130,7 +130,7 @@ internal class Mango9LiveChatApi internal constructor(
     companion object {
         fun wire(session: Mango9Session, operation: String, query: Map<String, String>, body: JSONObject?): Request {
             val reads = setOf("sites", "list", "messages", "capabilities", "availability", "analytics")
-            val writes = setOf("send", "read", "typing", "status", "assign", "presence", "preferences", "visibility", "reaction")
+            val writes = setOf("send", "read", "typing", "status", "assign", "presence", "preferences", "visibility", "conversation-visibility", "reaction")
             require((body == null && operation in reads) || (body != null && operation in writes && query.isEmpty()))
             val base = Mango9Configuration.verifiedHttpsUrl(session.crmApiBaseUrl)?.toString()?.toHttpUrl() ?: throw Mango9LiveChatFailure(0)
             require(base.query == null)

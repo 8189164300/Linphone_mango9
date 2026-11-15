@@ -186,9 +186,9 @@ internal class Mango9LiveChatViewModel : ViewModel() {
                         merged.values.forEach { it.data.put("hiddenForMe", it.id in hidden) }
                     }
                     state.value = current().copy(conversation = conversation, messages = merged.values.sortedBy { it.id }, hasMore = hasMore, error = null, authorized = true)
-                    messages.lastOrNull()?.takeIf { it.id > readID }?.let {
+                    messages.lastOrNull()?.takeIf { !more && it.id > readID }?.let {
                         api.request(owner, "read", body = JSONObject().put("id", target).put("messageId", it.id))
-                        if (valid(owner, stamp)) readID = it.id
+                        if (valid(owner, stamp)) { readID = it.id; Mango9InboxUnread.didRead(target, "live", owner) }
                     }
                     val availability = api.request(owner, "availability", mapOf("siteId" to conversation.getString("site_id")))
                     if (valid(owner, stamp)) state.value = current().copy(agents = availability.getJSONArray("agents").liveObjects(), online = availability.optBoolean("online"))

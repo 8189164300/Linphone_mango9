@@ -20,10 +20,11 @@ class Mango9LiveChatTest {
         assertEquals("Taylor & team", request.url.queryParameter("search"))
         assertEquals("Bearer test-access", request.header("Authorization"))
         assertFalse(request.url.toString().contains("test-access"))
-        for (operation in listOf("reaction", "visibility", "send")) {
+        for (operation in listOf("reaction", "visibility", "conversation-visibility", "send")) {
             val body = JSONObject().put("id", "conversation").put("requestId", "unchanged-command")
             val wire = Mango9LiveChatApi.wire(session, operation, emptyMap(), body)
             assertEquals("POST", wire.method)
+            assertEquals("/app/api/v2/mobile/livechat/$operation", wire.url.encodedPath)
             assertEquals("unchanged-command", JSONObject(Buffer().also { wire.body!!.writeTo(it) }.readUtf8()).getString("requestId"))
         }
         assertThrows(IllegalArgumentException::class.java) { Mango9LiveChatApi.wire(session, "send", emptyMap(), null) }

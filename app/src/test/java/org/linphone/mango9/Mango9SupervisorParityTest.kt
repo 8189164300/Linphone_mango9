@@ -40,10 +40,10 @@ class Mango9SupervisorParityTest {
 
     @Test fun historyDatesUseTodayYesterdayWeekAndUsDate() {
         val now = Instant.parse("2026-10-31T18:00:00Z"); val zone = ZoneId.of("America/Los_Angeles")
-        assertEquals("Today, 10:00 AM", Mango9SupervisorPresentation.date("2026-10-31T17:00:00Z", now, zone))
-        assertEquals("Yesterday, 10:00 AM", Mango9SupervisorPresentation.date("2026-10-30T17:00:00Z", now, zone))
-        assertEquals("Thu, 10:00 AM", Mango9SupervisorPresentation.date("2026-10-29T17:00:00Z", now, zone))
-        assertEquals("10/20/2026, 10:00 AM", Mango9SupervisorPresentation.date("2026-10-20T17:00:00Z", now, zone))
+        assertEquals("10:00 AM", Mango9SupervisorPresentation.date("2026-10-31T17:00:00Z", now, zone))
+        assertEquals("Yesterday", Mango9SupervisorPresentation.date("2026-10-30T17:00:00Z", now, zone))
+        assertEquals("Thursday", Mango9SupervisorPresentation.date("2026-10-29T17:00:00Z", now, zone))
+        assertEquals("October 20", Mango9SupervisorPresentation.date("2026-10-20T17:00:00Z", now, zone))
         assertEquals("", Mango9SupervisorPresentation.date("bad", now, zone))
     }
 

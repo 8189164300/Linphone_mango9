@@ -47,6 +47,13 @@ import java.time.format.DateTimeFormatter
 
 class Mango9SupervisorFragment : GenericMainFragment() {
     private val model by lazy { ViewModelProvider(this)[Mango9SupervisorViewModel::class.java] }
+    private val mediaUI = Mango9AssistantMediaUI(this) { model }
+    private var lastThinking = ""
+    private var thinkingLabel: String? = null
+    private var tray: View? = null
+    private var traySignature = ""
+    private var historySelection = mutableSetOf<String>()
+    private var historySelecting = false
     private lateinit var ui: Mango9LiveViews
     private lateinit var root: LinearLayout
     private lateinit var body: FrameLayout
@@ -108,12 +115,12 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         rendered = ""; root = ui.column().apply { setBackgroundColor(SURFACE) }
         val header = ui.row().apply { setBackgroundColor(BLUE); setPadding(ui.dp(4), 0, ui.dp(8), 0) }
         header.addView(
-            ui.icon(R.drawable.caret_left, "Close Supervisor") {
+            ui.icon(R.drawable.caret_left, "Close Assistant") {
             close()
         }.apply { imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE) }
         )
         header.addView(
-            text("Supervisor", 20f, true).apply {
+            text("Assistant", 20f, true).apply {
             setTextColor(Color.WHITE); gravity = Gravity.CENTER_VERTICAL; ui.oneLine(this)
         },
             LinearLayout.LayoutParams(0, ui.dp(56), 1f)
@@ -143,7 +150,8 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             arguments = it
         },
             Mango9SessionStore(requireContext())
-            )
+            ),
+                arguments?.getString("assistantConversationId")
         )
         model.changed.observe(viewLifecycleOwner) { render() }
         requireActivity().onBackPressedDispatcher.addCallback(
@@ -162,12 +170,14 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         }; if (::composer.isInitialized) composer.clearFocus()
     }
 
-    override fun onStop() { if (!requireActivity().isChangingConfigurations) model.background(); super.onStop() }
+    override fun onStop() {
+        mediaUI.background(); if (!requireActivity().isChangingConfigurations) model.background(); super.onStop()
+    }
 
     override fun onStart() { super.onStart(); model.foreground(latest = followingLatest) }
 
     override fun onDestroyView() {
-        layoutVersion++; historySearch?.cancel(); historyList = null
+        mediaUI.close(); layoutVersion++; historySearch?.cancel(); historyList = null
         spinner?.cancel(); spinner = null; privacyDialog?.dismiss(); toolsDialog?.dismiss(); privacyDialog = null; toolsDialog = null; toolsBody = null; super.onDestroyView()
     }
 
@@ -219,16 +229,16 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             setBackgroundColor(Color.WHITE); setPadding(ui.dp(10), ui.dp(6), ui.dp(10), ui.dp(6))
         }; chat.addView(bottom)
         composer = EditText(ui.context).apply {
-            hint = "Message Supervisor…"; contentDescription = "Message Supervisor"; textSize = 16f; setTextColor(INK); setHintTextColor(SECONDARY)
+            hint = "Message Assistant…"; contentDescription = "Message Supervisor"; textSize = 16f; setTextColor(INK); setHintTextColor(SECONDARY)
             background = ui.round(0xfff1f2f8.toInt(), 24); setPadding(ui.dp(14), ui.dp(10), ui.dp(14), ui.dp(10)); minHeight = ui.dp(48)
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI; maxLines = 4
             doAfterTextChanged {
-                model.draft = it.toString(); send.isEnabled = model.canSend(); send.alpha = if (send.isEnabled) 1f else 0.4f
+                model.draft = it.toString(); model.draftChanged(); send.isEnabled = model.canSend(); send.alpha = if (send.isEnabled) 1f else 0.4f
             }
         }
         send = pill("↑", BLUE, Color.WHITE) {
-            followingLatest = true; hideKeyboard(); model.send()
+            followingLatest = true; hideKeyboard(); if (model.transfer.active) model.transfer.pause() else model.send()
         }.apply { contentDescription = "Send to Supervisor"; textSize = 26f }
     }
 
@@ -286,7 +296,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         chat.isVisible = !voiceMode; voice.isVisible = voiceMode
         mode.text = if (voiceMode) "Chat" else "Voice"; mode.isVisible = model.authorized
         mode.isEnabled = !model.accepted || voiceMode || model.canVoice()
-        if ((model.loading || model.sending) && android.animation.ValueAnimator.areAnimatorsEnabled()) {
+        if ((model.loading || model.working) && android.animation.ValueAnimator.areAnimatorsEnabled()) {
             ai.text = "◌"
             if (spinner == null) {
                 spinner = android.animation.ObjectAnimator.ofFloat(ai, View.ROTATION, 0f, 360f).apply {
@@ -295,7 +305,8 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             }
         } else { spinner?.cancel(); spinner = null; ai.rotation = 0f; ai.text = "AI" }
         notice.text = (if (voiceMode) model.voice.error else model.error).orEmpty()
-        if (model.loading && notice.text.isEmpty()) notice.text = "Loading Supervisor…"
+        if (!model.working) thinkingLabel = null
+        if (model.loading && notice.text.isEmpty()) notice.text = "Loading Assistant…"
         notice.isVisible = notice.text.isNotEmpty()
         status.text = model.voice.status
         hint.text = if (!model.voice.running) "Tap the microphone to connect" else if (model.voice.muted) "You can still hear Supervisor" else "Tap Mute to pause microphone sharing"
@@ -309,7 +320,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         }
         val signature = model.messages.joinToString {
             it.toString()
-        } + model.loading + model.moreMessages + model.configurationDetails.toString() + model.actionBusy + model.loadingOlder + visibleMessageCount + model.savedConfigurationIds
+        } + model.loading + model.moreMessages + model.configurationDetails.toString() + model.actionBusy + model.loadingOlder + visibleMessageCount + model.savedConfigurationIds + model.working + model.replyPhase
         if (signature != rendered) {
             rendered = signature
             val anchor = (0 until messages.childCount).map {
@@ -318,7 +329,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             val anchorId = anchor?.tag; val offset = (anchor?.top ?: 0) - chatScroll.scrollY
             val previousY = chatScroll.scrollY; val layout = ++layoutVersion
             aligningMessages = true
-            messages.removeAllViews()
+            mediaUI.stopPlayback(); messages.removeAllViews()
             if (model.moreMessages || visibleMessageCount < model.messages.size) {
                 messages.addView(
                     button(if (model.loadingOlder) "Loading earlier messages…" else "Load earlier messages") {
@@ -340,6 +351,26 @@ class Mango9SupervisorFragment : GenericMainFragment() {
                 )
             }
             model.messages.takeLast(visibleMessageCount).forEach { bubble(it) }
+            if (model.working && !model.transfer.active) {
+                val working = ui.row(); working.setPadding(ui.dp(10), ui.dp(8), 0, ui.dp(8))
+                working.addView(ProgressBar(ui.context), LinearLayout.LayoutParams(ui.dp(22), ui.dp(22)))
+                working.addView(
+                    text(
+                        if (model.replyPhase == "waiting") {
+                        "  Waiting for a reply…"
+                    } else {
+                        "  " + (
+                            thinkingLabel ?: Mango9AssistantThinking.next(lastThinking).also {
+                        thinkingLabel = it; lastThinking = it
+                    }
+                        )
+                    },
+                        13f
+                    ).apply {
+                    setTextColor(SECONDARY)
+                }
+                ); messages.addView(working)
+            }
             messages.doOnNextLayout {
                 chatScroll.post {
                     if (view == null || layout != layoutVersion) return@post
@@ -351,24 +382,26 @@ class Mango9SupervisorFragment : GenericMainFragment() {
                 }
             }
         }
-        val expected = if (model.accepted) "composer" else "consent"
+        val expected = if (model.accepted || model.loading) "composer" else "consent"
         if (bottom.tag != expected) {
             bottom.tag = expected; bottom.removeAllViews()
-            if (model.accepted) {
+            if (model.accepted || model.loading) {
                 val row = ui.row(); (composer.parent as? ViewGroup)?.removeView(composer); (send.parent as? ViewGroup)?.removeView(send)
+                row.addView(
+                    button("+") {
+                    }.apply {
+                        textSize = 28f; contentDescription = "Add to message"; setOnClickListener {
+                            hideKeyboard(); mediaUI.menu(this)
+                        }
+                    },
+                        LinearLayout.LayoutParams(ui.dp(44), ui.dp(48))
+                )
                 row.addView(
                     composer,
                     LinearLayout.LayoutParams(0, -2, 1f).apply {
                     marginEnd = ui.dp(8)
                 }
                 ); row.addView(send, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48))); bottom.addView(row)
-                if (model.billing) {
-                    bottom.addView(
-                        text("Uses your Mango9 AI credit", 11f).apply {
-                    setTextColor(SECONDARY); setPadding(ui.dp(8), ui.dp(4), 0, 0)
-                }
-                    )
-                }
             } else {
                 val row = ui.row(); row.addView(text("AI sharing is off", 14f), LinearLayout.LayoutParams(0, -2, 1f)); row.addView(
                     button("Review") {
@@ -378,8 +411,16 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             }
         }
         if (composer.text.toString() != model.draft) { composer.setText(model.draft); composer.setSelection(composer.length()) }
-        send.isEnabled = model.canSend(); send.alpha = if (send.isEnabled) 1f else 0.4f
-        pending.removeAllViews(); pending.isVisible = model.pending != null && !model.sending
+        composer.isEnabled = model.authorized
+        val fileSignature = model.transfer.draft?.toString().orEmpty() + model.transfer.phase + model.transfer.uploaded + model.transfer.error
+        if (model.accepted && (fileSignature != traySignature || tray?.parent == null)) {
+            traySignature = fileSignature; tray?.let {
+                bottom.removeView(it)
+            }; tray = mediaUI.tray(); tray?.let { bottom.addView(it, 0) }
+        }
+        send.text = if (model.transfer.active) "Ⅱ" else "↑"
+        send.isEnabled = model.canSend() || model.transfer.active; send.alpha = if (send.isEnabled) 1f else 0.4f
+        pending.removeAllViews(); pending.isVisible = model.pending != null && !model.sending && model.replyPhase == "idle"
         if (pending.isVisible) {
             pending.addView(
                 text("Request status is unconfirmed. It won’t be sent again automatically.", 12f).apply {
@@ -424,8 +465,14 @@ class Mango9SupervisorFragment : GenericMainFragment() {
                 )
             }
         }
-        message.text = display; group.addView(message)
+        message.text = display; if (raw.isNotEmpty()) group.addView(message)
+        Mango9SupervisorPresentation.objects(row.optJSONArray("parts")).filter {
+            it.optString("type") == "attachment" && Mango9SupervisorPresentation.uuid(it.optString("id"))
+        }.take(3).forEach { group.addView(mediaUI.bubble(it)) }
         if (!outgoing) {
+            row.optJSONObject("metadata")?.optJSONObject("workflowDesign")?.let {
+                Mango9AssistantWorkflowUI.view(this, model, it)?.let(group::addView)
+            }
             val ids = row.optJSONObject("metadata")?.optJSONArray("actionIds")
             for (index in 0 until (ids?.length() ?: 0)) {
                 val id = ids?.optString(index).orEmpty()
@@ -444,11 +491,18 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             DateTimeFormatter.ofPattern("h:mm a").withZone(ZoneId.systemDefault()).format(Instant.parse(stamp))
         }.getOrDefault("")
         footer.addView(text(time, 11f).apply { setTextColor(SECONDARY) })
-        footer.addView(
-            button("Copy") {
-            (requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Supervisor message", raw))
-        }.apply { textSize = 11f; contentDescription = "Copy Supervisor message" }
-        )
+        fun actions(anchor: View) {
+            PopupMenu(ui.context, anchor).apply {
+                menu.add("Copy"); if (!outgoing) menu.add("Report reply")
+                setOnMenuItemClickListener { item ->
+                    if (item.title == "Copy") (requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Assistant message", raw))
+                    else report(row)
+                    true
+                }; show()
+            }
+        }
+        group.setOnLongClickListener { actions(it); true }
+        message.setOnLongClickListener { actions(it); true }
         group.addView(footer)
         val cell = FrameLayout(ui.context).apply { tag = row.optString("id") }
         cell.addView(
@@ -640,9 +694,11 @@ class Mango9SupervisorFragment : GenericMainFragment() {
 
     private fun menu(anchor: View) {
         hideKeyboard(); val popup = PopupMenu(ui.context, anchor, Gravity.END)
-        listOf("AI privacy", "History", "New chat").forEach { popup.menu.add(it) }
+        listOf("AI privacy", if (model.unreadChats > 0) "History (${model.unreadChats})" else "History", "New chat").forEach {
+            popup.menu.add(it)
+        }
         popup.setOnMenuItemClickListener {
-            when (it.title.toString()) {
+            when (it.title.toString().substringBefore(" (")) {
                 "AI privacy" -> privacy()
                 "History" -> {
                     showTools("History"); viewLifecycleOwner.lifecycleScope.launch {
@@ -657,9 +713,10 @@ class Mango9SupervisorFragment : GenericMainFragment() {
 
     private fun showTools(title: String) {
         if (title != "History") return
+        model.readingConversation = false
         val (dialog, layout) = sheet(title); toolsDialog = dialog; toolsMode = title; toolsBody = ui.column()
         val search = EditText(ui.context).apply {
-            hint = "Search conversation titles"; contentDescription = "Search conversation titles"; textSize = 15f; setSingleLine()
+            hint = "Search chat titles"; contentDescription = "Search chat titles"; textSize = 15f; setSingleLine()
             setText(model.historyQuery)
             doAfterTextChanged {
                 historySearch?.cancel()
@@ -667,7 +724,21 @@ class Mango9SupervisorFragment : GenericMainFragment() {
                 historySearch = viewLifecycleOwner.lifecycleScope.launch { delay(250); model.loadConversations(query = query) }
             }
         }
-        layout.addView(search)
+        val actions = ui.row()
+        actions.addView(
+            button("‹") {
+            dialog.dismiss()
+        }.apply { contentDescription = "Back to chat" },
+            LinearLayout.LayoutParams(ui.dp(44), ui.dp(44))
+        )
+        actions.addView(search, LinearLayout.LayoutParams(0, -2, 1f))
+        actions.addView(
+            button("⋯") {
+            historyMenu(actions)
+        }.apply { contentDescription = "History options" },
+            LinearLayout.LayoutParams(ui.dp(44), ui.dp(44))
+        )
+        layout.addView(actions)
         val filters = ui.row()
         historyFilters.clear()
         listOf("all" to "All", "text" to "Text only", "voice" to "With voice").forEach { (key, label) ->
@@ -691,6 +762,20 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             override fun onBindViewHolder(holder: HistoryHolder, position: Int) {
                 val row = historyRows[position]; val cell = holder.cell; cell.removeAllViews(); cell.setPadding(0, ui.dp(9), 0, ui.dp(9))
                 val line = ui.row()
+                if (historySelecting) {
+                    line.addView(
+                        text(if (row.optString("id") in historySelection) "☑" else "○", 22f).apply {
+                    setTextColor(BLUE)
+                }
+                    )
+                }
+                if (row.optString("id") in model.unread) {
+                    line.addView(
+                        text("●", 12f).apply {
+                    setTextColor(BLUE); contentDescription = "Unread chat"
+                }
+                    )
+                }
                 line.addView(
                     text(row.optString("title").ifBlank { "Supervisor conversation" }, 15f, true).apply {
                     maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
@@ -698,7 +783,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
                     LinearLayout.LayoutParams(0, -2, 1f)
                 )
                 line.addView(
-                    ui.icon(R.drawable.trash, "Delete conversation") {
+                    ui.icon(R.drawable.trash, "Delete chat") {
                     confirmDelete(row)
                 }.apply { isEnabled = model.canManageHistory() }
                 )
@@ -717,6 +802,9 @@ class Mango9SupervisorFragment : GenericMainFragment() {
                 )
                 cell.addView(metadata); cell.addView(ui.line())
                 cell.setOnClickListener {
+                    if (historySelecting) {
+                        val id = row.optString("id"); if (!historySelection.add(id)) historySelection.remove(id); historySignature = ""; renderTools(); return@setOnClickListener
+                    }
                     if (!model.loading && !model.sending && !model.actionBusy && model.pending == null) {
                         model.select(row.optString("id")); dialog.dismiss()
                     }
@@ -737,12 +825,59 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         }).attachToRecyclerView(list)
         historyList = list; historySignature = ""
         layout.addView(list, LinearLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * .50).toInt()))
-        dialog.setOnDismissListener { historySearch?.cancel(); historyList = null; toolsBody = null }
+        dialog.setOnDismissListener {
+            model.readingConversation = true; historySearch?.cancel(); historyList = null; toolsBody = null
+        }
         dialog.show(); renderTools()
     }
 
     private class HistoryHolder(val cell: LinearLayout) : RecyclerView.ViewHolder(cell) {
         init { cell.layoutParams = RecyclerView.LayoutParams(-1, -2) }
+    }
+
+    private fun historyMenu(anchor: View) {
+        val popup = PopupMenu(ui.context, anchor)
+        listOf(if (historySelecting) "Cancel selection" else "Select chats", "Select all", "Refresh").forEach {
+            popup.menu.add(it)
+        }
+        popup.setOnMenuItemClickListener { item ->
+            when (item.title.toString()) {
+                "Select all" -> viewLifecycleOwner.lifecycleScope.launch {
+                    historySelection = model.allHistoryIDs().toMutableSet(); historySelecting = true; historySignature = ""; renderTools()
+                }
+                "Refresh" -> viewLifecycleOwner.lifecycleScope.launch { model.loadConversations(); model.refreshUnread() }
+                else -> { historySelecting = !historySelecting; historySelection.clear(); historySignature = ""; renderTools() }
+            }; true
+        }; popup.show()
+    }
+
+    private fun report(message: JSONObject) {
+        val reasons =
+            listOf("Incorrect information", "Unsafe or harmful", "Inappropriate content", "Privacy concern", "Other")
+        val keys = listOf("incorrect", "unsafe", "inappropriate", "privacy", "other")
+        var selected = 0
+        val layout = ui.column(); val choice = Spinner(ui.context).apply {
+            adapter = ArrayAdapter(ui.context, android.R.layout.simple_spinner_dropdown_item, reasons)
+        }; layout.addView(choice)
+        val detail = EditText(ui.context).apply { hint = "Details (optional)"; maxLines = 5 }; layout.addView(detail)
+        val error = text("", 12f); layout.addView(error)
+        var reportId = java.util.UUID.randomUUID().toString(); var previous = ""
+        val dialog = MaterialAlertDialogBuilder(ui.context).setTitle("Report reply").setView(layout).setNegativeButton("Cancel", null).setPositiveButton("Send report", null).create()
+        dialog.show(); dialog.getButton(-1).setOnClickListener {
+            val details = detail.text.toString(); selected = choice.selectedItemPosition
+            if (details.toByteArray().size > 2000) {
+                error.text = "Please shorten the report to 2000 bytes."; return@setOnClickListener
+            }
+            val body = keys[selected] + details; if (body != previous) {
+                reportId = java.util.UUID.randomUUID().toString(); previous = body
+            }
+            dialog.getButton(-1).isEnabled = false
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    model.report(message, keys[selected], details, reportId); dialog.dismiss()
+                } catch (_: Exception) { error.text = "Couldn’t submit the report. Try again."; dialog.getButton(-1).isEnabled = true }
+            }
+        }
     }
 
     private fun confirmDelete(row: JSONObject) {
@@ -761,9 +896,30 @@ class Mango9SupervisorFragment : GenericMainFragment() {
                 control.isSelected = model.historyChannel == key
                 control.background = ui.round(if (control.isSelected) TINT else Color.TRANSPARENT, 18)
             }
-            val signature = model.conversations.toString() + model.canManageHistory()
+            val signature = model.conversations.toString() + model.canManageHistory() + model.unread + historySelection + historySelecting
             if (signature != historySignature) {
                 historySignature = signature; historyRows = model.conversations; historyList?.adapter?.notifyDataSetChanged()
+            }
+            if (historySelecting) {
+                val actions = ui.row(); actions.addView(text("${historySelection.size} selected", 12f), LinearLayout.LayoutParams(0, -2, 1f))
+                if (model.bulkBusy) actions.addView(ProgressBar(ui.context), LinearLayout.LayoutParams(ui.dp(24), ui.dp(24)))
+                actions.addView(
+                    button("✓") {
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        model.markConversationsRead(historySelection.toSet())
+                    }
+                }.apply { contentDescription = "Mark selected read"; isEnabled = historySelection.isNotEmpty() && !model.bulkBusy }
+                )
+                actions.addView(
+                    ui.icon(R.drawable.trash, "Delete selected") {
+                    MaterialAlertDialogBuilder(ui.context).setTitle("Delete selected chats?").setMessage("Tasks and other changes will be kept.").setNegativeButton("Cancel", null).setPositiveButton("Delete") { _, _ ->
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            val removed = model.deleteConversations(historySelection.toSet()); historySelection.removeAll(removed); if (historySelection.isEmpty()) historySelecting = false; historySignature = ""; renderTools()
+                        }
+                    }.show()
+                }.apply { isEnabled = historySelection.isNotEmpty() && !model.bulkBusy }
+                )
+                content.addView(actions)
             }
             if (model.loadingConversations) content.addView(text("Loading history…", 12f))
             model.historyError?.let {
@@ -780,7 +936,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             }
                 )
             }
-            if (model.conversations.isEmpty() && !model.loadingConversations) content.addView(text(if (model.historyQuery.isEmpty() && model.historyChannel == "all") "No saved conversations yet." else "No matching conversations.", 13f))
+            if (model.conversations.isEmpty() && !model.loadingConversations) content.addView(text(if (model.historyQuery.isEmpty() && model.historyChannel == "all") "No saved conversations yet." else "No matching chats.", 13f))
         }
     }
 

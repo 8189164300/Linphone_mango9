@@ -39,6 +39,8 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.tabs.TabLayout
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
+import org.linphone.mango9.Mango9InboxUnread
 import kotlinx.coroutines.delay
 import android.widget.ArrayAdapter
 import android.widget.AdapterView
@@ -165,7 +167,7 @@ class ConversationsListFragment : AbstractMainFragment() {
                 val icon = when (tab) { Mango9MessagingTab.Sms -> R.drawable.chat_teardrop_text; Mango9MessagingTab.Team -> R.drawable.users; Mango9MessagingTab.Social -> R.drawable.chat_teardrop_dots; Mango9MessagingTab.Live -> R.drawable.globe_hemisphere_west }
                 val ui = org.linphone.ui.main.crm.fragment.Mango9LiveViews(requireContext())
                 val colors = android.content.res.ColorStateList(arrayOf(intArrayOf(android.R.attr.state_selected), intArrayOf()), intArrayOf(ui.accent, ui.secondary))
-                val label = ui.text(title, 12f, true).apply {
+                val label = ui.text(title, 11f, true).apply {
                     id = android.R.id.text1; maxLines = 1; isDuplicateParentStateEnabled = true
                     setTextColor(colors)
                 }
@@ -180,6 +182,7 @@ class ConversationsListFragment : AbstractMainFragment() {
                     setPadding(ui.dp(2), ui.dp(8), ui.dp(2), ui.dp(8))
                     addView(image, android.widget.LinearLayout.LayoutParams(ui.dp(15), ui.dp(15)).apply { marginEnd = ui.dp(4) })
                     addView(label)
+                    addView(android.view.View(requireContext()).apply { tag = "unread-dot"; background = ui.round(ui.accent, 3); visibility = View.INVISIBLE }, android.widget.LinearLayout.LayoutParams(ui.dp(5), ui.dp(5)).apply { marginStart = ui.dp(3) })
                 }
                 tabs.addTab(tabs.newTab().setText(title).setContentDescription(title).setCustomView(content).setTag(tab), tab == mango9Tab)
             }
@@ -617,11 +620,37 @@ class ConversationsListFragment : AbstractMainFragment() {
 
         binding.topBar.showExtraAction = mango9Sessions.captureSession() != null
         binding.topBar.extraActionEnabled = true
-        binding.topBar.extraActionContentDescription = "Open Supervisor"
+        binding.topBar.extraActionContentDescription = "Open Assistant"
         binding.topBar.extraActionIcon = ContextCompat.getDrawable(requireContext(), R.drawable.mango9_supervisor_ai)
         binding.topBar.extraAction.imageTintList = null
         binding.topBar.extraActionClickListener = View.OnClickListener {
             org.linphone.ui.main.crm.fragment.Mango9SupervisorFragment.open(this)
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                Mango9InboxUnread.counts.collect { counts ->
+                    Mango9MessagingTab.entries.forEach { updateTabBadge(it, counts[it.name.lowercase()] ?: 0) }
+                    val assistantUnread = (counts["assistant"] ?: 0) > 0
+                    binding.topBar.extraActionContentDescription = "Open Assistant" + if (assistantUnread) ", ${counts["assistant"]} unread chats" else ""
+                    val icon = ContextCompat.getDrawable(requireContext(), R.drawable.mango9_supervisor_ai)!!
+                    binding.topBar.extraActionIcon = if (assistantUnread) {
+                        val size = (18 * resources.displayMetrics.density).toInt()
+                        val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+                        val canvas = android.graphics.Canvas(bitmap)
+                        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+                        paint.color = android.graphics.Color.WHITE; canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+                        paint.color = android.graphics.Color.rgb(218, 48, 65); canvas.drawCircle(size / 2f, size / 2f, size / 2f - resources.displayMetrics.density, paint)
+                        paint.color = android.graphics.Color.WHITE; paint.textSize = 10 * resources.displayMetrics.density
+                        paint.typeface = android.graphics.Typeface.DEFAULT_BOLD; paint.textAlign = android.graphics.Paint.Align.CENTER
+                        val count = counts["assistant"] ?: 0
+                        canvas.drawText(if (count > 99) "99+" else count.toString(), size / 2f, size / 2f - (paint.ascent() + paint.descent()) / 2f, paint)
+                        val badge = android.graphics.drawable.BitmapDrawable(resources, bitmap)
+                        android.graphics.drawable.LayerDrawable(arrayOf(icon, badge)).apply {
+                            setLayerSize(1, size, size); setLayerGravity(1, android.view.Gravity.TOP or android.view.Gravity.END)
+                        }
+                    } else icon
+                }
+            }
         }
 
         // Handle intent params if any
@@ -711,8 +740,8 @@ class ConversationsListFragment : AbstractMainFragment() {
         listOf(mango9SmsMessagesAdapter, mango9TeamMessagesAdapter, socialAdapter).forEach {
             it.notificationScope = mango9Sessions.captureSession()
         }
-        val teamUnread = mango9ChatStore.teamUnreadCount(state)
-        val smsUnread = mango9ChatStore.smsUnreadCount(state)
+        val teamUnread = Mango9InboxUnread.counts.value["team"] ?: 0
+        val smsUnread = Mango9InboxUnread.counts.value["sms"] ?: 0
         updateTabBadge(Mango9MessagingTab.Team, teamUnread)
         updateTabBadge(Mango9MessagingTab.Sms, smsUnread)
         val teamItems = Mango9MessagingListItems.team(
@@ -755,17 +784,10 @@ class ConversationsListFragment : AbstractMainFragment() {
     private fun updateTabBadge(kind: Mango9MessagingTab, unread: Int) {
         val tabs = binding.mango9MessagesTabs
         val tab = (0 until tabs.tabCount).mapNotNull { tabs.getTabAt(it) }.firstOrNull { it.tag == kind } ?: return
-        if (unread <= 0) {
-            tab.removeBadge()
-            return
-        }
-        tab.orCreateBadge.apply {
-            number = unread
-            maxCharacterCount = 3
-            backgroundColor = ContextCompat.getColor(requireContext(), R.color.orange_main_500)
-            badgeTextColor = ContextCompat.getColor(requireContext(), R.color.bc_white)
-            isVisible = true
-        }
+        tab.removeBadge()
+        tab.customView?.findViewWithTag<View>("unread-dot")?.visibility = if (unread > 0) View.VISIBLE else View.INVISIBLE
+        tab.contentDescription = (when (kind) { Mango9MessagingTab.Sms -> "SMS"; Mango9MessagingTab.Team -> "Team Chat"; Mango9MessagingTab.Social -> "Social"; Mango9MessagingTab.Live -> "Live Chat" }) + if (unread > 0) ", $unread unread chats" else ""
+
     }
 
     private fun showMango9MessagesAdapter(tab: Mango9MessagingTab) {
@@ -790,7 +812,7 @@ class ConversationsListFragment : AbstractMainFragment() {
             Mango9MessagingListItem.Social(it, value.previews[it.id] ?: "Loading preview…", value.previewEpoch)
         }
         )
-        updateTabBadge(Mango9MessagingTab.Social, value.threads.count { it.unread })
+        updateTabBadge(Mango9MessagingTab.Social, Mango9InboxUnread.counts.value["social"] ?: 0)
         binding.mango9MessagesStatus.visibility = if (value.error != null || value.accountWarning != null || (value.loading && value.threads.isEmpty())) View.VISIBLE else View.GONE
         binding.mango9MessagesStatus.text = value.error ?: value.accountWarning ?: if (value.loading) getString(R.string.mango9_chat_connecting) else getString(R.string.mango9_social)
         binding.mango9MessagesEmpty.setText(R.string.mango9_social_empty)

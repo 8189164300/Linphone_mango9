@@ -7,6 +7,12 @@
         android:layout_height="match_parent"
         android:background="?attr/color_grey_100">
 
+        <include android:id="@+id/top_bar" layout="@layout/main_activity_top_bar"
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintTop_toTopOf="parent" />
+        <include android:id="@+id/bottom_nav_bar" layout="@layout/mango9_crm_nav_bar"
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintBottom_toBottomOf="parent" />
         <ImageView
             android:id="@+id/back"
             style="@style/icon_top_bar_button_style"
@@ -15,7 +21,7 @@
             android:contentDescription="@string/content_description_go_back_icon"
             android:src="@drawable/caret_left"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/top_bar"
             app:tint="?attr/color_main1_500" />
 
         <LinearLayout
@@ -27,7 +33,7 @@
             android:paddingHorizontal="8dp"
             app:layout_constraintEnd_toStartOf="@id/refresh"
             app:layout_constraintStart_toEndOf="@id/back"
-            app:layout_constraintTop_toTopOf="parent">
+            app:layout_constraintTop_toBottomOf="@id/top_bar">
 
             <TextView
                 android:id="@+id/title"
@@ -57,7 +63,7 @@
             android:contentDescription="@string/mango9_crm_refresh"
             android:src="@drawable/arrow_clockwise"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/top_bar"
             app:tint="?attr/color_main1_500" />
 
         <View
@@ -73,7 +79,7 @@
             android:id="@+id/content"
             android:layout_width="0dp"
             android:layout_height="0dp"
-            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintBottom_toTopOf="@id/bottom_nav_bar"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/header_separator">
@@ -337,7 +343,11 @@
                                     android:textSize="11sp" />
                             </LinearLayout>
                             <ImageView style="@style/Mango9.Crm.Chevron" />
-                        </LinearLayout>
+
+                            <TextView android:id="@+id/leads_new_badge" style="@style/unread_count_text_style"
+                                android:layout_width="wrap_content" android:layout_height="22dp" android:minWidth="22dp"
+                                android:paddingHorizontal="5dp" android:visibility="gone" />
+</LinearLayout>
 
                         <LinearLayout
                             android:id="@+id/clients_row"
@@ -388,73 +398,13 @@
                                     android:textSize="11sp" />
                             </LinearLayout>
                             <ImageView style="@style/Mango9.Crm.Chevron" />
-                        </LinearLayout>
 
-                        <LinearLayout
-                            android:id="@+id/team_chat_row"
-                            style="@style/Mango9.Crm.WorkspaceRow"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="12dp"
-                            android:background="@drawable/shape_squircle_white_background"
-                            android:clickable="true"
-                            android:focusable="true"
-                            android:foreground="?attr/selectableItemBackground"
-                            android:gravity="center_vertical"
-                            android:minHeight="70dp"
-                            android:orientation="horizontal"
-                            android:padding="13dp">
+                            <TextView android:id="@+id/clients_new_badge" style="@style/unread_count_text_style"
+                                android:layout_width="wrap_content" android:layout_height="22dp" android:minWidth="22dp"
+                                android:paddingHorizontal="5dp" android:visibility="gone" />
+</LinearLayout>
 
-                            <ImageView
-                                android:layout_width="45dp"
-                                android:layout_height="45dp"
-                                android:background="@drawable/mango9_crm_icon_background"
-                                android:contentDescription="@null"
-                                android:padding="10dp"
-                                android:src="@drawable/chat_teardrop_text"
-                                android:backgroundTint="@color/mango9_crm_conversations_surface"
-                                app:tint="@color/mango9_crm_conversations" />
 
-                            <LinearLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_marginStart="12dp"
-                                android:layout_weight="1"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    style="@style/default_text_style_700"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:text="@string/mango9_crm_team_chat"
-                                    android:textSize="14sp" />
-
-                                <TextView
-                                    android:id="@+id/team_chat_subtitle"
-                                    style="@style/default_text_style"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="3dp"
-                                    android:text="@string/mango9_crm_team_chat_subtitle"
-                                    android:textColor="?attr/color_main2_500"
-                                    android:textSize="11sp" />
-                            </LinearLayout>
-
-                            <TextView
-                                android:id="@+id/team_chat_unread_badge"
-                                style="@style/default_text_style_700"
-                                android:layout_width="wrap_content"
-                                android:layout_height="22dp"
-                                android:layout_marginStart="8dp"
-                                android:background="@drawable/mango9_chat_unread_background"
-                                android:gravity="center"
-                                android:minWidth="22dp"
-                                android:paddingHorizontal="6dp"
-                                android:textColor="@color/bc_white"
-                                android:textSize="10sp"
-                                android:visibility="gone" />
-                            <ImageView style="@style/Mango9.Crm.Chevron" />
-                        </LinearLayout>
                     </LinearLayout>
 
                     <LinearLayout
@@ -719,7 +669,7 @@
             android:src="@drawable/plus_circle"
             android:visibility="gone"
             app:backgroundTint="?attr/color_main1_500"
-            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintBottom_toTopOf="@id/bottom_nav_bar"
             app:layout_constraintEnd_toEndOf="parent"
             app:tint="@color/bc_white" />
     </androidx.constraintlayout.widget.ConstraintLayout>

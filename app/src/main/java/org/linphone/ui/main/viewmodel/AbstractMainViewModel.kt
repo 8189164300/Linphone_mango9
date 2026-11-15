@@ -22,6 +22,9 @@ package org.linphone.ui.main.viewmodel
 import androidx.annotation.UiThread
 import androidx.annotation.WorkerThread
 import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import org.linphone.LinphoneApplication.Companion.coreContext
 import org.linphone.LinphoneApplication.Companion.corePreferences
 import org.linphone.core.Account
@@ -51,6 +54,10 @@ open class AbstractMainViewModel
     val searchBarVisible = MutableLiveData<Boolean>()
 
     val searchFilter = MutableLiveData<String>()
+
+    val crmSelected = MutableLiveData(false)
+
+    val crmNewCount = MutableLiveData(0)
 
     val contactsSelected = MutableLiveData<Boolean>()
 
@@ -192,6 +199,12 @@ open class AbstractMainViewModel
     }
 
     init {
+        viewModelScope.launch { org.linphone.mango9.Mango9CrmUnread.counts.collect { crmNewCount.value = it.values.sum() } }
+        viewModelScope.launch {
+            org.linphone.mango9.Mango9InboxUnread.counts.collect {
+                if (org.linphone.mango9.Mango9SessionStore(coreContext.context).load() != null) unreadMessages.value = org.linphone.mango9.Mango9InboxUnread.total()
+            }
+        }
         // Pre-compute this value to prevent the menu being briefly visible
         hideMeetings.value = !coreContext.defaultAccountHasVideoConferenceFactoryUri
 
@@ -315,7 +328,7 @@ open class AbstractMainViewModel
     @WorkerThread
     fun computeUnreadMessagesCount() {
         val account = LinphoneUtils.getDefaultAccount()
-        val count = account?.unreadChatMessageCount ?: coreContext.core.unreadChatMessageCount
+        val count = if (org.linphone.mango9.Mango9SessionStore(coreContext.context).load() != null) org.linphone.mango9.Mango9InboxUnread.total() else account?.unreadChatMessageCount ?: coreContext.core.unreadChatMessageCount
         val moreThanOne = count > 1
         Log.i(
             "$TAG There ${if (moreThanOne) "are" else "is"} [$count] unread ${if (moreThanOne) "messages" else "message"}"

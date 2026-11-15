@@ -37,6 +37,9 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
         setPadding(dp(8), dp(12), dp(8), dp(12))
     }
     private val buttons = mutableMapOf<Int, Button>()
+    private var pageHost: ViewGroup? = null
+    fun setHost(host: ViewGroup) = apply { pageHost = host }
+
     private var shown: ((DialogInterface) -> Unit)? = null
     private var dismissed: ((DialogInterface) -> Unit)? = null
     private var cancelled: ((DialogInterface) -> Unit)? = null
@@ -53,7 +56,7 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
         root.addView(toolbar, LinearLayout.LayoutParams(-1, -2))
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            if (pageHost == null) v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             insets
         }
     }
@@ -107,7 +110,7 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
 
     fun show() {
         if (isShowing) return
-        val host = activity.findViewById<ViewGroup>(android.R.id.content)
+        val host = pageHost ?: activity.findViewById<ViewGroup>(android.R.id.content)
         for (i in 0 until host.childCount) host.getChildAt(i).let {
             siblings[it] = it.importantForAccessibility
             it.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS

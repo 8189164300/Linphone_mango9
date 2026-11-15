@@ -55,10 +55,39 @@
             android:background="@drawable/squircle_transparent_button_background_2"
             android:text="@string/bottom_navigation_contacts_label"
             textFont="@{viewModel.contactsSelected ? NotoSansFont.NotoSansBold : NotoSansFont.NotoSansRegular}"
-            app:layout_constraintBottom_toTopOf="@id/calls"
+            app:layout_constraintBottom_toTopOf="@id/crm"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toBottomOf="@id/avatar" />
+
+        <androidx.appcompat.widget.AppCompatTextView
+            style="@style/bottom_nav_bar_label_style"
+            android:id="@+id/crm"
+            android:onClick="@{() -> viewModel.navigateToCrm()}"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:paddingTop="5dp"
+            android:paddingBottom="5dp"
+            android:layout_marginTop="0dp"
+            android:textColor="?attr/color_on_main"
+            android:drawableTop="@drawable/mango9_crm_footer"
+            android:drawablePadding="10dp"
+            android:drawableTint="?attr/color_on_main"
+            android:background="@drawable/squircle_transparent_button_background_2"
+            android:text="@string/mango9_crm_title"
+            textFont="@{viewModel.crmSelected ? NotoSansFont.NotoSansBold : NotoSansFont.NotoSansRegular}"
+            app:layout_constraintBottom_toTopOf="@id/calls"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/contacts" />
+
+        <androidx.appcompat.widget.AppCompatTextView
+            style="@style/unread_count_text_style" android:id="@+id/crm_new_count"
+            android:layout_width="@dimen/unread_count_indicator_size" android:layout_height="@dimen/unread_count_indicator_size"
+            android:layout_marginEnd="1dp" android:layout_marginTop="2dp"
+            android:text="@{viewModel.crmNewCount > 99 ? `99+` : String.valueOf(viewModel.crmNewCount)}"
+            android:visibility="@{viewModel.crmNewCount > 0 ? View.VISIBLE : View.GONE}"
+            app:layout_constraintTop_toTopOf="@id/crm" app:layout_constraintEnd_toEndOf="@id/crm" />
 
         <androidx.appcompat.widget.AppCompatTextView
             style="@style/bottom_nav_bar_label_style"
@@ -79,7 +108,7 @@
             app:layout_constraintBottom_toTopOf="@id/conversations"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toBottomOf="@id/contacts" />
+            app:layout_constraintTop_toBottomOf="@id/crm" />
 
         <androidx.appcompat.widget.AppCompatTextView
             style="@style/unread_count_text_style"

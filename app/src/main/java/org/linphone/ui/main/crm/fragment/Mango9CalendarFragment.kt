@@ -60,6 +60,10 @@ import org.linphone.mango9.task
 import org.linphone.ui.main.fragment.GenericMainFragment
 
 class Mango9CalendarFragment : GenericMainFragment() {
+    private lateinit var chromeHeader: org.linphone.databinding.MainActivityTopBarBinding
+    private lateinit var chromeFooter: org.linphone.databinding.Mango9CrmNavBarBinding
+    private lateinit var pageHost: FrameLayout
+    private lateinit var chromeModel: org.linphone.ui.main.viewmodel.AbstractMainViewModel
     private lateinit var model: Mango9CalendarViewModel
     private lateinit var tasksModel: Mango9TasksViewModel
     private val presentation get() = arguments?.getString("presentation").orEmpty()
@@ -293,11 +297,31 @@ class Mango9CalendarFragment : GenericMainFragment() {
         // Keep a usable calendar and let the surrounding page scroll as needed.
         // The calendar owns gestures starting on its grid, without nested-scroll
         // interception stealing long presses or vertical/hour scrolling.
-        return ScrollView(ctx).apply { isFillViewport = true; addView(root, ViewGroup.LayoutParams(-1, -2)) }
+        val scrollContent = ScrollView(ctx).apply { isFillViewport = true; addView(root, ViewGroup.LayoutParams(-1, -2)) }
+        pageHost = FrameLayout(ctx).apply { addView(scrollContent, FrameLayout.LayoutParams(-1, -1)) }
+        chromeHeader = org.linphone.databinding.MainActivityTopBarBinding.inflate(inflater).also { it.root.id = R.id.top_bar }
+        chromeFooter = org.linphone.databinding.Mango9CrmNavBarBinding.inflate(inflater)
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(chromeHeader.root, LinearLayout.LayoutParams(-1, -2))
+            addView(pageHost, LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(chromeFooter.root, LinearLayout.LayoutParams(-1, -2))
+        }
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        chromeModel = ViewModelProvider(this)[org.linphone.ui.main.viewmodel.AbstractMainViewModel::class.java]
+        chromeHeader.lifecycleOwner = viewLifecycleOwner; chromeFooter.lifecycleOwner = viewLifecycleOwner
+        chromeHeader.viewModel = chromeModel; chromeFooter.viewModel = chromeModel
+        chromeModel.title.value = "CRM"; chromeModel.crmSelected.value = true
+        chromeHeader.searchToggle.setOnClickListener { search.requestFocus() }
+        chromeModel.openDrawerMenuEvent.observe(viewLifecycleOwner) { it.consume { (requireActivity() as org.linphone.ui.main.MainActivity).toggleDrawerMenu() } }
+        chromeModel.navigateToCrmEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.mango9CrmFragment) } }
+        chromeModel.navigateToContactsEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.contactsListFragment) } }
+        chromeModel.navigateToHistoryEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.historyListFragment) } }
+        chromeModel.navigateToConversationsEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.conversationsListFragment) } }
+        chromeModel.navigateToMeetingsEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.meetingsListFragment) } }
         model = ViewModelProvider(this)[Mango9CalendarViewModel::class.java]
         tasksModel = ViewModelProvider(this)[Mango9TasksViewModel::class.java]
         activityKind = savedInstanceState?.getString("activity_kind")?.let {
@@ -322,7 +346,7 @@ class Mango9CalendarFragment : GenericMainFragment() {
                     Mango9CrmFragment.recordArguments(linked, lease)
                 )
             }
-        }, retainedEdits = model.edits, loadContacts = model.contacts)
+        }, retainedEdits = model.edits, loadContacts = model.contacts, pageHost = pageHost)
         val pushId = arguments?.getInt("mango9_event_id", 0) ?: 0
         if (pushId > 0 && savedInstanceState == null) {
             val owner = org.linphone.mango9.Mango9NavigationSession.resolve(requireArguments(), org.linphone.mango9.Mango9SessionStore(requireContext()))
@@ -559,6 +583,15 @@ class Mango9CalendarFragment : GenericMainFragment() {
             .setPositiveButton(R.string.mango9_calendar_done, null).show()
     }
 
+    private fun selectAppTab(destination: Int) {
+        informationDialog?.dismiss(); dialogs?.close()
+        val nav = findNavController()
+        val options = androidx.navigation.NavOptions.Builder().setLaunchSingleTop(true)
+        val root = runCatching { nav.getBackStackEntry(R.id.mango9CrmFragment) }.isSuccess
+        options.setPopUpTo(if (root) R.id.mango9CrmFragment else R.id.mango9CalendarFragment, destination != R.id.mango9CrmFragment)
+        nav.navigate(destination, null, options.build())
+    }
+
     private fun openTask(taskId: Int, lease: Mango9SessionLease?) {
         if (lease == null || !model.repository.isCurrent(lease)) return
         viewLifecycleOwner.lifecycleScope.launch {
@@ -571,7 +604,7 @@ class Mango9CalendarFragment : GenericMainFragment() {
                     full.contact.orEmpty(), full.agent.orEmpty(), full.history.joinToString("\n")
                 ).filter { it.isNotBlank() }.joinToString("\n\n")
                 informationDialog?.dismiss()
-                val page = Mango9FullPage(requireContext()).setTitle(full.title)
+                val page = Mango9FullPage(requireContext()).setHost(pageHost).setTitle(full.title)
                     .setView(
                         android.widget.ScrollView(requireContext()).apply {
                         addView(TextView(requireContext()).apply { text = body; textSize = 16f; setPadding(dp(20), dp(20), dp(20), dp(20)) })
