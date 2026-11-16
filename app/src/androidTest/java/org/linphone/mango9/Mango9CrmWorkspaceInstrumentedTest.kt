@@ -40,7 +40,7 @@ class Mango9CrmWorkspaceInstrumentedTest {
                     assertNotNull("Each shortcut needs its category color", tint)
                     assertEquals(activity.getColor(colors[index]), tint!!.defaultColor)
                     assertEquals((45 * density + 0.5f).toInt(), icon.layoutParams.width)
-                    assertTrue(row.getChildAt(row.childCount - 1) is ImageView)
+                    assertTrue("Keep the navigation chevron before optional unread badges", row.getChildAt(2) is ImageView)
                     val labels = row.getChildAt(1) as LinearLayout
                     textSizes.add((labels.getChildAt(0) as TextView).textSize)
                     assertEquals(2, labels.childCount)
