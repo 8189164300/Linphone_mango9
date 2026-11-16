@@ -94,7 +94,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
     private val permission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
         if (allowed && view != null && model.voicePage && model.accepted) {
             model.connectVoice()
-        } else if (!allowed && view != null) MaterialAlertDialogBuilder(requireContext()).setMessage("Allow microphone access in Android Settings to use Supervisor voice.").setPositiveButton("OK", null).show()
+        } else if (!allowed && view != null) MaterialAlertDialogBuilder(requireContext()).setMessage("Allow microphone access in Android Settings to use Assistant voice.").setPositiveButton("OK", null).show()
     }
 
     private fun text(value: String, size: Float = 15f, bold: Boolean = false) = ui.text(value, size, bold).apply {
@@ -127,9 +127,9 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         )
         mode = pill("Voice", 0x28ffffff, Color.WHITE) {
             hideKeyboard(); if (!model.accepted) privacy() else if (model.voicePage) model.endVoice() else model.showVoice()
-        }.apply { contentDescription = "Supervisor voice or chat" }
+        }.apply { contentDescription = "Assistant voice or chat" }
         header.addView(mode, LinearLayout.LayoutParams(-2, ui.dp(44)).apply { marginEnd = ui.dp(8) })
-        ai = pill("AI", Color.WHITE, BLUE) { menu(ai) }.apply { contentDescription = "Supervisor options" }
+        ai = pill("AI", Color.WHITE, BLUE) { menu(ai) }.apply { contentDescription = "Assistant options" }
         header.addView(ai, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
         root.addView(header)
         notice = button("") {
@@ -229,7 +229,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             setBackgroundColor(Color.WHITE); setPadding(ui.dp(10), ui.dp(6), ui.dp(10), ui.dp(6))
         }; chat.addView(bottom)
         composer = EditText(ui.context).apply {
-            hint = "Message Assistant…"; contentDescription = "Message Supervisor"; textSize = 16f; setTextColor(INK); setHintTextColor(SECONDARY)
+            hint = "Message Assistant…"; contentDescription = "Message Assistant"; textSize = 16f; setTextColor(INK); setHintTextColor(SECONDARY)
             background = ui.round(0xfff1f2f8.toInt(), 24); setPadding(ui.dp(14), ui.dp(10), ui.dp(14), ui.dp(10)); minHeight = ui.dp(48)
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI; maxLines = 4
@@ -239,7 +239,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         }
         send = pill("↑", BLUE, Color.WHITE) {
             followingLatest = true; hideKeyboard(); if (model.transfer.active) model.transfer.pause() else model.send()
-        }.apply { contentDescription = "Send to Supervisor"; textSize = 26f }
+        }.apply { contentDescription = "Send to Assistant"; textSize = 26f }
     }
 
     private fun updateLatest() { latest.isVisible = !aligningMessages && chatScroll.canScrollVertically(1) }
@@ -251,7 +251,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             isFillViewport = true; addView(content)
         }; voice.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         orb = SupervisorOrb(ui.context).apply {
-            contentDescription = "Connect Supervisor voice"; isClickable = true; isFocusable = true
+            contentDescription = "Connect Assistant voice"; isClickable = true; isFocusable = true
             setOnClickListener {
                 if (model.voice.state == Mango9SupervisorVoice.State.CONNECTED) {
                     model.voice.setMuted(!model.voice.muted)
@@ -309,10 +309,10 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         if (model.loading && notice.text.isEmpty()) notice.text = "Loading Assistant…"
         notice.isVisible = notice.text.isNotEmpty()
         status.text = model.voice.status
-        hint.text = if (!model.voice.running) "Tap the microphone to connect" else if (model.voice.muted) "You can still hear Supervisor" else "Tap Mute to pause microphone sharing"
+        hint.text = if (!model.voice.running) "Tap the microphone to connect" else if (model.voice.muted) "You can still hear Assistant" else "Tap Mute to pause microphone sharing"
         mute.text = if (model.voice.muted) "Unmute" else "Mute"; mute.isEnabled = model.voice.state == Mango9SupervisorVoice.State.CONNECTED; mute.alpha = if (mute.isEnabled) 1f else 0.45f
         orb.update(model.voice.running, model.voice.state == Mango9SupervisorVoice.State.CONNECTING, model.voice.muted, model.voice.level)
-        orb.contentDescription = if (model.voice.running) "Mute or unmute Supervisor microphone" else "Connect Supervisor voice"
+        orb.contentDescription = if (model.voice.running) "Mute or unmute Assistant microphone" else "Connect Assistant voice"
         val diameter = ui.dp(if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) 170 else 276)
         if (orb.layoutParams.height != diameter) { orb.layoutParams.height = diameter; orb.requestLayout() }
         if (renderedConversation != model.conversation) {
@@ -641,7 +641,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
     private fun privacy() {
         if (privacyDialog?.isShowing == true || view == null) return
         hideKeyboard(); privacyPrompted = true
-        val (dialog, layout) = sheet(if (model.accepted) "AI sharing is on" else "Use Supervisor AI?"); privacyDialog = dialog
+        val (dialog, layout) = sheet(if (model.accepted) "AI sharing is on" else "Use Assistant AI?"); privacyDialog = dialog
         val details = ui.column()
         for (value in listOf(Mango9SupervisorConsent.CHAT, Mango9SupervisorConsent.VOICE, "AI can make mistakes. Review replies and actions.")) details.addView(
             text(value, 15f).apply {
@@ -741,7 +741,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         }
         layout.addView(filters); layout.addView(toolsBody)
         val list = RecyclerView(ui.context).apply {
-            layoutManager = LinearLayoutManager(ui.context); itemAnimator = null; contentDescription = "Supervisor history"
+            layoutManager = LinearLayoutManager(ui.context); itemAnimator = null; contentDescription = "Assistant history"
         }
         list.adapter = object : RecyclerView.Adapter<HistoryHolder>() {
             override fun getItemCount() = historyRows.size
@@ -766,7 +766,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
                     )
                 }
                 line.addView(
-                    text(row.optString("title").ifBlank { "Supervisor conversation" }, 15f, true).apply {
+                    text(row.optString("title").ifBlank { "Assistant conversation" }, 15f, true).apply {
                     maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
                 },
                     LinearLayout.LayoutParams(0, -2, 1f)

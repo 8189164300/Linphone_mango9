@@ -124,7 +124,7 @@ class Mango9SupervisorDeviceTest {
             SystemClock.sleep(1400); capture("privacy-landscape")
             onView(withText("Not now")).perform(click())
             screen { main, fragment ->
-                val mode = views(fragment.requireView()).first { it.contentDescription == "Supervisor voice or chat" }
+                val mode = views(fragment.requireView()).first { it.contentDescription == "Assistant voice or chat" }
                 assertTrue(mode.performClick()); assertFalse(ViewModelProvider(fragment)[Mango9SupervisorViewModel::class.java].voice.running)
                 main.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT; true
             }

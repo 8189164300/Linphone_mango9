@@ -33,7 +33,7 @@ class Mango9SupervisorTest {
         assertTrue(Mango9SupervisorConsent.valid(Mango9SupervisorConsent.receipt(1000), 1001))
         assertFalse(Mango9SupervisorConsent.valid(Mango9SupervisorConsent.receipt(1000), 999))
         assertFalse(Mango9SupervisorConsent.valid("broken"))
-        assertFalse(Mango9SupervisorConsent.valid(JSONObject(Mango9SupervisorConsent.receipt()).put("version", "old").toString()))
+        assertFalse(Mango9SupervisorConsent.valid(JSONObject(Mango9SupervisorConsent.receipt()).put("version", "2026-10-30.1").toString()))
         val session = Mango9CalendarTestFixtures.session()
         assertNotEquals(Mango9SupervisorConsent.key(session), Mango9SupervisorConsent.key(session.copy(userId = "43")))
         assertNotEquals(Mango9SupervisorConsent.key(session), Mango9SupervisorConsent.key(session.copy(crmApiBaseUrl = "https://other.example.invalid/app/api/v2")))

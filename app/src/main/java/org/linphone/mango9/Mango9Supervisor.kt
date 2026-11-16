@@ -20,12 +20,12 @@ import kotlin.coroutines.resumeWithException
 
 internal class Mango9SupervisorFailure(val code: String, val status: Int = 0) : Exception(
     when (code) {
-    "ai_consent_required" -> "Review AI privacy and allow sharing before using Supervisor chat or voice."
-    "scope_changed" -> "Your account changed. Reopen Supervisor in your current account."
-    "supervisor_owner_required", "forbidden" -> "Supervisor is available to the account owner."
+    "ai_consent_required" -> "Review AI privacy and allow sharing before using Assistant chat or voice."
+    "scope_changed" -> "Your account changed. Reopen Assistant in your current account."
+    "supervisor_owner_required", "forbidden" -> "Assistant is available to the account owner."
     "wallet_insufficient" -> "Your available AI credit is too low. Check your Mango9 wallet."
-    "call_active" -> "End your phone call before starting Supervisor voice."
-    "voice_permission" -> "Allow microphone access in Android Settings to use Supervisor voice."
+    "call_active" -> "End your phone call before starting Assistant voice."
+    "voice_permission" -> "Allow microphone access in Android Settings to use Assistant voice."
     "voice_interrupted" -> "Voice was interrupted by an audio change. Tap the microphone to reconnect."
     "voice_audio_format" -> "This audio route is unavailable. Check your microphone or headset and try again."
     "storage_unavailable" -> "Couldn’t securely save this request. Your message has not been sent."
@@ -33,18 +33,18 @@ internal class Mango9SupervisorFailure(val code: String, val status: Int = 0) : 
     else -> if (code.startsWith("voice_")) {
         "Voice disconnected. Tap the microphone to reconnect."
     } else if (status == 403) {
-        "Supervisor is not enabled for this account."
+        "Assistant is not enabled for this account."
     } else if (status == 429) {
-        "Supervisor is busy. Wait a moment, then try again."
+        "Assistant is busy. Wait a moment, then try again."
     } else {
-        "Couldn’t reach Supervisor. Check your connection and try again."
+        "Couldn’t reach Assistant. Check your connection and try again."
     }
 }
 )
 
 internal object Mango9SupervisorConsent {
-    const val VERSION = "2026-10-30.1" // Bump when recipients or purposes change.
-    const val CHAT = "Mango9 sends your messages, files you attach, conversation history and relevant account/CRM records to OpenRouter and the configured AI provider: DeepInfra (DeepSeek) or OpenAI. They process this information to answer your requests."
+    const val VERSION = "2026-11-16.1" // Bump when recipients or purposes change.
+    const val CHAT = "Mango9 sends your messages, attached files, conversation history and relevant account/CRM records to the AI service configured for your organization to answer requests and assist with CRM tasks. This may use OpenRouter with DeepInfra (DeepSeek) or OpenAI, or your connected ChatGPT account through OpenAI Codex or your Claude account through Anthropic Claude Code. For connected-computer replies, this information also passes through your authorized computer running that tool. Provider availability and your provider account limits apply."
     const val VOICE = "Voice also sends microphone audio, transcripts and conversation context to Google (Gemini) for spoken replies."
 
     fun key(session: Mango9Session) = MessageDigest.getInstance("SHA-256").digest(

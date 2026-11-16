@@ -278,7 +278,7 @@ class Mango9SupervisorParityDeviceTest {
 
     @Test fun historySearchFiltersAndSingleDeleteConfirmation() = fixture { _, f ->
         instrument.runOnMainSync {
-            views(f.fragment.requireView()).first { it.contentDescription == "Supervisor options" }.performClick()
+            views(f.fragment.requireView()).first { it.contentDescription == "Assistant options" }.performClick()
         }
         instrument.waitForIdleSync()
         waitVisible("History")
