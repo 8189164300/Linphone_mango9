@@ -46,6 +46,79 @@ final class Mango9AssistantParityTests: XCTestCase {
         XCTAssertThrowsError(try Mango9AssistantMediaFile.copyPart(read, to: write, size: manifest.size, number: 2, md5: String(repeating: "A", count: 22) + "=="))
         XCTAssertThrowsError(try Mango9AssistantMediaFile.requireSpace(bytes: 500_000_001, available: 1_000_000_000))
     }
+    func testDocumentSelectionKeepsSameNamesIndependentAndPreservesOrder() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = root.appendingPathComponent("a"), b = root.appendingPathComponent("b")
+        for directory in [a, b] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        let first = a.appendingPathComponent("same.txt"), second = b.appendingPathComponent("same.txt")
+        try Data("first".utf8).write(to: first); try Data("second".utf8).write(to: second)
+        let complete = expectation(description: "Both snapshots")
+        FilePicker.convertToAttachmentArray(fromResults: [first, second]) { values, error in
+            defer { complete.fulfill(); for value in values ?? [] { try? FileManager.default.removeItem(at: value.full) } }
+            XCTAssertNil(error); XCTAssertEqual(values?.count, 2)
+            guard let values, values.count == 2 else { return }
+            XCTAssertNotEqual(values[0].full, values[1].full)
+            XCTAssertEqual(try? String(contentsOf: values[0].full, encoding: .utf8), "first")
+            XCTAssertEqual(try? String(contentsOf: values[1].full, encoding: .utf8), "second")
+            XCTAssertEqual(values.map(\.name), ["same.txt", "same.txt"])
+        }
+        wait(for: [complete], timeout: 10)
+        let failed = expectation(description: "No partial selection")
+        FilePicker.convertToAttachmentArray(fromResults: [first, root.appendingPathComponent("missing.txt")]) { values, error in
+            XCTAssertNil(values); XCTAssertNotNil(error); failed.fulfill()
+        }
+        wait(for: [failed], timeout: 10)
+    }
+    func testBatchDraftMigrationRetainsOrderAndRejectsWrongScopeOrDuplicates() throws {
+        let chat = UUID().uuidString.lowercased()
+        func draft(_ name: String) -> Mango9AssistantUpload {
+            Mango9AssistantUpload(id: UUID().uuidString.lowercased(), account: "fixture", origin: "https://2.mango9.com", conversationId: chat,
+                file: Mango9AssistantFile(uri: "file:///tmp/" + name, name: name, size: 100, mime: "text/plain", sha256: String(repeating: "a", count: 64), partMD5: [Data(repeating: 0, count: 16).base64EncodedString()]))
+        }
+        let first = draft("a.txt"), second = draft("b.txt")
+        func restore(_ data: Data, account: String = "fixture", origin: String = "https://2.mango9.com", conversation: String? = nil) throws -> Mango9AssistantUploadBatch {
+            try Mango9AssistantUploadBatch.restore(data, account: account, origin: origin, conversation: conversation ?? chat)
+        }
+        let legacy = try restore(JSONEncoder().encode(first))
+        XCTAssertEqual(legacy.drafts.map(\.id), [first.id]); XCTAssertFalse(legacy.sealed)
+        let batch = Mango9AssistantUploadBatch(version: 2, drafts: [second, first], sealed: false)
+        let bytes = try JSONEncoder().encode(batch)
+        XCTAssertEqual(try restore(bytes).drafts.map(\.id), [second.id, first.id])
+        XCTAssertThrowsError(try restore(bytes, account: "different"))
+        XCTAssertThrowsError(try restore(bytes, origin: "https://us.mango9.com"))
+        XCTAssertThrowsError(try restore(bytes, conversation: UUID().uuidString))
+        for invalid in [[], [first, first], [first, second, draft("c.txt"), draft("d.txt")]] {
+            XCTAssertThrowsError(try restore(JSONEncoder().encode(Mango9AssistantUploadBatch(version: 2, drafts: invalid, sealed: false))))
+        }
+        var frozenA = first, frozenB = second; frozenA.caption = "One caption"; frozenB.caption = "One caption"
+        let frozen = try restore(JSONEncoder().encode(Mango9AssistantUploadBatch(version: 2, drafts: [frozenA, frozenB], sealed: true)))
+        XCTAssertTrue(frozen.sealed); XCTAssertEqual(frozen.drafts[1].caption, "One caption")
+        frozenB.caption = "Different"
+        XCTAssertThrowsError(try restore(JSONEncoder().encode(Mango9AssistantUploadBatch(version: 2, drafts: [frozenA, frozenB], sealed: true))))
+    }
+    func testDeletedChatMigratesWholeBatchAndReusesDestinationAfterInterruptedCleanup() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let chat = UUID().uuidString.lowercased(), account = "fixture", origin = "https://2.mango9.com"
+        let source = root.appendingPathComponent(account + "." + chat + ".json")
+        let drafts = (1...3).map { n in Mango9AssistantUpload(id: UUID().uuidString.lowercased(), account: account, origin: origin, conversationId: chat,
+            file: Mango9AssistantFile(uri: "file:///tmp/fixture\(n).wav", name: "voice\(n).wav", size: 100, mime: "audio/wav", sha256: String(repeating: "a", count: 64), partMD5: [Data(repeating: 0, count: 16).base64EncodedString()]), caption: "Original caption") }
+        let original = try JSONEncoder().encode(Mango9AssistantUploadBatch(version: 2, drafts: drafts, sealed: true))
+        try original.write(to: source)
+        func recover() throws -> String { try Mango9AssistantDraftMigration.recover(source, source: chat, account: account, origin: origin) }
+        let destination = try recover(), target = root.appendingPathComponent(account + "." + destination + ".json")
+        let saved = try Data(contentsOf: target)
+        let moved = try Mango9AssistantUploadBatch.restore(saved, account: account, origin: origin, conversation: destination)
+        XCTAssertEqual(moved.drafts.map(\.file), drafts.map(\.file)); XCTAssertFalse(moved.sealed)
+        XCTAssertTrue(moved.drafts.allSatisfy { $0.caption == nil }); XCTAssertTrue(Set(moved.drafts.map(\.id)).isDisjoint(with: Set(drafts.map(\.id))))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+        try original.write(to: source) // Simulate interruption after destination commit but before source removal.
+        XCTAssertEqual(try recover(), destination); XCTAssertEqual(try Data(contentsOf: target), saved)
+        try original.write(to: source); try Data("bad journal".utf8).write(to: target)
+        XCTAssertThrowsError(try recover()); XCTAssertEqual(try Data(contentsOf: source), original)
+    }
     func testAttachmentsSurviveLocalCacheAndUnsupportedPartsDoNotBecomeText() throws {
         let fileID = UUID().uuidString.lowercased()
         let message = try XCTUnwrap(Mango9SupervisorMessage(["id": UUID().uuidString, "role": "user", "parts": [["type": "attachment", "id": fileID, "mime": "audio/wav", "name": "Voice.wav", "size": 48044], ["type": "tool", "text": "private"]]]))

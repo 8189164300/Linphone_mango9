@@ -917,8 +917,12 @@ private struct Mango9AttachmentPickerModifier: ViewModifier {
 	}
 	private func append(_ values: [Attachment], for selection: Mango9AttachmentRequest) {
 		guard let account = selection.account, Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey) == account else { return }
-		if values.count + selected.count > limit { error("Choose up to \(limit) attachment(s).") }
-		selected.append(contentsOf: values.prefix(max(0, limit - selected.count)))
+		if values.count + selected.count > limit {
+            for item in values { for url in Set([item.full, item.thumbnail]) where url.path.hasPrefix(FileManager.default.temporaryDirectory.path) { try? FileManager.default.removeItem(at: url) } }
+            error("Choose up to \(max(0, limit - selected.count)) more attachments. Nothing was added.")
+            return
+        }
+        selected.append(contentsOf: values)
 		if request?.id == selection.id { request = nil }
 	}
 }

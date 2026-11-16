@@ -361,6 +361,9 @@ struct Mango9LiveChatConversation: View {
 	@State private var attachmentRequest: Mango9AttachmentRequest?
  @State private var selectedMedia: [Attachment] = []
  @State private var recordingVoice = false
+ @State private var sendingSelection = false
+ @State private var pendingFileID: String?
+ @State private var pendingText: String?
  @State private var confirmingDelete = false
  @State private var forwardPayload: Mango9LiveForwardPayload?
  private var visibleMessages: [Mango9LiveMessage] { store.messages.filter { !$0.hiddenForMe } }
@@ -442,7 +445,7 @@ struct Mango9LiveChatConversation: View {
 			} label: { Image(systemName: "ellipsis.circle") }.disabled(store.sending || !store.authorized).accessibilityLabel("Conversation actions")
 		} }
 		.sheet(isPresented: $showDetails) { NavigationView { Mango9LiveVisitorDetails(context: details ?? store.conversation.context, name: store.conversation.title, email: store.conversation.email) } }
-		.mango9Attachments(request: $attachmentRequest, selected: $selectedMedia, limit: 1, photosOnly: true, error: { localError = $0 })
+		.mango9Attachments(request: $attachmentRequest, selected: $selectedMedia, limit: 10, photosOnly: true, error: { localError = $0 })
   .sheet(item: $forwardPayload) { payload in Mango9LiveForwardSheet(session: store.session, payload: payload) }
   .confirmationDialog("Delete for me on all my devices? The visitor and other staff keep their copies.", isPresented: $confirmingDelete, titleVisibility: .visible) {
    Button("Delete for me", role: .destructive) {
@@ -496,28 +499,50 @@ struct Mango9LiveChatConversation: View {
   VStack(spacing: 6) {
    if store.pending != nil {
     Text("Delivery is unconfirmed. Retry checks the original message.").font(.caption).foregroundStyle(.secondary).padding(.horizontal)
-    Button("Retry original message") { Task { if await store.send("") { draft = ""; selectedMedia = [] } } }.disabled(store.sending)
+    Button("Retry original message") { sendDraft(retry: true) }.disabled(store.sending || sendingSelection)
    } else if recordingVoice {
-    Mango9VoiceRecorderComposer(onCancel: { recordingVoice = false }, onComplete: { selectedMedia = [$0]; recordingVoice = false }).padding(12)
+    Mango9VoiceRecorderComposer(onCancel: { recordingVoice = false }, onComplete: { if selectedMedia.count < 10 { selectedMedia.append($0) } else { localError = "Choose up to ten attachments." }; recordingVoice = false }).padding(12)
    } else {
-    if !selectedMedia.isEmpty { Mango9PendingAttachmentStrip(attachments: $selectedMedia) }
+    if !selectedMedia.isEmpty { Mango9PendingAttachmentStrip(attachments: $selectedMedia).disabled(sendingSelection) }
+    if selectedMedia.count > 1 { Text("Files send as separate messages, in order.").font(.caption).foregroundStyle(.secondary) }
     Mango9MessageComposer(templateSession: store.session, text: $draft, focus: $focused, placeholder: "Reply to this visitor…",
-     enabled: store.authorized && store.site != nil, sending: store.sending, sendEnabled: draft.count <= 10000,
+     enabled: store.authorized && store.site != nil && !sendingSelection, sending: store.sending || sendingSelection, sendEnabled: draft.count <= 10000,
      hasAttachments: !selectedMedia.isEmpty, attach: canAttach ? { focused = false; attachmentRequest = $0 } : nil,
-     record: canRecord ? { focused = false; recordingVoice = true } : nil, send: sendDraft)
+     record: canRecord ? { focused = false; recordingVoice = true } : nil, send: { sendDraft() })
    }
   }.disabled(!store.authorized)
  }
  private func pendingAttachment(_ item: Attachment, text: String) throws -> Mango9LivePendingSend {
   try Mango9LiveAttachmentPayload.prepare(item, text: text, allowedMIMEs: store.site?.capabilities["attachments"] as? [String] ?? [])
  }
- private func sendDraft() {
-  focused = false
-  let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-  do {
-   let attachment = try selectedMedia.first.map { try pendingAttachment($0, text: text) }
-   Task { if await store.send(text, attachment: attachment) { draft = ""; selectedMedia = []; atBottom = true } }
-  } catch { localError = error.localizedDescription }
+ private func sendDraft(retry: Bool = false) {
+  guard !sendingSelection, !store.sending, store.authorized else { return }
+  focused = false; sendingSelection = true
+  let text = draft.trimmingCharacters(in: .whitespacesAndNewlines), original = draft, selection = selectedMedia
+  Task {
+   defer { sendingSelection = false }
+   if retry {
+    if await store.send("") {
+     if let id = pendingFileID { selectedMedia.removeAll { $0.id == id } }
+     if let sent = pendingText, draft == sent { draft = "" }
+     pendingFileID = nil; pendingText = nil; atBottom = true
+    }
+    return
+   }
+   guard store.pending == nil, selection.count <= 10 else { return }
+   for index in 0..<max(1, selection.count) {
+    guard store.authorized, !Task.isCancelled else { return }
+    do {
+     let item = selection.isEmpty ? nil : selection[index], body = index == 0 ? text : ""
+     let attachment = try item.map { try pendingAttachment($0, text: body) }
+     pendingFileID = item?.id; pendingText = index == 0 ? original : ""
+     guard await store.send(body, attachment: attachment) else { return }
+     if let item { selectedMedia.removeAll { $0.id == item.id } }
+     if draft == pendingText { draft = "" }
+     pendingFileID = nil; pendingText = nil; atBottom = true
+    } catch { localError = error.localizedDescription; return }
+   }
+  }
  }
 
 	private func bubble(_ message: Mango9LiveMessage) -> some View {

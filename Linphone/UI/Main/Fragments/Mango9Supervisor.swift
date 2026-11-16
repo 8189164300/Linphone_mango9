@@ -133,7 +133,7 @@ struct Mango9SupervisorView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var picker: Mango9AssistantPicker.Kind?
-    @State private var pickedFile: (URL, String)?
+    @State private var pickedFiles: [(URL, String)] = []
     @State private var recording = false
     @State private var selectedHistory = Set<String>()
     @State private var selectingHistory = false
@@ -194,17 +194,17 @@ struct Mango9SupervisorView: View {
         .onChange(of: model.draft) { _ in model.draftChanged() }
         .onChange(of: showingHistory) { model.readingConversation = !$0 }
         .fullScreenCover(item: $picker, onDismiss: importPickedFile) { kind in
-            Mango9AssistantPicker(kind: kind) { result in
+            Mango9AssistantPicker(kind: kind, limit: max(1, model.transfer.maximum - model.transfer.drafts.count)) { result in
                 if let result {
-                    switch result { case .success(let file): pickedFile = file; case .failure(let error): model.transfer.error = error.localizedDescription }
+                    switch result { case .success(let file): pickedFiles = file; case .failure(let error): model.transfer.error = error.localizedDescription }
                 }
                 picker = nil
             }.ignoresSafeArea()
         }
         .sheet(isPresented: $recording, onDismiss: importPickedFile) {
             if #available(iOS 16.0, *) {
-                Mango9AssistantRecordView { pickedFile = ($0, $0.lastPathComponent) }.presentationDetents([.height(420)]).presentationDragIndicator(.visible).preferredColorScheme(.light)
-            } else { Mango9AssistantRecordView { pickedFile = ($0, $0.lastPathComponent) }.preferredColorScheme(.light) }
+                Mango9AssistantRecordView { pickedFiles = [($0, $0.lastPathComponent)] }.presentationDetents([.height(420)]).presentationDragIndicator(.visible).preferredColorScheme(.light)
+            } else { Mango9AssistantRecordView { pickedFiles = [($0, $0.lastPathComponent)] }.preferredColorScheme(.light) }
         }
         .sheet(item: $reportMessage) { Mango9AssistantReportView(model: model, message: $0) }
         .sheet(isPresented: $showingHistory) { historySheet.preferredColorScheme(.light) }
@@ -385,12 +385,12 @@ struct Mango9SupervisorView: View {
         withTransaction(transaction) { proxy.scrollTo(latestScrollTarget, anchor: .bottom) }
     }
     private func importPickedFile() {
-        guard let (url, name) = pickedFile else { return }; pickedFile = nil
+        let files = pickedFiles; guard !files.isEmpty else { return }; pickedFiles = []
         let conversation = model.conversationID
         Task {
-            guard model.canAttach, conversation == model.conversationID else { try? FileManager.default.removeItem(at: url); return }
-            await model.transfer.select(url, name: name)
-            try? FileManager.default.removeItem(at: url)
+            defer { for file in files { try? FileManager.default.removeItem(at: file.0) } }
+            guard model.canAttach, conversation == model.conversationID else { return }
+            await model.transfer.selectMany(files)
         }
     }
     private func capture(_ kind: Mango9AssistantPicker.Kind) {
@@ -418,7 +418,7 @@ struct Mango9SupervisorView: View {
                             .accessibilityIdentifier("supervisor.attachment.voice")
                     }
                 } label: { Image(systemName: "plus.circle.fill").font(.system(size: 27)).frame(width: 44, height: 44).foregroundColor(.mango9Primary) }
-                    .disabled(!model.canAttach || !model.transfer.enabled || model.transfer.draft != nil)
+                    .disabled(!model.canAttach || !model.transfer.canAdd)
                     .modifier(Mango9AssistantMenuOrder())
                     .accessibilityLabel("Add to message").accessibilityIdentifier("supervisor.attach")
                 Group {

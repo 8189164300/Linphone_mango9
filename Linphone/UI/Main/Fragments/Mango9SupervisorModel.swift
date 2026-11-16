@@ -361,11 +361,14 @@ import Combine
     private func recoverDeleted(_ id: String) async {
         guard opened, api.active, conversationID == id else { return }
         let unsent = draft
+        let replacement: String
+        do { replacement = try transfer.recoverDraft(from: id) }
+        catch { self.error = "Couldn’t move the attachment draft. Your files are kept; try reopening Assistant."; return }
         rememberDeleted(id)
         do { try pendingStore.write(nil) } catch { self.error = "Couldn’t finish clearing the saved request. Reopen Assistant."; return }
         try? saveDeliveries((assistantState.deliveries ?? []).filter { $0.command.conversationID != id })
         pending = nil; sending = false; draft = ""
-        invalidateOperations(); conversationID = UUID().uuidString.lowercased(); defaults.set(conversationID, forKey: conversationKey)
+        invalidateOperations(); conversationID = replacement; defaults.set(conversationID, forKey: conversationKey)
         messages = []; usingSavedHistory = false; historyCursor = "0"; historyReady = false; olderCursor = nil; moreMessages = false; error = nil
         draft = unsent; saveDraftNow()
         await transfer.configure(conversationID)

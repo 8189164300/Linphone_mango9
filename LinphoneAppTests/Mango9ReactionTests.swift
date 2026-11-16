@@ -1101,6 +1101,38 @@ final class Mango9ReactionTests: XCTestCase {
 			XCTAssertFalse(store.canSend); XCTAssertEqual(store.draft, "No send")
 		}
 	}
+	@MainActor func testSocialOrderedSelectionStopsAtUnknownAndKeepsRemainingFiles() async throws {
+        try await withSocialStore { store, _ in
+            var commands: [[String: Any]] = []
+            ReactionMockProtocol.handler = { request in
+                switch request.url!.lastPathComponent {
+                case "media-prepare":
+                    let body = try ReactionMockProtocol.body(request)
+                    return Self.envelope(["asset": ["id": body["id"]!, "state": "ready"]])
+                case "inbox-send":
+                    let body = try ReactionMockProtocol.body(request); commands.append(body)
+                    if commands.count == 2 { throw URLError(.timedOut) }
+                    return Self.envelope(["id": "thread", "requestId": body["requestId"]!, "sendId": "send-1", "state": "sent", "message": body["message"]!])
+                default: return Self.socialRead(request)
+                }
+            }
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let files = try (1...3).map { index -> Attachment in
+                let url = directory.appendingPathComponent("photo\(index).png")
+                try Data([1, 2, 3]).write(to: url)
+                return Attachment(id: "photo\(index)", name: url.lastPathComponent, url: url, type: .image)
+            }
+            await store.loadThread(id: "thread"); store.draft = "Caption"; store.selectedMedia = files
+            await store.send()
+            XCTAssertEqual(commands.count, 2)
+            XCTAssertEqual(commands.compactMap { $0["message"] as? String }, ["Caption", ""])
+            XCTAssertEqual(store.selectedMedia.map(\.id), ["photo2", "photo3"])
+            XCTAssertTrue(store.unresolvedSend); XCTAssertFalse(store.sending)
+            await store.send(); XCTAssertEqual(commands.count, 2, "Unknown delivery cannot be blindly resent")
+        }
+    }
 	@MainActor func testSocialPendingSendSurvivesRestartWithoutSavingMessageBody() throws {
 		let name = "social-send-test-" + UUID().uuidString; let defaults = UserDefaults(suiteName: name)!
 		defer { defaults.removePersistentDomain(forName: name) }

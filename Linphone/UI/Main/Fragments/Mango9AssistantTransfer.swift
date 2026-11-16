@@ -125,8 +125,63 @@ extension Mango9AssistantMediaNative {
     func pause(_ id: String) { cancelLargeVideoUpload(id, resolver: {_ in}, rejecter: {_,_,_ in}) }
 }
 
+struct Mango9AssistantUploadBatch: Codable {
+    let version: Int
+    var drafts: [Mango9AssistantUpload]
+    var sealed: Bool
+    static func restore(_ data: Data, account: String, origin: String, conversation: String) throws -> Self {
+        let decoder = JSONDecoder()
+        let batch = try? decoder.decode(Self.self, from: data)
+        let values = try batch?.drafts ?? [decoder.decode(Mango9AssistantUpload.self, from: data)]
+        guard batch == nil || batch?.version == 2, !values.isEmpty, values.count <= 3,
+              Set(values.map(\.id)).count == values.count else { throw Mango9AssistantMediaContract.invalid() }
+        let frozen = batch?.sealed ?? (values.first?.caption != nil)
+        for value in values {
+            try Mango9AssistantMediaContract.validate(value)
+            guard value.account == account, value.origin == origin, value.conversationId == conversation,
+                  !frozen || value.caption == values[0].caption else { throw Mango9AssistantMediaContract.invalid() }
+        }
+        return Self(version: 2, drafts: values, sealed: frozen)
+    }
+}
+
+enum Mango9AssistantDraftMigration {
+    static func recover(_ sourceURL: URL, source: String, account: String, origin: String) throws -> String {
+        let marker = sourceURL.appendingPathExtension("recovery")
+        let destination: String
+        if FileManager.default.fileExists(atPath: marker.path) {
+            guard let saved = String(data: try Data(contentsOf: marker), encoding: .utf8) else { throw Mango9AssistantMediaContract.invalid() }
+            guard UUID(uuidString: saved) != nil, saved != source else { throw Mango9AssistantMediaContract.invalid() }
+            destination = saved
+        } else {
+            destination = UUID().uuidString.lowercased()
+            try Data(destination.utf8).write(to: marker, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        }
+        if FileManager.default.fileExists(atPath: sourceURL.path) {
+            let data = try Data(contentsOf: sourceURL)
+            let batch = try Mango9AssistantUploadBatch.restore(data, account: account, origin: origin, conversation: source)
+            let target = sourceURL.deletingLastPathComponent().appendingPathComponent(account + "." + destination + ".json")
+            if FileManager.default.fileExists(atPath: target.path) {
+                let restored = try Mango9AssistantUploadBatch.restore(Data(contentsOf: target), account: account, origin: origin, conversation: destination)
+                guard restored.drafts.map(\.file) == batch.drafts.map(\.file) else { throw Mango9AssistantMediaContract.invalid() }
+            } else {
+                let moved = batch.drafts.map { Mango9AssistantUpload(id: UUID().uuidString.lowercased(), account: account,
+                    origin: origin, conversationId: destination, file: $0.file) }
+                try JSONEncoder().encode(Mango9AssistantUploadBatch(version: 2, drafts: moved, sealed: false)).write(to: target, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            }
+            try FileManager.default.removeItem(at: sourceURL)
+        }
+        return destination
+    }
+}
+
 @MainActor final class Mango9AssistantTransfer: ObservableObject {
     @Published private(set) var draft: Mango9AssistantUpload?
+    @Published private(set) var drafts: [Mango9AssistantUpload] = []
+    @Published private(set) var sealed = false
+    @Published private(set) var maximum = 1
+    var canAdd: Bool { enabled && !busy && !sealed && drafts.count < maximum }
+    var total: Int64 { drafts.reduce(0) { $0 + $1.file.size } }
     @Published private(set) var phase = "idle"
     @Published private(set) var uploaded: Int64 = 0
     @Published private(set) var previewContext: UUID?
@@ -144,7 +199,7 @@ extension Mango9AssistantMediaNative {
     var label: String {
         switch phase {
         case "preparing": return "Preparing file…"
-        case "uploading": return "Uploading \(draft.map { Int(Double(uploaded) / Double($0.file.size) * 100) } ?? 0)%"
+        case "uploading": return "Uploading \(total > 0 ? Int(Double(uploaded) / Double(total) * 100) : 0)%"
         case "verifying": return "Checking file…"
         case "paused": return "Upload paused"
         case "received": return "File received"
@@ -163,28 +218,35 @@ extension Mango9AssistantMediaNative {
         var excluded = root; var values = URLResourceValues(); values.isExcludedFromBackup = true; try excluded.setResourceValues(values)
         return root.appendingPathComponent(account + "." + id + ".json")
     }
-    private func save(_ value: Mango9AssistantUpload?, id: String) throws {
+    private func save(_ values: [Mango9AssistantUpload], id: String, sealed: Bool) throws {
         let path = try location(id)
-        if let value { try Mango9AssistantMediaContract.validate(value); try JSONEncoder().encode(value).write(to: path, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]) }
+        guard values.count <= 3, Set(values.map(\.id)).count == values.count else { throw Mango9AssistantMediaContract.invalid() }
+        for value in values { try Mango9AssistantMediaContract.validate(value) }
+        if !values.isEmpty { try JSONEncoder().encode(Mango9AssistantUploadBatch(version: 2, drafts: values, sealed: sealed)).write(to: path, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]) }
         else if FileManager.default.fileExists(atPath: path.path) { try FileManager.default.removeItem(at: path) }
+    }
+    func recoverDraft(from source: String) throws -> String {
+        guard api.active else { throw Mango9AssistantMediaContract.invalid() }
+        pause()
+        return try Mango9AssistantDraftMigration.recover(location(source), source: source, account: account, origin: origin)
     }
     func configure(_ id: String) async {
         previewContext = nil
-        pause(); conversation = id; draft = nil; uploaded = 0; phase = "idle"; error = nil; enabled = false
+        pause(); conversation = id; draft = nil; drafts = []; sealed = false; maximum = 1; uploaded = 0; phase = "idle"; error = nil; enabled = false
         let stamp = epoch
         // Cached messages can appear before startup restores the chat's transfer scope.
         // Publish readiness so their previews retry only against the correct chat.
         defer { if stamp == epoch && api.active { previewContext = stamp } }
         do {
             if let data = try? Data(contentsOf: location(id)) {
-                let value = try JSONDecoder().decode(Mango9AssistantUpload.self, from: data); try Mango9AssistantMediaContract.validate(value)
-                guard value.account == account, value.origin == origin, value.conversationId == id else { throw Mango9AssistantMediaContract.invalid() }
-                draft = value; phase = "paused"
+                let batch = try Mango9AssistantUploadBatch.restore(data, account: account, origin: origin, conversation: id)
+                drafts = batch.drafts; draft = batch.drafts.first; sealed = batch.sealed; phase = "paused"
             }
             let cap = try await request("capabilities", stamp: stamp); try check(stamp)
             enabled = cap["version"] as? Int == 1 && cap["enabled"] as? Bool == true && cap["mode"] as? String == "transport" && cap["maxBytes"] as? Int64 == Mango9AssistantMediaContract.maximum && cap["partSize"] as? Int == Mango9AssistantMediaContract.partSize
             allowedTypes = Set(cap["types"] as? [String] ?? []).intersection(Mango9AssistantMediaContract.types)
             captions = cap["textWithAttachment"] as? Bool == true
+            maximum = cap["multipleAttachments"] as? Bool == true && cap["maxFiles"] as? Int == 3 ? 3 : 1
         } catch { if stamp == epoch && api.active { self.error = "File transfers are temporarily unavailable. You can still use text chat." } }
     }
     private func request(_ action: String, id: String? = nil, body: [String: Any] = [:], stamp: UUID) async throws -> [String: Any] {
@@ -199,46 +261,64 @@ extension Mango9AssistantMediaNative {
         }
         throw Mango9AssistantMediaContract.invalid()
     }
-    func select(_ url: URL, name: String) async {
-        guard enabled, !busy, draft == nil, api.active, api.hasAIConsent else { return }
+    func select(_ url: URL, name: String) async { await selectMany([(url, name)]) }
+    func selectMany(_ files: [(URL, String)]) async {
+        guard canAdd, api.active, api.hasAIConsent else { return }
+        guard !files.isEmpty, files.count + drafts.count <= maximum else { error = "Choose up to \(maximum) files. Nothing was added."; return }
         busy = true; phase = "preparing"; error = nil; let stamp = epoch
-        defer { busy = false }
-        var prepared: Mango9AssistantFile?
+        defer { if stamp == epoch { busy = false } }
+        var prepared: [Mango9AssistantFile] = []
         do {
-            let file = try await native.prepare(url, name: name); prepared = file; try check(stamp)
-            guard allowedTypes.contains(file.mime) else { throw Mango9AssistantMediaError(message: "This file format is not supported by your server.") }
-            let d = Mango9AssistantUpload(id: UUID().uuidString.lowercased(), account: account, origin: origin, conversationId: conversation, file: file)
-            try save(d, id: conversation); draft = d; phase = "selected"
+            var added: [Mango9AssistantUpload] = []
+            for (url, name) in files {
+                let file = try await native.prepare(url, name: name); prepared.append(file); try check(stamp)
+                guard allowedTypes.contains(file.mime) else { throw Mango9AssistantMediaError(message: "This file format is not supported by your server.") }
+                guard !(drafts + added).contains(where: { $0.file.sha256 == file.sha256 && $0.file.size == file.size }) else { throw Mango9AssistantMediaError(message: "This file is already attached. Choose different files.") }
+                added.append(Mango9AssistantUpload(id: UUID().uuidString.lowercased(), account: account, origin: origin, conversationId: conversation, file: file))
+            }
+            let all = drafts + added; try save(all, id: conversation, sealed: false)
+            drafts = all; draft = all.first; phase = "selected"; uploaded = 0
         } catch {
-            if let prepared { await native.discard(prepared.uri) }
+            for file in prepared where !drafts.contains(where: { $0.file.uri == file.uri }) { await native.discard(file.uri) }
             if stamp == epoch { self.error = error.localizedDescription; phase = "error" }
         }
     }
-    func pause() { epoch = UUID(); if let draft { native.pause(draft.id); phase = "paused" } else { phase = "idle" } }
-    func remove() async {
-        guard let d = draft, !busy, api.active else { return }
-        let stamp = epoch; error = nil
+    func pause() { epoch = UUID(); busy = false; if let draft { native.pause(draft.id); phase = "paused" } else { phase = "idle" } }
+    func remove(id: String? = nil) async {
+        guard !drafts.isEmpty, !busy, api.active else { return }
+        let stamp = epoch; error = nil; busy = true
+        defer { if stamp == epoch { busy = false } }
+        let removing = sealed || id == nil ? drafts : drafts.filter { $0.id == id }
         do {
-            do { _ = try await request("abort", id: d.id, stamp: stamp) }
-            catch let e as Mango9SupervisorFailure where e.status == 404 {}
-            try check(stamp); try save(nil, id: d.conversationId); await native.discard(d.file.uri); try check(stamp)
-            draft = nil; phase = "idle"; uploaded = 0
-        } catch { if stamp == epoch { self.error = "Removal could not be confirmed. Try again." } }
+            for item in removing {
+                do { _ = try await request("abort", id: item.id, stamp: stamp) }
+                catch let e as Mango9SupervisorFailure where e.status == 404 {}
+                try check(stamp)
+            }
+            let kept = drafts.filter { d in !removing.contains(where: { $0.id == d.id }) }
+            try save(kept, id: conversation, sealed: false); drafts = kept; draft = kept.first; sealed = false; phase = kept.isEmpty ? "idle" : "selected"; uploaded = 0
+            for item in removing { await native.discard(item.file.uri) }
+        } catch { if stamp == epoch { self.error = "Removal could not be confirmed. Your files have been kept." } }
     }
     func send(caption: String) async -> (id: String, caption: String)? {
-        guard var d = draft, enabled, !busy, api.active, api.hasAIConsent else { return nil }
+        guard !drafts.isEmpty, enabled, !busy, api.active, api.hasAIConsent else { return nil }
         let stamp = epoch; busy = true; error = nil
-        defer { busy = false }
+        defer { if stamp == epoch { busy = false } }
         do {
-            if d.caption == nil { d.caption = caption.trimmingCharacters(in: .whitespacesAndNewlines) }
-            guard (d.caption?.utf8.count ?? 0) <= 8000, captions || (d.caption ?? "").isEmpty else { throw Mango9AssistantMediaError(message: "Send a shorter caption, or send this file without text.") }
-            try save(d, id: conversation); draft = d; try check(stamp)
+            guard drafts.count <= maximum else { throw Mango9AssistantMediaError(message: "Multiple attachments are unavailable on this server. Your files have been kept.") }
+            let text = drafts[0].caption ?? caption.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard text.utf8.count <= 8000, captions || text.isEmpty else { throw Mango9AssistantMediaError(message: "Send a shorter caption, or send these files without text.") }
+            let all = drafts.map { value -> Mango9AssistantUpload in var value = value; value.caption = text; return value }
+            try save(all, id: conversation, sealed: true); drafts = all; sealed = true; try check(stamp)
+            var completed: Int64 = 0
+            for d in all {
+            draft = d
             let f = d.file
             let start: [String: Any] = ["name": f.name, "size": f.size, "mime": f.mime, "sha256": f.sha256, "partMD5": f.partMD5]
             _ = try Mango9AssistantMediaContract.status(await request("start", id: d.id, body: start, stamp: stamp), d)
             var status = try Mango9AssistantMediaContract.status(await request("status", id: d.id, stamp: stamp), d)
             if status.state == "uploading" {
-                uploaded = try status.uploaded.reduce(Int64(0)) { try $0 + Mango9AssistantMediaContract.length(f, $1) }; phase = "uploading"
+                uploaded = try status.uploaded.reduce(completed) { try $0 + Mango9AssistantMediaContract.length(f, $1) }; phase = "uploading"
                 // One bounded native part at a time; memory stays independent of the video size.
                 for part in 1...f.partMD5.count where !status.uploaded.contains(part) {
                     try check(stamp)
@@ -256,11 +336,17 @@ extension Mango9AssistantMediaNative {
                 status = try Mango9AssistantMediaContract.status(await request("status", id: d.id, stamp: stamp), d)
             }
             guard status.state == "ready" else { throw Mango9AssistantMediaError(message: status.state == "rejected" ? "This file could not be verified. Remove it and choose another." : "Verification is still running. Tap Resume to check its status.") }
-            let result = try await request("attach", id: d.id, body: (d.caption ?? "").isEmpty ? [:] : ["text": d.caption!], stamp: stamp)
-            guard result["received"] as? Bool == true, result["id"] as? String == d.id, result["conversationId"] as? String == conversation else { throw Mango9AssistantMediaContract.invalid() }
-            try save(nil, id: conversation); draft = nil; phase = "received"
-            Task { await native.discard(f.uri) }
-            return (d.id, d.caption ?? "")
+            completed += f.size; uploaded = completed
+            }
+            let first = all[0], ids = all.map(\.id)
+            var body: [String: Any] = text.isEmpty ? [:] : ["text": text]
+            if ids.count > 1 { body["ids"] = ids }
+            let result = try await request("attach", id: first.id, body: body, stamp: stamp)
+            guard result["received"] as? Bool == true, result["id"] as? String == first.id, result["conversationId"] as? String == conversation,
+                  ids.count == 1 || result["ids"] as? [String] == ids else { throw Mango9AssistantMediaContract.invalid() }
+            try save([], id: conversation, sealed: false); drafts = []; draft = nil; sealed = false; phase = "received"
+            Task { for item in all { await native.discard(item.file.uri) } }
+            return (first.id, text)
         } catch { if stamp == epoch { phase = "error"; self.error = error.localizedDescription }; return nil }
     }
     func resource(_ file: Mango9AssistantAttachment) async throws -> (url: URL, file: Mango9AssistantAttachment) {

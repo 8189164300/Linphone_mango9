@@ -121,7 +121,10 @@ struct PhotoPicker: UIViewControllerRepresentable {
 		
 		dispatchGroup.notify(queue: .main) {
 			lock.lock(); let ordered = medias.keys.sorted().compactMap { medias[$0] }; let error = failure; lock.unlock()
-			onComplete(ordered, error)
+            if let error {
+                for item in ordered { for url in Set([item.full, item.thumbnail]) { try? FileManager.default.removeItem(at: url) } }
+                onComplete(nil, error)
+            } else { onComplete(ordered, nil) }
 		}
 	}
 	

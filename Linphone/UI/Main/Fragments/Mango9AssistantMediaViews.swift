@@ -29,15 +29,16 @@ struct Mango9AssistantQuickLook: UIViewControllerRepresentable {
 struct Mango9AssistantPicker: UIViewControllerRepresentable {
     enum Kind: String, Identifiable { case library, photo, video, file; var id: String { rawValue } }
     let kind: Kind
-    let complete: (Result<(URL, String), Error>?) -> Void
-    func makeCoordinator() -> Coordinator { Coordinator(complete) }
+    var limit = 1
+    let complete: (Result<[(URL, String)], Error>?) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(limit: limit, complete) }
     func makeUIViewController(context: Context) -> UIViewController {
         if kind == .file {
             let vc = UIDocumentPickerViewController(forOpeningContentTypes: [.image, .movie, .audio, .pdf, .plainText, .commaSeparatedText], asCopy: true)
-            vc.delegate = context.coordinator; return vc
+            vc.allowsMultipleSelection = limit > 1; vc.delegate = context.coordinator; return vc
         }
         if kind == .library {
-            var configuration = PHPickerConfiguration(); configuration.selectionLimit = 1; configuration.filter = .any(of: [.images, .videos]); configuration.preferredAssetRepresentationMode = .current
+            var configuration = PHPickerConfiguration(); configuration.selectionLimit = max(1, limit); configuration.filter = .any(of: [.images, .videos]); configuration.preferredAssetRepresentationMode = .current
             let vc = PHPickerViewController(configuration: configuration); vc.delegate = context.coordinator; return vc
         }
         let vc = UIImagePickerController(); vc.sourceType = .camera
@@ -47,8 +48,9 @@ struct Mango9AssistantPicker: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ controller: UIViewController, context: Context) { }
     final class Coordinator: NSObject, PHPickerViewControllerDelegate, UIDocumentPickerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let complete: (Result<(URL, String), Error>?) -> Void
-        init(_ complete: @escaping (Result<(URL, String), Error>?) -> Void) { self.complete = complete }
+        let complete: (Result<[(URL, String)], Error>?) -> Void
+        let limit: Int
+        init(limit: Int, _ complete: @escaping (Result<[(URL, String)], Error>?) -> Void) { self.limit = limit; self.complete = complete }
         static func copy(_ source: URL) throws -> URL {
             let access = source.startAccessingSecurityScopedResource(); defer { if access { source.stopAccessingSecurityScopedResource() } }
             let size = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
@@ -58,36 +60,55 @@ struct Mango9AssistantPicker: UIViewControllerRepresentable {
             let target = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(source.pathExtension)
             try FileManager.default.copyItem(at: source, to: target); return target
         }
-        func picked(_ url: URL) {
+        func picked(_ urls: [URL]) {
+            guard urls.count <= limit else { complete(.failure(Mango9AssistantMediaError(message: "Choose up to \(limit) files. Nothing was added."))); return }
             let callback = complete
             DispatchQueue.global(qos: .userInitiated).async {
-                let result = Result { (try Self.copy(url), url.lastPathComponent) }
-                DispatchQueue.main.async { callback(result) }
+                var copied: [(URL, String)] = []
+                do {
+                    for url in urls { copied.append((try Self.copy(url), url.lastPathComponent)) }
+                    let result = copied; DispatchQueue.main.async { callback(.success(result)) }
+                } catch {
+                    for file in copied { try? FileManager.default.removeItem(at: file.0) }
+                    DispatchQueue.main.async { callback(.failure(error)) }
+                }
             }
         }
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { complete(nil) }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { if let first = urls.first { picked(first) } else { complete(nil) } }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { if urls.isEmpty { complete(nil) } else { picked(urls) } }
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { complete(nil) }
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let url = info[.mediaURL] as? URL { picked(url); return }
+            if let url = info[.mediaURL] as? URL { picked([url]); return }
             if let image = info[.originalImage] as? UIImage, let bytes = image.jpegData(compressionQuality: 0.95) {
                 do {
                     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ephonix-supervisor-picked", isDirectory: true)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                     let url = directory.appendingPathComponent(UUID().uuidString + ".jpg")
-                    try bytes.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]); complete(.success((url, "Photo.jpg")))
+                    try bytes.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]); complete(.success([(url, "Photo.jpg")]))
                 } catch { complete(.failure(error)) }
             } else { complete(.failure(Mango9AssistantMediaError(message: "Could not open the selected photo."))) }
         }
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-            guard let provider = results.first?.itemProvider else { complete(nil); return }
-            let type = provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) ? UTType.movie.identifier : UTType.image.identifier
-            provider.loadFileRepresentation(forTypeIdentifier: type) { [complete] url, error in
-                let result: Result<(URL, String), Error>
-                if let url { result = Result { (try Self.copy(url), url.lastPathComponent) } }
-                else { result = .failure(error ?? Mango9AssistantMediaError(message: "Download this file to your phone and try again.")) }
-                DispatchQueue.main.async { complete(result) }
+            guard !results.isEmpty else { complete(nil); return }
+            guard results.count <= limit else { complete(.failure(Mango9AssistantMediaError(message: "Choose up to \(limit) files. Nothing was added."))); return }
+            // Copy each representation while its temporary URL is valid. Preserve
+            // picker order and keep partial selections out of the composer.
+            func load(_ index: Int, _ files: [(URL, String)]) {
+                guard index < results.count else { DispatchQueue.main.async { self.complete(.success(files)) }; return }
+                let provider = results[index].itemProvider
+                let type = provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) ? UTType.movie.identifier : UTType.image.identifier
+                provider.loadFileRepresentation(forTypeIdentifier: type) { url, error in
+                    do {
+                        guard let url else { throw error ?? Mango9AssistantMediaError(message: "Download this file to your phone and try again.") }
+                        let file = (try Self.copy(url), url.lastPathComponent)
+                        load(index + 1, files + [file])
+                    } catch {
+                        for file in files { try? FileManager.default.removeItem(at: file.0) }
+                        DispatchQueue.main.async { self.complete(.failure(error)) }
+                    }
+                }
             }
+            load(0, [])
         }
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 import QuickLook
 import ImageIO
 import AVFoundation
+import CryptoKit
 
 /// Only small thumbnails live in memory. Original downloads are transient and
 /// removed after decoding; full-size viewing still uses the authorized endpoint.
@@ -504,7 +505,7 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 
 /// Durable intent metadata only. Unknown sends are reconciled, never blindly resent.
 @MainActor final class Mango9SocialSendJournal {
-	struct Pending: Codable, Equatable { let account: String; let thread: String; let requestId: String }
+	struct Pending: Codable, Equatable { let account: String; let thread: String; let requestId: String; var attachmentID: String?; var draftHash: String? }
 	static let shared = Mango9SocialSendJournal()
 	private let defaults: UserDefaults
 	private let key = "mango9_social_pending_sends_v1"
@@ -515,9 +516,9 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 	}
 	private func scope(_ account: String, _ thread: String) -> String { "\(account.utf8.count):\(account)\(thread)" }
 	func pending(account: String, thread: String) -> Pending? { entries[scope(account, thread)] }
-	func begin(account: String, thread: String) throws -> Pending {
+	func begin(account: String, thread: String, attachmentID: String? = nil, draftHash: String? = nil) throws -> Pending {
 		guard pending(account: account, thread: thread) == nil else { throw Mango9MessagingError.pending }
-		let pending = Pending(account: account, thread: thread, requestId: UUID().uuidString.lowercased())
+		let pending = Pending(account: account, thread: thread, requestId: UUID().uuidString.lowercased(), attachmentID: attachmentID, draftHash: draftHash)
 		entries[scope(account, thread)] = pending
 		defaults.set(try JSONEncoder().encode(entries), forKey: key)
 		return pending
@@ -829,7 +830,7 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 			let account = Mango9ReactionTarget.accountKey(session)
 			if let pending = journal.pending(account: account, thread: id),
 				let receipt = page.items.first(where: { $0.requestId == pending.requestId }), receipt.terminal {
-				if receipt.confirmedSent && outgoingText == receipt.message { draft = ""; replyQuote = nil; selectedMedia = []; mediaIDs = [:] }
+				if receipt.confirmedSent { acknowledge(pending, receipt: receipt) }
 				sendNotice = receipt.confirmedSent ? nil : "Message not sent. \(receipt.error ?? "")"
 				journal.finish(pending)
 			}
@@ -840,39 +841,56 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 			// A failed receipt lookup is not proof that a send failed.
 		}
 	}
-	func send() async {
-		guard canSend, let thread else { return }
-		let text = outgoingText
-		let originalDraft = draft
-		sending = true; sendNotice = nil; defer { sending = false }
-		var intent: Mango9SocialSendJournal.Pending?
-		do {
-			guard selectedMedia.count <= 1 else { throw Mango9MessagingError.rejected(400, "Social supports one attachment per message.") }
-			if thread.platform == "tiktok", !selectedMedia.isEmpty, !text.isEmpty { throw Mango9MessagingError.rejected(400, "Send a TikTok photo without a caption.") }
-			var mediaID: String?
-			if let attachment = selectedMedia.first {
-				let id = mediaIDs[attachment.id] ?? UUID().uuidString.lowercased(); mediaIDs[attachment.id] = id
-				mediaID = try await api.uploadSocial(attachment, session: session, platform: thread.platform, id: id)
-			}
-			let pending = try journal.begin(account: Mango9ReactionTarget.accountKey(session), thread: thread.id)
-			intent = pending; unresolvedSend = true
-			var body: [String: Any] = ["id": thread.id, "version": thread.version, "message": text, "requestId": pending.requestId]
-			if let mediaID { body["mediaId"] = mediaID }
-			let receipt = try await api.request(Mango9SocialSendReceipt.self, session: session, social: true,
-				path: ["inbox-send"], body: body)
-			guard receipt.id == thread.id, receipt.requestId == pending.requestId else { throw Mango9MessagingError.invalidResponse }
-			sends.removeAll { $0.sendId == receipt.sendId }; sends.insert(receipt, at: 0)
-			if receipt.terminal { journal.finish(pending); unresolvedSend = false }
-			if receipt.confirmedSent {
-				if draft == originalDraft { draft = ""; replyQuote = nil; selectedMedia = []; mediaIDs = [:] }
-			} else { sendNotice = receipt.terminal ? "Message not sent. \(receipt.error ?? "")" : Self.unknownSendNotice }
-		} catch {
-			if let intent, Mango9ReactionOutcome.transportFailure(error, previouslyUnconfirmed: false) == .failed {
-				journal.finish(intent); unresolvedSend = false; sendNotice = error.localizedDescription
-			} else { sendNotice = intent == nil ? error.localizedDescription : Self.unknownSendNotice }
-		}
-		await loadThread(id: thread.id, refreshProvider: true)
-	}
+	private func acknowledge(_ pending: Mango9SocialSendJournal.Pending, receipt: Mango9SocialSendReceipt) {
+        if let hash = pending.draftHash { if Self.sendDraftHash(outgoingText) == hash { draft = ""; replyQuote = nil } }
+        else if outgoingText == receipt.message { draft = ""; replyQuote = nil }
+        if let id = pending.attachmentID { selectedMedia.removeAll { $0.id == id }; mediaIDs.removeValue(forKey: id) }
+    }
+    private static func sendDraftHash(_ text: String) -> String { SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined() }
+    func send() async {
+        guard canSend, let initial = thread else { return }
+        let text = outgoingText, selection = selectedMedia, life = lifetime
+        guard selection.count <= 10 else { sendNotice = "Choose up to ten attachments."; return }
+        if initial.platform == "tiktok", !selection.isEmpty, !text.isEmpty { sendNotice = "Send TikTok photos without a caption."; return }
+        sending = true; sendNotice = nil
+        defer { if life == lifetime && thread?.id == initial.id { sending = false } }
+        for index in 0..<max(1, selection.count) {
+            guard life == lifetime, thread?.id == initial.id, !Task.isCancelled,
+                  let current = thread, current.id == initial.id, current.permitsSending, current.openSend == nil, !unresolvedSend else { break }
+            let attachment = selection.isEmpty ? nil : selection[index]
+            let bodyText = index == 0 ? text : ""
+            var intent: Mango9SocialSendJournal.Pending?
+            do {
+                var mediaID: String?
+                if let attachment {
+                    let id = mediaIDs[attachment.id] ?? UUID().uuidString.lowercased(); mediaIDs[attachment.id] = id
+                    mediaID = try await api.uploadSocial(attachment, session: session, platform: current.platform, id: id)
+                }
+                guard life == lifetime, thread?.id == initial.id, !Task.isCancelled else { return }
+                let pending = try journal.begin(account: Mango9ReactionTarget.accountKey(session), thread: initial.id,
+                    attachmentID: attachment?.id, draftHash: Self.sendDraftHash(bodyText))
+                intent = pending; unresolvedSend = true
+                var body: [String: Any] = ["id": initial.id, "version": current.version, "message": bodyText, "requestId": pending.requestId]
+                if let mediaID { body["mediaId"] = mediaID }
+                let receipt = try await api.request(Mango9SocialSendReceipt.self, session: session, social: true, path: ["inbox-send"], body: body)
+                guard life == lifetime, thread?.id == initial.id, !Task.isCancelled else { return }
+                guard receipt.id == initial.id, receipt.requestId == pending.requestId else { throw Mango9MessagingError.invalidResponse }
+                sends.removeAll { $0.sendId == receipt.sendId }; sends.insert(receipt, at: 0)
+                if receipt.terminal { journal.finish(pending); unresolvedSend = false }
+                guard receipt.confirmedSent else { sendNotice = receipt.terminal ? "Message not sent. \(receipt.error ?? "")" : Self.unknownSendNotice; break }
+                acknowledge(pending, receipt: receipt)
+                // Refresh the optimistic-concurrency version before the next independent message.
+                await loadThread(id: initial.id, refreshProvider: false)
+            } catch {
+                guard life == lifetime, thread?.id == initial.id else { return }
+                if let intent, Mango9ReactionOutcome.transportFailure(error, previouslyUnconfirmed: false) == .failed {
+                    journal.finish(intent); unresolvedSend = false; sendNotice = error.localizedDescription
+                } else { sendNotice = intent == nil ? error.localizedDescription : Self.unknownSendNotice }
+                break
+            }
+        }
+        if life == lifetime, thread?.id == initial.id { await loadThread(id: initial.id, refreshProvider: true) }
+    }
 	func checkSend() async {
 		guard !sending, let thread else { return }; sending = true; defer { sending = false }
 		await loadSends(id: thread.id)
@@ -1255,7 +1273,7 @@ struct Mango9SocialConversation: View {
 		.navigationBarHidden(false)
 		.onAppear { profileViewVisible = true }
 		.onDisappear { profileViewVisible = false; profileNotice = nil }
-		.mango9Attachments(request: $attachmentRequest, selected: $store.selectedMedia, limit: 1, error: { localError = $0 })
+		.mango9Attachments(request: $attachmentRequest, selected: $store.selectedMedia, limit: 10, error: { localError = $0 })
 		.quickLookPreview($previewURL)
 		.modifier(Mango9VoicePreviewLifecycle(owner: voicePreviewOwner, url: $previewURL))
 		#if DEBUG && targetEnvironment(simulator)
@@ -1347,7 +1365,8 @@ struct Mango9SocialConversation: View {
 			}, cancel: { selectionMode = false; selectedIDs = [] }).disabled(preparingMedia)
 		} else {
 		if let quote = store.replyQuote { Mango9ReplyPreview(text: quote) { store.replyQuote = nil } }
-		if !store.selectedMedia.isEmpty { Mango9PendingAttachmentStrip(attachments: $store.selectedMedia) }
+		if !store.selectedMedia.isEmpty { Mango9PendingAttachmentStrip(attachments: $store.selectedMedia).disabled(store.sending || store.unresolvedSend) }
+        if store.selectedMedia.count > 1 { Text("Files send as separate messages, in order.").font(.caption).foregroundStyle(.secondary) }
 		if let notice = store.sendNotice { Text(notice).font(.footnote).foregroundStyle(.secondary).padding(.horizontal) }
 		if store.draft.unicodeScalars.count > 10000 { Text("Messages can contain up to 10,000 characters.").font(.footnote).foregroundStyle(.red).padding(.horizontal) }
 		if store.unresolvedSend || store.thread?.openSend != nil {

@@ -53,62 +53,52 @@ struct FilePicker: UIViewControllerRepresentable {
 	}
 	
 	static func convertToAttachmentArray(fromResults results: [URL], onComplete: @escaping ([Attachment]?, Error?) -> Void) {
-		var medias = [Attachment]()
-		
-		let dispatchGroup = DispatchGroup()
-		for urlFile in results {
-			dispatchGroup.enter()
-			do {
-				let mimeType = urlFile.mimeType()
-				if !mimeType.isEmpty {
-					let type = mimeType.components(separatedBy: "/").first ?? ""
-					let subtype = mimeType.components(separatedBy: "/").last ?? ""
-					var typeTmp: AttachmentType = .other
-					switch type {
-					case "image":
-						typeTmp = urlFile.lastPathComponent.lowercased().hasSuffix("gif") ? .gif : .image
-					case "audio":
-						typeTmp = .audio
-					case "application":
-						typeTmp = subtype.lowercased() == "pdf" ? .pdf : .other
-					case "text":
-						typeTmp = .text
-					case "video":
-						typeTmp = .video
-					default:
-						typeTmp = .other
-					}
-					
-					if typeTmp == .video {
-						PhotoPicker.prepareVideoForMessaging(
-							sourceURL: urlFile,
-							suggestedName: urlFile.lastPathComponent
-						) { result in
-							if case .success(let attachment) = result {
-								medias.append(attachment)
-							}
-							dispatchGroup.leave()
-						}
-					} else {
-						let dataResult = try Data(contentsOf: urlFile)
-						let urlImage = PhotoPicker.saveMedia(name: urlFile.lastPathComponent, data: dataResult, type: typeTmp)
-						
-						if urlImage != nil {
-							let attachment = Attachment(id: UUID().uuidString, name: urlImage!.lastPathComponent, url: urlImage!, type: typeTmp)
-							medias.append(attachment)
-						}
-						dispatchGroup.leave()
-					}
-				} else {
-					dispatchGroup.leave()
-				}
-			} catch {
-				dispatchGroup.leave()
-			}
-		}
-		
-		dispatchGroup.notify(queue: .main) {
-			onComplete(medias, nil)
-		}
-	}
+        let lock = NSLock()
+        var files: [Int: Attachment] = [:]
+        var failure: Error?
+        func record(_ index: Int, _ result: Result<Attachment, Error>) {
+            lock.lock(); defer { lock.unlock() }
+            switch result { case .success(let file): files[index] = file; case .failure(let error): failure = error }
+        }
+        let group = DispatchGroup()
+        for (index, source) in results.enumerated() {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let access = source.startAccessingSecurityScopedResource()
+                let mime = source.mimeType(), category = mime.components(separatedBy: "/").first ?? ""
+                if category == "video" {
+                    PhotoPicker.prepareVideoForMessaging(sourceURL: source, suggestedName: source.lastPathComponent) { result in
+                        record(index, result)
+                        if access { source.stopAccessingSecurityScopedResource() }
+                        group.leave()
+                    }
+                    return
+                }
+                defer { if access { source.stopAccessingSecurityScopedResource() }; group.leave() }
+                let id = UUID().uuidString
+                let target = FileManager.default.temporaryDirectory.appendingPathComponent(id).appendingPathExtension(source.pathExtension)
+                do {
+                    // Independent snapshots prevent same-name files from replacing each other.
+                    try FileManager.default.copyItem(at: source, to: target)
+                    let type: AttachmentType
+                    switch category {
+                    case "image": type = source.pathExtension.lowercased() == "gif" ? .gif : .image
+                    case "audio": type = .audio
+                    case "text": type = .text
+                    case "application": type = mime == "application/pdf" ? .pdf : .other
+                    default: type = .other
+                    }
+                    let size = try target.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                    record(index, .success(Attachment(id: id, name: source.lastPathComponent, url: target, type: type, size: size)))
+                } catch { try? FileManager.default.removeItem(at: target); record(index, .failure(error)) }
+            }
+        }
+        group.notify(queue: .main) {
+            lock.lock(); let ordered = files.keys.sorted().compactMap { files[$0] }; let error = failure; lock.unlock()
+            if let error {
+                for item in ordered { for url in Set([item.full, item.thumbnail]) { try? FileManager.default.removeItem(at: url) } }
+                onComplete(nil, error)
+            } else { onComplete(ordered, nil) }
+        }
+    }
 }
