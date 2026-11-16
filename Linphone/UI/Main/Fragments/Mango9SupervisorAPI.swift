@@ -258,8 +258,8 @@ enum Mango9SupervisorPersistence {
 
 enum Mango9SupervisorConsent {
     // Change this version whenever the disclosed recipients or purposes change.
-    static let version = "2026-10-30.1"
-    static let chatDisclosure = "Mango9 sends your messages, files you attach, conversation history and relevant account/CRM records to OpenRouter and the configured AI provider: DeepInfra (DeepSeek) or OpenAI. They process this information to answer your requests."
+    static let version = "2026-11-16.1"
+    static let chatDisclosure = "Mango9 sends your messages, attached files, conversation history and relevant account/CRM records to the AI service configured for your organization to answer requests and assist with CRM tasks. This may use OpenRouter with DeepInfra (DeepSeek) or OpenAI, or your connected ChatGPT account through OpenAI Codex or your Claude account through Anthropic Claude Code. For connected-computer replies, this information also passes through your authorized computer running that tool. Provider availability and your provider account limits apply."
     static let voiceDisclosure = "Voice also sends microphone audio, transcripts and conversation context to Google (Gemini) for spoken replies."
     private struct Receipt: Codable { let version: String; let acceptedAt: Date }
     private static func key(_ session: Mango9Session) -> String { "mango9.supervisor.aiConsent." + Mango9SupervisorPersistence.key(session) }

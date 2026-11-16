@@ -158,6 +158,12 @@ struct LoginFragment: View {
 	private var settingsGate: some View {
 		NavigationView {
 			Form {
+				Section {
+					Text("Manual SIP setup")
+						.font(.headline)
+					Text("Configure a SIP calling account supplied by your administrator. This optional setup is separate from Mango9 sign-in and does not unlock CRM or Assistant permissions.")
+						.font(.subheadline).foregroundStyle(.secondary)
+				}
 				SecureField("Settings password", text: $settingsPassword)
 					.textInputAutocapitalization(.never).disableAutocorrection(true)
 					.submitLabel(.go).onSubmit(unlockSettings)

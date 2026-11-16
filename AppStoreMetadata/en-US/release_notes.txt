@@ -1,4 +1,6 @@
-• Improved Assistant recovery after temporary connection interruptions.
-• Temporary connection notices clear when chat history reconnects successfully.
-• Saved messages and unsent drafts stay available during refreshes.
-• Continue composing while an earlier Assistant reply is pending.
+• Attach up to three supported files to one Assistant message.
+• Select several supported attachments in Social and Live Chat and send them in order.
+• Improved recovery of unsent attachment drafts and interrupted Assistant chats.
+• Keep composing while an earlier Assistant reply is pending.
+• Updated AI sharing notice for connected ChatGPT (Codex) and Claude integrations, with renewed consent.
+• Clearer manual connection setup explanations.

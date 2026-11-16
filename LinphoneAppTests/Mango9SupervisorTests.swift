@@ -335,7 +335,7 @@ final class Mango9SupervisorTests: XCTestCase {
         Mango9SupervisorConsent.allow(account, defaults: defaults)
         let key = try XCTUnwrap(defaults.dictionaryRepresentation().keys.first { $0.hasPrefix("mango9.supervisor.aiConsent.") })
         var receipt = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(defaults.data(forKey: key))) as? [String: Any])
-        receipt["version"] = "old-disclosure"
+        receipt["version"] = "2026-10-30.1" // Prior notice did not name connected Claude/Anthropic.
         defaults.set(try JSONSerialization.data(withJSONObject: receipt), forKey: key)
         XCTAssertFalse(Mango9SupervisorConsent.accepted(account, defaults: defaults))
         defaults.set(Data("broken".utf8), forKey: key)
