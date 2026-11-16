@@ -22,7 +22,50 @@ internal class Mango9SupervisorViewModel(
     val changed = MutableLiveData(0)
     val transfer by lazy { Mango9AssistantTransfer(coreContext.context, api, ::owner, ::notifyChange) }
     var replyPhase = "idle"; private set
-    val working get() = sending || pending != null || replyPhase != "idle"
+    private var receipts = listOf<JSONObject>()
+    private val textRequests = mutableSetOf<String>()
+    private val textJobs = mutableMapOf<String, Job>()
+    val working get() = sending || receipts.any {
+        it.getJSONObject("command").let { c -> c.optString("conversationId") == conversation && c.optString("requestId") in textRequests }
+    } || replyPhase != "idle"
+
+    fun delivery(id: String): String? = receipts.firstOrNull {
+        it.getJSONObject("command").getJSONObject("message").optString("id") == id
+    }?.let {
+        if (it.optString("state") == "failed") "Not sent" else if (it.getJSONObject("command").optString("requestId") in textRequests) "Sending…" else "Delivery unconfirmed"
+    }
+
+    private fun syncDelivery() {
+        pending = receipts.firstOrNull {
+            it.getJSONObject("command").optString("conversationId") == conversation && it.optString("state") != "failed"
+        }?.getJSONObject("command")
+    }
+
+    private fun saveDeliveries(rows: List<JSONObject>) {
+        val owner = owner() ?: throw Mango9SupervisorFailure("scope_changed")
+        store.deliveries(owner.session, rows); receipts = rows; syncDelivery()
+    }
+
+    private fun restoreDeliveries(session: Mango9Session) {
+        var rows = store.deliveries(session)
+        val legacy = store.pending(session)
+        if (legacy != null && rows.none {
+            it.getJSONObject("command").optString("requestId") == legacy.optString("requestId")
+        }
+        ) {
+            rows = rows + JSONObject().put("command", legacy).put("state", "unconfirmed").put("createdAt", java.time.Instant.now().toString())
+            store.deliveries(session, rows)
+        }
+        store.pending(session, null); receipts = rows; syncDelivery()
+    }
+
+    private fun includeLocalMessages() {
+        val local = receipts.filter { it.getJSONObject("command").optString("conversationId") == conversation }.map {
+            JSONObject(it.getJSONObject("command").getJSONObject("message").toString()).put("metadata", JSONObject().put("createdAt", it.getString("createdAt")))
+        }
+        messages = messages + local.filter { row -> messages.none { it.optString("id") == row.optString("id") } }
+    }
+
     var readingConversation = true
     var bulkBusy = false; private set
     var unread = emptyMap<String, Int>(); private set
@@ -40,6 +83,7 @@ internal class Mango9SupervisorViewModel(
     var sending = false; private set
     var voicePage = false; private set
     var error: String? = null; private set
+    var historyRefreshError: String? = null; private set
     var billing = false; private set
     var draft = ""
     var conversation = UUID.randomUUID().toString(); private set
@@ -109,11 +153,11 @@ internal class Mango9SupervisorViewModel(
 
     fun notifyChange() { changed.value = (changed.value ?: 0) + 1 }
 
-    fun canSend() = storageReady && authorized && accepted && !loading && !sending && pending == null && !voice.running && owner() != null && replyPhase == "idle" && !transfer.active && (transfer.draft != null || Mango9SupervisorWire.validText(draft))
+    fun canSend() = storageReady && authorized && accepted && !loading && !sending && !voice.running && owner() != null && !transfer.active && (transfer.draft != null || Mango9SupervisorWire.validText(draft))
 
-    fun canVoice() = storageReady && authorized && accepted && !loading && !sending && pending == null && !transfer.active && owner() != null
+    fun canVoice() = pending == null && storageReady && authorized && accepted && !loading && !sending && !transfer.active && owner() != null
 
-    fun canManageHistory() = storageReady && authorized && !loading && !sending && !actionBusy && !voice.running && pending == null && deletingConversation == null && !bulkBusy && !transfer.active && owner() != null
+    fun canManageHistory() = storageReady && authorized && !loading && !sending && !actionBusy && !voice.running && deletingConversation == null && !bulkBusy && !transfer.active && owner() != null
 
     private fun restoreLocal() {
         val saved = savedChats.firstOrNull { it.optString("id") == conversation } ?: return
@@ -168,7 +212,7 @@ internal class Mango9SupervisorViewModel(
             try {
                 withContext(Dispatchers.IO) {
                     accepted = store.accepted(value.session); pending = store.pending(value.session)
-                    conversation = pending?.optString("conversationId") ?: requestedConversation ?: store.conversation(value.session) ?: UUID.randomUUID().toString()
+                    conversation = requestedConversation ?: store.conversation(value.session) ?: pending?.optString("conversationId") ?: UUID.randomUUID().toString()
                     if (runCatching { UUID.fromString(conversation) }.isFailure) conversation = UUID.randomUUID().toString()
                     savedChats = store.savedChats(value.session)
                     val state = store.state(value.session); draftState = state.optJSONObject("drafts") ?: JSONObject()
@@ -184,8 +228,9 @@ internal class Mango9SupervisorViewModel(
 
                 }
                 if (!current(stamp, value)) return@launch
+                restoreDeliveries(value.session)
                 storageReady = true
-                restoreLocal(); notifyChange()
+                restoreLocal(); includeLocalMessages(); notifyChange()
                 reload()
             } catch (e: Exception) {
                 if (e !is CancellationException) {
@@ -207,8 +252,10 @@ internal class Mango9SupervisorViewModel(
     }
 
     private fun clearAccount() {
-        generation++; listFlight++; invalidateHistory(); storageReady = false; savedChats = emptyList(); savedConfigurationIds.clear(); configurationDetails.clear(); configurationRequested.clear(); configurationFlights.clear(); detail = null; sendJob?.cancel(); loadJob?.cancel(); actionJob?.cancel(); voice.stop()
-        authorized = false; accepted = false; loading = false; sending = false; voicePage = false; draft = ""; pending = null
+        generation++; listFlight++; invalidateHistory(); storageReady = false; savedChats = emptyList(); savedConfigurationIds.clear(); configurationDetails.clear(); configurationRequested.clear(); configurationFlights.clear(); detail = null; sendJob?.cancel(); textJobs.values.toList().forEach {
+            it.cancel()
+        }; loadJob?.cancel(); actionJob?.cancel(); voice.stop()
+        authorized = false; accepted = false; loading = false; sending = false; voicePage = false; draft = ""; pending = null; receipts = emptyList(); textRequests.clear()
         messages = emptyList(); conversations = emptyList(); actions = emptyList(); activity = emptyList(); detail = null
         error = Mango9SupervisorFailure("scope_changed").message; notifyChange()
     }
@@ -218,12 +265,12 @@ internal class Mango9SupervisorViewModel(
     private suspend fun reload() {
         val owner = owner() ?: return
         val stamp = generation
-        loading = true; error = null; notifyChange()
+        loading = true; error = null; historyRefreshError = null; notifyChange()
         try {
             storageReady = false
-            val restored = withContext(Dispatchers.IO) { store.pending(owner.session) }
+            restoreDeliveries(owner.session)
             if (!current(stamp, owner)) return
-            pending = restored; storageReady = true
+            storageReady = true
             val status = api.authorize(owner)
             if (!current(stamp, owner)) return
             authorized = true; billing = status.optBoolean("billingEnabled")
@@ -309,6 +356,7 @@ internal class Mango9SupervisorViewModel(
     }
 
     private fun rememberDeleted(id: String) {
+        runCatching { saveDeliveries(receipts.filterNot { it.getJSONObject("command").optString("conversationId") == id }) }
         deleted.remove(id); deleted.add(id); while (deleted.size > 256) deleted.remove(deleted.first())
         draftState.remove(id); unread = unread - id; conversations = conversations.filterNot { it.optString("id") == id }
     }
@@ -316,20 +364,24 @@ internal class Mango9SupervisorViewModel(
     private suspend fun recoverDeleted() {
         val owner = owner() ?: return
         val unsent = draft; rememberDeleted(conversation)
-        store.pending(owner.session, null); pending = null; sending = false
+        saveDeliveries(
+            receipts.filterNot {
+            it.getJSONObject("command").optString("conversationId") == conversation
+        }
+        ); pending = null; sending = false
         savedChats = savedChats.filterNot { it.optString("id") == conversation }; store.savedChats(owner.session, savedChats)
         generation++; invalidateHistory(); conversation = UUID.randomUUID().toString(); store.conversation(owner.session, conversation)
-        messages = emptyList(); configurationDetails.clear(); historyCursor = "0"; historyReady = false; moreMessages = false; olderCursor = null; error = null
+        messages = emptyList(); configurationDetails.clear(); historyCursor = "0"; historyReady = false; moreMessages = false; olderCursor = null; error = null; historyRefreshError = null
         draft = unsent; saveDraftNow(); transfer.configure(owner, conversation)
     }
 
     fun select(id: String) {
-        if (loading || sending || actionBusy || pending != null || runCatching { UUID.fromString(id) }.isFailure) return
+        if (loading || sending || actionBusy || runCatching { UUID.fromString(id) }.isFailure) return
         val owner = owner() ?: return
         if (id.lowercase() in deleted || transfer.active) return
         saveDraftNow(); draft = draftState.optString(id.lowercase())
-        generation++; configurationDetails.clear(); configurationRequested.clear(); configurationFlights.clear(); detail = null; actionBusy = false; voice.stop(); voicePage = false; conversation = id.lowercase(); messages = emptyList(); historyCursor = "0"; moreMessages = false; error = null
-        listFlight++; invalidateHistory(); preferLatestHistory = false; savedConfigurationIds.clear(); historyReady = false; olderCursor = null; restoreLocal()
+        generation++; configurationDetails.clear(); configurationRequested.clear(); configurationFlights.clear(); detail = null; actionBusy = false; voice.stop(); voicePage = false; conversation = id.lowercase(); messages = emptyList(); historyCursor = "0"; moreMessages = false; error = null; historyRefreshError = null; syncDelivery()
+        listFlight++; invalidateHistory(); preferLatestHistory = false; savedConfigurationIds.clear(); historyReady = false; olderCursor = null; restoreLocal(); includeLocalMessages()
         loadJob = viewModelScope.launch {
             try {
                 store.conversation(owner.session, conversation); loading = true; notifyChange(); transfer.configure(owner, conversation); refresh()
@@ -377,20 +429,22 @@ internal class Mango9SupervisorViewModel(
             }
             messages = merged; historyCursor = result.optString("cursor", historyCursor)
             historyReady = true
+            historyRefreshError = null
             if (tail) {
                 olderCursor = result.optString("olderCursor").takeIf {
                     it.isNotBlank() && it != "null"
                 }; moreMessages = olderCursor != null
             }
-            val requestId = pending?.optString("requestId")
-            if (requestId != null && (
-                result.optString("confirmedRequestId") == requestId || messages.any {
-                it.optString("role") == "assistant" && (it.optString("id") == requestId || it.optJSONObject("metadata")?.optString("requestId") == requestId)
+            saveDeliveries(
+                receipts.filter { r ->
+                val c = r.getJSONObject("command")
+                c.optString("conversationId") != id || !(
+                    result.optString("confirmedRequestId") == c.optString("requestId") || rows.any {
+                    it.optString("id") == c.getJSONObject("message").optString("id") || it.optString("id") == c.optString("requestId") || it.optJSONObject("metadata")?.optString("requestId") == c.optString("requestId")
+                }
+                )
             }
-            )
-            ) {
-                store.pending(owner.session, null); pending = null; error = null
-            }
+            ); includeLocalMessages()
             replyPhase = if (result.optBoolean("pending")) "thinking" else "idle"
             if (result.optBoolean("pending") || result.optString("nextCursor").let {
                 it.isNotBlank() && it != "null"
@@ -406,9 +460,16 @@ internal class Mango9SupervisorViewModel(
             if (e is Mango9SupervisorFailure && e.status == 404 && e.code == "conversation_deleted") {
                 recoverDeleted()
             } else if (e is Mango9SupervisorFailure && e.status == 404 && e.code == "conversation_not_found") {
-                if (pending != null) error = Mango9SupervisorFailure("history_pending").message
-                if (stamp == generation) { messages = emptyList(); configurationDetails.clear(); persistLocal() }
-            } else if (stamp == generation) { error = failure(e); accessFailure(e) }
+                if (stamp == generation) {
+                    messages = emptyList(); includeLocalMessages(); configurationDetails.clear(); persistLocal()
+                }
+            } else if (stamp == generation) {
+                if ((e is Mango9SupervisorFailure && e.status in listOf(401, 403)) || e == Mango9ApiException.Unauthorized || e == Mango9ApiException.InvalidCredentials) {
+                    error = failure(e); accessFailure(e)
+                } else {
+                    historyRefreshError = failure(e)
+                }
+            }
         } finally {
             if (historyFlight == flight) {
                 historyFlight = null; refreshing = false; refreshReplyPhase(id, stamp, owner); notifyChange()
@@ -452,32 +513,67 @@ internal class Mango9SupervisorViewModel(
                 } finally { if (current(stamp, owner, chat)) { sending = false; notifyChange() } }
             }; return
         }
-        val owner = owner() ?: return
         if (!canSend()) return
-        val chat = conversation; val command = Mango9SupervisorWire.command(chat, draft.trim()); val stamp = generation
-        sending = true; error = null; notifyChange()
-        sendJob = viewModelScope.launch {
+        if (receipts.size >= 100) { error = "Reconnect to synchronize unconfirmed messages."; notifyChange(); return }
+        val command = Mango9SupervisorWire.command(conversation, draft.trim())
+        try {
+            saveDeliveries(receipts + JSONObject().put("command", command).put("state", "unconfirmed").put("createdAt", java.time.Instant.now().toString()))
+        } catch (_: Exception) {
+            error = "Couldn’t save this message. Your text is still in the composer."; notifyChange(); return
+        }
+        draft = ""; saveDraftNow(); error = null; historyRefreshError = null; includeLocalMessages(); persistLocal(); notifyChange()
+        transmit(command)
+    }
+
+    fun retryMessage(id: String) {
+        if (!authorized || !accepted || owner() == null || voice.running) return
+        val row = receipts.firstOrNull {
+            it.optString("state") == "failed" && it.getJSONObject("command").optString("conversationId") == conversation && it.getJSONObject("command").getJSONObject("message").optString("id") == id
+        } ?: return
+        val replacement = JSONObject(row.toString()).put("state", "unconfirmed")
+        try {
+            saveDeliveries(
+                receipts.map {
+                if (it === row) replacement else it
+            }
+            )
+        } catch (_: Exception) { error = "Couldn’t save message delivery."; notifyChange(); return }
+        transmit(replacement.getJSONObject("command"))
+    }
+
+    private fun transmit(command: JSONObject) {
+        val owner = owner() ?: return
+        val stamp = generation; val chat = command.getString("conversationId"); val request = command.getString("requestId")
+        historyFlight = null; refreshing = false; textRequests.add(request); notifyChange()
+        textJobs[request] = viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) { store.pending(owner.session, command) }
-                ensureActive()
-                if (!current(stamp, owner, chat) || !store.accepted(owner.session)) return@launch
-                pending = command; draft = ""; saveDraftNow(); notifyChange()
                 val reply = api.request(owner, "chat", command)
                 if (!current(stamp, owner, chat) || !store.accepted(owner.session)) return@launch
-                if (reply.optString("role") != "assistant") throw Mango9SupervisorFailure("invalid_response")
-                refresh()
-                if (!current(stamp, owner, chat) || !store.accepted(owner.session)) return@launch
-                val local = command.getJSONObject("message")
-                if (messages.none { it.optString("id") == local.optString("id") }) messages += local
+                if (reply.optString("role") != "assistant" || (reply.optString("id") != request && reply.optJSONObject("metadata")?.optString("requestId") != request) || reply.optJSONObject("metadata")?.optString("conversationId")?.takeIf {
+                    it.isNotBlank()
+                }?.let { it != chat } == true
+                ) {
+                    throw Mango9SupervisorFailure("invalid_response")
+                }
+                historyFlight = null; refreshing = false
                 if (messages.none { it.optString("id") == reply.optString("id") }) messages += reply
-                store.pending(owner.session, null); pending = null
-                runCatching { loadConversations() }
-                if (!current(stamp, owner, chat)) return@launch
-                persistLocal()
+                saveDeliveries(receipts.filterNot { it.getJSONObject("command").optString("requestId") == request })
+                persistLocal(); refresh(); runCatching { loadConversations() }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                if (current(stamp, owner, chat)) { error = failure(e); refresh() }
-            } finally { if (stamp == generation) { sending = false; notifyChange() } }
+                if (current(stamp, owner, chat)) {
+                    if (e is Mango9SupervisorFailure && (e.status in listOf(400, 401, 402, 403, 413, 422, 429) || e.status == 409 && e.code == "support_pilot_busy")) {
+                        runCatching {
+                            saveDeliveries(
+                                receipts.map {
+                                if (it.getJSONObject("command").optString("requestId") == request) JSONObject(it.toString()).put("state", "failed") else it
+                            }
+                            )
+                        }
+                    }
+                    refresh()
+                }
+            } finally { textRequests.remove(request); textJobs.remove(request); notifyChange() }
         }
     }
 
@@ -569,7 +665,9 @@ internal class Mango9SupervisorViewModel(
         try {
             store.consent(owner.session, allow); accepted = store.accepted(owner.session)
             if (!allow) {
-                generation++; invalidateHistory(); configurationDetails.clear(); configurationRequested.clear(); configurationFlights.clear(); detail = null; sendJob?.cancel(); actionJob?.cancel(); voice.stop(); voicePage = false; sending = false; actionBusy = false
+                generation++; invalidateHistory(); configurationDetails.clear(); configurationRequested.clear(); configurationFlights.clear(); detail = null; sendJob?.cancel(); textJobs.values.toList().forEach {
+                    it.cancel()
+                }; actionJob?.cancel(); voice.stop(); voicePage = false; sending = false; actionBusy = false
             }
         } catch (e: Exception) { error = failure(e) }
         notifyChange()

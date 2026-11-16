@@ -85,6 +85,20 @@ internal class Mango9SupervisorStore(context: Context) {
 
     fun pending(session: Mango9Session, command: JSONObject?) = put("pending.", session, command?.toString())
 
+    fun deliveries(session: Mango9Session): List<JSONObject> {
+        val rows = org.json.JSONArray(prefs.getString("delivery." + Mango9SupervisorConsent.key(session), null) ?: "[]")
+        require(rows.length() <= 100)
+        return (0 until rows.length()).map { index ->
+            rows.getJSONObject(index).also { row ->
+            Mango9SupervisorWire.savedCommand(row.getJSONObject("command").toString())
+            require(row.getString("state") in setOf("unconfirmed", "failed"))
+            java.time.Instant.parse(row.getString("createdAt"))
+        }
+        }
+    }
+
+    fun deliveries(session: Mango9Session, rows: List<JSONObject>) = put("delivery.", session, org.json.JSONArray(rows).toString())
+
     fun conversation(session: Mango9Session): String? = prefs.getString("conversation." + Mango9SupervisorConsent.key(session), null)
 
     fun state(session: Mango9Session): JSONObject = JSONObject(prefs.getString("state." + Mango9SupervisorConsent.key(session), null) ?: "{}")

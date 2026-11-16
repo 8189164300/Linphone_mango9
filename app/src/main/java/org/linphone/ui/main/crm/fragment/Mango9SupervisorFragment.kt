@@ -304,7 +304,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             }
             }
         } else { spinner?.cancel(); spinner = null; ai.rotation = 0f; ai.text = "AI" }
-        notice.text = (if (voiceMode) model.voice.error else model.error).orEmpty()
+        notice.text = (if (voiceMode) model.voice.error else (model.error ?: model.historyRefreshError)).orEmpty()
         if (!model.working) thinkingLabel = null
         if (model.loading && notice.text.isEmpty()) notice.text = "Loading Assistant…"
         notice.isVisible = notice.text.isNotEmpty()
@@ -320,7 +320,9 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         }
         val signature = model.messages.joinToString {
             it.toString()
-        } + model.loading + model.moreMessages + model.configurationDetails.toString() + model.actionBusy + model.loadingOlder + visibleMessageCount + model.savedConfigurationIds + model.working + model.replyPhase
+        } + model.loading + model.moreMessages + model.configurationDetails.toString() + model.actionBusy + model.loadingOlder + visibleMessageCount + model.savedConfigurationIds + model.working + model.replyPhase + model.messages.map {
+            model.delivery(it.optString("id"))
+        }
         if (signature != rendered) {
             rendered = signature
             val anchor = (0 until messages.childCount).map {
@@ -356,15 +358,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
                 working.addView(ProgressBar(ui.context), LinearLayout.LayoutParams(ui.dp(22), ui.dp(22)))
                 working.addView(
                     text(
-                        if (model.replyPhase == "waiting") {
-                        "  Waiting for a reply…"
-                    } else {
-                        "  " + (
-                            thinkingLabel ?: Mango9AssistantThinking.next(lastThinking).also {
-                        thinkingLabel = it; lastThinking = it
-                    }
-                        )
-                    },
+                        "  " + (thinkingLabel ?: Mango9AssistantThinking.next(lastThinking).also { thinkingLabel = it; lastThinking = it }),
                         13f
                     ).apply {
                     setTextColor(SECONDARY)
@@ -420,26 +414,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         }
         send.text = if (model.transfer.active) "Ⅱ" else "↑"
         send.isEnabled = model.canSend() || model.transfer.active; send.alpha = if (send.isEnabled) 1f else 0.4f
-        pending.removeAllViews(); pending.isVisible = model.pending != null && !model.sending && model.replyPhase == "idle"
-        if (pending.isVisible) {
-            pending.addView(
-                text("Request status is unconfirmed. It won’t be sent again automatically.", 12f).apply {
-                setPadding(ui.dp(12), ui.dp(6), ui.dp(12), 0)
-            }
-            )
-            val row = ui.row(); row.addView(
-                button("Check status") {
-                viewLifecycleOwner.lifecycleScope.launch { model.refresh() }
-            },
-                LinearLayout.LayoutParams(0, -2, 1f)
-            )
-            row.addView(
-                button("Start new chat") {
-                MaterialAlertDialogBuilder(ui.context).setMessage("This does not cancel work already received by the server. Check the saved request status first. Start a new chat without retrying?").setNegativeButton("Cancel", null).setPositiveButton("Start new chat") { _, _ -> model.leavePending() }.show()
-            },
-                LinearLayout.LayoutParams(0, -2, 1f)
-            ); pending.addView(row)
-        }
+        pending.removeAllViews(); pending.isVisible = false
         renderTools()
         if (restorePrivacy || (model.authorized && !model.accepted && !privacyPrompted)) {
             restorePrivacy = false; root.post { if (view != null) privacy() }
@@ -491,12 +466,26 @@ class Mango9SupervisorFragment : GenericMainFragment() {
             DateTimeFormatter.ofPattern("h:mm a").withZone(ZoneId.systemDefault()).format(Instant.parse(stamp))
         }.getOrDefault("")
         footer.addView(text(time, 11f).apply { setTextColor(SECONDARY) })
+        model.delivery(row.optString("id"))?.let { state ->
+            footer.addView(text(" · $state", 11f).apply { setTextColor(SECONDARY) })
+            if (state == "Not sent") {
+                footer.addView(
+                    button("↻") {
+                model.retryMessage(row.optString("id"))
+            }.apply { contentDescription = "Retry message" }
+                )
+            }
+        }
+
         fun actions(anchor: View) {
             PopupMenu(ui.context, anchor).apply {
                 menu.add("Copy"); if (!outgoing) menu.add("Report reply")
                 setOnMenuItemClickListener { item ->
-                    if (item.title == "Copy") (requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Assistant message", raw))
-                    else report(row)
+                    if (item.title == "Copy") {
+                        (requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Assistant message", raw))
+                    } else {
+                        report(row)
+                    }
                     true
                 }; show()
             }
