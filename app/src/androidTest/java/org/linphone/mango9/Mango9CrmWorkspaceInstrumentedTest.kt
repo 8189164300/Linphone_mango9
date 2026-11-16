@@ -27,8 +27,8 @@ class Mango9CrmWorkspaceInstrumentedTest {
         ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)).use { scenario ->
             scenario.onActivity { activity ->
                 val binding = Mango9CrmFragmentBinding.inflate(activity.layoutInflater)
-                val rows = listOf(binding.leadsRow, binding.clientsRow, binding.teamChatRow, binding.calendarRow, binding.appointmentsRow)
-                val colors = listOf(R.color.mango9_crm_leads, R.color.mango9_crm_clients, R.color.mango9_crm_conversations, R.color.mango9_crm_calendar, R.color.mango9_crm_activities)
+                val rows = listOf(binding.leadsRow, binding.clientsRow, binding.calendarRow, binding.appointmentsRow)
+                val colors = listOf(R.color.mango9_crm_leads, R.color.mango9_crm_clients, R.color.mango9_crm_calendar, R.color.mango9_crm_activities)
                 val density = activity.resources.displayMetrics.density
                 val textSizes = mutableListOf<Float>()
                 for ((index, row) in rows.withIndex()) {
@@ -48,7 +48,7 @@ class Mango9CrmWorkspaceInstrumentedTest {
                     assertTrue(row.measuredHeight >= (70 * density).toInt())
                 }
                 assertEquals(1, textSizes.distinct().size)
-                assertEquals(5, colors.map(activity::getColor).distinct().size)
+                assertEquals(4, colors.map(activity::getColor).distinct().size)
                 val parent = binding.calendarRow.parent as LinearLayout
                 assertEquals(parent.indexOfChild(binding.calendarRow) + 1, parent.indexOfChild(binding.appointmentsRow))
                 val gap = (12 * density).toInt()

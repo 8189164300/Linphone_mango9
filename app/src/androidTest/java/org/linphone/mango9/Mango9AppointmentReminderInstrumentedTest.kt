@@ -333,7 +333,7 @@ class Mango9AppointmentReminderInstrumentedTest {
             ActivityScenario.launch<MainActivity>(intent).use { scenario ->
                 scenario.onActivity { activity ->
                     val repository = Mango9CalendarRepository(f, { error("No refresh") }, f::respond)
-                    f.dialogs = Mango9AppointmentDialogs(activity, scope, repository, {}, { _, _ -> }, { f.now })
+                    f.dialogs = Mango9AppointmentDialogs(activity, scope, repository, {}, { _, _ -> }, now = { f.now })
                     f.dialogs.detail(f.captureSession(), Mango9CalendarJson.appointment(f.event), f.metadata)
                 }
                 try {
