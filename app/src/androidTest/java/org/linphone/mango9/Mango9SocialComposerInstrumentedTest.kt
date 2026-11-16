@@ -35,11 +35,9 @@ class Mango9SocialComposerInstrumentedTest {
                 composer.import(listOf(Uri.fromFile(first), Uri.fromFile(second)))
             }
             withTimeout(10_000) { while (composer.state.value.preparing > 0) delay(20) }
-            assertEquals(1, composer.state.value.attachments.size)
-            assertEquals("one.txt", composer.state.value.attachments.single().name)
+            assertTrue(composer.state.value.attachments.isEmpty())
             assertTrue(composer.state.value.error.orEmpty().contains("one attachment"))
             withContext(Dispatchers.Main) {
-                composer.remove(composer.state.value.attachments.single().uri)
                 composer.import(listOf(Uri.fromFile(second)))
             }
             withTimeout(10_000) { while (composer.state.value.preparing > 0) delay(20) }

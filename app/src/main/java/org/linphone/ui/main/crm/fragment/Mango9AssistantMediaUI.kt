@@ -33,6 +33,7 @@ internal class Mango9AssistantMediaUI(private val host: Fragment, private val mo
     private var capture: File? = null
     private var captureChat: String? = null
     private var selectedChat: String? = null
+    private var picking = false
     private var recording: PcmRecording? = null
     private var audio: MediaPlayer? = null
     private var playingVideo: VideoView? = null
@@ -57,7 +58,7 @@ internal class Mango9AssistantMediaUI(private val host: Fragment, private val mo
             }
         }
     }
-    private val picked = host.registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) copySelected(uri, selectedChat) }
+    private val picked = host.registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) copySelected(uris, selectedChat) }
     private val photo = host.registerForActivityResult(ActivityResultContracts.TakePicture()) { okay -> captured(okay) }
     private val video = host.registerForActivityResult(ActivityResultContracts.CaptureVideo()) { okay -> captured(okay) }
     private var permissionStart: (() -> Unit)? = null
@@ -70,7 +71,7 @@ internal class Mango9AssistantMediaUI(private val host: Fragment, private val mo
     }
 
     fun menu(anchor: View) {
-        val m = model(); if (!m.accepted || !m.authorized || !m.transfer.enabled || m.transfer.draft != null || m.transfer.active) return
+        val m = model(); if (!m.accepted || !m.authorized || !m.transfer.canAdd || picking || m.transfer.active) return
         // Keep this order aligned with the iOS Assistant's fixed attachment menu.
         val options = mutableListOf(
             Triple(1, "Photos and videos", R.drawable.image),
@@ -120,44 +121,51 @@ internal class Mango9AssistantMediaUI(private val host: Fragment, private val mo
         }
     }
 
-    private fun copySelected(uri: Uri, chat: String?) {
+    private fun copySelected(uris: List<Uri>, chat: String?) {
+        if (picking) return
+        val m = model()
+        val remaining = m.transfer.maximum - m.transfer.drafts.size
+        if (uris.size > remaining) { toast("Choose up to $remaining more files. Nothing was added."); return }
         val context = host.requireContext().applicationContext
+        picking = true
         host.lifecycleScope.launch {
-            var target: File? = null
+            val targets = mutableListOf<File>(); var handedOff = false
             try {
-                val result = withContext(Dispatchers.IO) {
-                    var name = ""
-                    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
-                        if (c.moveToFirst()) {
-                            name = c.getString(0); if (!c.isNull(1)) {
-                                require(c.getLong(1) in 1..Mango9AssistantMediaContract.maximum) {
-                                "Choose a file up to 500 MB."
-                            }
+                val copied = withContext(Dispatchers.IO) {
+                    uris.map { uri ->
+                        var name = ""
+                        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+                            if (c.moveToFirst()) {
+                                name = c.getString(0)
+                                if (!c.isNull(1)) require(c.getLong(1) in 1..Mango9AssistantMediaContract.maximum) { "Choose files up to 500 MB each." }
                             }
                         }
-                    }
-                    require(name.isNotBlank() && name.length <= 240)
-                    val dir = File(context.cacheDir, "ephonix-supervisor-picked").apply { mkdirs() }
-                    val output = File(dir, UUID.randomUUID().toString() + "." + name.substringAfterLast('.', "")); target = output
-                    context.contentResolver.openInputStream(uri)!!.use { input ->
-                        output.outputStream().use { out ->
-                        var bytes = 0L; val buffer = ByteArray(65536)
-                        while (true) {
-                            ensureActive(); val n = input.read(buffer); if (n < 0) break; bytes += n; require(bytes <= Mango9AssistantMediaContract.maximum && dir.usableSpace > 134217728L) {
-                                "Choose a smaller file or free some space."
-                            }; out.write(buffer, 0, n)
+                        require(name.isNotBlank() && name.length <= 240)
+                        val dir = File(context.cacheDir, "ephonix-supervisor-picked").apply { mkdirs() }
+                        val output = File(dir, UUID.randomUUID().toString() + "." + name.substringAfterLast('.', "")); targets.add(output)
+                        context.contentResolver.openInputStream(uri)!!.use { input ->
+                            output.outputStream().use { out ->
+                            var bytes = 0L; val buffer = ByteArray(65536)
+                            while (true) {
+                                ensureActive(); val n = input.read(buffer); if (n < 0) break; bytes += n
+                                require(bytes <= Mango9AssistantMediaContract.maximum && dir.usableSpace > 134217728L) {
+                                    "Choose smaller files or free some space."
+                                }
+                                out.write(buffer, 0, n)
+                            }
+                            require(bytes > 0)
                         }
-                        require(bytes > 0)
+                        }
+                        Uri.fromFile(output) to name
                     }
-                    }
-                    output to name
                 }
                 if (host.view != null && model().conversation == chat && model().accepted) {
-                    model().selectAttachment(Uri.fromFile(result.first), result.second); target = null
+                    val job = model().selectAttachments(copied)
+                    if (job != null) { handedOff = true; job.invokeOnCompletion { targets.forEach { it.delete() } } }
                 }
             } catch (e: Exception) {
-                if (e !is CancellationException) toast(e.message ?: "Could not read this file.")
-            } finally { target?.delete() }
+                if (e !is CancellationException) toast(e.message ?: "Could not read these files.")
+            } finally { if (!handedOff) targets.forEach { it.delete() }; picking = false }
         }
     }
 
@@ -168,31 +176,50 @@ internal class Mango9AssistantMediaUI(private val host: Fragment, private val mo
             setPadding(dp(8), dp(4), dp(8), dp(4)); background = ui.round(0xffeef1ff.toInt(), 14)
         }
         if (d != null) {
-            val f = d.getJSONObject("file"); val row = ui.row()
-            row.addView(
-                ui.button(if (f.getString("mime").startsWith("audio/")) "▶" else "▣") {
-                openLocal(Uri.parse(f.getString("uri")), f.getString("mime"))
-            }.apply { contentDescription = "Preview attachment" },
-                LinearLayout.LayoutParams(dp(44), dp(48))
+            val rows = LinearLayout(host.requireContext()).apply { orientation = LinearLayout.HORIZONTAL }
+            for (item in m.transfer.drafts) {
+                val f = item.getJSONObject("file"); val card = ui.column(); val row = ui.row()
+                row.addView(
+                    ui.button(if (f.getString("mime").startsWith("audio/")) "▶" else "▣") {
+                    openLocal(Uri.parse(f.getString("uri")), f.getString("mime"))
+                }.apply { contentDescription = "Preview " + f.getString("name"); isEnabled = !m.transfer.active },
+                    LinearLayout.LayoutParams(dp(44), dp(48))
+                )
+                val info = ui.column()
+                info.addView(
+                    ui.text(f.getString("name"), 13f, true).apply {
+                    maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
+                }
+                )
+                info.addView(ui.text(Mango9AssistantMediaContract.sizeLabel(f.getLong("size")), 11f))
+                row.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
+                if (!m.transfer.sealed) {
+                    row.addView(
+                        ui.button("×") {
+                    host.viewLifecycleOwner.lifecycleScope.launch { m.transfer.remove(item.getString("id")) }
+                }.apply { contentDescription = "Remove " + f.getString("name"); isEnabled = !m.transfer.active },
+                    LinearLayout.LayoutParams(dp(44), dp(44))
+                    )
+                }
+                card.addView(row); rows.addView(card, LinearLayout.LayoutParams(dp(280), -2))
+            }
+            layout.addView(
+                HorizontalScrollView(host.requireContext()).apply {
+                isHorizontalScrollBarEnabled = false; addView(rows)
+            }
             )
-            row.addView(
-                ui.text(f.getString("name"), 13f, true).apply {
-                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-            },
-                LinearLayout.LayoutParams(0, -2, 1f)
-            )
-            row.addView(
-                ui.button("×") {
+            val status = ui.row(); status.addView(ui.text(m.transfer.label + if (m.transfer.drafts.size > 1) " · ${m.transfer.drafts.size} files" else "", 11f), LinearLayout.LayoutParams(0, -2, 1f))
+            if (m.transfer.sealed && !m.transfer.active) {
+                status.addView(
+                    ui.button("×") {
                 host.viewLifecycleOwner.lifecycleScope.launch {
                     m.transfer.remove()
                 }
-            }.apply {
-                contentDescription = "Remove attachment"; isEnabled = !m.transfer.active
-            },
-                LinearLayout.LayoutParams(dp(44), dp(44))
-            )
-            layout.addView(row)
-            layout.addView(ui.text(m.transfer.label + " · " + Mango9AssistantMediaContract.sizeLabel(f.getLong("size")), 11f))
+            }.apply { contentDescription = "Remove upload" },
+                LinearLayout.LayoutParams(dp(44), dp(36))
+                )
+            }
+            layout.addView(status)
         } else if (m.transfer.active) layout.addView(ui.text(m.transfer.label, 12f))
         m.transfer.error?.let { layout.addView(ui.text(it, 12f).apply { setTextColor(0xff9e3548.toInt()) }) }
         return layout
@@ -337,27 +364,48 @@ internal class Mango9AssistantMediaUI(private val host: Fragment, private val mo
             layout.background = ui.round(0xfff5f6fc.toInt(), 22)
             val status = ui.text("Tap Record to start", 14f).apply { gravity = Gravity.CENTER }; layout.addView(status)
             val controls = ui.row().apply { gravity = Gravity.CENTER }
-            val retake = ui.button("↻") { stopPlayback(); rec.reset(); status.text = "Tap Record to start" }.apply { contentDescription = "Record again" }
-            val control = ImageButton(host.requireContext()).apply { setImageResource(R.drawable.microphone); imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE); setPadding(dp(18),dp(18),dp(18),dp(18)); contentDescription = "Start recording"; background = ui.round(0xff4454ca.toInt(), 32) }
+            val retake = ui.button("↻") {
+                stopPlayback(); rec.reset(); status.text = "Tap Record to start"
+            }.apply { contentDescription = "Record again" }
+            val control = ImageButton(host.requireContext()).apply {
+                setImageResource(R.drawable.microphone); imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE); setPadding(dp(18), dp(18), dp(18), dp(18)); contentDescription = "Start recording"; background = ui.round(0xff4454ca.toInt(), 32)
+            }
             retake.visibility = View.GONE
             controls.addView(retake, LinearLayout.LayoutParams(dp(44), dp(44))); controls.addView(control, LinearLayout.LayoutParams(dp(64), dp(64)))
-            val wave = ui.row().apply { gravity = Gravity.CENTER; background = ui.round(0xffeceeff.toInt(),16) }
-            val bars = (0 until 32).map { index -> View(host.requireContext()).apply { background = ui.round(0xff4454ca.toInt(),2); wave.addView(this,LinearLayout.LayoutParams(dp(3),dp(4)).apply { marginStart = dp(2); marginEnd = dp(2) }) } }
-            layout.addView(wave,0,LinearLayout.LayoutParams(-1,dp(64)).apply { bottomMargin = dp(12) })
-            layout.addView(controls); layout.addView(ui.text("Review here, then send from your message.", 12f).apply { gravity = Gravity.CENTER })
+            val wave = ui.row().apply { gravity = Gravity.CENTER; background = ui.round(0xffeceeff.toInt(), 16) }
+            val bars = (0 until 32).map { index ->
+                View(host.requireContext()).apply {
+                background = ui.round(0xff4454ca.toInt(), 2); wave.addView(
+                    this,
+                    LinearLayout.LayoutParams(dp(3), dp(4)).apply {
+                    marginStart = dp(2); marginEnd = dp(2)
+                }
+                )
+            }
+            }
+            layout.addView(wave, 0, LinearLayout.LayoutParams(-1, dp(64)).apply { bottomMargin = dp(12) })
+            layout.addView(controls); layout.addView(
+                ui.text("Review here, then send from your message.", 12f).apply {
+                gravity = Gravity.CENTER
+            }
+            )
             var inserted = false
             val dialog = MaterialAlertDialogBuilder(host.requireContext()).setTitle("Voice recording").setView(layout).setBackground(ui.round(0xfff5f6fc.toInt(), 24))
                 .setNegativeButton("Cancel", null).setPositiveButton("Insert", null).create()
-            dialog.setOnDismissListener { permissionStart = null; stopPlayback(); rec.stop(); if (!inserted) rec.file.delete(); if (recording == rec) recording = null }
+            dialog.setOnDismissListener {
+                permissionStart = null; stopPlayback(); rec.stop(); if (!inserted) rec.file.delete(); if (recording == rec) recording = null
+            }
             dialog.show()
             dialog.getButton(-2).setTextColor(0xff4454ca.toInt())
-            dialog.getButton(-1).setTextColor(android.content.res.ColorStateList(arrayOf(intArrayOf(android.R.attr.state_enabled),intArrayOf()),intArrayOf(0xff4454ca.toInt(),0xff9699a6.toInt())))
+            dialog.getButton(-1).setTextColor(android.content.res.ColorStateList(arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()), intArrayOf(0xff4454ca.toInt(), 0xff9699a6.toInt())))
+
             fun start() {
                 if (!dialog.isShowing || host.view == null || model().conversation != chat) return
                 host.viewLifecycleOwner.lifecycleScope.launch {
                     if (Mango9SupervisorVoice.hasCall()) { toast("Finish your call before recording."); return@launch }
-                    try { stopPlayback(); rec.start(); status.text = "Recording…" }
-                    catch (_: Exception) { status.text = "Could not start recording. Please try again." }
+                    try {
+                        stopPlayback(); rec.start(); status.text = "Recording…"
+                    } catch (_: Exception) { status.text = "Could not start recording. Please try again." }
                 }
             }
             control.setOnClickListener {
@@ -378,7 +426,11 @@ internal class Mango9AssistantMediaUI(private val host: Fragment, private val mo
                 time.text = "%02d:%02d".format(rec.seconds.toInt() / 60, rec.seconds.toInt() % 60)
                 val ready = !rec.active && rec.seconds > .2
                 control.setImageResource(if (rec.active || audio != null) R.drawable.stop_fill else if (ready) R.drawable.play_fill else R.drawable.microphone)
-                bars.forEachIndexed { index, bar -> bar.layoutParams = (bar.layoutParams as LinearLayout.LayoutParams).apply { height = dp(if (rec.active) 4 + (rec.level * (12 + index * 17 % 42)).toInt() else 4) } }
+                bars.forEachIndexed { index, bar ->
+                    bar.layoutParams = (bar.layoutParams as LinearLayout.LayoutParams).apply {
+                    height = dp(if (rec.active) 4 + (rec.level * (12 + index * 17 % 42)).toInt() else 4)
+                }
+                }
                 control.contentDescription = if (rec.active) "Stop recording" else if (audio != null) "Stop playback" else if (ready) "Play recording" else "Start recording"
                 retake.visibility = if (ready) View.VISIBLE else View.GONE
                 dialog.getButton(-1).isEnabled = ready
@@ -418,6 +470,7 @@ private class PcmRecording(root: File) {
     val active get() = running.get()
 
     @Volatile private var bytes = 0L
+
     @Volatile var level = 0f; private set
     val seconds get() = bytes / 96000.0
     private var worker: Thread? = null
@@ -439,8 +492,10 @@ private class PcmRecording(root: File) {
                 while (running.get() && bytes < 28_800_000) {
                     val n = record.read(data, 0, data.size); if (n <= 0) break; if (!paused.get()) {
                         var peak = 0
-                        for (index in 0 until n - 1 step 2) { val sample = ((data[index].toInt() and 255) or (data[index+1].toInt() shl 8)).toShort().toInt(); peak = maxOf(peak,kotlin.math.abs(sample)) }
-                        level = (peak / 32768f).coerceIn(0f,1f)
+                        for (index in 0 until n - 1 step 2) {
+                            val sample = ((data[index].toInt() and 255) or (data[index + 1].toInt() shl 8)).toShort().toInt(); peak = maxOf(peak, kotlin.math.abs(sample))
+                        }
+                        level = (peak / 32768f).coerceIn(0f, 1f)
                         output.write(data, 0, n); bytes += n
                     }
                 }

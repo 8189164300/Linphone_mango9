@@ -363,14 +363,18 @@ internal class Mango9SupervisorViewModel(
 
     private suspend fun recoverDeleted() {
         val owner = owner() ?: return
-        val unsent = draft; rememberDeleted(conversation)
+        val unsent = draft
+        val replacement = try { transfer.recoverDraft(conversation) } catch (_: Exception) {
+            error = "Could not move the attachment draft. Your files are kept; try reopening Assistant."; notifyChange(); return
+        }
+        rememberDeleted(conversation)
         saveDeliveries(
             receipts.filterNot {
             it.getJSONObject("command").optString("conversationId") == conversation
         }
         ); pending = null; sending = false
         savedChats = savedChats.filterNot { it.optString("id") == conversation }; store.savedChats(owner.session, savedChats)
-        generation++; invalidateHistory(); conversation = UUID.randomUUID().toString(); store.conversation(owner.session, conversation)
+        generation++; invalidateHistory(); conversation = replacement; store.conversation(owner.session, conversation)
         messages = emptyList(); configurationDetails.clear(); historyCursor = "0"; historyReady = false; moreMessages = false; olderCursor = null; error = null; historyRefreshError = null
         draft = unsent; saveDraftNow(); transfer.configure(owner, conversation)
     }
@@ -596,6 +600,11 @@ internal class Mango9SupervisorViewModel(
     fun selectAttachment(uri: android.net.Uri, name: String) {
         if (!authorized || !accepted || transfer.active || voice.running) return
         viewModelScope.launch { transfer.select(uri, name) }
+    }
+
+    fun selectAttachments(files: List<Pair<android.net.Uri, String>>): kotlinx.coroutines.Job? {
+        if (!authorized || !accepted || transfer.active || voice.running) return null
+        return viewModelScope.launch { transfer.selectMany(files) }
     }
 
     private suspend fun refreshReplyPhase(id: String, stamp: Int, owner: Mango9SessionLease) {

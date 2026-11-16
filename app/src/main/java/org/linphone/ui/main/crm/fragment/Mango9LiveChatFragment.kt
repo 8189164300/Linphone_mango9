@@ -70,9 +70,9 @@ class Mango9LiveChatFragment : GenericMainFragment() {
     private var rendered = ""
     private var draftApplied = false
     private val photo =
-        registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> picked("photo", uri) }
+        registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris -> picked("photo", uris) }
     private val document =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> picked("document", uri) }
+        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> picked("document", uris) }
     private val camera = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (model.pickerKind != "camera") return@registerForActivityResult
         model.pickerKind = null
@@ -136,8 +136,10 @@ class Mango9LiveChatFragment : GenericMainFragment() {
         }
         adapter = Messages(); list.adapter = adapter; root.addView(Mango9ChatNavigation.wrap(list), LinearLayout.LayoutParams(-1, 0, 1f))
         pending = ui.button("") {
-            if (!model.current().pending && recorder == null) {
-                model.attachment = null; render(model.current())
+            if (!model.current().pending && !model.current().sending && !model.importing && recorder == null) {
+                MaterialAlertDialogBuilder(requireContext()).setTitle("Remove attachment")
+                    .setItems(model.attachments.map { it.liveText("name") }.toTypedArray()) { _, index -> model.removeAttachment(index) }
+                    .setNegativeButton("Cancel", null).show()
             }
         }; root.addView(pending)
         val composer = ui.row(); ui.padded(composer, 4, 2)
@@ -269,7 +271,7 @@ class Mango9LiveChatFragment : GenericMainFragment() {
             }
             )
         }
-        pending.text = when { recorder != null -> "Recording… Tap the microphone to finish"; model.importing -> "Preparing attachment…"; state.pending -> "Send not confirmed. Tap Send to retry the original message."; model.attachment != null -> model.attachment!!.liveText("name") + "  ×"; else -> "" }
+        pending.text = when { recorder != null -> "Recording… Tap the microphone to finish"; model.importing -> "Preparing attachment…"; state.pending -> "Send not confirmed. Tap Send to retry the original message."; model.attachment != null -> "${model.attachments.size} attachment${if (model.attachments.size == 1) "" else "s"} · Send separately in order · Edit"; else -> "" }
         pending.visibility = if (pending.text.isEmpty()) View.GONE else View.VISIBLE
         updateComposer()
     }
@@ -404,10 +406,10 @@ class Mango9LiveChatFragment : GenericMainFragment() {
         if (::input.isInitialized) input.clearFocus(); root.requestFocus(); (requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(root.windowToken, 0)
     }
 
-    private fun picked(kind: String, uri: Uri?) {
+    private fun picked(kind: String, uris: List<Uri>) {
         if (model.pickerKind != kind) return
         model.pickerKind = null
-        if (uri != null) model.importAttachment(uri)
+        if (uris.isNotEmpty()) model.importAttachments(uris)
         if (::input.isInitialized) updateComposer()
     }
 

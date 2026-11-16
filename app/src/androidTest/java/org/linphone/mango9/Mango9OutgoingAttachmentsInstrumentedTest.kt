@@ -98,6 +98,49 @@ class Mango9OutgoingAttachmentsInstrumentedTest {
         } finally { prepared.close() }
     }
 
+    @Test fun multipleSelectionKeepsOrderAndRejectsOverflowWithoutPartialImport() = fixture { root ->
+        val source = (1..4).map { n -> File(root, "item$n.txt").apply { writeText("fixture $n") } }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val composer =
+            Mango9MessageComposer(context, scope, { true }, Mango9AttachmentPreparer(context, File(root, "prepared"))::prepare)
+        try {
+            withContext(Dispatchers.Main) { composer.setAttachmentLimit(3); composer.import(source.take(2).map(Uri::fromFile)) }
+            await { composer.state.value.preparing == 0 }
+            assertEquals(listOf("item1.txt", "item2.txt"), composer.state.value.attachments.map { it.name })
+            withContext(Dispatchers.Main) { composer.import(source.drop(2).map(Uri::fromFile)) }
+            await { composer.state.value.preparing == 0 }
+            assertEquals(2, composer.state.value.attachments.size)
+            assertTrue(composer.state.value.error.orEmpty().contains("Nothing was added"))
+            withContext(Dispatchers.Main) { composer.import(listOf(Uri.fromFile(source[2]))) }
+            await { composer.state.value.preparing == 0 }
+            assertEquals(listOf("item1.txt", "item2.txt", "item3.txt"), composer.state.value.attachments.map { it.name })
+            assertNull(composer.state.value.error)
+        } finally { withContext(Dispatchers.Main) { composer.dispose(); scope.cancel() } }
+    }
+
+    @Test fun orderedMessagesStopAtUnknownAndAcknowledgeOnlyOriginalFile() = fixture { root ->
+        val source = (1..3).map { n -> File(root, "ordered$n.txt").apply { writeText("fixture $n") } }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val composer =
+            Mango9MessageComposer(context, scope, { true }, Mango9AttachmentPreparer(context, File(root, "prepared"))::prepare)
+        try {
+            withContext(Dispatchers.Main) { composer.import(source.map(Uri::fromFile)); composer.changeText("caption") }
+            await { composer.state.value.preparing == 0 }
+            val calls = mutableListOf<Pair<String, String>>()
+            withContext(Dispatchers.Main) {
+                composer.send(separately = true) { text, files ->
+                calls.add(text to files.single().name); calls.size == 1
+            }
+            }
+            await { !composer.state.value.sending }
+            assertEquals(listOf("caption" to "ordered1.txt", "" to "ordered2.txt"), calls)
+            assertEquals(listOf("ordered2.txt", "ordered3.txt"), composer.state.value.attachments.map { it.name })
+            withContext(Dispatchers.Main) { composer.changeText("new draft"); composer.confirmSavedSend("") }
+            assertEquals("new draft", composer.state.value.text)
+            assertEquals(listOf("ordered3.txt"), composer.state.value.attachments.map { it.name })
+        } finally { withContext(Dispatchers.Main) { composer.dispose(); scope.cancel() } }
+    }
+
     @Test fun sendPinsOriginalFilesAndPreservesNewDraftEdits() = fixture { root ->
         val source = File(root, "first.bin").apply { writeText("first") }
         val second = File(root, "second.bin").apply { writeText("second") }

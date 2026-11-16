@@ -406,7 +406,7 @@ class Mango9SupervisorFragment : GenericMainFragment() {
         }
         if (composer.text.toString() != model.draft) { composer.setText(model.draft); composer.setSelection(composer.length()) }
         composer.isEnabled = model.authorized
-        val fileSignature = model.transfer.draft?.toString().orEmpty() + model.transfer.phase + model.transfer.uploaded + model.transfer.error
+        val fileSignature = org.json.JSONArray(model.transfer.drafts).toString() + model.transfer.phase + model.transfer.uploaded + model.transfer.error
         if (model.accepted && (fileSignature != traySignature || tray?.parent == null)) {
             traySignature = fileSignature; tray?.let {
                 bottom.removeView(it)

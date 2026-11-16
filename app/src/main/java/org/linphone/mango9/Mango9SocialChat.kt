@@ -186,11 +186,13 @@ internal class Mango9SocialRepository(context: Context, private val api: Mango9M
 
     suspend fun markRead(lease: Mango9SessionLease, thread: Mango9SocialThread): Mango9SocialThread {
         val readThrough = thread.readThrough ?: return thread
-        val result = Mango9SocialThread.parse(api.request(
+        val result = Mango9SocialThread.parse(
+            api.request(
             lease, channel, listOf("inbox-read"),
             body = JSONObject().put("id", thread.id)
             .put("requestId", UUID.randomUUID().toString()).put("readThrough", readThrough)
-        ))
+        )
+        )
         require(result.id == thread.id)
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { Mango9InboxUnread.socialReceipt(result, lease) }
         return result
@@ -222,15 +224,18 @@ internal class Mango9SocialRepository(context: Context, private val api: Mango9M
 
     /** Returns true only for a confirmed send; callers retain their draft otherwise. */
     suspend fun send(lease: Mango9SessionLease, thread: Mango9SocialThread, text: String, attachments: List<Mango9PendingAttachment>): Boolean = sendLock.withLock {
-        require(thread.canSend && !thread.openSend) { "Replies are unavailable for this conversation." }
+        // Refresh the provider version before every message in an ordered selection.
+        val currentThread = this.thread(lease, thread.id)
+        require(isCurrent(lease))
+        require(currentThread.canSend && !currentThread.openSend) { "Replies are unavailable for this conversation." }
         require(attachments.size <= 1) { "Social supports one attachment per message." }
         if (hasPending(lease, thread.id)) throw Mango9MessagingFailure(0, "pending")
         require(text.isNotBlank() || attachments.isNotEmpty())
-        val mediaId = attachments.firstOrNull()?.let { upload(lease, thread, it, text) }
+        val mediaId = attachments.firstOrNull()?.let { upload(lease, currentThread, it, text) }
         val requestId = UUID.randomUUID().toString()
         if (!intents.edit().putString(key(lease, thread.id), requestId).commit()) throw Mango9MessagingFailure(0, "pending")
         try {
-            val body = JSONObject().put("id", thread.id).put("version", thread.version).put("message", text).put("requestId", requestId)
+            val body = JSONObject().put("id", thread.id).put("version", currentThread.version).put("message", text).put("requestId", requestId)
             mediaId?.let { body.put("mediaId", it) }
             val result = api.request(lease, channel, listOf("inbox-send"), body = body)
             require(result.getString("id") == thread.id && result.getString("requestId") == requestId)

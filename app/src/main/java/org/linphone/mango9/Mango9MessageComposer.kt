@@ -76,7 +76,11 @@ internal class Mango9MessageComposer(
     fun import(uris: List<Uri>, ownedSource: Mango9PreparedAttachment? = null) {
         if (!current() || uris.isEmpty()) { ownedSource?.close(); return }
         val remaining = (attachmentLimit - files.size - mutable.value.preparing).coerceAtLeast(0)
-        val selected = uris.take(remaining)
+        if (uris.size > remaining) {
+            mutable.value = mutable.value.copy(error = attachmentLimitMessage() + " Nothing was added.")
+            ownedSource?.close(); return
+        }
+        val selected = uris
         mutable.value = mutable.value.copy(
             preparing = mutable.value.preparing + selected.size,
             error = if (uris.size > remaining) attachmentLimitMessage() else null,
@@ -119,7 +123,11 @@ internal class Mango9MessageComposer(
         try {
             if (!current() || !share.isCurrent()) return
             val remaining = (attachmentLimit - files.size - mutable.value.preparing).coerceAtLeast(0)
-            share.files.take(remaining).forEach { file ->
+            if (share.files.size > remaining) {
+                mutable.value = mutable.value.copy(error = attachmentLimitMessage() + " Nothing was added.")
+                return
+            }
+            share.files.forEach { file ->
                 if (file.attachment.uri !in files) files[file.attachment.uri] = file.retain()
             }
             changeText(org.linphone.mango9.Mango9PendingShare.mergeText(mutable.value.text, share.text))
@@ -136,7 +144,7 @@ internal class Mango9MessageComposer(
     }
 
     /** Acknowledgment removes only the exact sent attachments and unchanged text revision. */
-    fun send(action: suspend (String, List<Mango9PendingAttachment>) -> Boolean) {
+    fun send(separately: Boolean = false, action: suspend (String, List<Mango9PendingAttachment>) -> Boolean) {
         val initial = mutable.value
         if (!current() || initial.sending || initial.preparing > 0 ||
             (initial.text.isBlank() && files.isEmpty())
@@ -145,13 +153,17 @@ internal class Mango9MessageComposer(
             }
         val sentRevision = revision
         val pins = files.values.map { it.retain() }
-        unconfirmedDraft = SentDraft(initial.text, sentRevision, pins.map { it.attachment.uri })
         mutable.value = initial.copy(sending = true, error = null)
         val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
-                if (current() && action(initial.text, pins.map { it.attachment }) && current()) {
+                val batches = if (separately && pins.isNotEmpty()) pins.map { listOf(it) } else listOf(pins)
+                for ((index, batch) in batches.withIndex()) {
+                    if (!current()) break
+                    val body = if (index == 0) initial.text else ""
+                    unconfirmedDraft = SentDraft(body, sentRevision, batch.map { it.attachment.uri })
+                    if (!action(body, batch.map { it.attachment }) || !current()) break
                     unconfirmedDraft = null
-                    pins.forEach { files.remove(it.attachment.uri)?.close() }
+                    batch.forEach { files.remove(it.attachment.uri)?.close() }
                     if (revision == sentRevision) mutable.value = mutable.value.copy(text = "")
                     publishFiles()
                 }

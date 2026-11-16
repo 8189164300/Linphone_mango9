@@ -133,16 +133,17 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         ActivityResultContracts.PickMultipleVisualMedia(maxItems = MAX_ATTACHMENTS),
     ) { uris -> if (viewModel.composer.finishRequest("media")) addPickedAttachments(uris) }
 
-    private val socialMediaPicker = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (viewModel.composer.finishRequest("socialMedia") && uri != null) addPickedAttachments(listOf(uri))
+    private val socialMediaPicker =
+        registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
+        if (viewModel.composer.finishRequest("socialMedia")) addPickedAttachments(uris)
     }
 
     private val filePicker = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris -> if (viewModel.composer.finishRequest("files")) addPickedAttachments(uris) }
 
-    private val socialFilePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (viewModel.composer.finishRequest("socialFile") && uri != null) addPickedAttachments(listOf(uri))
+    private val socialFilePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (viewModel.composer.finishRequest("socialFile")) addPickedAttachments(uris)
     }
 
     private val cameraCapture = registerForActivityResult(ActivityResultContracts.TakePicture()) { captured ->
@@ -186,7 +187,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         super.onViewCreated(view, savedInstanceState)
         viewModel = ViewModelProvider(this)[Mango9MessagingViewModel::class.java]
         viewModel.bindConversation(Mango9NavigationSession.resolve(requireArguments(), Mango9SessionStore(requireContext())))
-        viewModel.composer.setAttachmentLimit(if (isSocial) 1 else if (isSms) 10 else MAX_ATTACHMENTS)
+        viewModel.composer.setAttachmentLimit(if (isSocial) 10 else if (isSms) 10 else MAX_ATTACHMENTS)
         social = ViewModelProvider(this)[Mango9SocialViewModel::class.java]
         social.bind(viewModel.mediaSession())
         exports.notices.observe(viewLifecycleOwner) { event ->
@@ -658,7 +659,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
     private fun sendMessage() {
         viewModel.composer.changeText(binding.message.text?.toString().orEmpty())
         if (isSocial) {
-            viewModel.composer.send { text, files -> social.send(text, files) }
+            viewModel.composer.send(separately = true) { text, files -> social.send(text, files) }
         } else if (isSms) {
             val destination = viewModel.currentState().activeSmsPhone ?: phone.orEmpty()
             viewModel.sendSmsDraft(destination, selectedSender())
@@ -1296,7 +1297,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
 
     private fun showAttachmentMenu() {
         if (!viewModel.isCurrentConversation()) return
-        val atLimit = attachments.size >= (if (isSocial) 1 else MAX_ATTACHMENTS) || (isSocial && social.current().thread?.canDraft != true)
+        val atLimit = attachments.size >= (if (isSocial || isSms) 10 else MAX_ATTACHMENTS) || (isSocial && social.current().thread?.canDraft != true)
         val options = arrayOf(
             getString(R.string.mango9_chat_take_photo),
             getString(R.string.mango9_chat_photo_library),

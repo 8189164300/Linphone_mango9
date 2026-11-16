@@ -28,6 +28,26 @@ internal object Mango9AssistantMediaContract {
         for (n in 0 until parts.length()) require(Regex("[A-Za-z0-9+/]{22}==").matches(parts.getString(n)))
     }
 
+    fun restore(value: JSONObject, account: String, origin: String, conversation: String): Pair<List<JSONObject>, Boolean> {
+        val items = if (value.optInt("version") == 2) {
+            value.getJSONArray("drafts").let { a ->
+                (0 until a.length()).map {
+            a.getJSONObject(it)
+        }
+        }
+        } else {
+            listOf(value)
+        }
+        require(items.size in 1..3 && items.map { it.getString("id") }.toSet().size == items.size)
+        val frozen = if (value.optInt("version") == 2) value.getBoolean("sealed") else value.has("caption")
+        items.forEach { d ->
+            require(Mango9SupervisorPresentation.uuid(d.getString("id")) && d.getString("conversationId") == conversation && d.getString("account") == account && d.getString("origin") == origin)
+            require(d.optString("caption").toByteArray().size <= 8000 && (!frozen || d.optString("caption") == items[0].optString("caption")))
+            validFile(d.getJSONObject("file"))
+        }
+        return items to frozen
+    }
+
     fun length(f: JSONObject, n: Int): Long {
         require(n in 1..f.getJSONArray("partMD5").length())
         return minOf(partSize.toLong(), f.getLong("size") - (n - 1L) * partSize)
@@ -74,6 +94,39 @@ internal object Mango9AssistantMediaContract {
     fun sizeLabel(size: Long): String = when { size <= 0 -> ""; size < 1000 -> "$size B"; size < 1_000_000 -> "%.1f KB".format(java.util.Locale.US, size / 1000.0); else -> "%.1f MB".format(java.util.Locale.US, size / 1_000_000.0) }
 }
 
+internal object Mango9AssistantDraftMigration {
+    fun recover(original: File, source: String, account: String, origin: String): String {
+        val marker = File(original.path + ".recovery")
+        val destination = if (marker.exists()) {
+            marker.readText().also {
+            require(Mango9SupervisorPresentation.uuid(it) && it != source)
+        }
+        } else {
+            UUID.randomUUID().toString().also { id ->
+            val temp = File(marker.path + ".tmp"); temp.writeText(id); check(temp.renameTo(marker))
+        }
+        }
+        if (original.exists()) {
+            val batch = Mango9AssistantMediaContract.restore(JSONObject(original.readText()), account, origin, source).first
+            val target = File(original.parentFile, "$account.$destination.json")
+            if (target.exists()) {
+                val restored = Mango9AssistantMediaContract.restore(JSONObject(target.readText()), account, origin, destination).first
+                require(restored.map { it.getJSONObject("file").toString() } == batch.map { it.getJSONObject("file").toString() })
+            } else {
+                val moved = batch.map {
+                    JSONObject(it.toString()).put("id", UUID.randomUUID().toString()).put("conversationId", destination).apply {
+                        remove("caption")
+                    }
+                }
+                val value = JSONObject().put("version", 2).put("drafts", JSONArray(moved)).put("sealed", false)
+                val temp = File(target.path + ".tmp"); temp.writeText(value.toString()); check(temp.renameTo(target))
+            }
+            check(original.delete())
+        }
+        return destination
+    }
+}
+
 internal class Mango9AssistantTransfer(context: Context, private val api: Mango9SupervisorApi, private val current: () -> Mango9SessionLease?, private val changed: () -> Unit) {
     val native = Mango9AssistantMediaNative(context.applicationContext)
     private val sessions = Mango9SessionStore(context)
@@ -83,6 +136,11 @@ internal class Mango9AssistantTransfer(context: Context, private val api: Mango9
     private var epoch = 0
     private var busy = false
     var draft: JSONObject? = null; private set
+    var drafts = emptyList<JSONObject>(); private set
+    var sealed = false; private set
+    var maximum = 1; private set
+    val canAdd get() = enabled && !busy && !sealed && drafts.size < maximum
+    val total get() = drafts.sumOf { it.getJSONObject("file").getLong("size") }
     var enabled = false; private set
     var allowedTypes = emptySet<String>(); private set
     var phase = "idle"; private set
@@ -90,7 +148,7 @@ internal class Mango9AssistantTransfer(context: Context, private val api: Mango9
     var error: String? = null
     private var captions = false
     val active get() = phase in setOf("preparing", "uploading", "verifying")
-    val label get() = when (phase) { "preparing" -> "Preparing file…"; "uploading" -> "Uploading ${(100 * uploaded / (draft?.getJSONObject("file")?.getLong("size") ?: 1))}%"; "verifying" -> "Checking file…"; "paused" -> "Upload paused"; else -> if (draft != null) "Ready to send" else "" }
+    val label get() = when (phase) { "preparing" -> "Preparing file…"; "uploading" -> "Uploading ${(100 * uploaded / maxOf(1L, total))}%"; "verifying" -> "Checking file…"; "paused" -> "Upload paused"; else -> if (draft != null) "Ready to send" else "" }
 
     private fun check(version: Int) {
         check(version == epoch && owner != null && current() == owner && sessions.currentSession(owner!!) != null)
@@ -100,9 +158,11 @@ internal class Mango9AssistantTransfer(context: Context, private val api: Mango9
         require(Mango9SupervisorPresentation.uuid(id)); return File(root, Mango9SupervisorConsent.key(owner!!.session) + ".$id.json")
     }
 
-    private fun save(value: JSONObject?) {
-        val target = path()
-        if (value == null) { if (target.exists()) check(target.delete()); return }
+    private fun save(values: List<JSONObject>, frozen: Boolean, id: String = conversation) {
+        require(values.size <= 3 && values.map { it.getString("id") }.toSet().size == values.size)
+        val target = path(id)
+        if (values.isEmpty()) { if (target.exists()) check(target.delete()); return }
+        val value = JSONObject().put("version", 2).put("drafts", JSONArray(values)).put("sealed", frozen)
         val temp = File(target.path + ".tmp"); temp.writeText(value.toString()); check(temp.renameTo(target))
     }
 
@@ -128,14 +188,20 @@ internal class Mango9AssistantTransfer(context: Context, private val api: Mango9
         error("File unavailable")
     }
 
+    fun recoverDraft(source: String): String {
+        val lease = requireNotNull(current()); require(owner == null || owner == lease)
+        owner = lease; check(sessions.currentSession(lease) != null); pause()
+        return Mango9AssistantDraftMigration.recover(path(source), source, Mango9SupervisorConsent.key(lease.session), origin())
+    }
+
     suspend fun configure(lease: Mango9SessionLease, id: String) {
-        pause(); owner = lease; conversation = id; draft = null; phase = "idle"; error = null; enabled = false; uploaded = 0
+        pause(); owner = lease; conversation = id; draft = null; drafts = emptyList(); sealed = false; maximum = 1; phase = "idle"; error = null; enabled = false; uploaded = 0
         val version = epoch
         try {
             val file = path(); if (file.exists()) {
                 val value = withContext(Dispatchers.IO) { JSONObject(file.readText()) }; check(version)
-                require(value.getString("conversationId") == id && value.getString("account") == Mango9SupervisorConsent.key(lease.session) && value.getString("origin") == origin())
-                Mango9AssistantMediaContract.validFile(value.getJSONObject("file")); draft = value; phase = "paused"
+                val restored = Mango9AssistantMediaContract.restore(value, Mango9SupervisorConsent.key(lease.session), origin(), id)
+                drafts = restored.first; draft = drafts.first(); sealed = restored.second; phase = "paused"
             }
             val cap = request("capabilities", version)
             enabled = cap.optInt("version") == 1 && cap.optBoolean("enabled") && cap.optString("mode") == "transport" && cap.optLong("maxBytes") == Mango9AssistantMediaContract.maximum && cap.optInt("partSize") == Mango9AssistantMediaContract.partSize
@@ -143,6 +209,7 @@ internal class Mango9AssistantTransfer(context: Context, private val api: Mango9
                 types!!.getString(it)
             }.toSet().intersect(Mango9AssistantMediaContract.types)
             captions = cap.optBoolean("textWithAttachment")
+            maximum = if (cap.optBoolean("multipleAttachments") && cap.optInt("maxFiles") == 3) 3 else 1
         } catch (e: Exception) {
             if (version == epoch && e !is CancellationException) error = "Files are temporarily unavailable. Text chat still works."
         }
@@ -151,48 +218,88 @@ internal class Mango9AssistantTransfer(context: Context, private val api: Mango9
 
     private fun origin() = "https://" + URI(owner!!.session.crmApiBaseUrl).host
 
-    suspend fun select(uri: Uri, name: String) {
-        if (!enabled || busy || draft != null) return
+    suspend fun select(uri: Uri, name: String) = selectMany(listOf(uri to name))
+
+    suspend fun selectMany(files: List<Pair<Uri, String>>) {
+        if (!canAdd) return
+        if (files.isEmpty() || files.size + drafts.size > maximum) {
+            error = "Choose up to $maximum files. Nothing was added."; changed(); return
+        }
         val version = epoch; busy = true; phase = "preparing"; error = null; changed()
-        var f: JSONObject? = null
+        val prepared = mutableListOf<JSONObject>()
         try {
-            check(version); f = nativeResult { native.prepareLargeVideo(uri.toString(), name, it) } as JSONObject
-            check(version); Mango9AssistantMediaContract.validFile(f); require(f.getString("mime") in allowedTypes)
-            val value = JSONObject().put("id", UUID.randomUUID().toString()).put("account", Mango9SupervisorConsent.key(owner!!.session)).put("origin", origin()).put("conversationId", conversation).put("file", f)
-            save(value); draft = value; phase = "selected"
+            val added = mutableListOf<JSONObject>()
+            for ((uri, name) in files) {
+                check(version); val file = nativeResult {
+                    native.prepareLargeVideo(uri.toString(), name, it)
+                } as JSONObject; prepared.add(file)
+                check(version); Mango9AssistantMediaContract.validFile(file); require(file.getString("mime") in allowedTypes)
+                require(
+                    (drafts + added).none {
+                    it.getJSONObject("file").getString("sha256") == file.getString("sha256") && it.getJSONObject("file").getLong("size") == file.getLong("size")
+                }
+                ) { "This file is already attached. Choose different files." }
+                added.add(JSONObject().put("id", UUID.randomUUID().toString()).put("account", Mango9SupervisorConsent.key(owner!!.session)).put("origin", origin()).put("conversationId", conversation).put("file", file))
+            }
+            val all = drafts + added; save(all, false); drafts = all; draft = all.first(); phase = "selected"; uploaded = 0
         } catch (e: Exception) {
-            f?.optString("uri")?.let { native.discardLargeMedia(it, discardCallback) }
+            for (file in prepared) if (drafts.none {
+                it.getJSONObject("file").getString("uri") == file.getString("uri")
+            }
+            ) {
+                native.discardLargeMedia(file.getString("uri"), discardCallback)
+            }
             if (version == epoch && e !is CancellationException) { phase = "error"; error = e.message }
-        } finally { busy = false; if (version == epoch) changed() }
+        } finally { if (version == epoch) { busy = false; changed() } }
     }
 
     fun pause() {
-        epoch++; draft?.let {
+        epoch++; busy = false; draft?.let {
             native.cancelLargeVideoUpload(it.getString("id"), discardCallback)
         }; phase = if (draft == null) "idle" else "paused"; changed()
     }
 
-    suspend fun remove() {
-        val d = draft ?: return; if (busy) return; val version = epoch
+    suspend fun remove(id: String? = null) {
+        if (drafts.isEmpty() || busy) return
+        val version = epoch; busy = true
+        val removing = if (sealed || id == null) drafts else drafts.filter { it.getString("id") == id }
         try {
-            try { request("abort", version, d.getString("id")) } catch (e: Mango9SupervisorFailure) { if (e.status != 404) throw e }
-            check(version); save(null); native.discardLargeMedia(d.getJSONObject("file").getString("uri"), discardCallback); draft = null; phase = "idle"; error = null
-        } catch (e: Exception) { if (version == epoch) error = "Removal could not be confirmed. Try again." }
-        if (version == epoch) changed()
+            for (item in removing) {
+                try {
+                    request("abort", version, item.getString("id"))
+                } catch (e: Mango9SupervisorFailure) { if (e.status != 404) throw e }
+                check(version)
+            }
+            val kept = drafts.filter {
+                it !in removing
+            }; save(kept, false); drafts = kept; draft = kept.firstOrNull(); sealed = false; phase = if (kept.isEmpty()) "idle" else "selected"; error = null; uploaded = 0
+            for (item in removing) native.discardLargeMedia(item.getJSONObject("file").getString("uri"), discardCallback)
+        } catch (e: Exception) {
+            if (version == epoch) error = "Removal could not be confirmed. Your files have been kept."
+        } finally { if (version == epoch) { busy = false; changed() } }
     }
 
     suspend fun send(text: String): String? {
-        val d = draft ?: return null; if (!enabled || busy) return null
+        if (drafts.isEmpty() || !enabled || busy) return null
         val version = epoch; busy = true; error = null
         try {
-            check(version); if (!d.has("caption")) d.put("caption", text.trim())
-            val caption = d.getString("caption"); require(caption.toByteArray().size <= 8000 && (captions || caption.isEmpty())); save(d)
+            check(version); require(drafts.size <= maximum) {
+                "Multiple attachments are unavailable on this server. Your files have been kept."
+            }
+            val caption = if (drafts[0].has("caption")) drafts[0].getString("caption") else text.trim()
+            require(caption.toByteArray().size <= 8000 && (captions || caption.isEmpty()))
+            val all = drafts.map { JSONObject(it.toString()).put("caption", caption) }; save(all, true); drafts = all; sealed = true
+            var completed = 0L
+            for (d in all) {
+            draft = d
             val f = d.getJSONObject("file"); val id = d.getString("id"); val input = JSONObject()
             for (key in listOf("name", "size", "mime", "sha256", "partMD5")) input.put(key, f.get(key))
             Mango9AssistantMediaContract.status(request("start", version, id, input), d)
             var status = Mango9AssistantMediaContract.status(request("status", version, id), d)
             if (status.first == "uploading") {
-                uploaded = status.second.sumOf { Mango9AssistantMediaContract.length(f, it) }; phase = "uploading"; changed()
+                uploaded = completed + status.second.sumOf {
+                    Mango9AssistantMediaContract.length(f, it)
+                }; phase = "uploading"; changed()
                 for (part in 1..f.getJSONArray("partMD5").length()) if (part !in status.second) {
                     val ticket = Mango9AssistantMediaContract.ticket(request("parts", version, id, JSONObject().put("parts", JSONArray().put(part))), d, part)
                     val result = nativeResult {
@@ -207,15 +314,29 @@ internal class Mango9AssistantTransfer(context: Context, private val api: Mango9
                 phase = "verifying"; changed(); delay(2000); status = Mango9AssistantMediaContract.status(request("status", version, id), d)
             }
             require(status.first == "ready") { "Verification is not ready. Tap Resume to check again." }
-            val result =
-                request("attach", version, id, JSONObject().apply { if (caption.isNotEmpty()) put("text", caption) })
-            require(result.optBoolean("received") && result.optString("id") == id && result.optString("conversationId") == conversation)
-            save(null); draft = null; phase = "received"; native.discardLargeMedia(f.getString("uri"), discardCallback); return caption
+            completed += f.getLong("size"); uploaded = completed
+            }
+            val ids = all.map { it.getString("id") }; val first = ids.first()
+            val body = JSONObject().apply {
+                if (caption.isNotEmpty()) put("text", caption); if (ids.size > 1) put("ids", JSONArray(ids))
+            }
+            val result = request("attach", version, first, body)
+            require(result.optBoolean("received") && result.optString("id") == first && result.optString("conversationId") == conversation)
+            if (ids.size > 1) {
+                val got = result.getJSONArray("ids"); require(
+                    got.length() == ids.size && ids.indices.all {
+                    got.getString(it) == ids[it]
+                }
+                )
+            }
+            save(emptyList(), false); draft = null; drafts = emptyList(); sealed = false; phase = "received"
+            for (item in all) native.discardLargeMedia(item.getJSONObject("file").getString("uri"), discardCallback)
+            return caption
         } catch (e: Exception) {
             if (version == epoch && e !is CancellationException) {
                 phase = "error"; error = e.message ?: "Upload paused. Tap Resume."
             }; return null
-        } finally { busy = false; if (version == epoch) changed() }
+        } finally { if (version == epoch) { busy = false; changed() } }
     }
 
     suspend fun resource(file: JSONObject): Pair<String, JSONObject> {
