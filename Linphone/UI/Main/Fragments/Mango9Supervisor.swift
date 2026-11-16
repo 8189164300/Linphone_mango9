@@ -257,7 +257,7 @@ struct Mango9SupervisorView: View {
     }
     private var chat: some View {
         VStack(spacing: 0) {
-            if let error = model.error { notice(error) }
+            if let error = model.error ?? model.historyRefreshError { notice(error) }
             if let warning = model.localStorageNotice { Text(warning).font(.caption).foregroundColor(.grayMain2c500).padding(8) }
             if model.usingSavedHistory && !model.loading {
                 HStack {

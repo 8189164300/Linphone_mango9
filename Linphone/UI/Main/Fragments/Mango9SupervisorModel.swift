@@ -50,6 +50,7 @@ import Combine
     @Published private(set) var hasAIConsent = false
     @Published var showVoice = false
     @Published var error: String?
+    @Published var historyRefreshError: String?
     @Published var pending: Mango9SupervisorCommand?
     @Published var walletBilling = false
     @Published var actions: [[String: Any]] = []
@@ -144,7 +145,7 @@ import Combine
     }
     func start() async {
         guard !starting, !sending else { return }
-        invalidateOperations(); opened = true; foreground = true; starting = true; loading = true; error = nil; authorized = false
+        invalidateOperations(); opened = true; foreground = true; starting = true; loading = true; error = nil; historyRefreshError = nil; authorized = false
         historyReady = false
         let stamp = operation
         defer { if stamp == operation { loading = false; starting = false } }
@@ -425,6 +426,7 @@ import Combine
             if messages != updated { messages = updated }
             historyCursor = result["cursor"] as? String ?? historyCursor
             historyReady = true
+            historyRefreshError = nil
             usingSavedHistory = false
             if tail { olderCursor = result["olderCursor"] as? String; moreMessages = olderCursor != nil }
             let remaining = (assistantState.deliveries ?? []).filter { r in
@@ -447,7 +449,7 @@ import Combine
                 messages = []; includeLocalMessages(); configurationDetails = [:]; savedConfigurations = [:]; savedConfigurationIDs = []; usingSavedHistory = false
                 savedChats.removeAll { $0.id == id }; writeLocalConversations()
             }
-        } catch { if valid(stamp) { self.error = notice(error); _ = discardForAccessError(error) } }
+        } catch { if valid(stamp) { if discardForAccessError(error) { self.error = notice(error) } else if !(error is CancellationError) { historyRefreshError = notice(error) } } }
     }
     func loadOlderHistory() async {
         guard opened, authorized, api.active, !loadingOlderMessages, !loadingLatestHistory, let olderCursor else { return }
@@ -470,7 +472,7 @@ import Combine
         let command = Mango9SupervisorCommand(conversationID: conversationID, text: draft.trimmingCharacters(in: .whitespacesAndNewlines))
         do { try saveDeliveries((assistantState.deliveries ?? []) + [.init(command: command, createdAt: Date())]) }
         catch { self.error = "Couldn’t save this message. Your text is still in the composer."; return }
-        draft = ""; saveDraftNow(); error = nil; includeLocalMessages(); persistLocalConversation()
+        draft = ""; saveDraftNow(); error = nil; historyRefreshError = nil; includeLocalMessages(); persistLocalConversation()
         await transmit(command)
     }
     func retryMessage(_ id: String) async {

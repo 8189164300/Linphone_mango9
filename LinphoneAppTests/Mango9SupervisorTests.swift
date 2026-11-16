@@ -814,6 +814,19 @@ final class Mango9SupervisorReliabilityTests: XCTestCase {
             XCTAssertEqual(model.conversations.map(\.id), [failed]); XCTAssertFalse(model.bulkBusy)
         }
     }
+    @MainActor func testTransientHistoryFailureClearsOnReconnectWithoutErasingSendError() async throws {
+        try await withModel { model, client, _ in
+            client.handler = { _, _ in throw URLError(.notConnectedToInternet) }
+            await model.refreshHistory()
+            XCTAssertNotNil(model.historyRefreshError); XCTAssertNil(model.error)
+            model.draft = "Unsent draft"; XCTAssertTrue(model.canSend)
+            model.error = "Unrelated send failure"
+            client.handler = { _, _ in ["messages": [], "items": [], "cursor": "0"] }
+            await model.refreshHistory()
+            XCTAssertNil(model.historyRefreshError); XCTAssertEqual(model.error, "Unrelated send failure")
+            XCTAssertEqual(model.draft, "Unsent draft"); XCTAssertTrue(model.canSend)
+        }
+    }
     @MainActor private func withModel(start: Bool = true, _ body: (Mango9SupervisorModel, SupervisorClientFixture, SupervisorPendingFixture) async throws -> Void) async throws {
         let name = "supervisor-model-fixture-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
