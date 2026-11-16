@@ -211,7 +211,7 @@ struct Mango9SupervisorView: View {
         .sheet(item: $createdTask) { task in
             if Mango9SessionStore.isActive(model.api.original) {
                 Mango9ManagedTaskDetail(taskID: task.id, session: model.api.original).preferredColorScheme(.light)
-            } else { Text("Reopen Supervisor in your current account.").padding() }
+            } else { Text("Reopen Assistant in your current account.").padding() }
         }
         .sheet(isPresented: $showingAIPrivacy) {
             Mango9SupervisorConsentView(accepted: model.hasAIConsent,
@@ -250,7 +250,7 @@ struct Mango9SupervisorView: View {
                     .disabled(model.sending)
                 Button { focused = false; model.close(); dismiss() } label: { Label("Close Assistant", systemImage: "xmark") }
             } label: { Mango9SupervisorMark(working: model.loading || model.working) }
-                .accessibilityLabel("Supervisor options").accessibilityIdentifier("supervisor.options")
+                .accessibilityLabel("Assistant options").accessibilityIdentifier("supervisor.options")
         }
         .foregroundColor(.white).padding(.horizontal, 8).frame(height: compact ? 46 : 56)
         .background(Color.mango9Primary.ignoresSafeArea(.container, edges: [.top, .leading, .trailing]))
@@ -269,7 +269,7 @@ struct Mango9SupervisorView: View {
             if model.loading && model.messages.isEmpty { Spacer(); ProgressView("Loading Assistant…").tint(.mango9Primary); Spacer() }
             else if !model.authorized && model.messages.isEmpty {
                 Spacer()
-                Text("Connect with your Mango9 account to use Supervisor.").font(.subheadline).foregroundColor(.grayMain2c500).multilineTextAlignment(.center).padding()
+                Text("Connect with your Mango9 account to use Assistant.").font(.subheadline).foregroundColor(.grayMain2c500).multilineTextAlignment(.center).padding()
                 Button("Try again") { Task { await model.start() } }.foregroundColor(.mango9Primary)
                 Spacer()
             } else {
@@ -769,7 +769,7 @@ private struct Mango9SupervisorConsentView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "hand.raised.fill").foregroundColor(.mango9Primary)
-                Text(accepted ? "AI sharing is on" : "Use Supervisor AI?")
+                Text(accepted ? "AI sharing is on" : "Use Assistant AI?")
                     .font(.headline).foregroundColor(.grayMain2c800)
                 Spacer(minLength: 8)
                 Button(action: close) { Image(systemName: "xmark").frame(width: 44, height: 44) }

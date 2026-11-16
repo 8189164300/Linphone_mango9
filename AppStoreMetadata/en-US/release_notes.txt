@@ -3,4 +3,4 @@
 • Improved recovery of unsent attachment drafts and interrupted Assistant chats.
 • Keep composing while an earlier Assistant reply is pending.
 • Updated AI sharing notice for connected ChatGPT (Codex) and Claude integrations, with renewed consent.
-• Clearer manual connection setup explanations.
+• Consistent Assistant AI naming and clearer connection setup explanations.

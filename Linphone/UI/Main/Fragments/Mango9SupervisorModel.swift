@@ -287,7 +287,7 @@ import Combine
     private func notice(_ error: Error) -> String {
         if error is CancellationError { return "The request stopped. Refresh to check saved history." }
         if error is Mango9SupervisorFailure || error is Mango9CRMAPIError { return error.localizedDescription }
-        return "Couldn’t reach Supervisor. Check your connection and try again."
+        return "Couldn’t reach Assistant. Check your connection and try again."
     }
     func loadConversations(more: Bool = false, query: String? = nil, channel: String? = nil) async throws {
         guard opened, api.active else { return }

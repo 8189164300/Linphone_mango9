@@ -12,7 +12,7 @@ Use your existing Mango9 account to:
 • Open customer records directly from call and message activity
 • Manage CRM appointments with calendar and list views, status updates, sharing and assignment
 • Customize in-app appointment reminders and messaging notification preferences
-• Use Assistant text and voice chat on eligible account-owner accounts, with supported file attachments, chat history and AI-assisted configuration review
+• Use Assistant AI text and voice chat on eligible account-owner accounts, with supported file attachments, chat history and AI-assisted configuration review
 • Connect your own supported ChatGPT account through OpenAI Codex, or Claude account through Anthropic Claude Code, using your organization’s CRM and authorized desktop setup to assist with CRM tasks
 • Review supported workflow and voice-agent drafts in the connected CRM
 

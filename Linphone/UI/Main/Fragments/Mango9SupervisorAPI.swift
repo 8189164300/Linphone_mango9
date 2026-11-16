@@ -100,17 +100,17 @@ struct Mango9SupervisorFailure: LocalizedError {
     let code: String
     var errorDescription: String? {
         switch code {
-        case "storage_unavailable": return "Couldn’t access the saved Supervisor request. Unlock your iPhone and reopen Supervisor before sending again."
+        case "storage_unavailable": return "Couldn’t access the saved Assistant request. Unlock your iPhone and reopen Assistant before sending again."
         case "action_changed": return "This action changed. Review its latest details before approving it."
-        case "ai_consent_required": return "Review AI privacy and allow sharing before using Supervisor chat or voice."
-        case "scope_changed": return "Your account changed. Reopen Supervisor in your current account."
-        case "supervisor_owner_required", "forbidden": return "Supervisor is available to the account owner."
+        case "ai_consent_required": return "Review AI privacy and allow sharing before using Assistant chat or voice."
+        case "scope_changed": return "Your account changed. Reopen Assistant in your current account."
+        case "supervisor_owner_required", "forbidden": return "Assistant is available to the account owner."
         case "wallet_insufficient": return "Your available AI credit is too low. Check your Mango9 wallet."
-        case "support_pilot_busy": return "Supervisor is still working on the previous request. Refresh to check its progress."
+        case "support_pilot_busy": return "Assistant is still working on the previous request. Refresh to check its progress."
         case "pilot_turn_already_submitted": return "This request was already received. Refresh the conversation to check its result."
         case "voice_session_already_requested": return "This voice session was already requested. Start a new session when you’re ready."
-        case "voice_permission": return "Allow microphone access in iPhone Settings to use Supervisor voice."
-        case "call_active": return "End your phone call before starting Supervisor voice."
+        case "voice_permission": return "Allow microphone access in iPhone Settings to use Assistant voice."
+        case "call_active": return "End your phone call before starting Assistant voice."
         case "voice_audio_format": return "This audio route is unavailable. Check your microphone or headset and try again."
         case "voice_no_audio": return "No microphone audio was detected. Check the selected microphone."
         case "voice_session_complete": return "Voice session ended. You can continue in chat."
@@ -121,10 +121,10 @@ struct Mango9SupervisorFailure: LocalizedError {
         case "invalid_pilot_chat": return "Enter a message of no more than 8,000 UTF-8 bytes."
         default:
             if status == 401 { return "Your Mango9 sign-in needs attention. Reconnect your account to continue." }
-            if status == 403 { return "Supervisor is not enabled for this account." }
-            if status == 429 { return "Supervisor is busy. Wait a moment, then try again." }
+            if status == 403 { return "Assistant is not enabled for this account." }
+            if status == 429 { return "Assistant is busy. Wait a moment, then try again." }
             if code.contains("wallet") || code.contains("billing") { return "AI billing is currently unavailable. Check your wallet or contact support." }
-            return "Couldn’t reach Supervisor. Check your connection and try again."
+            return "Couldn’t reach Assistant. Check your connection and try again."
         }
     }
 }
@@ -166,7 +166,7 @@ struct Mango9SupervisorConversation: Identifiable, Codable {
     let hasVoice: Bool
     init?(_ raw: [String: Any]) {
         guard let id = raw["id"] as? String, UUID(uuidString: id) != nil else { return nil }
-        self.id = id.lowercased(); title = raw["title"] as? String ?? "Supervisor conversation"
+        self.id = id.lowercased(); title = raw["title"] as? String ?? "Assistant conversation"
         let date = ISO8601DateFormatter(); date.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let stamp = raw["updatedAt"] as? String ?? raw["createdAt"] as? String ?? ""
         updatedAt = date.date(from: stamp) ?? ISO8601DateFormatter().date(from: stamp)
