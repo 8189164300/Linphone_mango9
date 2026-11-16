@@ -1,10 +1,10 @@
-Mango9 is a companion app for existing Mango9 business customers. Accounts and telecommunications services are provisioned outside the app. There is no consumer signup, purchase, pricing or subscription link. Use the review credentials supplied separately in App Store Connect. Version 6.2.23 (68) supports iOS 15 and later.
+Mango9 is a companion app for existing Mango9 business customers. Accounts and telecommunications services are provisioned outside the app. There is no consumer signup, purchase, pricing or subscription link. Use the review credentials supplied separately in App Store Connect. Version 6.2.24 (70) supports iOS 15 and later.
 
 Assistant is available to eligible, enabled client-owner accounts. Open Chat and tap the round AI button in the top header. The server verifies the signed-in owner and account scope; other roles cannot access owner-only operations.
 
 Before AI chat, voice or applying AI-assisted settings, the AI privacy sheet explains data sent to OpenRouter and the configured chat provider, and to Google Gemini for voice. The user can decline or accept. AI options > AI privacy lets the user review or revoke that choice. Revocation stops voice and cancels in-flight AI requests. Declining keeps AI chat and voice disabled. Existing acceptance is restored for the same account.
 
-New in this update:
+Existing features and review steps:
 1. In Assistant, tap + to choose Photos and videos, Take photo, Record video, Choose file or Voice. Server permissions and allowed file types apply. Voice opens a high-quality WAV recorder; recording starts only after tapping Record. An attachment shows its size and upload progress. Supported media uses native preview, playback, sharing and export.
 2. Assistant history has search/filter, multiple-selection cleanup, clearer dates and per-chat unread indicators. Assistant unread counts appear on the top AI icon, separately from the Chat footer. Saved drafts/history and deletion state are scoped to the signed-in account.
 3. The Chat footer totals SMS, Team Chat, Social and Live Chat. Tabs indicate unread chats, and confirmed Social reads update the inbox without a manual refresh. Incoming replies refresh open chats.
@@ -15,7 +15,9 @@ Other review steps:
 • Settings > Conversations controls device-local messaging tab visibility; server permissions still apply. Live Chat supports website/status filters, assignment and visitor details. Social replies depend on provider permissions and reply windows; unsupported outgoing voice is not offered.
 • In supported chats, + > Templates opens personal templates. Insert preserves the current draft and never sends automatically. Long-press messages for supported copy, select, forward, delete-for-me and reactions. Notifications open the matching chat.
 • Calling uses the assigned business line. Voice-message playback uses the loudspeaker by default and respects headphones and calls.
-• Normal sign-in uses the supplied account credentials. The optional sign-in connection-settings gear uses the app version, 6.2.23, as its access code; normal sign-in needs no manual server entry.
+• Normal sign-in uses the supplied account credentials. The optional sign-in connection-settings gear uses the app version, 6.2.24, as its access code; normal sign-in needs no manual server entry.
 
-Exact corresponding source: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.23-build-68
+Exact corresponding source: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.24-build-70
 Review credentials and contact details are supplied only in App Store Connect, never in public source.
+
+Build 70 improves Assistant reconnection: a successful history refresh clears only its temporary connection notice. Unrelated send errors and unsent drafts are preserved. Background history reads do not block composing, and uncertain sends are not automatically replayed.

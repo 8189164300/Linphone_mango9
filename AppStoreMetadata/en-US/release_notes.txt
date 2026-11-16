@@ -1,6 +1,4 @@
-• Add photos, videos, files and high-quality voice recordings to Assistant chats, with upload progress and native previews.
-• Improved Assistant history, unread indicators and bulk cleanup.
-• Clearer Chat menus and more reliable unread counts across messaging channels.
-• Consistent CRM navigation with new-lead and new-client indicators.
-• Faster Social read-state updates and smoother navigation.
-• Keep writing in Assistant chats while an earlier reply is pending, with clearer delivery recovery after connection interruptions.
+• Improved Assistant recovery after temporary connection interruptions.
+• Temporary connection notices clear when chat history reconnects successfully.
+• Saved messages and unsent drafts stay available during refreshes.
+• Continue composing while an earlier Assistant reply is pending.
