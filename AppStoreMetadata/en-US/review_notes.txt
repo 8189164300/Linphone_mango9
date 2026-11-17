@@ -1,23 +1,11 @@
-Mango9 6.2.24 (72): business communications and CRM companion, iOS 15+. Use the review credentials in App Store Connect. Sign-in provisions the assigned calling line and CRM. There is no native consumer signup or purchase flow.
+Mango9 6.2.24 (73): business communications and CRM companion, iOS 15+.
 
-FEATURE MAP
-• Chat contains SMS, Team Chat, Social and Live Chat. Settings > Conversations lets each user hide or restore tabs on that device; server permissions still apply. Social requires a connected provider and an open reply window. Live Chat requires a connected website. An empty list is not a different review mode.
-• Chat > round AI header button opens Assistant AI. The server permits enabled client-owner accounts only, to protect organization settings. Other roles cannot perform owner operations. Access rules are account-based.
-• The sign-in gear opens optional manual SIP setup. Its settings code is the displayed app version: 6.2.24. It opens a form for SIP credentials supplied by an administrator; it does not grant CRM or Assistant access. Normal sign-in does not require this code or manual configuration. Build 72 explains the purpose on the settings screen.
-• Contacts, Calls and CRM use the main footer. CRM has Leads, Clients, Calendar and Tasks, subject to account permissions.
+We have decided to discontinue the AI assistant. This update removes its chat and voice features while retaining the app’s other functionality. The assistant button, AI chat screens, voice sessions and assistant notification routing have been removed.
 
-ASSISTANT REVIEW PATHS
-1. Open Chat > AI. CRM/desktop setup can connect the owner’s ChatGPT account via OpenAI Codex or Claude account via Anthropic Claude Code. The mobile chat sends requests through the CRM to the authorized connected computer; its AI tool must stay available to answer. Other configured routes use OpenRouter with OpenAI or DeepInfra (DeepSeek). Voice uses Google Gemini. Build 72 names these routes, recipients and shared data in AI privacy and requires fresh consent. Accept/decline or revoke via AI options > AI privacy. Prior requests may finish; history remains.
-2. Send a text prompt. Assistant can answer business questions, use authorized CRM context, and propose configuration actions. Action cards show the proposed changes and require explicit approval/rejection before applying them. Ask for a proposed change without approving it to inspect this flow safely.
-3. Assistant can return workflow and voice-agent drafts. When the server returns a complete supported design, the card offers Review workflow draft or Review agent setup. This opens the connected CRM in an in-app web view, requires the matching CRM login, and reviews the draft before saving. These features require the matching account, independently of the settings code.
-4. Assistant + offers Photos and videos, Take photo, Record video, Choose file and Voice. Voice opens a WAV recorder without starting automatically. Build 72 supports up to three allowed files in one message, with size/progress, preview and removal before sending. File types and limits come from the server.
-5. Top Voice mode is separate from file recording. Opening it does not connect. Tap Connect/microphone to start; Mute stops microphone input; End voice stops the session. Calls, backgrounding and audio interruptions stop voice without automatic reconnection.
-6. History supports search, deletion and unread status. Assistant badges appear on AI; Chat totals the four messaging channels. Options include reporting and AI privacy.
+Use the existing review credentials in App Store Connect. Sign-in provisions the assigned calling line and CRM. There is no native consumer signup or purchase flow.
 
-MESSAGING
-Chats offer Templates, media preview/export and message actions. SMS/Team support multiple files. Build 72 sends Social/Live files separately in order, subject to provider limits. Notifications open the matching chat; open chats refresh incoming replies.
+Chat contains SMS, Team Chat, Social and Live Chat. Settings > Conversations controls visible tabs; account permissions still apply. Social requires a connected provider and an open reply window. Live Chat requires a connected website.
 
-BUILD 72 CHANGES
-Includes build 70's connection recovery and independent composing, plus multiple attachments, complete draft recovery, and clearer setup explanations. Successful history refresh clears temporary connection notices; uncertain sends are reconciled without automatic replay. Public description includes the AI integrations and access requirements.
+Contacts, Calls and CRM use the main footer. CRM includes Leads, Clients, Calendar and Tasks, subject to account permissions. Chats retain templates, media preview/export and message actions.
 
-Corresponding source: https://github.com/8189164300/Linphone_mango9/tree/ios-6.2.24-build-72
+The sign-in gear opens optional manual SIP setup. Its settings code is the displayed app version, 6.2.24. This opens a form for SIP credentials supplied by an administrator and does not grant CRM permissions. Normal sign-in does not require this setup.

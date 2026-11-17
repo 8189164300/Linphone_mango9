@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Mango9. SPDX-License-Identifier: GPL-3.0-or-later
 import SwiftUI
+import CryptoKit
 
 /// CRM has no shared read receipt. Keep only record IDs, scoped to this phone's account.
 struct Mango9CRMNewRecords: Codable, Equatable {
@@ -25,7 +26,7 @@ struct Mango9CRMNewRecords: Codable, Equatable {
     func count(_ kind: Mango9CRMRecordKind) -> Int { records[key(kind)]?.unread.count ?? 0 }
     func isNew(_ id: Int, kind: Mango9CRMRecordKind) -> Bool { records[key(kind)]?.unread.contains(id) == true }
     private func bind(_ session: Mango9Session?) {
-        let next = session.map(Mango9SupervisorPersistence.key) ?? ""
+        let next = session.map { SHA256.hash(data: Data([$0.crmApiBaseUrl, $0.userId, $0.sipIdentity ?? ""].joined(separator: "|").utf8)).map { String(format: "%02x", $0) }.joined() } ?? ""
         if account != next {
             account = next
             records = next.isEmpty ? [:] : defaults.data(forKey: "mango9.crm.new." + next).flatMap { try? JSONDecoder().decode([String: Mango9CRMNewRecords].self, from: $0) } ?? [:]

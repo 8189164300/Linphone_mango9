@@ -161,7 +161,7 @@ struct LoginFragment: View {
 				Section {
 					Text("Manual SIP setup")
 						.font(.headline)
-					Text("Configure a SIP calling account supplied by your administrator. This optional setup is separate from Mango9 sign-in and does not unlock CRM or Assistant permissions.")
+					Text("Configure a SIP calling account supplied by your administrator. This optional setup is separate from Mango9 sign-in and does not unlock CRM permissions.")
 						.font(.subheadline).foregroundStyle(.secondary)
 				}
 				SecureField("Settings password", text: $settingsPassword)
@@ -1264,7 +1264,6 @@ enum Mango9SessionStore {
 		// A checked secure tombstone survives a crash and defeats late renewal callbacks.
 		try write(nil, account: identity, persist: false)
 		setVolatileSession(nil, for: identity)
-		Mango9SupervisorLocalStore.remove(for: identity)
 		var identities = storedIdentities
 		identities.remove(identity)
 		storeIdentities(identities)

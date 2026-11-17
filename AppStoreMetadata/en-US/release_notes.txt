@@ -1,6 +1,1 @@
-• Attach up to three supported files to one Assistant message.
-• Select several supported attachments in Social and Live Chat and send them in order.
-• Improved recovery of unsent attachment drafts and interrupted Assistant chats.
-• Keep composing while an earlier Assistant reply is pending.
-• Updated AI sharing notice for connected ChatGPT (Codex) and Claude integrations, with renewed consent.
-• Consistent Assistant AI naming and clearer connection setup explanations.
+We have discontinued the AI assistant and removed its chat and voice features. Business calling, messaging and CRM functionality remain available.

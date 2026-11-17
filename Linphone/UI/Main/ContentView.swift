@@ -84,7 +84,6 @@ struct ContentView: View {
 	@State private var mango9ChatTarget: Mango9ChatTarget?
 	@State private var mango9SocialTarget: Mango9SocialPushTarget?
 	@State private var mango9LiveTarget: Mango9LivePushTarget?
-	@ObservedObject private var assistantPushInbox = Mango9AssistantPushInbox.shared
 	@ObservedObject private var messagePushInbox = Mango9MessagePushInbox.shared
 	@State private var mango9AppointmentTarget: Mango9AppointmentPushTarget?
 	@State private var crmNavigationID = UUID()
@@ -238,7 +237,6 @@ struct ContentView: View {
 				}
                 }
 				if !isShowCRMFragment && sharedMainViewModel.indexView == 2 {
-					Mango9SupervisorLauncher().padding(.trailing, 10)
 				}
 
 				if !isShowCRMFragment && sharedMainViewModel.indexView == 0 {
@@ -2292,9 +2290,7 @@ struct ContentView: View {
 				let session = Mango9SessionStore.load(), target.matches(session) else { return }
 			mango9AppointmentTarget = target
 		}
-        .fullScreenCover(item: $assistantPushInbox.target) { target in
-            if let session = Mango9SessionStore.load(), target.matches(session) { Mango9SupervisorView(session: session, conversation: target.id) }
-        }
+
 		.onReceive(messagePushInbox.$pending) { request in
 			guard let request else { return }
 			guard let session = Mango9SessionStore.load(), request.route.matches(session) else {
@@ -2330,7 +2326,6 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in Task { await inboxUnread.refresh(); await crmUnread.refresh() } }
         .onReceive(NotificationCenter.default.publisher(for: .mango9LeadDidChange)) { _ in Task { await crmUnread.refresh() } }
         .onReceive(NotificationCenter.default.publisher(for: .mango9ClientDidChange)) { _ in Task { await crmUnread.refresh() } }
-        .onReceive(NotificationCenter.default.publisher(for: .mango9AssistantReply)) { _ in Task { await inboxUnread.refresh() } }
         .onReceive(NotificationCenter.default.publisher(for: .mango9SocialInboxDidChange)) { _ in Task { await inboxUnread.refresh() } }
         .onReceive(NotificationCenter.default.publisher(for: .mango9LiveInboxDidChange)) { _ in Task { await inboxUnread.refresh() } }
         .onChange(of: scenePhase) { phase in if phase == .active { Task { await inboxUnread.refresh(); await crmUnread.refresh() } } }

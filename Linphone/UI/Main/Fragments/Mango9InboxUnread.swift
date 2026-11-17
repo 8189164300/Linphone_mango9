@@ -1,91 +1,5 @@
 // Copyright (c) 2026 Mango9. SPDX-License-Identifier: GPL-3.0-or-later
-import Foundation
-import Combine
-import UIKit
-
-/// Local drafts and confirmed deletions are isolated by login identity.
-struct Mango9AssistantDelivery: Codable {
-    let command: Mango9SupervisorCommand
-    var failed: Bool = false
-    let createdAt: Date
-}
-struct Mango9AssistantState: Codable {
-    var deliveries: [Mango9AssistantDelivery]? = nil
-    var drafts: [String: String] = [:]
-    var deleted: [String] = []
-    static func location(_ account: String) throws -> URL {
-        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("AssistantState", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
-        var excluded = root; var values = URLResourceValues(); values.isExcludedFromBackup = true; try excluded.setResourceValues(values)
-        return root.appendingPathComponent(account + ".json")
-    }
-    static func read(_ account: String) throws -> Self {
-        let file = try location(account)
-        guard FileManager.default.fileExists(atPath: file.path) else { return .init() }
-        let state = try JSONDecoder().decode(Self.self, from: Data(contentsOf: file))
-        guard (state.deliveries?.count ?? 0) <= 100,
-              (state.deliveries ?? []).allSatisfy({ UUID(uuidString: $0.command.conversationID) != nil && UUID(uuidString: $0.command.requestID) != nil && UUID(uuidString: $0.command.messageID) != nil && Mango9SupervisorCommand.valid($0.command.text) }),
-              state.drafts.count <= 10, state.deleted.count <= 256,
-              state.drafts.allSatisfy({ UUID(uuidString: $0.key) != nil && $0.value.utf8.count <= 32_000 }),
-              state.deleted.allSatisfy({ UUID(uuidString: $0) != nil }) else { throw Mango9AssistantMediaContract.invalid() }
-        return state
-    }
-    func write(_ account: String) throws {
-        try JSONEncoder().encode(self).write(to: Self.location(account), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-    }
-    static func unique(_ rows: [Mango9SupervisorConversation], excluding: Set<String>) -> [Mango9SupervisorConversation] {
-        var unique: [String: Mango9SupervisorConversation] = [:]
-        for row in rows where !excluding.contains(row.id.lowercased()) {
-            if let previous = unique[row.id], (previous.updatedAt ?? .distantPast) > (row.updatedAt ?? .distantPast) { continue }
-            unique[row.id] = row
-        }
-        return unique.values.sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
-    }
-}
-
-struct Mango9AssistantUnread {
-    let counts: [String: Int]
-    let through: String
-    init?(_ raw: [String: Any]) {
-        guard let counts = raw["conversations"] as? [String: Int], let unread = raw["unread"] as? Int,
-              let through = raw["readThrough"] as? String, !through.isEmpty, through.allSatisfy({ $0.isASCII && $0.isNumber }),
-              counts.count <= 10000, counts.allSatisfy({ UUID(uuidString: $0.key) != nil && $0.value > 0 && $0.value <= 1_000_000 }),
-              counts.values.reduce(0, +) == unread else { return nil }
-        var normalized: [String: Int] = [:]
-        for (id, count) in counts { guard normalized[id.lowercased()] == nil else { return nil }; normalized[id.lowercased()] = count }
-        self.counts = normalized; self.through = through
-    }
-}
-
-struct Mango9AssistantStateStore {
-    let read: () throws -> Mango9AssistantState
-    let write: (Mango9AssistantState) throws -> Void
-    static func device(_ account: String) -> Self { .init(read: { try Mango9AssistantState.read(account) }, write: { try $0.write(account) }) }
-}
-
-struct Mango9AssistantPushTarget: Identifiable, Equatable {
-    let id: String
-    let identity: String
-    let crmID: String
-    let recipient: String
-    init?(userInfo: [AnyHashable: Any]) {
-        let data = Mango9MessagePushRoute.payload(userInfo)
-        guard data["event"] as? String == "supervisor.reply",
-              let id = (data["conversation_id"] ?? data["conversationId"]) as? String, UUID(uuidString: id) != nil,
-              let crm = data["crm_id"] as? String, !crm.isEmpty,
-              let identity = Mango9SessionStore.normalizedIdentity(data["sip_identity"] as? String) else { return nil }
-        let raw = data["recipient_user_id"] ?? data["recipientUserId"]
-        let recipient = (raw as? String) ?? (raw as? NSNumber)?.stringValue ?? ""
-        guard let numeric = Int(recipient), numeric > 0, String(numeric) == recipient else { return nil }
-        self.id = id.lowercased(); self.identity = identity; crmID = crm; self.recipient = recipient
-    }
-    func matches(_ session: Mango9Session) -> Bool { session.crmId == crmID && session.userId == recipient && Mango9SessionStore.normalizedIdentity(session.sipIdentity) == identity }
-}
-@MainActor final class Mango9AssistantPushInbox: ObservableObject {
-    static let shared = Mango9AssistantPushInbox()
-    @Published var target: Mango9AssistantPushTarget?
-}
-extension Notification.Name { static let mango9AssistantReply = Notification.Name("mango9AssistantReply") }
+import SwiftUI
 
 /// Acknowledged content stays read when an older list request finishes later.
 /// A newer sequence/timestamp is never cleared by an earlier receipt.
@@ -120,10 +34,7 @@ struct Mango9InboxReadLedger {
         let tabs = Mango9ChatTabPreferences.shared
         return Mango9InboxCountPolicy.total(["social": count("social"), "live": count("live")], enabled: Set( (tabs.social ? ["social"] : []) + (tabs.live ? ["live"] : [])))
     }
-    func assistant(_ counts: [String: Int], session: Mango9Session) {
-        guard Mango9SessionStore.isActive(session) else { return }; bind(session)
-        revision += 1; channels["assistant"] = Set(counts.keys); syncBadge()
-    }
+
     func socialUnread(_ row: Mango9SocialThread, session: Mango9Session) -> Bool {
         guard scope == Mango9ReactionTarget.accountKey(session), login == session.loginGeneration else { return row.unread }
         return reads.unread(row.unread, id: row.id, channel: "social", version: row.readThrough.map(Double.init))
@@ -146,7 +57,7 @@ struct Mango9InboxReadLedger {
     private func syncBadge() {
         guard Mango9SessionStore.load() != nil else { return }
         let tabs = Mango9ChatTabPreferences.shared
-        UIApplication.shared.applicationIconBadgeNumber = Mango9ChatStore.shared.smsUnreadCount + (tabs.team ? Mango9ChatStore.shared.teamUnreadCount : 0) + externalTotal + count("assistant")
+        UIApplication.shared.applicationIconBadgeNumber = Mango9ChatStore.shared.smsUnreadCount + (tabs.team ? Mango9ChatStore.shared.teamUnreadCount : 0) + externalTotal
     }
     func refresh() async {
         guard let session = Mango9SessionStore.load() else { scope = ""; revision += 1; reads = .init(); channels = [:]; return }
@@ -157,7 +68,7 @@ struct Mango9InboxReadLedger {
         repeat {
             again = false; let version = revision, account = scope
             let preferences = Mango9ChatTabPreferences.shared
-            for channel in ["social", "live", "assistant"] {
+            for channel in ["social", "live"] {
                 guard !Task.isCancelled, Mango9SessionStore.isActive(session), scope == account else { return }
                 if (channel == "social" && !preferences.social) || (channel == "live" && !preferences.live) { channels[channel] = []; continue }
                 do {
@@ -166,7 +77,7 @@ struct Mango9InboxReadLedger {
                     if version == revision { channels[channel] = ids } else { again = true }
                 } catch {
                     if Task.isCancelled { return }
-                    var status = (error as? Mango9LiveChatFailure)?.status ?? (error as? Mango9SupervisorFailure)?.status
+                    var status = (error as? Mango9LiveChatFailure)?.status
                     if case Mango9MessagingError.rejected(let code, _) = error { status = code }
                     if version == revision, [401,403,404].contains(status ?? 0) { channels[channel] = [] }
                 }
@@ -175,12 +86,7 @@ struct Mango9InboxReadLedger {
         } while again && !Task.isCancelled && Mango9SessionStore.isActive(session)
     }
     private func fetch(_ channel: String, session: Mango9Session) async throws -> Set<String> {
-        if channel == "assistant" {
-            let api = Mango9SupervisorAPI(session: session); _ = try await api.authorize()
-            guard let status = Mango9AssistantUnread(try await api.request("notifications", body: ["action": "status"])) else { throw Mango9MessagingError.invalidResponse }
-            let deleted = (try? Mango9AssistantState.read(Mango9SupervisorPersistence.key(session)).deleted) ?? []
-            return Set(status.counts.keys).subtracting(deleted)
-        }
+
         var before: String?, beforeID: String?, visited = Set<String>(), found = Set<String>(), pages = 0
         repeat {
             try Task.checkCancellation(); pages += 1; guard pages <= 100 else { throw Mango9MessagingError.invalidResponse }
@@ -211,7 +117,7 @@ struct Mango9InboxReadLedger {
             let batch = Array(rows[start..<min(start + 200, rows.count)])
             let raw = try await Mango9LiveChatAPI.shared.request("conversation-visibility", session: session,
                 body: ["conversationIds": batch, "hide": false])
-            let receipt = try Mango9AssistantMediaContract.decode(raw, as: Mango9PersonalConversationVisibility.Receipt.self)
+            let receipt = try JSONDecoder().decode(Mango9PersonalConversationVisibility.Receipt.self, from: JSONSerialization.data(withJSONObject: raw))
             guard receipt.scope == "user", receipt.channel == "livechat", receipt.state == "succeeded", Set(receipt.conversationIds) == Set(batch), Set(receipt.hiddenConversationIds).isSubset(of: Set(batch)) else { throw Mango9MessagingError.invalidResponse }
             found.subtract(receipt.hiddenConversationIds)
         }
