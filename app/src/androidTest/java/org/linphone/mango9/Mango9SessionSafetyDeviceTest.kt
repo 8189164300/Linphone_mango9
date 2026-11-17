@@ -208,6 +208,7 @@ class Mango9SessionSafetyDeviceTest {
             assertEquals(saved.session, store.load())
         } finally { store.remove(fixture.sipIdentity!!); context.deleteSharedPreferences(name) }
     }
+
     @Test fun backgroundAccountReadDoesNotHideActiveAccountStorageFailure() {
         val name = "session-read-fixture-${UUID.randomUUID()}"
         val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
@@ -236,17 +237,23 @@ class Mango9SessionSafetyDeviceTest {
         var failNext = false
         val wrapped = Proxy.newProxyInstance(SharedPreferences::class.java.classLoader, arrayOf(SharedPreferences::class.java)) { _, method, args ->
             val value = method.invoke(prefs, *(args ?: emptyArray()))
-            if (method.name != "edit") value else {
+            if (method.name != "edit") {
+                value
+            } else {
                 val editor = value as SharedPreferences.Editor
                 Proxy.newProxyInstance(SharedPreferences.Editor::class.java.classLoader, arrayOf(SharedPreferences.Editor::class.java)) { proxy, edit, values ->
                     val result = edit.invoke(editor, *(values ?: emptyArray()))
-                    if (edit.name == "commit" && failNext) { failNext = false; false }
-                    else if (result is SharedPreferences.Editor) proxy else result
+                    if (edit.name == "commit" && failNext) { failNext = false; false } else if (result is SharedPreferences.Editor) {
+                        proxy
+                    } else {
+                        result
+                    }
                 }
             }
         } as SharedPreferences
         val isolated = object : android.content.ContextWrapper(context) {
             override fun getApplicationContext(): Context = this
+
             override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
                 if (name == Mango9SessionStore.METADATA_FILE) wrapped else super.getSharedPreferences(name, mode)
         }
@@ -255,9 +262,12 @@ class Mango9SessionSafetyDeviceTest {
             store.save(original, makeActive = true)
             val old = store.captureLogin(original.sipIdentity!!)!!
             failNext = true
-            assertEquals(Mango9ApiException.SecureStorage, runCatching {
+            assertEquals(
+                Mango9ApiException.SecureStorage,
+                runCatching {
                 store.save(original.copy(accessToken = "fresh-access", refreshToken = "fresh-refresh"), makeActive = true)
-            }.exceptionOrNull())
+            }.exceptionOrNull()
+            )
             assertNull(store.currentLogin(old))
             assertFalse(store.replaceLoginTokens(old, old.session, old.session.copy(accessToken = "stale-response")))
             assertEquals("fresh-access", store.load(original.sipIdentity)?.accessToken)

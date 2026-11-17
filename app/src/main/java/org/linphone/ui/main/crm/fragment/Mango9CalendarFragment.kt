@@ -316,12 +316,20 @@ class Mango9CalendarFragment : GenericMainFragment() {
         chromeHeader.viewModel = chromeModel; chromeFooter.viewModel = chromeModel
         chromeModel.title.value = "CRM"; chromeModel.crmSelected.value = true
         chromeHeader.searchToggle.setOnClickListener { search.requestFocus() }
-        chromeModel.openDrawerMenuEvent.observe(viewLifecycleOwner) { it.consume { (requireActivity() as org.linphone.ui.main.MainActivity).toggleDrawerMenu() } }
+        chromeModel.openDrawerMenuEvent.observe(viewLifecycleOwner) {
+            it.consume { (requireActivity() as org.linphone.ui.main.MainActivity).toggleDrawerMenu() }
+        }
         chromeModel.navigateToCrmEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.mango9CrmFragment) } }
-        chromeModel.navigateToContactsEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.contactsListFragment) } }
+        chromeModel.navigateToContactsEvent.observe(viewLifecycleOwner) {
+            it.consume { selectAppTab(R.id.contactsListFragment) }
+        }
         chromeModel.navigateToHistoryEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.historyListFragment) } }
-        chromeModel.navigateToConversationsEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.conversationsListFragment) } }
-        chromeModel.navigateToMeetingsEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.meetingsListFragment) } }
+        chromeModel.navigateToConversationsEvent.observe(viewLifecycleOwner) {
+            it.consume { selectAppTab(R.id.conversationsListFragment) }
+        }
+        chromeModel.navigateToMeetingsEvent.observe(viewLifecycleOwner) {
+            it.consume { selectAppTab(R.id.meetingsListFragment) }
+        }
         model = ViewModelProvider(this)[Mango9CalendarViewModel::class.java]
         tasksModel = ViewModelProvider(this)[Mango9TasksViewModel::class.java]
         activityKind = savedInstanceState?.getString("activity_kind")?.let {

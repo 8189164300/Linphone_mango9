@@ -53,12 +53,15 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     private var accountLabels = emptyList<String>()
     private var mode = Mango9MessagingTab.Sms
     private lateinit var liveInbox: Mango9LiveInbox
+
     private fun visibleTabs() {
         val preferences = org.linphone.mango9.Mango9ChatTabPreferences(requireContext())
         listOf("team" to binding.teamTab, "social" to binding.socialTab, "live" to binding.liveTab).forEach { (key, button) ->
             button.visibility = if (preferences.visible(key)) View.VISIBLE else View.GONE
         }
-        if (mode != Mango9MessagingTab.Sms && !preferences.visible(mode.name.lowercase())) { mode = Mango9MessagingTab.Sms; binding.tabs.check(R.id.sms_tab) }
+        if (mode != Mango9MessagingTab.Sms && !preferences.visible(mode.name.lowercase())) {
+            mode = Mango9MessagingTab.Sms; binding.tabs.check(R.id.sms_tab)
+        }
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -74,7 +77,9 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         binding.socialSearch.setText(social.current().search)
         binding.socialSearch.doAfterTextChanged { social.search(it?.toString().orEmpty()) }
         binding.errorMessage.setOnClickListener { if (mode == Mango9MessagingTab.Social) social.inbox() }
-        liveInbox = Mango9LiveInbox(this, ViewModelProvider(this)[org.linphone.ui.main.crm.viewmodel.Mango9LiveChatViewModel::class.java]) { Mango9LiveChatFragment.open(this, it.id) }
+        liveInbox = Mango9LiveInbox(this, ViewModelProvider(this)[org.linphone.ui.main.crm.viewmodel.Mango9LiveChatViewModel::class.java]) {
+            Mango9LiveChatFragment.open(this, it.id)
+        }
         binding.mango9LiveHost.addView(liveInbox.view, android.widget.FrameLayout.LayoutParams(-1, -1))
         mode = when (savedInstanceState?.getString(ARG_INITIAL_TAB) ?: arguments?.getString(ARG_INITIAL_TAB)) {
             TYPE_TEAM -> Mango9MessagingTab.Team
@@ -166,7 +171,9 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         liveInbox.show(live); binding.mango9LiveHost.visibility = if (live) View.VISIBLE else View.GONE
         binding.swipeRefresh.visibility = if (live) View.GONE else View.VISIBLE
         binding.connectionStatus.visibility = if (live) View.GONE else View.VISIBLE
-        if (live) { binding.loading.visibility = View.GONE; binding.empty.visibility = View.GONE; binding.errorCard.visibility = View.GONE; binding.addGroup.visibility = View.INVISIBLE; return }
+        if (live) {
+            binding.loading.visibility = View.GONE; binding.empty.visibility = View.GONE; binding.errorCard.visibility = View.GONE; binding.addGroup.visibility = View.INVISIBLE; return
+        }
         if (mode == Mango9MessagingTab.Social) { renderSocial(); return }
         val teamItems = teamItems(state)
         val smsItems = smsItems(state)

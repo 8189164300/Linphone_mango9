@@ -359,7 +359,9 @@ class SettingsFragment : GenericMainFragment() {
             control.setOnCheckedChangeListener(null); control.isChecked = preferences.visible(key)
             control.setOnCheckedChangeListener { _, checked -> preferences.set(key, checked) }
         }
-        controls.mango9LiveSettings.setOnClickListener { findNavController().navigate(R.id.action_global_mango9LiveSettingsFragment) }
+        controls.mango9LiveSettings.setOnClickListener {
+            findNavController().navigate(R.id.action_global_mango9LiveSettingsFragment)
+        }
     }
 
     private fun setupMango9CallSettings() {

@@ -48,7 +48,9 @@ class CallLogModel
     val sipUri = address.asStringUriOnly()
     private val savedPresentation = if (callLog.dir == org.linphone.core.Call.Dir.Incoming) {
         org.linphone.mango9.Mango9CallHistoryPresentation.decode(callLog.refKey)?.takeIf { it.source != "sip" }
-    } else null
+    } else {
+        null
+    }
 
     val displayedAddress: String
 
@@ -120,8 +122,12 @@ class CallLogModel
             }
         }
         displayedAddress = savedPresentation?.let {
-            if (it.source == "withheld") it.name else org.linphone.mango9.Mango9CallerIdentity.externalPhoneNumber(it.handle)
+            if (it.source == "withheld") {
+                it.name
+            } else {
+                org.linphone.mango9.Mango9CallerIdentity.externalPhoneNumber(it.handle)
                 ?.let(org.linphone.mango9.Mango9CallerIdentity::formattedPhoneNumber) ?: it.handle
+            }
         } ?: if (corePreferences.onlyDisplaySipUriUsername) {
             address.username ?: ""
         } else {

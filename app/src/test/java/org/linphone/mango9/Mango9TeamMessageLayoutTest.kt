@@ -1,4 +1,4 @@
-/* Copyright (c) 2026 Mango9. SPDX-License-Identifier: GPL-3.0-or-later */
+// Copyright (c) 2026 Mango9. SPDX-License-Identifier: GPL-3.0-or-later
 package org.linphone.mango9
 
 import java.time.ZoneId

@@ -221,7 +221,12 @@ internal class Mango9SocialViewModel(
             if (more) previous.nextThread?.let { consumedCursors.add(it) } else consumedCursors.clear()
             state.value = current().copy(
                 accounts = accounts, account = account, accountWarning = warning,
-                threads = Mango9SocialRecency.overlay(owner, merged.filterNot { it.id in hidden }).map { Mango9InboxUnread.socialRow(it, owner) },
+                threads = Mango9SocialRecency.overlay(
+                    owner,
+                    merged.filterNot {
+                    it.id in hidden
+                }
+                ).map { Mango9InboxUnread.socialRow(it, owner) },
                 nextThread = page.next?.takeUnless { it in consumedCursors }, loading = false
             )
         } catch (e: Exception) { failure(owner, request, e) }

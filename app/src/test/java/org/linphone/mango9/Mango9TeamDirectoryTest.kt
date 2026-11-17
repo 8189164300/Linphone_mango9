@@ -18,9 +18,9 @@ class Mango9TeamDirectoryTest {
         assertFalse(system.canJoinGroups)
         assertFalse(legacy.canJoinGroups)
         assertFalse(inactive.canJoinGroups)
-        val room = Mango9ChatRoom("10", listOf(2,3,4,5), "", "", 0, false)
-        assertEquals(listOf(4,5), room.humanMemberIds(listOf(system, legacy, inactive)))
-        assertEquals(listOf(2,3,4,5), room.userIds)
+        val room = Mango9ChatRoom("10", listOf(2, 3, 4, 5), "", "", 0, false)
+        assertEquals(listOf(4, 5), room.humanMemberIds(listOf(system, legacy, inactive)))
+        assertEquals(listOf(2, 3, 4, 5), room.userIds)
         assertEquals("Notifications", system.name)
     }
 }

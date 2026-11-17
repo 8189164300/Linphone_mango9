@@ -35,14 +35,20 @@ import org.linphone.ui.main.crm.viewmodel.Mango9LiveChatViewModel
 class Mango9LiveChatEndToEndTest {
     private val instrument = InstrumentationRegistry.getInstrumentation()
     private val context = instrument.targetContext
+
     private fun all(view: View): Sequence<View> = sequence {
         yield(view); if (view is ViewGroup) for (i in 0 until view.childCount) yieldAll(all(view.getChildAt(i)))
     }
+
     private fun leaf(fragment: Fragment): Fragment = fragment.childFragmentManager.primaryNavigationFragment?.let(::leaf) ?: fragment
+
     private fun waitFor(check: () -> Boolean) {
         val start = SystemClock.elapsedRealtime()
-        while (!check()) { if (SystemClock.elapsedRealtime() - start > 30000) fail("Live Chat did not reach the expected state"); SystemClock.sleep(100) }
+        while (!check()) {
+            if (SystemClock.elapsedRealtime() - start > 30000) fail("Live Chat did not reach the expected state"); SystemClock.sleep(100)
+        }
     }
+
     @Test fun isolatedWebsiteReceivesNativeImagePdfVoiceAndMessageActions() {
         val id = InstrumentationRegistry.getArguments().getString("liveFixtureId")
         val siteId = InstrumentationRegistry.getArguments().getString("liveFixtureSiteId")
@@ -76,11 +82,17 @@ class Mango9LiveChatEndToEndTest {
             ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use { scenario ->
                 var model: Mango9LiveChatViewModel? = null
                 scenario.onActivity { activity ->
-                    activity.supportFragmentManager.fragments.filterIsInstance<NavHostFragment>().first().navController.navigate(R.id.action_global_mango9LiveChatFragment, Bundle().apply { putString("liveId", id); Mango9NavigationSession.bind(this, owner) })
+                    activity.supportFragmentManager.fragments.filterIsInstance<NavHostFragment>().first().navController.navigate(
+                        R.id.action_global_mango9LiveChatFragment,
+                        Bundle().apply {
+                        putString("liveId", id); Mango9NavigationSession.bind(this, owner)
+                    }
+                    )
                 }
                 waitFor {
                     scenario.onActivity { activity ->
-                        val f = leaf(activity.supportFragmentManager.fragments.filterIsInstance<NavHostFragment>().first())
+                        val f =
+                            leaf(activity.supportFragmentManager.fragments.filterIsInstance<NavHostFragment>().first())
                         if (f is Mango9LiveChatFragment) model = ViewModelProvider(f)[Mango9LiveChatViewModel::class.java]
                     }; model?.current()?.authorized == true
                 }
@@ -98,22 +110,33 @@ class Mango9LiveChatEndToEndTest {
                     }
                     waitFor { !vm.current().sending }
                     assertNull("$mime: ${vm.current().error}", vm.current().error); assertFalse(vm.current().pending)
-                    assertTrue("Expected $text ($mime); actual messages: " + vm.current().messages.map { it.text to it.files.map { f -> f.liveText("mime") } },
-                        vm.current().messages.any { it.text == text && it.files.any { f -> f.liveText("mime") == mime } })
+                    assertTrue(
+                        "Expected $text ($mime); actual messages: " + vm.current().messages.map {
+                            it.text to it.files.map { f -> f.liveText("mime") }
+                        },
+                        vm.current().messages.any { it.text == text && it.files.any { f -> f.liveText("mime") == mime } }
+                    )
                     val sent = vm.current().messages.first { it.text == text }
                     val media = Mango9LivePolicy.media(sent.files.first(), owner.session)
                     val downloaded = runBlocking { Mango9MediaCache.acquire(context, media, owner) }
-                    try { assertArrayEquals("The phone can retrieve the complete sent attachment", file.readBytes(), downloaded.file.readBytes()) }
-                    finally { downloaded.close() }
+                    try {
+                        assertArrayEquals("The phone can retrieve the complete sent attachment", file.readBytes(), downloaded.file.readBytes())
+                    } finally { downloaded.close() }
                     scenario.onActivity { activity ->
-                        val editor = all(activity.findViewById(android.R.id.content)).filterIsInstance<EditText>().single { it.hint == "Message" }
+                        val editor = all(activity.findViewById(android.R.id.content)).filterIsInstance<EditText>().single {
+                            it.hint == "Message"
+                        }
                         assertEquals("", editor.text.toString()); assertFalse(editor.hasFocus())
                     }
                 }
                 val latest = vm.current().messages.last()
                 scenario.onActivity { vm.react(latest, "👍") }
                 waitFor { !vm.current().reacting }
-                assertNull(vm.current().error); assertTrue(vm.current().messages.last().reactions.items.any { it.mine && it.emoji == "👍" })
+                assertNull(vm.current().error); assertTrue(
+                    vm.current().messages.last().reactions.items.any {
+                    it.mine && it.emoji == "👍"
+                }
+                )
                 val agent = vm.current().agents.firstOrNull()
                 assertNotNull("Disposable site must have an assignable owner", agent)
                 scenario.onActivity { vm.action("assign", JSONObject().put("actorId", agent!!.getInt("id"))) }
@@ -123,7 +146,9 @@ class Mango9LiveChatEndToEndTest {
                     scenario.onActivity { it.requestedOrientation = orientation }; SystemClock.sleep(1000)
                     var secure = false
                     scenario.onActivity { activity ->
-                        val editor = all(activity.findViewById(android.R.id.content)).filterIsInstance<EditText>().single { it.hint == "Message" }
+                        val editor = all(activity.findViewById(android.R.id.content)).filterIsInstance<EditText>().single {
+                            it.hint == "Message"
+                        }
                         val rect = android.graphics.Rect(); assertTrue(editor.getGlobalVisibleRect(rect)); assertEquals(editor.height, rect.height())
                         secure = activity.window.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_SECURE != 0
                         activity.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
@@ -131,15 +156,25 @@ class Mango9LiveChatEndToEndTest {
                     try {
                         SystemClock.sleep(150)
                         val output = File(context.getExternalFilesDir(null), "live-chat-verification").apply { mkdirs() }
-                        instrument.uiAutomation.takeScreenshot()?.let { shot -> File(output, "e2e-$name.png").outputStream().use { shot.compress(Bitmap.CompressFormat.PNG, 100, it) }; shot.recycle() }
-                    } finally { if (secure) scenario.onActivity { it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) } }
+                        instrument.uiAutomation.takeScreenshot()?.let { shot ->
+                            File(output, "e2e-$name.png").outputStream().use {
+                            shot.compress(Bitmap.CompressFormat.PNG, 100, it)
+                        }; shot.recycle()
+                        }
+                    } finally {
+                        if (secure) scenario.onActivity { it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) }
+                    }
                 }
-                scenario.onActivity { vm.action("visibility", JSONObject().put("messageIds", JSONArray(listOf(latest.id))).put("hidden", true)) }
+                scenario.onActivity {
+                    vm.action("visibility", JSONObject().put("messageIds", JSONArray(listOf(latest.id))).put("hidden", true))
+                }
                 waitFor { !vm.current().sending }
                 assertNull(vm.current().error)
                 val inbox = runBlocking { api.request(owner, "list", mapOf("siteId" to site.getString("id"))) }
                 assertFalse(inbox.getJSONArray("conversations").getJSONObject(0).getLong("last_message_id") == latest.id)
-                runBlocking { api.request(owner, "visibility", body = JSONObject().put("id", id).put("messageIds", JSONArray(listOf(latest.id))).put("hidden", false)) }
+                runBlocking {
+                    api.request(owner, "visibility", body = JSONObject().put("id", id).put("messageIds", JSONArray(listOf(latest.id))).put("hidden", false))
+                }
                 scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
             }
         } finally { root.deleteRecursively() }

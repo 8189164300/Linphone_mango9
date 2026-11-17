@@ -368,7 +368,9 @@ class AccountProfileViewModel
             // or let a stale profile overwrite a new login that reused the same SDK account.
             if (!::account.isInitialized || removalPending ||
                 core.accountList.none { it.nativePointer == account.nativePointer }
-            ) return@postOnCoreThread
+            ) {
+                return@postOnCoreThread
+            }
             val lease = accountLogin
             if (lease != null && mango9Sessions.currentLogin(lease) == null) return@postOnCoreThread
             if (lease == null && account.params.identityAddress?.asStringUriOnly()?.let(mango9Sessions::hasSession) == true) {

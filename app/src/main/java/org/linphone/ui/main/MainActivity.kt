@@ -756,14 +756,7 @@ class MainActivity : GenericActivity() {
                             Mango9ChatTarget(target.userId, target.name, target.roomId), lease,
                         )
                         is Mango9MessagePushTarget.Sms -> openMango9Sms(Mango9SmsTarget(target.phone, target.name), lease)
-                        is Mango9MessagePushTarget.Assistant -> {
-                            findNavController().navigate(
-                                R.id.action_global_mango9SupervisorFragment,
-                                Bundle().apply {
-                                Mango9NavigationSession.bind(this, lease); putString("assistantConversationId", target.conversationId)
-                            }
-                            )
-                        }
+
                         is Mango9MessagePushTarget.LiveChat -> {
                             val controller = findNavController()
                             if (!controller.popBackStack(R.id.conversationsListFragment, false)) {

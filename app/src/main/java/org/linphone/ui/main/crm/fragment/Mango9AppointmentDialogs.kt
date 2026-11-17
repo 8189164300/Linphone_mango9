@@ -148,13 +148,17 @@ internal class Mango9AppointmentDialogs(
         fun addControl(view: View) {
             val target = sectionBody ?: body
             if (sectionBody != null && target.childCount > 0) {
-                target.addView(View(context).apply {
+                target.addView(
+                    View(context).apply {
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                     setBackgroundColor(context.getColor(R.color.mango9_calendar_separator))
-                }, LinearLayout.LayoutParams(-1, dp(1)).apply { marginStart = dp(14); marginEnd = dp(14) })
+                },
+                    LinearLayout.LayoutParams(-1, dp(1)).apply { marginStart = dp(14); marginEnd = dp(14) }
+                )
             }
             target.addView(view, LinearLayout.LayoutParams(-1, -2))
         }
+
         val error = TextView(context).apply {
             tag = "calendar.error"
             setTextColor(context.getColor(R.color.mango9_calendar_error)); visibility = View.GONE; accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
@@ -356,8 +360,12 @@ internal class Mango9AppointmentDialogs(
             if (groupedEditor) {
                 textSize = 16f; minHeight = dp(52)
                 typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
-                setTextColor(ColorStateList(arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()),
-                    intArrayOf(context.getColor(R.color.mango9_calendar_ink), context.getColor(R.color.mango9_calendar_secondary))))
+                setTextColor(
+                    ColorStateList(
+                        arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()),
+                    intArrayOf(context.getColor(R.color.mango9_calendar_ink), context.getColor(R.color.mango9_calendar_secondary))
+                    )
+                )
                 gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
                 cornerRadius = 0; strokeWidth = 0; insetTop = 0; insetBottom = 0
                 backgroundTintList = ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)

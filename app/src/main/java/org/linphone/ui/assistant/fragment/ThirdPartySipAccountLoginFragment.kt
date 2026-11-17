@@ -179,8 +179,10 @@ class ThirdPartySipAccountLoginFragment : GenericFragment() {
     private fun goBack() {
         val navigation = findNavController()
         if (!navigation.popBackStack()) {
-            navigation.navigate(R.id.landingFragment, null,
-                androidx.navigation.NavOptions.Builder().setPopUpTo(R.id.assistant_nav_graph, false).build())
+            navigation.navigate(
+                R.id.landingFragment, null,
+                androidx.navigation.NavOptions.Builder().setPopUpTo(R.id.assistant_nav_graph, false).build()
+            )
         }
     }
 

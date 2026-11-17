@@ -46,8 +46,12 @@ class Mango9MediaPlaybackInstrumentedTest {
     @Test fun voiceMediaUsesLoudspeakerWithoutChangingCallMode() = withFixtures { valid, _ ->
         val audio = context.getSystemService(android.media.AudioManager::class.java)
         val mode = audio.mode
-        org.junit.Assume.assumeTrue(Mango9MediaPlaybackRoute.preferSpeaker(mode,
-            audio.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).map { it.type }))
+        org.junit.Assume.assumeTrue(
+            Mango9MediaPlaybackRoute.preferSpeaker(
+                mode,
+            audio.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).map { it.type }
+            )
+        )
         withPlayer { model, _ ->
             main { model.loadFile(valid.path); model.play() }
             await { (model.position.value ?: 0) > 0 }

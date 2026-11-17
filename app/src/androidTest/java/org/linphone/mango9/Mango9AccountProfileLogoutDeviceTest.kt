@@ -1,4 +1,4 @@
-/* Copyright (c) 2026 Mango9. SPDX-License-Identifier: GPL-3.0-or-later */
+// Copyright (c) 2026 Mango9. SPDX-License-Identifier: GPL-3.0-or-later
 package org.linphone.mango9
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -60,12 +60,18 @@ class Mango9AccountProfileLogoutDeviceTest {
                     model.deleteAccount()
                 }
                 onCore { core ->
-                    assertFalse("Logout cycle ${cycle + 1} must remove the account",
-                        core.accountList.any { it.params.identityAddress?.asStringUriOnly() == identity })
+                    assertFalse(
+                        "Logout cycle ${cycle + 1} must remove the account",
+                        core.accountList.any { it.params.identityAddress?.asStringUriOnly() == identity }
+                    )
                 }
             }
         } finally {
-            onCore { core -> core.accountList.filter { it.params.identityAddress?.asStringUriOnly() == identity }.forEach(core::removeAccount) }
+            onCore { core ->
+                core.accountList.filter {
+                it.params.identityAddress?.asStringUriOnly() == identity
+            }.forEach(core::removeAccount)
+            }
         }
     }
 
@@ -88,7 +94,11 @@ class Mango9AccountProfileLogoutDeviceTest {
                 assertEquals("Fixture", removed.params.identityAddress?.displayName)
             }
         } finally {
-            onCore { core -> core.accountList.filter { it.params.identityAddress?.asStringUriOnly() == identity }.forEach(core::removeAccount) }
+            onCore { core ->
+                core.accountList.filter {
+                it.params.identityAddress?.asStringUriOnly() == identity
+            }.forEach(core::removeAccount)
+            }
         }
     }
 }

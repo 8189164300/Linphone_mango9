@@ -28,7 +28,8 @@ class Mango9CrmWorkspaceInstrumentedTest {
             scenario.onActivity { activity ->
                 val binding = Mango9CrmFragmentBinding.inflate(activity.layoutInflater)
                 val rows = listOf(binding.leadsRow, binding.clientsRow, binding.calendarRow, binding.appointmentsRow)
-                val colors = listOf(R.color.mango9_crm_leads, R.color.mango9_crm_clients, R.color.mango9_crm_calendar, R.color.mango9_crm_activities)
+                val colors =
+                    listOf(R.color.mango9_crm_leads, R.color.mango9_crm_clients, R.color.mango9_crm_calendar, R.color.mango9_crm_activities)
                 val density = activity.resources.displayMetrics.density
                 val textSizes = mutableListOf<Float>()
                 for ((index, row) in rows.withIndex()) {
@@ -52,8 +53,10 @@ class Mango9CrmWorkspaceInstrumentedTest {
                 val parent = binding.calendarRow.parent as LinearLayout
                 assertEquals(parent.indexOfChild(binding.calendarRow) + 1, parent.indexOfChild(binding.appointmentsRow))
                 val gap = (12 * density).toInt()
-                val bitmap = android.graphics.Bitmap.createBitmap(rows.first().measuredWidth,
-                    rows.sumOf { it.measuredHeight } + gap * (rows.size - 1), android.graphics.Bitmap.Config.ARGB_8888)
+                val bitmap = android.graphics.Bitmap.createBitmap(
+                    rows.first().measuredWidth,
+                    rows.sumOf { it.measuredHeight } + gap * (rows.size - 1), android.graphics.Bitmap.Config.ARGB_8888
+                )
                 val canvas = android.graphics.Canvas(bitmap)
                 canvas.drawColor(activity.getColor(R.color.mango9_calendar_background))
                 for (row in rows) {

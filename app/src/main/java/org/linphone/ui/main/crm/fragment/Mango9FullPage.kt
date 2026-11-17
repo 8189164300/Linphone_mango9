@@ -38,6 +38,7 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
     }
     private val buttons = mutableMapOf<Int, Button>()
     private var pageHost: ViewGroup? = null
+
     fun setHost(host: ViewGroup) = apply { pageHost = host }
 
     private var shown: ((DialogInterface) -> Unit)? = null

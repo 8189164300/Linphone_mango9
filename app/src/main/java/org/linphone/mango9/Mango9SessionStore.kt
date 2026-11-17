@@ -287,7 +287,6 @@ class Mango9SessionStore internal constructor(context: Context, private val sche
                 putString(sessionKey(identity), tombstone())
             }
             val metadataFailure = runCatching { removeLocalState(identity) }.exceptionOrNull()
-            runCatching { Mango9SupervisorStore(appContext).clearDisplay(current) }
             contextVersion.value = contextVersion.value + 1
             runCatching { scheduleCleanup(appContext) }
             onRemoval(current)

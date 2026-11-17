@@ -50,7 +50,9 @@ internal class Mango9AudioMessageView(context: Context, private val cardStyle: B
     fun setInk(color: Int) {
         if (cardStyle) {
             name.setTextColor(ContextCompat.getColor(context, R.color.mango9_team_ink))
-            listOf(elapsed, duration, status).forEach { it.setTextColor(ContextCompat.getColor(context, R.color.mango9_team_secondary)) }
+            listOf(elapsed, duration, status).forEach {
+                it.setTextColor(ContextCompat.getColor(context, R.color.mango9_team_secondary))
+            }
             play.imageTintList = ColorStateList.valueOf(Color.WHITE)
             seek.progressTintList = ColorStateList.valueOf(ContextCompat.getColor(context, R.color.orange_main_500))
             seek.thumbTintList = ColorStateList.valueOf(ContextCompat.getColor(context, R.color.orange_main_500))
@@ -124,7 +126,9 @@ internal class Mango9AudioMessageView(context: Context, private val cardStyle: B
             }
             name.setPadding(0, 0, 0, 0); name.textSize = 15f
             seek.setPadding(dp(2), 0, dp(2), 0)
-            play.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(ContextCompat.getColor(context, R.color.orange_main_500)) }
+            play.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL; setColor(ContextCompat.getColor(context, R.color.orange_main_500))
+            }
             heading.addView(controls, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) })
             addView(heading, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
             addView(status, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
@@ -144,7 +148,9 @@ internal class Mango9AudioMessageView(context: Context, private val cardStyle: B
         clip = value; controller = owner
         name.text = if (cardStyle && (value.media.name.isBlank() || value.media.name.startsWith("mango9-voice-", true))) {
             context.getString(R.string.mango9_voice_message)
-        } else value.media.name.ifBlank { context.getString(R.string.mango9_audio_message) }
+        } else {
+            value.media.name.ifBlank { context.getString(R.string.mango9_audio_message) }
+        }
         render(Mango9AudioState())
         if (isAttachedToWindow) subscribe()
     }

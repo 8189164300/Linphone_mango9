@@ -107,13 +107,21 @@ class Mango9CrmFragment : GenericMainFragment() {
         binding.topBar.showExtraAction = true; binding.topBar.extraActionEnabled = true
         binding.topBar.extraActionContentDescription = getString(R.string.mango9_crm_refresh)
         binding.topBar.extraActionIcon = AppCompatResources.getDrawable(requireContext(), R.drawable.arrow_clockwise)
-        binding.topBar.extraActionClickListener = View.OnClickListener { viewModel.refresh(); org.linphone.mango9.Mango9CrmUnread.refreshSoon() }
-        navModel.openDrawerMenuEvent.observe(viewLifecycleOwner) { it.consume { dismissRecordDialogs(); (requireActivity() as org.linphone.ui.main.MainActivity).toggleDrawerMenu() } }
+        binding.topBar.extraActionClickListener = View.OnClickListener {
+            viewModel.refresh(); org.linphone.mango9.Mango9CrmUnread.refreshSoon()
+        }
+        navModel.openDrawerMenuEvent.observe(viewLifecycleOwner) {
+            it.consume { dismissRecordDialogs(); (requireActivity() as org.linphone.ui.main.MainActivity).toggleDrawerMenu() }
+        }
         navModel.navigateToContactsEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.contactsListFragment) } }
         navModel.navigateToHistoryEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.historyListFragment) } }
-        navModel.navigateToConversationsEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.conversationsListFragment) } }
+        navModel.navigateToConversationsEvent.observe(viewLifecycleOwner) {
+            it.consume { selectAppTab(R.id.conversationsListFragment) }
+        }
         navModel.navigateToMeetingsEvent.observe(viewLifecycleOwner) { it.consume { selectAppTab(R.id.meetingsListFragment) } }
-        navModel.navigateToCrmEvent.observe(viewLifecycleOwner) { it.consume { dismissRecordDialogs(); viewModel.selectDashboard() } }
+        navModel.navigateToCrmEvent.observe(viewLifecycleOwner) {
+            it.consume { dismissRecordDialogs(); viewModel.selectDashboard() }
+        }
         binding.topBar.searchToggle.setOnClickListener { viewModel.selectLeads(); binding.search.requestFocus() }
 
         adapter = Mango9CrmRecordAdapter(viewModel::openRecord) { record ->
@@ -677,7 +685,9 @@ class Mango9CrmFragment : GenericMainFragment() {
         dialog.setOnDismissListener {
             statusJob?.cancel()
             recordActionPopup?.dismiss(); recordActionPopup = null
-            if (recordDialog === dialog) { recordChildDialog?.dismiss(); recordChildDialog = null; recordDialog = null; if (view === originalView) renderMode() }
+            if (recordDialog === dialog) {
+                recordChildDialog?.dismiss(); recordChildDialog = null; recordDialog = null; if (view === originalView) renderMode()
+            }
         }
         dismissRecordDialogs()
         recordDialog = dialog

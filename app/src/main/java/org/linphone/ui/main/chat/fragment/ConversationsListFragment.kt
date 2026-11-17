@@ -108,6 +108,7 @@ class ConversationsListFragment : AbstractMainFragment() {
     private lateinit var liveInbox: org.linphone.ui.main.crm.fragment.Mango9LiveInbox
     private var rebuildingTabs = false
     private var normalizedMango9Inbox = false
+
     private fun normalizeMango9Inbox() {
         if (normalizedMango9Inbox || mango9Sessions.load() == null) return
         normalizedMango9Inbox = true
@@ -138,7 +139,8 @@ class ConversationsListFragment : AbstractMainFragment() {
                 id = R.id.crm; gravity = android.view.Gravity.CENTER
                 setOnClickListener { findNavController().navigate(R.id.action_global_mango9CrmFragment) }; bar.addView(this)
             }
-            val controls = listOf(binding.bottomNavBar.contacts, crm, binding.bottomNavBar.calls, binding.bottomNavBar.conversations)
+            val controls =
+                listOf(binding.bottomNavBar.contacts, crm, binding.bottomNavBar.calls, binding.bottomNavBar.conversations)
             for (i in 0 until bar.childCount) bar.getChildAt(i).let { if (it.id == View.NO_ID) it.id = View.generateViewId() }
             androidx.constraintlayout.widget.ConstraintSet().apply {
                 clone(bar)
@@ -150,14 +152,23 @@ class ConversationsListFragment : AbstractMainFragment() {
                     icon?.setBounds(0, 0, ui.dp(18), ui.dp(18)); control.setCompoundDrawables(null, icon, null, null)
                     control.compoundDrawablePadding = ui.dp(2); control.setPadding(ui.dp(6), ui.dp(4), ui.dp(6), ui.dp(4)); control.maxLines = 1; control.textSize = 12f
                 }
-                createHorizontalChain(0, androidx.constraintlayout.widget.ConstraintSet.LEFT, 0, androidx.constraintlayout.widget.ConstraintSet.RIGHT, controls.map { it.id }.toIntArray(), null, androidx.constraintlayout.widget.ConstraintSet.CHAIN_SPREAD)
+                createHorizontalChain(
+                    0, androidx.constraintlayout.widget.ConstraintSet.LEFT, 0, androidx.constraintlayout.widget.ConstraintSet.RIGHT,
+                    controls.map {
+                    it.id
+                }.toIntArray(),
+                    null, androidx.constraintlayout.widget.ConstraintSet.CHAIN_SPREAD
+                )
                 applyTo(bar)
             }
         }
     }
+
     private fun rebuildMango9Tabs() {
         val preferences = org.linphone.mango9.Mango9ChatTabPreferences(requireContext())
-        val visible = Mango9MessagingTab.entries.filter { it == Mango9MessagingTab.Sms || preferences.visible(it.name.lowercase()) }
+        val visible = Mango9MessagingTab.entries.filter {
+            it == Mango9MessagingTab.Sms || preferences.visible(it.name.lowercase())
+        }
         if (mango9Tab !in visible) mango9Tab = Mango9MessagingTab.Sms
         val tabs = binding.mango9MessagesTabs
         if ((0 until tabs.tabCount).map { tabs.getTabAt(it)?.tag } != visible) {
@@ -182,7 +193,12 @@ class ConversationsListFragment : AbstractMainFragment() {
                     setPadding(ui.dp(2), ui.dp(8), ui.dp(2), ui.dp(8))
                     addView(image, android.widget.LinearLayout.LayoutParams(ui.dp(15), ui.dp(15)).apply { marginEnd = ui.dp(4) })
                     addView(label)
-                    addView(android.view.View(requireContext()).apply { tag = "unread-dot"; background = ui.round(ui.accent, 3); visibility = View.INVISIBLE }, android.widget.LinearLayout.LayoutParams(ui.dp(5), ui.dp(5)).apply { marginStart = ui.dp(3) })
+                    addView(
+                        android.view.View(requireContext()).apply {
+                        tag = "unread-dot"; background = ui.round(ui.accent, 3); visibility = View.INVISIBLE
+                    },
+                        android.widget.LinearLayout.LayoutParams(ui.dp(5), ui.dp(5)).apply { marginStart = ui.dp(3) }
+                    )
                 }
                 tabs.addTab(tabs.newTab().setText(title).setContentDescription(title).setCustomView(content).setTag(tab), tab == mango9Tab)
             }
@@ -307,8 +323,10 @@ class ConversationsListFragment : AbstractMainFragment() {
         binding.mango9MessagesStatus.setOnClickListener {
             if (mango9Tab == Mango9MessagingTab.Social) social.inbox()
         }
-        liveInbox = org.linphone.ui.main.crm.fragment.Mango9LiveInbox(this,
-            ViewModelProvider(this)[org.linphone.ui.main.crm.viewmodel.Mango9LiveChatViewModel::class.java]) { item ->
+        liveInbox = org.linphone.ui.main.crm.fragment.Mango9LiveInbox(
+            this,
+            ViewModelProvider(this)[org.linphone.ui.main.crm.viewmodel.Mango9LiveChatViewModel::class.java]
+        ) { item ->
             org.linphone.ui.main.crm.fragment.Mango9LiveChatFragment.open(this, item.id)
         }
         binding.mango9LiveHost.addView(liveInbox.view, android.widget.FrameLayout.LayoutParams(-1, -1))
@@ -618,37 +636,11 @@ class ConversationsListFragment : AbstractMainFragment() {
             R.id.conversationsListFragment
         )
 
-        binding.topBar.showExtraAction = mango9Sessions.captureSession() != null
-        binding.topBar.extraActionEnabled = true
-        binding.topBar.extraActionContentDescription = "Open Assistant"
-        binding.topBar.extraActionIcon = ContextCompat.getDrawable(requireContext(), R.drawable.mango9_supervisor_ai)
-        binding.topBar.extraAction.imageTintList = null
-        binding.topBar.extraActionClickListener = View.OnClickListener {
-            org.linphone.ui.main.crm.fragment.Mango9SupervisorFragment.open(this)
-        }
+        binding.topBar.showExtraAction = false
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 Mango9InboxUnread.counts.collect { counts ->
                     Mango9MessagingTab.entries.forEach { updateTabBadge(it, counts[it.name.lowercase()] ?: 0) }
-                    val assistantUnread = (counts["assistant"] ?: 0) > 0
-                    binding.topBar.extraActionContentDescription = "Open Assistant" + if (assistantUnread) ", ${counts["assistant"]} unread chats" else ""
-                    val icon = ContextCompat.getDrawable(requireContext(), R.drawable.mango9_supervisor_ai)!!
-                    binding.topBar.extraActionIcon = if (assistantUnread) {
-                        val size = (18 * resources.displayMetrics.density).toInt()
-                        val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
-                        val canvas = android.graphics.Canvas(bitmap)
-                        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-                        paint.color = android.graphics.Color.WHITE; canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
-                        paint.color = android.graphics.Color.rgb(218, 48, 65); canvas.drawCircle(size / 2f, size / 2f, size / 2f - resources.displayMetrics.density, paint)
-                        paint.color = android.graphics.Color.WHITE; paint.textSize = 10 * resources.displayMetrics.density
-                        paint.typeface = android.graphics.Typeface.DEFAULT_BOLD; paint.textAlign = android.graphics.Paint.Align.CENTER
-                        val count = counts["assistant"] ?: 0
-                        canvas.drawText(if (count > 99) "99+" else count.toString(), size / 2f, size / 2f - (paint.ascent() + paint.descent()) / 2f, paint)
-                        val badge = android.graphics.drawable.BitmapDrawable(resources, bitmap)
-                        android.graphics.drawable.LayerDrawable(arrayOf(icon, badge)).apply {
-                            setLayerSize(1, size, size); setLayerGravity(1, android.view.Gravity.TOP or android.view.Gravity.END)
-                        }
-                    } else icon
                 }
             }
         }

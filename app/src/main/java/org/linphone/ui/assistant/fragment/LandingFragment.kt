@@ -52,8 +52,10 @@ class LandingFragment : GenericFragment() {
         binding.viewModel = viewModel
         val loginForm = binding.mango9LoginForm
         view.addOnLayoutChangeListener { _, left, _, right, _, _, _, _, _ ->
-            val width = minOf(right - left - (50 * resources.displayMetrics.density).toInt(),
-                (520 * resources.displayMetrics.density).toInt())
+            val width = minOf(
+                right - left - (50 * resources.displayMetrics.density).toInt(),
+                (520 * resources.displayMetrics.density).toInt()
+            )
             if (width > 0 && loginForm.layoutParams.width != width) {
                 loginForm.layoutParams = loginForm.layoutParams.apply { this.width = width }
             }
@@ -106,6 +108,7 @@ class LandingFragment : GenericFragment() {
             .setNegativeButton(android.R.string.cancel, null)
             .setPositiveButton(R.string.mango9_settings_unlock, null)
             .create()
+
         fun unlock() {
             if (field.text?.toString()?.trim() != BuildConfig.VERSION_NAME) {
                 input.error = getString(R.string.mango9_settings_password_error)
@@ -117,9 +120,13 @@ class LandingFragment : GenericFragment() {
                 findNavController().navigate(LandingFragmentDirections.actionLandingFragmentToThirdPartySipAccountLoginFragment())
             }
         }
-        dialog.setOnShowListener { dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener { unlock() } }
+        dialog.setOnShowListener {
+            dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener { unlock() }
+        }
         field.setOnEditorActionListener { _, action, _ ->
-            if (action == EditorInfo.IME_ACTION_GO) { unlock(); true } else false
+            if (action == EditorInfo.IME_ACTION_GO) { unlock(); true } else {
+                false
+            }
         }
         dialog.show()
     }

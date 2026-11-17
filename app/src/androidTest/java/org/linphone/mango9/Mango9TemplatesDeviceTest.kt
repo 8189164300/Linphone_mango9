@@ -35,7 +35,9 @@ import java.util.UUID
 class Mango9TemplatesDeviceTest {
     private val instrument = InstrumentationRegistry.getInstrumentation()
     private val context = instrument.targetContext
+
     private fun leaf(f: Fragment): Fragment = f.childFragmentManager.primaryNavigationFragment?.let(::leaf) ?: f
+
     private fun screen(block: (MainActivity, Fragment) -> Boolean): Boolean {
         var result = false
         instrument.runOnMainSync {
@@ -46,17 +48,29 @@ class Mango9TemplatesDeviceTest {
         }
         return result
     }
+
     private fun waitFor(check: () -> Boolean) {
         val end = SystemClock.elapsedRealtime() + 30000
-        while (!check()) { if (SystemClock.elapsedRealtime() > end) fail("Template phone check timed out"); SystemClock.sleep(100) }
+        while (!check()) {
+            if (SystemClock.elapsedRealtime() > end) fail("Template phone check timed out"); SystemClock.sleep(100)
+        }
     }
-    private fun views(v: View): List<View> = listOf(v) + if (v is ViewGroup) (0 until v.childCount).flatMap { views(v.getChildAt(it)) } else emptyList()
+
+    private fun views(v: View): List<View> = listOf(v) + if (v is ViewGroup) {
+        (0 until v.childCount).flatMap {
+        views(v.getChildAt(it))
+    }
+    } else {
+        emptyList()
+    }
+
     private fun click(v: View, label: String) {
         val text = views(v).filterIsInstance<TextView>().first { it.text.toString() == label }
         var target: View = text
         while (!target.isClickable) target = target.parent as View
         assertTrue(target.isEnabled); assertTrue(target.performClick())
     }
+
     private fun capture(name: String) {
         var secured = false
         screen { main, _ -> secured = main.window.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_SECURE != 0; main.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE); true }
@@ -65,8 +79,11 @@ class Mango9TemplatesDeviceTest {
             val image = requireNotNull(instrument.uiAutomation.takeScreenshot())
             File(context.cacheDir, "templates-$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
             image.recycle()
-        } finally { if (secured) screen { main, _ -> main.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE); true } }
+        } finally {
+            if (secured) screen { main, _ -> main.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE); true }
+        }
     }
+
     @Test fun savedTemplateEditAndInsertPreservesLiveChatDraft() {
         org.junit.Assume.assumeTrue("Requires an explicitly requested template phone check", InstrumentationRegistry.getArguments().getString("templateLiveCheck") == "1")
         ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java)).use {
@@ -74,23 +91,34 @@ class Mango9TemplatesDeviceTest {
         val lease = requireNotNull(Mango9SessionStore(context).captureSession())
         val api = Mango9TemplateApi(context)
         val title = "Phone template check " + UUID.randomUUID().toString().take(8)
-        val receipt = runBlocking { api.request(lease, method = "POST", body = JSONObject().put("requestId", UUID.randomUUID().toString()).put("values", JSONObject().put("title", title).put("content", "Template draft only 👋"))) }
+        val receipt =
+            runBlocking {
+                api.request(lease, method = "POST", body = JSONObject().put("requestId", UUID.randomUUID().toString()).put("values", JSONObject().put("title", title).put("content", "Template draft only 👋")))
+            }
         val id = receipt.getJSONObject("template").getLong("id")
         try {
-            val liveId = runBlocking { Mango9LiveChatApi(context).request(lease, "list") }.getJSONArray("conversations").getJSONObject(0).getString("id")
+            val liveId = runBlocking {
+                Mango9LiveChatApi(context).request(lease, "list")
+            }.getJSONArray("conversations").getJSONObject(0).getString("id")
             screen { main, _ ->
                 val args = android.os.Bundle().apply { Mango9NavigationSession.bind(this, lease); putString("liveId", liveId) }
                 (main.supportFragmentManager.findFragmentById(R.id.main_nav_container) as NavHostFragment).navController.navigate(R.id.mango9LiveChatFragment, args); true
             }
-            waitFor { screen { _, f -> f is Mango9LiveChatFragment && ViewModelProvider(f)[Mango9LiveChatViewModel::class.java].current().authorized } }
+            waitFor {
+                screen { _, f -> f is Mango9LiveChatFragment && ViewModelProvider(f)[Mango9LiveChatViewModel::class.java].current().authorized }
+            }
             screen { _, f ->
                 val input = views(f.requireView()).filterIsInstance<EditText>().first(); input.setText("Existing draft\n"); input.setSelection(input.length())
                 assertTrue(views(f.requireView()).any { it.contentDescription == "Add to message" })
                 Mango9TemplatesFragment.open(f, lease, input); true
             }
-            waitFor { screen { _, f -> f is Mango9TemplatesFragment && ViewModelProvider(f)[Mango9TemplatesViewModel::class.java].loaded } }
+            waitFor {
+                screen { _, f -> f is Mango9TemplatesFragment && ViewModelProvider(f)[Mango9TemplatesViewModel::class.java].loaded }
+            }
             screen { _, f -> click(f.requireView(), title); true }
-            waitFor { screen { _, f -> f is Mango9TemplatesFragment && ViewModelProvider(f)[Mango9TemplatesViewModel::class.java].selected != null } }
+            waitFor {
+                screen { _, f -> f is Mango9TemplatesFragment && ViewModelProvider(f)[Mango9TemplatesViewModel::class.java].selected != null }
+            }
             screen { _, f -> click(f.requireView(), "Edit"); true }
             screen { _, f ->
                 val fields = views(f.requireView()).filterIsInstance<EditText>(); fields.last().setText("Edited template 👋")
@@ -98,25 +126,45 @@ class Mango9TemplatesDeviceTest {
             }
             capture("editor-portrait")
             screen { main, _ -> main.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE; true }
-            waitFor { screen { _, f -> f is Mango9TemplatesFragment && f.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE } }
+            waitFor {
+                screen { _, f -> f is Mango9TemplatesFragment && f.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE }
+            }
             screen { _, f ->
                 val field = views(f.requireView()).filterIsInstance<EditText>().last(); field.requestFocus()
                 (context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(field, 0); true
             }
             SystemClock.sleep(800); capture("editor-landscape")
             screen { main, _ -> main.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT; true }
-            waitFor { screen { _, f -> f is Mango9TemplatesFragment && f.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT } }
-            screen { _, f -> click(f.requireView(), "Save"); true
+            waitFor {
+                screen { _, f -> f is Mango9TemplatesFragment && f.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT }
             }
-            waitFor { screen { _, f -> f is Mango9TemplatesFragment && ViewModelProvider(f)[Mango9TemplatesViewModel::class.java].let { it.mode == Mango9TemplatesViewModel.Mode.DETAIL && !it.busy } } }
-            assertEquals("Edited template 👋", runBlocking { api.request(lease, id.toString()) }.getJSONObject("template").getString("content"))
+            screen { _, f ->
+                click(f.requireView(), "Save"); true
+            }
+            waitFor {
+                screen { _, f ->
+                    f is Mango9TemplatesFragment && ViewModelProvider(f)[Mango9TemplatesViewModel::class.java].let {
+                    it.mode == Mango9TemplatesViewModel.Mode.DETAIL && !it.busy
+                }
+                }
+            }
+            assertEquals(
+                "Edited template 👋",
+                runBlocking {
+                api.request(lease, id.toString())
+            }.getJSONObject("template").getString("content")
+            )
             screen { _, f -> click(f.requireView(), "Insert"); true }
-            waitFor { screen { _, f -> f is Mango9LiveChatFragment && views(f.requireView()).filterIsInstance<EditText>().firstOrNull()?.text.toString() == "Existing draft\nEdited template 👋" } }
+            waitFor {
+                screen { _, f -> f is Mango9LiveChatFragment && views(f.requireView()).filterIsInstance<EditText>().firstOrNull()?.text.toString() == "Existing draft\nEdited template 👋" }
+            }
             screen { _, f -> views(f.requireView()).filterIsInstance<EditText>().first().setText(""); true }
             assertEquals(1, Mango9TemplatesFragment.characters("👨‍👩‍👧‍👦"))
         } finally {
             val fresh = runBlocking { api.request(lease, id.toString()) }.getJSONObject("template")
-            runBlocking { api.request(lease, id.toString(), "DELETE", body = JSONObject().put("requestId", UUID.randomUUID().toString()).put("revision", fresh.getString("revision"))) }
+            runBlocking {
+                api.request(lease, id.toString(), "DELETE", body = JSONObject().put("requestId", UUID.randomUUID().toString()).put("revision", fresh.getString("revision")))
+            }
         }
         }
     }

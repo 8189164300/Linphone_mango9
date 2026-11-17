@@ -239,7 +239,11 @@ class Mango9ChatStore private constructor(context: Context) {
     fun teamUnreadCount(snapshot: Mango9ChatState = state.value): Int = snapshot.rooms
         .filterNot { moderation.isConversationDeleted(it.id) }
         .filter { room ->
-            !room.isDirect || room.userIds.firstOrNull()?.let { id -> snapshot.users.any { it.id == id && !it.isSystem } && !moderation.isBlocked(id) } == true
+            !room.isDirect || room.userIds.firstOrNull()?.let { id ->
+                snapshot.users.any {
+                it.id == id && !it.isSystem
+            } && !moderation.isBlocked(id)
+            } == true
         }
         .count { it.unread > 0 }
 

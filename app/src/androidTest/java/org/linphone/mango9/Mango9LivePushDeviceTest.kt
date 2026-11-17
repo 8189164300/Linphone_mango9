@@ -60,16 +60,20 @@ class Mango9LivePushDeviceTest {
         val title = "Mango9 Live Chat delivery check"
         android.util.Log.i("Mango9LivePushCheck", "Ready for the remote notification")
         waitFor { manager.activeNotifications.any { it.notification.extras.getString(Notification.EXTRA_TITLE) == title } }
-        val notification = manager.activeNotifications.last { it.notification.extras.getString(Notification.EXTRA_TITLE) == title }
+        val notification = manager.activeNotifications.last {
+            it.notification.extras.getString(Notification.EXTRA_TITLE) == title
+        }
         try {
             notification.notification.contentIntent.send()
-            waitFor { activity { main ->
+            waitFor {
+                activity { main ->
                 val host = main.supportFragmentManager.findFragmentById(R.id.main_nav_container) as? NavHostFragment
                 val screen = host?.let(::leaf)
                 if (screen !is Mango9LiveChatFragment) return@activity false
                 val state = ViewModelProvider(screen)[Mango9LiveChatViewModel::class.java].current()
                 state.authorized && state.error == null && state.conversation?.optString("id") == id
-            } }
+            }
+            }
         } finally { manager.cancel(notification.tag, notification.id) }
     }
 

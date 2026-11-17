@@ -58,8 +58,10 @@ class AssistantActivity : GenericActivity() {
             val navController = binding.assistantNavContainer.findNavController()
             if (navController.currentDestination?.id != R.id.landingFragment) {
                 if (!navController.popBackStack()) {
-                    navController.navigate(R.id.landingFragment, null,
-                        androidx.navigation.NavOptions.Builder().setPopUpTo(R.id.assistant_nav_graph, false).build())
+                    navController.navigate(
+                        R.id.landingFragment, null,
+                        androidx.navigation.NavOptions.Builder().setPopUpTo(R.id.assistant_nav_graph, false).build()
+                    )
                 }
             }
         }
@@ -106,7 +108,9 @@ class AssistantActivity : GenericActivity() {
                 val signingIn = destination.id == R.id.landingFragment
                 binding.assistantNavContainer.background = if (signingIn) {
                     ColorDrawable(ContextCompat.getColor(this, R.color.mango9_login_background))
-                } else originalBackground
+                } else {
+                    originalBackground
+                }
                 bars.isAppearanceLightStatusBars = !signingIn && originalStatusAppearance
                 bars.isAppearanceLightNavigationBars = !signingIn && originalNavigationAppearance
             }

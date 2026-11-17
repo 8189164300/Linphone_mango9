@@ -28,33 +28,52 @@ import org.linphone.ui.main.MainActivity
 class Mango9LiveChatDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
+
     private fun descendants(view: View): Sequence<View> = sequence {
         yield(view)
         if (view is ViewGroup) for (i in 0 until view.childCount) yieldAll(descendants(view.getChildAt(i)))
     }
+
     private fun leaf(fragment: Fragment): Fragment = fragment.childFragmentManager.primaryNavigationFragment?.let(::leaf) ?: fragment
+
     private fun waitFor(timeout: Long = 15000, check: () -> Boolean) {
         val start = SystemClock.elapsedRealtime()
-        while (!check()) { if (SystemClock.elapsedRealtime() - start > timeout) fail("Screen did not reach the expected state"); SystemClock.sleep(100) }
+        while (!check()) {
+            if (SystemClock.elapsedRealtime() - start > timeout) fail("Screen did not reach the expected state"); SystemClock.sleep(100)
+        }
     }
+
     private fun image(name: String, scenario: ActivityScenario<MainActivity>) {
         var secure = false
-        scenario.onActivity { secure = it.window.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_SECURE != 0; it.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) }
+        scenario.onActivity {
+            secure = it.window.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_SECURE != 0; it.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
         SystemClock.sleep(150)
         try {
         val output = File(context.getExternalFilesDir(null), "live-chat-verification").apply { mkdirs() }
-        instrumentation.uiAutomation.takeScreenshot()?.let { bitmap -> File(output, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle() }
-        } finally { if (secure) scenario.onActivity { it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) } }
+        instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+            File(output, "$name.png").outputStream().use {
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+        }; bitmap.recycle()
+        }
+        } finally {
+            if (secure) scenario.onActivity { it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) }
+        }
     }
+
     private fun keyboard(scenario: ActivityScenario<MainActivity>, name: String) {
         scenario.onActivity { activity ->
-            val editor = descendants(activity.findViewById(android.R.id.content)).filterIsInstance<EditText>().first { it.isShown && (it.id == R.id.message || it.hint == "Message") }
+            val editor = descendants(activity.findViewById(android.R.id.content)).filterIsInstance<EditText>().first {
+                it.isShown && (it.id == R.id.message || it.hint == "Message")
+            }
             editor.requestFocus()
             (activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(editor, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
         }
         SystemClock.sleep(900)
         scenario.onActivity { activity ->
-            val editor = descendants(activity.findViewById(android.R.id.content)).filterIsInstance<EditText>().first { it.isShown && (it.id == R.id.message || it.hint == "Message") }
+            val editor = descendants(activity.findViewById(android.R.id.content)).filterIsInstance<EditText>().first {
+                it.isShown && (it.id == R.id.message || it.hint == "Message")
+            }
             val rect = Rect(); assertTrue(editor.getGlobalVisibleRect(rect)); assertEquals("Composer stays visible above native keyboard", editor.height, rect.height())
         }
         image(name, scenario)
@@ -64,14 +83,23 @@ class Mango9LiveChatDeviceTest {
         }
         SystemClock.sleep(300)
     }
+
     @Test fun chatTabsSurviveRotationAndReturningFromNativeLiveHistory() {
         val owner = Mango9SessionStore(context).captureSession()
         assertNotNull("Sign in on the physical phone before this test", owner)
-        File(context.getExternalFilesDir(null), "live-chat-verification").apply { mkdirs() }.resolve("account-scope.json").writeText(org.json.JSONObject().put("api", owner!!.session.crmApiBaseUrl).put("userId", owner.session.userId).put("parentClientId", owner.session.parentClientId).toString())
+        File(context.getExternalFilesDir(null), "live-chat-verification").apply {
+            mkdirs()
+        }.resolve("account-scope.json").writeText(org.json.JSONObject().put("api", owner!!.session.crmApiBaseUrl).put("userId", owner.session.userId).put("parentClientId", owner.session.parentClientId).toString())
         val intent = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ActivityScenario.launch<MainActivity>(intent).use { scenario ->
             var ready = false
-            waitFor { scenario.onActivity { activity -> ready = activity.supportFragmentManager.fragments.any { it is NavHostFragment } }; ready }
+            waitFor {
+                scenario.onActivity { activity ->
+                    ready = activity.supportFragmentManager.fragments.any {
+                    it is NavHostFragment
+                }
+                }; ready
+            }
             scenario.onActivity { activity ->
                 val host = activity.supportFragmentManager.fragments.filterIsInstance<NavHostFragment>().first()
                 host.navController.navigate(R.id.conversationsListFragment)
@@ -105,17 +133,25 @@ class Mango9LiveChatDeviceTest {
                             if ((rows.adapter?.itemCount ?: 0) > 0 && rows.childCount > 0) opened = rows.getChildAt(0).performClick()
                         }
                         if (opened) {
-                            waitFor { scenario.onActivity { activity -> ready = leaf(activity.supportFragmentManager.fragments.filterIsInstance<NavHostFragment>().first()) is org.linphone.ui.main.crm.fragment.Mango9MessagingConversationFragment }; ready }
+                            waitFor {
+                                scenario.onActivity { activity -> ready = leaf(activity.supportFragmentManager.fragments.filterIsInstance<NavHostFragment>().first()) is org.linphone.ui.main.crm.fragment.Mango9MessagingConversationFragment }; ready
+                            }
                             SystemClock.sleep(700)
                             scenario.onActivity { activity ->
-                                val editor = descendants(activity.findViewById(android.R.id.content)).filterIsInstance<EditText>().first { it.isShown && it.id == R.id.message }
+                                val editor = descendants(activity.findViewById(android.R.id.content)).filterIsInstance<EditText>().first {
+                                    it.isShown && it.id == R.id.message
+                                }
                                 val rect = Rect(); assertTrue(editor.getGlobalVisibleRect(rect)); assertEquals(editor.height, rect.height()); assertFalse(editor.hasFocus())
                                 assertTrue(editor.imeOptions and android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI != 0)
                             }
                             image("$name-detail-$index", scenario)
                             if (name == "landscape") keyboard(scenario, "$name-keyboard-$index")
                             scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-                            waitFor { scenario.onActivity { ready = it.findViewById<TabLayout>(R.id.mango9_messages_tabs)?.selectedTabPosition == index }; ready }
+                            waitFor {
+                                scenario.onActivity {
+                                    ready = it.findViewById<TabLayout>(R.id.mango9_messages_tabs)?.selectedTabPosition == index
+                                }; ready
+                            }
                             image("$name-return-$index", scenario)
                         }
                     }
@@ -133,11 +169,14 @@ class Mango9LiveChatDeviceTest {
                         }
                         if (first.isNotBlank()) {
                             scenario.onActivity { activity ->
-                                descendants(activity.findViewById(R.id.mango9_live_host)).filterIsInstance<TextView>().first { it.text.toString().removePrefix("● ") == first }.let { (it.parent as View).performClick() }
+                                descendants(activity.findViewById(R.id.mango9_live_host)).filterIsInstance<TextView>().first {
+                                    it.text.toString().removePrefix("● ") == first
+                                }.let { (it.parent as View).performClick() }
                             }
                             waitFor(30000) {
                                 scenario.onActivity { activity ->
-                                    val f = leaf(activity.supportFragmentManager.fragments.filterIsInstance<NavHostFragment>().first())
+                                    val f =
+                                        leaf(activity.supportFragmentManager.fragments.filterIsInstance<NavHostFragment>().first())
                                     ready = f is org.linphone.ui.main.crm.fragment.Mango9LiveChatFragment && androidx.lifecycle.ViewModelProvider(f)[org.linphone.ui.main.crm.viewmodel.Mango9LiveChatViewModel::class.java].current().authorized
                                 }; ready
                             }
@@ -149,7 +188,9 @@ class Mango9LiveChatDeviceTest {
                             image("$name-live-detail", scenario)
                             if (name == "landscape") keyboard(scenario, "$name-live-keyboard")
                             scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-                            waitFor { scenario.onActivity { ready = it.findViewById<TabLayout>(R.id.mango9_messages_tabs)?.selectedTabPosition == 3 }; ready }
+                            waitFor {
+                                scenario.onActivity { ready = it.findViewById<TabLayout>(R.id.mango9_messages_tabs)?.selectedTabPosition == 3 }; ready
+                            }
                             SystemClock.sleep(500)
                             image("$name-live-return", scenario)
                         }
@@ -161,6 +202,7 @@ class Mango9LiveChatDeviceTest {
             image("live-inbox-final", scenario)
         }
     }
+
     @Test fun conversationSettingsHideTabsWithoutChangingServerData() {
         val preferences = Mango9ChatTabPreferences(context)
         val keys = listOf("team", "social", "live")
@@ -184,7 +226,11 @@ class Mango9LiveChatDeviceTest {
                         activity.supportFragmentManager.fragments.filterIsInstance<NavHostFragment>().first().navController.navigate(R.id.conversationsListFragment)
                     }
                     var count = 0
-                    waitFor { scenario.onActivity { count = it.findViewById<TabLayout>(R.id.mango9_messages_tabs)?.tabCount ?: 0 }; count == if (enabled) 4 else 1 }
+                    waitFor {
+                        scenario.onActivity {
+                            count = it.findViewById<TabLayout>(R.id.mango9_messages_tabs)?.tabCount ?: 0
+                        }; count == if (enabled) 4 else 1
+                    }
                     assertEquals(enabled, preferences.visible("live"))
                 }
                 settings(false)
@@ -192,6 +238,7 @@ class Mango9LiveChatDeviceTest {
             }
         } finally { original.forEach { (key, value) -> preferences.set(key, value) } }
     }
+
     @Test fun liveControlsAndMetadataRemainBoundedWithNativeEmoji() {
         instrumentation.runOnMainSync {
             val themed = androidx.appcompat.view.ContextThemeWrapper(context, R.style.Theme_Linphone)
@@ -199,12 +246,15 @@ class Mango9LiveChatDeviceTest {
             val column = ui.column()
             val emoji = ui.text("👩🏽‍💻 🇺🇸 ❤️ Hello", 16f); column.addView(emoji)
             val row = ui.row()
-            val attach = ui.icon(R.drawable.paperclip, "Attach") {}; val mic = ui.icon(R.drawable.microphone, "Record") {}; val send = ui.icon(R.drawable.paper_plane_right, "Send") {}
+            val attach = ui.icon(R.drawable.paperclip, "Attach") {
+                }; val mic = ui.icon(R.drawable.microphone, "Record") {}; val send = ui.icon(R.drawable.paper_plane_right, "Send") {}
             row.addView(attach); row.addView(EditText(themed), android.widget.LinearLayout.LayoutParams(0, -2, 1f)); row.addView(mic); row.addView(send); column.addView(row)
             for (widthDp in listOf(320, 640)) {
                 val width = ui.dp(widthDp); column.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)); column.layout(0, 0, width, column.measuredHeight)
                 assertTrue(emoji.height >= emoji.layout.height)
-                for (control in listOf(attach, mic, send)) { assertTrue(control.width >= ui.dp(44)); assertTrue(control.height >= ui.dp(44)); assertTrue(control.right <= width) }
+                for (control in listOf(attach, mic, send)) {
+                    assertTrue(control.width >= ui.dp(44)); assertTrue(control.height >= ui.dp(44)); assertTrue(control.right <= width)
+                }
                 assertTrue(mic.left > attach.right); assertEquals(attach.top, mic.top)
             }
         }
