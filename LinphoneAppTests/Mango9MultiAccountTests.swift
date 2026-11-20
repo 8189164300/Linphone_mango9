@@ -436,7 +436,7 @@ final class Mango9MultiAccountTests: XCTestCase {
 		Mango9SessionStore.activate(sipIdentity: identity)
 		let probe = Mango9LeadFilterProbe()
 		let viewModel = await Mango9LeadsViewModel {
-			_, _, status, _, _, _ in
+			_, _, status, _, _, _, _ in
 			await probe.load(status: status)
 		}
 

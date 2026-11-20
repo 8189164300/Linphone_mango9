@@ -95,6 +95,29 @@ private struct CalendarNavigationTestView: View {
 }
 
 final class Mango9CalendarTests: XCTestCase {
+	func testOpportunityPushUsesExactAccountAndCannotBecomeLeadOrSMS() throws {
+		let active = session()
+		let data: [String: Any] = ["event": "opportunity.created", "opportunity_id": "91", "crm_id": "crm",
+			"recipient_user_id": "42", "sip_identity": active.sipIdentity!]
+		let target = try XCTUnwrap(Mango9LeadPushTarget(userInfo: ["mango9": data]))
+		XCTAssertEqual(target.opportunityID, 91); XCTAssertNil(target.leadID)
+		XCTAssertTrue(target.matches(active)); XCTAssertFalse(target.matches(session(user: "43")))
+		XCTAssertFalse(target.matches(session(host: "other.example.invalid")))
+		for key in ["crm_id", "recipient_user_id", "sip_identity", "opportunity_id"] {
+			var invalid = data; invalid.removeValue(forKey: key)
+			XCTAssertNil(Mango9LeadPushTarget(userInfo: ["mango9": invalid]))
+		}
+		for raw in ["0", "-1", "list", "../91", "abc", "999999999999999999999999"] {
+			var invalid = data; invalid["opportunity_id"] = raw
+			XCTAssertNil(Mango9LeadPushTarget(userInfo: ["mango9": invalid]))
+		}
+		for event in ["leads.imported", "lead.created", "sms.received"] {
+			var invalid = data; invalid["event"] = event
+			XCTAssertNil(Mango9LeadPushTarget(userInfo: ["mango9": invalid]))
+		}
+		var mixed = data; mixed["lead_id"] = "91"
+		XCTAssertNil(Mango9LeadPushTarget(userInfo: ["mango9": mixed]))
+	}
 	func testLeadPushRequiresExactScopeAndDistinctBulkTarget() throws {
 		let active = session()
 		var data: [String: Any] = ["event": "lead.created", "lead_id": "91", "crm_id": "crm",

@@ -17,11 +17,12 @@ struct Mango9CRMNewRecords: Codable, Equatable {
 @MainActor final class Mango9CRMUnread: ObservableObject {
     static let shared = Mango9CRMUnread()
     @Published private(set) var records: [String: Mango9CRMNewRecords] = [:]
+    var opportunityReceipts: [Int: Bool] { Dictionary(uniqueKeysWithValues: (records["opportunities"]?.unread ?? []).map { ($0, true) }) }
     private var account = ""
     private var running = false
     private var again = false
     private let defaults = UserDefaults.standard
-    var total: Int { count(.lead) + count(.client) }
+    var total: Int { count(.lead) + count(.client) + opportunityReceipts.count }
     private func key(_ kind: Mango9CRMRecordKind) -> String { kind == .lead ? "leads" : "clients" }
     func count(_ kind: Mango9CRMRecordKind) -> Int { records[key(kind)]?.unread.count ?? 0 }
     func isNew(_ id: Int, kind: Mango9CRMRecordKind) -> Bool { records[key(kind)]?.unread.contains(id) == true }
@@ -37,6 +38,13 @@ struct Mango9CRMNewRecords: Codable, Equatable {
         guard Mango9SessionStore.isActive(session) else { return }
         bind(session); var state = records[key(kind)] ?? .init(); state.read(id); records[key(kind)] = state; save()
     }
+    func converted(_ id: Int, session: Mango9Session) {
+        guard Mango9SessionStore.isActive(session) else { return }
+        bind(session)
+        var leads = records[key(.lead)] ?? .init(); leads.read(id); records[key(.lead)] = leads
+        var clients = records[key(.client)] ?? .init(); clients.read(id); records[key(.client)] = clients
+        save()
+    }
     func refresh() async {
         bind(Mango9SessionStore.load())
         guard var session = Mango9SessionStore.load(), UIApplication.shared.applicationState == .active else { return }
@@ -44,6 +52,7 @@ struct Mango9CRMNewRecords: Codable, Equatable {
         running = true; defer { running = false }
         repeat {
             again = false; let scope = account
+            await refreshOpportunities(session: session)
             for kind in [Mango9CRMRecordKind.lead, .client] {
                 do {
                     let ids: Set<Int>
@@ -58,6 +67,28 @@ struct Mango9CRMNewRecords: Codable, Equatable {
                 }
             }
         } while again && !Task.isCancelled && Mango9SessionStore.isActive(session)
+    }
+    func refreshOpportunities(session: Mango9Session) async {
+        guard Mango9SessionStore.isActive(session) else { return }; bind(session); let owner = account
+        do {
+            var ids = Set<Int>(), page = 1, total: Int?
+            while page <= 200 {
+                let result = try await Mango9OpportunityAPI.send(session, query: [.init(name: "page", value: String(page)), .init(name: "limit", value: "50"), .init(name: "sort", value: "created_at")])
+                guard let rows = result["items"] as? [[String: Any]], let p = result["pagination"] as? [String: Any],
+                      p["page"] as? Int == page, p["limit"] as? Int == 50, let expected = p["total"] as? Int, expected >= 0,
+                      total == nil || total == expected, let more = p["hasMore"] as? Bool,
+                      rows.count == min(50, max(0, expected - (page - 1) * 50)), more == (page * 50 < expected) else { throw Mango9OpportunityFailure.invalid }
+                total = expected
+                for row in rows { guard let id = Mango9OpportunityAPI.integer(row["id"]), id > 0, ids.insert(id).inserted else { throw Mango9OpportunityFailure.invalid } }
+                if !more { break }; page += 1
+            }
+            guard ids.count == total, owner == account, Mango9SessionStore.isActive(session) else { return }
+            var state = records["opportunities"] ?? .init(); state.reconcile(ids); records["opportunities"] = state; save()
+        } catch { /* As with Leads, incomplete snapshots never erase a verified count. */ }
+    }
+    func readOpportunity(_ id: Int, session: Mango9Session) async {
+        guard Mango9SessionStore.isActive(session) else { return }; bind(session)
+        var state = records["opportunities"] ?? .init(); state.read(id); records["opportunities"] = state; save()
     }
     private func snapshot(_ kind: Mango9CRMRecordKind, session: Mango9Session) async throws -> Set<Int> {
         var ids = Set<Int>(), page = 1, pages = 1, total: Int?

@@ -140,7 +140,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 			DispatchQueue.main.async {
 				if let target = Mango9LeadPushTarget(userInfo: userInfo),
 					let session = Mango9SessionStore.load(), target.matches(session) {
-					NotificationCenter.default.post(name: .mango9LeadDidChange, object: nil)
+					NotificationCenter.default.post(name: target.opportunityID == nil ? .mango9LeadDidChange : .mango9OpportunityDidChange, object: nil)
 				}
 				completionHandler(.noData)
 			}
@@ -310,7 +310,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 				let stored = Mango9SessionStore.load(for: target.identity), target.matches(stored) else { completionHandler([]); return }
 			DispatchQueue.main.async {
 				if let session = Mango9SessionStore.load(), target.matches(session) {
-					NotificationCenter.default.post(name: .mango9LeadDidChange, object: nil)
+					NotificationCenter.default.post(name: target.opportunityID == nil ? .mango9LeadDidChange : .mango9OpportunityDidChange, object: nil)
 				}
 			}
 			completionHandler([.banner, .sound, .badge]); return

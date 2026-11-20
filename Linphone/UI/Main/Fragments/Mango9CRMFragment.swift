@@ -14,10 +14,15 @@ import SwiftUI
 struct Mango9CRMFragment: View {
 	@Binding var isPresented: Bool
 	let initialLeadId: Int?
+    let initialOpportunityId: Int?
+    @State private var showPushedOpportunity: Bool
 	let onConnectAccount: () -> Void
 	let onOpenConversations: () -> Void
+    let rootHeader: AnyView
+    @State private var pageOwnsHeader = false
 
 	@StateObject private var viewModel = Mango9CRMViewModel()
+    @StateObject private var opportunityAccess = Mango9OpportunityCards()
 	@ObservedObject private var newRecords = Mango9CRMUnread.shared
 	@State private var pushedLeadId: Int?
 	@State private var showPushedLead: Bool
@@ -25,18 +30,25 @@ struct Mango9CRMFragment: View {
 	init(
 		isPresented: Binding<Bool>,
 		initialLeadId: Int? = nil,
+        initialOpportunityId: Int? = nil,
 		onConnectAccount: @escaping () -> Void,
-		onOpenConversations: @escaping () -> Void
+		onOpenConversations: @escaping () -> Void,
+        rootHeader: AnyView = AnyView(EmptyView())
 	) {
 		_isPresented = isPresented
 		self.initialLeadId = initialLeadId
+        self.initialOpportunityId = initialOpportunityId
+        _showPushedOpportunity = State(initialValue: initialOpportunityId != nil)
 		self.onConnectAccount = onConnectAccount
 		self.onOpenConversations = onOpenConversations
+        self.rootHeader = rootHeader
 		_pushedLeadId = State(initialValue: initialLeadId)
 		_showPushedLead = State(initialValue: initialLeadId != nil)
 	}
 
 	var body: some View {
+        VStack(spacing: 0) {
+            if !pageOwnsHeader { rootHeader }
 		NavigationView {
 			ZStack {
 				Color.gray100
@@ -62,13 +74,14 @@ struct Mango9CRMFragment: View {
 						.padding(.bottom, 24)
 					}
 					.refreshable {
-						await viewModel.reload(); await newRecords.refresh()
+						await reloadWorkspace()
 					}
 				}
 			}
 			.navigationTitle("")
 			.navigationBarHidden(true)
 			.background {
+                if let id = initialOpportunityId { NavigationLink(isActive: $showPushedOpportunity) { Mango9OpportunityDetail(id: id, session: Mango9SessionStore.load(), metadata: nil) } label: { EmptyView() }.hidden() }
 				if let pushedLeadId {
 					NavigationLink(
 						destination: Mango9LeadDetailFragment(leadId: pushedLeadId),
@@ -80,24 +93,44 @@ struct Mango9CRMFragment: View {
 				}
 			}
 		}
-		.navigationViewStyle(StackNavigationViewStyle())
+        .navigationViewStyle(StackNavigationViewStyle())
+        .clipped()
+        }
+        // Reserve real layout space for the native header. A top safe-area
+        // overlay can cover a hidden-navigation-bar destination's toolbar.
+        .onPreferenceChange(Mango9CRMPageHeaderPreference.self) { value in
+            var transaction = Transaction(); transaction.disablesAnimations = true
+            withTransaction(transaction) { pageOwnsHeader = value }
+        }
 		.task {
-			await viewModel.reload(); await newRecords.refresh()
+			await reloadWorkspace()
 		}
 		.onReceive(
 			NotificationCenter.default.publisher(for: .mango9AccountContextChanged)
 		) { _ in
 			Task {
-				await viewModel.reload(); await newRecords.refresh()
+				await reloadWorkspace()
 			}
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9AppointmentDidChange)) { _ in Task { await viewModel.reloadAppointmentCount() } }
+        .onReceive(NotificationCenter.default.publisher(for: .mango9OpportunityDidChange)) { _ in
+            Task { await opportunityAccess.refresh(ids: [], includeOverview: true) }
+        }
 		.onChange(of: initialLeadId) { leadId in
 			guard let leadId else { return }
 			pushedLeadId = leadId
 			showPushedLead = true
 		}
 	}
+
+    @MainActor private func reloadWorkspace() async {
+        // The unread reconciliation can scan many pages. It must not hold up
+        // module permissions, counts, or the Opportunity list's first page.
+        async let dashboard: Void = viewModel.reload()
+        async let unread: Void = newRecords.refresh()
+        async let opportunities: Void = opportunityAccess.refresh(ids: [], includeOverview: true)
+        _ = await (dashboard, unread, opportunities)
+    }
 
 	private var header: some View {
 		HStack(spacing: 8) {
@@ -216,6 +249,12 @@ struct Mango9CRMFragment: View {
 			}
 			.buttonStyle(.plain).accessibilityIdentifier("crm.clients")
 
+            if opportunityAccess.metadata?.permissions["access"] == true {
+                NavigationLink { Mango9OpportunityWorkspace(preloaded: opportunityAccess.overview) } label: {
+                    workspaceRow(icon: "dollarsign.circle.fill", title: "Opportunities", subtitle: "Values, stages and follow-ups", color: .green, count: opportunityAccess.overview?.total, unreadCount: newRecords.opportunityReceipts.count)
+                }.buttonStyle(.plain).accessibilityIdentifier("crm.opportunities")
+            }
+
 			NavigationLink(destination: Mango9AppointmentsFragment(presentation: .calendar)) {
 				workspaceRow(icon: "calendar", title: "Calendar",
 					subtitle: "Your schedule by month, week or day", color: .mango9Primary)
@@ -261,6 +300,7 @@ struct Mango9CRMFragment: View {
 			if let count {
 				Text(count.formatted()).font(.system(size: 19, weight: .bold, design: .rounded))
 					.foregroundColor(color).accessibilityLabel("\(count) \(title)")
+                    .accessibilityIdentifier("crm.count." + title.lowercased())
 			}
 
 			if unreadCount > 0 {

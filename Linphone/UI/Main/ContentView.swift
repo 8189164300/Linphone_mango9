@@ -81,6 +81,7 @@ struct ContentView: View {
 	@State var isShowHelpFragment = false
 	@State var isShowCRMFragment = false
 	@State private var crmDeepLinkLeadId: Int?
+    @State private var crmDeepLinkOpportunityId: Int?
 	@State private var mango9ChatTarget: Mango9ChatTarget?
 	@State private var mango9SocialTarget: Mango9SocialPushTarget?
 	@State private var mango9LiveTarget: Mango9LivePushTarget?
@@ -526,12 +527,11 @@ struct ContentView: View {
 
     private var crmWorkspace: some View {
                         VStack(spacing: 0) {
-                            appHeader
-                            Mango9CRMFragment(isPresented: $isShowCRMFragment, initialLeadId: crmDeepLinkLeadId,
-                                onConnectAccount: { isShowLoginFragment = true }, onOpenConversations: {})
+                            Mango9CRMFragment(isPresented: $isShowCRMFragment, initialLeadId: crmDeepLinkLeadId, initialOpportunityId: crmDeepLinkOpportunityId,
+                                onConnectAccount: { isShowLoginFragment = true }, onOpenConversations: {}, rootHeader: AnyView(appHeader))
                                 .id(crmNavigationID)
                             Mango9CRMFooter(messages: combinedUnreadMessages, missedCalls: sharedMainViewModel.missedCallsCount, showChat: !sharedMainViewModel.disableChatFeature, showMeetings: !sharedMainViewModel.disableMeetingFeature) { destination in
-                                if destination == 4 { crmDeepLinkLeadId = nil; crmNavigationID = UUID(); return }
+                                if destination == 4 { crmDeepLinkLeadId = nil; crmDeepLinkOpportunityId = nil; crmNavigationID = UUID(); return }
                                 resetFilter(); sharedMainViewModel.displayedFriend = nil; sharedMainViewModel.displayedCall = nil
                                 sharedMainViewModel.displayedSMS = nil; sharedMainViewModel.displayedConversation = nil; sharedMainViewModel.displayedMeeting = nil
                                 sharedMainViewModel.changeIndexView(indexViewInt: destination); isShowCRMFragment = false
@@ -2274,7 +2274,7 @@ struct ContentView: View {
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenLead)) { notification in
 			guard let leadId = notification.object as? Int else { return }
-			crmDeepLinkLeadId = leadId
+			crmDeepLinkLeadId = leadId; crmDeepLinkOpportunityId = nil
 			isShowCRMFragment = true
 		}
 		.sheet(item: $mango9AppointmentTarget) { target in
@@ -2283,7 +2283,7 @@ struct ContentView: View {
 		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenLeadPush)) { notification in
 			guard let target = notification.object as? Mango9LeadPushTarget,
 				let session = Mango9SessionStore.load(), target.matches(session) else { return }
-			crmDeepLinkLeadId = target.leadID; crmNavigationID = UUID(); isShowCRMFragment = true
+			crmDeepLinkLeadId = target.leadID; crmDeepLinkOpportunityId = target.opportunityID; crmNavigationID = UUID(); isShowCRMFragment = true
 		}
 		.onReceive(NotificationCenter.default.publisher(for: .mango9OpenAppointment)) { notification in
 			guard let target = notification.object as? Mango9AppointmentPushTarget,
@@ -2324,6 +2324,7 @@ struct ContentView: View {
         }
         .task { while !Task.isCancelled { await crmUnread.refresh(); try? await Task.sleep(nanoseconds: 60_000_000_000) } }
         .onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in Task { await inboxUnread.refresh(); await crmUnread.refresh() } }
+        .onReceive(NotificationCenter.default.publisher(for: .mango9OpportunityDidChange)) { _ in Task { await crmUnread.refresh() } }
         .onReceive(NotificationCenter.default.publisher(for: .mango9LeadDidChange)) { _ in Task { await crmUnread.refresh() } }
         .onReceive(NotificationCenter.default.publisher(for: .mango9ClientDidChange)) { _ in Task { await crmUnread.refresh() } }
         .onReceive(NotificationCenter.default.publisher(for: .mango9SocialInboxDidChange)) { _ in Task { await inboxUnread.refresh() } }

@@ -3,26 +3,31 @@ import Foundation
 /// Push scope is mandatory; the CRM API remains authoritative for access to each lead.
 struct Mango9LeadPushTarget: Equatable, Identifiable {
 	let leadID: Int?
+    let opportunityID: Int?
 	let crmID: String
 	let userID: String
 	let identity: String
-	var id: String { [crmID, userID, identity, leadID.map(String.init) ?? "list"].joined(separator: "|") }
+	var id: String { [crmID, userID, identity, opportunityID.map { "opportunity-\($0)" } ?? leadID.map(String.init) ?? "list"].joined(separator: "|") }
 	static func isLeadNotification(_ userInfo: [AnyHashable: Any]) -> Bool {
 		let nested = userInfo["mango9"] as? [String: Any]
 		let event = nested?["event"] as? String ?? userInfo["mango9_event"] as? String ?? userInfo["event"] as? String
-		return ["lead.created", "lead.assigned", "leads.imported"].contains(event ?? "")
+		return ["lead.created", "lead.assigned", "leads.imported", "opportunity.created"].contains(event ?? "")
 	}
 	init?(userInfo: [AnyHashable: Any]) {
 		guard let data = userInfo["mango9"] as? [String: Any], let event = data["event"] as? String,
-			["lead.created", "lead.assigned", "leads.imported"].contains(event),
+			["lead.created", "lead.assigned", "leads.imported", "opportunity.created"].contains(event),
 			let crm = data["crm_id"] as? String, !crm.isEmpty,
 			let user = data["recipient_user_id"] as? String, let userID = Int(user), userID > 0,
 			let identity = Mango9SessionStore.normalizedIdentity(data["sip_identity"] as? String) else { return nil }
-		if event == "leads.imported" {
-			guard data["lead_id"] == nil else { return nil }
+		if event == "opportunity.created" {
+            guard data["lead_id"] == nil, data["event_id"] == nil, let raw = data["opportunity_id"] as? String, let value = Int(raw), value > 0 else { return nil }; opportunityID = value; leadID = nil
+        } else if event == "leads.imported" {
+            opportunityID = nil
+			guard data["lead_id"] == nil, data["opportunity_id"] == nil else { return nil }
 			leadID = nil
 		} else {
-			guard let raw = data["lead_id"] as? String, let value = Int(raw), value > 0 else { return nil }
+            opportunityID = nil
+			guard data["opportunity_id"] == nil, let raw = data["lead_id"] as? String, let value = Int(raw), value > 0 else { return nil }
 			leadID = value
 		}
 		crmID = crm; self.userID = String(userID); self.identity = identity

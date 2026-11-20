@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0C0A00012FCA000100000001 /* Mango9Opportunities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C0A00022FCA000100000001; };
+		0C0A00112FCA000100000001 /* Mango9OpportunityWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C0A00122FCA000100000001; };
 		AB1411260000000000000081 /* Mango9CRMUnread.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC1411260000000000000081 /* Mango9CRMUnread.swift */; };
 		AC1411260000000000000004 /* Mango9InboxUnread.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1411260000000000000004; };
 		CA1E10512FCA000100000001 /* Mango9ChatTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA1E10522FCA000100000001; };
@@ -303,6 +305,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0C0A00022FCA000100000001 /* Mango9Opportunities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9Opportunities.swift; sourceTree = "<group>"; };
+		0C0A00122FCA000100000001 /* Mango9OpportunityWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9OpportunityWorkspace.swift; sourceTree = "<group>"; };
 		AC1411260000000000000081 /* Mango9CRMUnread.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9CRMUnread.swift; sourceTree = "<group>"; };
 		AB1411260000000000000004 /* Mango9InboxUnread.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9InboxUnread.swift; sourceTree = "<group>"; };
 		CA1E10522FCA000100000001 /* Mango9ChatTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9ChatTemplates.swift; sourceTree = "<group>"; };
@@ -1001,6 +1005,8 @@
 				D706BA812ADD72D100278F45 /* DeviceRotationViewModifier.swift */,
 				D72250682ADFBF2D008FB426 /* SideMenu.swift */,
 				C0D390012F22000100C0FFEE /* Mango9CRMFragment.swift */,
+				0C0A00022FCA000100000001 /* Mango9Opportunities.swift */,
+				0C0A00122FCA000100000001 /* Mango9OpportunityWorkspace.swift */,
 				CA1E00022FCA000100000001 /* Mango9CalendarAPI.swift */,
 				CA1E01022FCA000100000001 /* Mango9Activities.swift */,
 				CA1E00222FCA000100000001 /* Mango9CalendarOccurrences.swift */,
@@ -1864,6 +1870,8 @@
 				66D382052CEB7E0A0063E1C5 /* ShortcutModel.swift in Sources */,
 				D72250692ADFBF2D008FB426 /* SideMenu.swift in Sources */,
 				C0D390022F22000100C0FFEE /* Mango9CRMFragment.swift in Sources */,
+				0C0A00012FCA000100000001 /* Mango9Opportunities.swift in Sources */,
+				0C0A00112FCA000100000001 /* Mango9OpportunityWorkspace.swift in Sources */,
 				CA1E00012FCA000100000001 /* Mango9CalendarAPI.swift in Sources */,
 				CA1E01012FCA000100000001 /* Mango9Activities.swift in Sources */,
 				CA1E00212FCA000100000001 /* Mango9CalendarOccurrences.swift in Sources */,

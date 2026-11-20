@@ -3551,6 +3551,8 @@ struct Mango9ChatStandaloneFragment: View {
 }
 
 struct Mango9Lead: Decodable, Identifiable {
+    var sharing: Mango9ContactSharing? = nil
+    var permissions: Mango9ContactPermissions? = nil
 	let id: Int
 	let ownerUserId: Int
 	let ownerName: String
@@ -4467,6 +4469,7 @@ extension Mango9CRMAPI {
 		status: String = "",
 		groupId: String = "",
 		dateFilter: Mango9CRMDateFilter = .all,
+        sharing: Mango9CRMSharingFilter = .all,
 		page: Int = 1
 	) async throws -> Mango9ClientListPayload {
 		var query = [
@@ -4485,6 +4488,7 @@ extension Mango9CRMAPI {
 		if let dateFilter = dateFilter.apiValue {
 			query.append(URLQueryItem(name: "date_filter", value: dateFilter))
 		}
+		if sharing != .all { query.append(URLQueryItem(name: "sharing", value: sharing.rawValue)) }
 		let request = try authorizedRequest(
 			session: session,
 			path: ["mobile", "clients"],
@@ -4626,6 +4630,7 @@ extension Mango9CRMAPI {
 		status: String,
 		groupId: String = "",
 		dateFilter: Mango9CRMDateFilter = .all,
+        sharing: Mango9CRMSharingFilter = .all,
 		page: Int = 1
 	) async throws -> Mango9LeadListPayload {
 		var query = [
@@ -4644,6 +4649,7 @@ extension Mango9CRMAPI {
 		if let dateFilter = dateFilter.apiValue {
 			query.append(URLQueryItem(name: "date_filter", value: dateFilter))
 		}
+		if sharing != .all { query.append(URLQueryItem(name: "sharing", value: sharing.rawValue)) }
 		let request = try authorizedRequest(
 			session: session,
 			path: ["mobile", "leads"],
@@ -4964,6 +4970,7 @@ typealias Mango9LeadListLoader = (
 	String,
 	String,
 	Mango9CRMDateFilter,
+    Mango9CRMSharingFilter,
 	Int
 ) async throws -> Mango9LeadListPayload
 
@@ -4979,6 +4986,7 @@ final class Mango9LeadsViewModel: ObservableObject {
 	@Published var selectedStatus = ""
 	@Published var selectedGroupId = ""
 	@Published var selectedDateFilter: Mango9CRMDateFilter = .all
+    @Published var selectedSharing: Mango9CRMSharingFilter = .all
 	private let listLoader: Mango9LeadListLoader
 	private var reloadRequested = false
 
@@ -4989,6 +4997,7 @@ final class Mango9LeadsViewModel: ObservableObject {
 			status,
 			groupId,
 			dateFilter,
+            sharing,
 			page in
 			try await Mango9CRMAPI.leads(
 				session: session,
@@ -4996,6 +5005,7 @@ final class Mango9LeadsViewModel: ObservableObject {
 				status: status,
 				groupId: groupId,
 				dateFilter: dateFilter,
+                sharing: sharing,
 				page: page
 			)
 		}
@@ -5118,9 +5128,10 @@ final class Mango9LeadsViewModel: ObservableObject {
 			selectedStatus,
 			selectedGroupId,
 			selectedDateFilter,
+            selectedSharing,
 			1
 		)
-		guard !reloadRequested else { return }
+		guard !reloadRequested, Mango9SessionStore.isActive(session) else { return }
 		leads = payload.leads
 		total = payload.pagination.total
 	}
@@ -5145,6 +5156,7 @@ struct Mango9LeadPushView: View {
 struct Mango9LeadsFragment: View {
 	@ObservedObject private var newRecords = Mango9CRMUnread.shared
 	@Environment(\.presentationMode) private var presentationMode
+	@StateObject private var opportunities = Mango9OpportunityCards()
 	@StateObject private var viewModel = Mango9LeadsViewModel()
 	@State private var isShowingCreateLead = false
 	@State private var createdLeadPayload: Mango9LeadDetailPayload?
@@ -5160,6 +5172,7 @@ struct Mango9LeadsFragment: View {
 				ScrollView {
 					LazyVStack(spacing: 12) {
 						searchCard
+                        Mango9SharingFilterMenu(selection: $viewModel.selectedSharing) { Task { await viewModel.reloadList() } }
 
 						if let schema = viewModel.schema {
 							statusFilters(schema.statuses)
@@ -5177,6 +5190,7 @@ struct Mango9LeadsFragment: View {
 							emptyState
 						} else {
 							ForEach(viewModel.filteredLeads) { lead in
+								HStack(spacing: 0) {
 								NavigationLink(
 									destination: Mango9LeadDetailFragment(
 										leadId: lead.id,
@@ -5196,6 +5210,9 @@ struct Mango9LeadsFragment: View {
 										)
 									}
 								}
+                                Mango9CRMCardActions(record: lead, kind: .lead, opportunities: opportunities).padding(.trailing, 6)
+                                }.background(Color.white).cornerRadius(15)
+                                    .overlay { RoundedRectangle(cornerRadius: 15).stroke(Color.gray200, lineWidth: 1) }
 							}
 						}
 					}
@@ -5204,6 +5221,7 @@ struct Mango9LeadsFragment: View {
 				}
 				.refreshable {
 					await viewModel.reloadList()
+                    await opportunities.refresh(ids: viewModel.filteredLeads.map(\.id))
 				}
 			}
 		}
@@ -5226,6 +5244,7 @@ struct Mango9LeadsFragment: View {
 				.hidden()
 			}
 		}
+        .task(id: viewModel.filteredLeads.map(\.id)) { await opportunities.refresh(ids: viewModel.filteredLeads.map(\.id)) }
 		.task {
 			await viewModel.load()
 		}
@@ -5513,12 +5532,6 @@ struct Mango9LeadsFragment: View {
 			}
 		}
 		.padding(14)
-		.background(Color.white)
-		.cornerRadius(15)
-		.overlay {
-			RoundedRectangle(cornerRadius: 15)
-				.stroke(Color.gray200, lineWidth: 1)
-		}
 	}
 
 	private func initials(for name: String) -> String {
@@ -5839,9 +5852,11 @@ final class Mango9ClientsViewModel: ObservableObject {
 	@Published var selectedStatus = ""
 	@Published var selectedGroupId = ""
 	@Published var selectedDateFilter: Mango9CRMDateFilter = .all
+    @Published var selectedSharing: Mango9CRMSharingFilter = .all
+    private var reloadRequested = false
 
 	var filteredClients: [Mango9Client] {
-		clients.filter { selectedDateFilter.includes($0.createdAt) }
+		clients
 	}
 
 	var selectedGroupName: String {
@@ -5857,7 +5872,7 @@ final class Mango9ClientsViewModel: ObservableObject {
 
 		isLoading = true
 		errorMessage = nil
-		defer { isLoading = false }
+		defer { isLoading = false; if reloadRequested { Task { await reloadList() } } }
 
 		do {
 			do {
@@ -5890,7 +5905,9 @@ final class Mango9ClientsViewModel: ObservableObject {
 	}
 
 	func reloadList() async {
+        reloadRequested = true
 		guard !isLoading else { return }
+        reloadRequested = false
 		guard var session = Mango9SessionStore.load() else {
 			errorMessage = "Connect your Mango9 account to load clients."
 			return
@@ -5898,7 +5915,7 @@ final class Mango9ClientsViewModel: ObservableObject {
 
 		isLoading = true
 		errorMessage = nil
-		defer { isLoading = false }
+		defer { isLoading = false; if reloadRequested { Task { await reloadList() } } }
 
 		do {
 			do {
@@ -5940,8 +5957,10 @@ final class Mango9ClientsViewModel: ObservableObject {
 			search: searchText,
 			status: selectedStatus,
 			groupId: selectedGroupId,
-			dateFilter: selectedDateFilter
+			dateFilter: selectedDateFilter,
+            sharing: selectedSharing
 		)
+		guard !reloadRequested, Mango9SessionStore.isActive(session) else { return }
 		clients = payload.clients
 		total = payload.pagination.total
 	}
@@ -5950,6 +5969,7 @@ final class Mango9ClientsViewModel: ObservableObject {
 struct Mango9ClientsFragment: View {
 	@ObservedObject private var newRecords = Mango9CRMUnread.shared
 	@Environment(\.presentationMode) private var presentationMode
+	@StateObject private var opportunities = Mango9OpportunityCards()
 	@StateObject private var viewModel = Mango9ClientsViewModel()
 	@State private var isShowingCreateClient = false
 	@State private var createdClientPayload: Mango9LeadDetailPayload?
@@ -5965,6 +5985,7 @@ struct Mango9ClientsFragment: View {
 				ScrollView {
 					LazyVStack(spacing: 12) {
 						searchCard
+                        Mango9SharingFilterMenu(selection: $viewModel.selectedSharing) { Task { await viewModel.reloadList() } }
 
 						if let schema = viewModel.schema {
 							statusFilters(schema.statuses)
@@ -5982,6 +6003,7 @@ struct Mango9ClientsFragment: View {
 							emptyState
 						} else {
 							ForEach(viewModel.filteredClients) { client in
+								HStack(spacing: 0) {
 								NavigationLink(
 									destination: Mango9LeadDetailFragment(
 										leadId: client.id,
@@ -6002,6 +6024,9 @@ struct Mango9ClientsFragment: View {
 										)
 									}
 								}
+                                Mango9CRMCardActions(record: client, kind: .client, opportunities: opportunities).padding(.trailing, 6)
+                                }.background(Color.white).cornerRadius(15)
+                                    .overlay { RoundedRectangle(cornerRadius: 15).stroke(Color.gray200, lineWidth: 1) }
 							}
 						}
 					}
@@ -6010,6 +6035,7 @@ struct Mango9ClientsFragment: View {
 				}
 				.refreshable {
 					await viewModel.reloadList()
+                    await opportunities.refresh(ids: viewModel.filteredClients.map(\.id))
 				}
 			}
 		}
@@ -6033,6 +6059,7 @@ struct Mango9ClientsFragment: View {
 				.hidden()
 			}
 		}
+        .task(id: viewModel.filteredClients.map(\.id)) { await opportunities.refresh(ids: viewModel.filteredClients.map(\.id)) }
 		.task {
 			await viewModel.load()
 		}
@@ -6323,12 +6350,6 @@ struct Mango9ClientsFragment: View {
 			}
 		}
 		.padding(14)
-		.background(Color.white)
-		.cornerRadius(15)
-		.overlay {
-			RoundedRectangle(cornerRadius: 15)
-				.stroke(Color.gray200, lineWidth: 1)
-		}
 	}
 
 	private func communicationTarget(for client: Mango9Client) -> Mango9CommunicationTarget {
@@ -6471,6 +6492,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 	}
 
 	func save() async {
+        guard canUpdate else { return }
 		guard !isSaving, !isDeleting, !isSavingStatus, let schema else { return }
 		for field in schema.fields where field.required && field.editable && field.isVisible {
 			if (values[field.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -6529,6 +6551,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 	}
 
 	func delete() async -> Bool {
+        guard canDelete else { return false }
 		guard !isSaving, !isDeleting, !isSavingStatus else { return false }
 		guard var session = Mango9SessionStore.load() else {
 			errorMessage = "Connect your Mango9 account to delete this \(recordKind.singular.lowercased())."
@@ -6570,7 +6593,10 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 		return nil
 	}
 
+	var canUpdate: Bool { lead?.permissions?.canUpdate != false }
+    var canDelete: Bool { lead?.permissions?.canDelete != false }
 	var editableStatusField: Mango9LeadSchema.Field? {
+        guard canUpdate else { return nil }
 		guard let field = standardStatusField, field.isVisible, field.editable, field.type == "select" else { return nil }
 		return field
 	}
@@ -6777,6 +6803,15 @@ struct Mango9LeadFieldRows<Content: View>: View {
 	}
 }
 
+// Lead and Opportunity fields share typography so their detail pages stay consistent.
+enum Mango9CRMText {
+    static let fieldLabel = Font.custom("NotoSans-Bold", size: 11)
+    static let fieldValue = Font.custom("NotoSans-Regular", size: 14)
+    static let emphasizedValue = Font.custom("NotoSans-SemiBold", size: 14)
+    static let recordTitle = Font.custom("NotoSans-ExtraBold", size: 16)
+    static let metadata = Font.custom("NotoSans-Regular", size: 12)
+}
+
 struct Mango9LeadSectionCard<Content: View>: View {
 	let section: Mango9LeadSchema.Section
 	@ViewBuilder let content: () -> Content
@@ -6801,6 +6836,7 @@ struct Mango9LeadSectionCard<Content: View>: View {
 
 struct Mango9LeadDetailFragment: View {
 	@Environment(\.presentationMode) private var presentationMode
+	@StateObject private var opportunities = Mango9OpportunityCards()
 	@StateObject private var viewModel: Mango9LeadDetailViewModel
 	@State private var communicationTarget: Mango9CommunicationTarget?
 	@State private var isShowingCommunicationActions = false
@@ -6844,6 +6880,7 @@ struct Mango9LeadDetailFragment: View {
 								if let lead = viewModel.lead {
 									leadHeader(lead)
 									if !viewModel.isEditing {
+                                        if let session = Mango9SessionStore.load() { Mango9CRMActivitySection(contactID: lead.id, session: session, collapsed: true) }
 										Mango9LinkedAppointmentsSection(contact: Mango9AppointmentContact(
 											id: lead.id, name: lead.name,
 											kind: viewModel.recordKind == .client ? "client" : "lead"))
@@ -6885,7 +6922,11 @@ struct Mango9LeadDetailFragment: View {
 		.navigationBarHidden(true)
 		.task {
 			await viewModel.load()
+            await opportunities.refresh(ids: [viewModel.leadId])
 		}
+        .onReceive(NotificationCenter.default.publisher(for: .mango9LeadDidChange)) { note in
+            if viewModel.recordKind == .lead, note.userInfo?["convertedId"] as? Int == viewModel.leadId { presentationMode.wrappedValue.dismiss() }
+        }
 		.alert("Status not updated", isPresented: Binding(
 			get: { viewModel.statusError != nil },
 			set: { if !$0 { viewModel.statusError = nil } }
@@ -6961,7 +7002,7 @@ struct Mango9LeadDetailFragment: View {
 
 			Spacer()
 
-			if viewModel.lead != nil {
+			if viewModel.lead != nil && viewModel.canUpdate {
 				if viewModel.isEditing {
 					HStack(spacing: 2) {
 						Button {
@@ -7042,7 +7083,7 @@ struct Mango9LeadDetailFragment: View {
 
 			VStack(alignment: .leading, spacing: 4) {
 				Text(lead.name.isEmpty ? viewModel.recordKind.emptyName : lead.name)
-					.default_text_style_800(styleSize: 16)
+					.font(Mango9CRMText.recordTitle)
 					.fixedSize(horizontal: false, vertical: true)
 				if !viewModel.isEditing && !viewModel.statusOptions.isEmpty {
 					statusMenu
@@ -7087,6 +7128,7 @@ struct Mango9LeadDetailFragment: View {
 			}
 
 			Spacer()
+            if !viewModel.isEditing { Mango9CRMCardActions(record: lead, kind: viewModel.recordKind, opportunities: opportunities) }
 
 		}
 		.padding(16)
@@ -7232,7 +7274,7 @@ struct Mango9LeadDetailFragment: View {
 		let rawValue = viewModel.values[field.key] ?? ""
 		VStack(alignment: .leading, spacing: 4) {
 			Text(field.label)
-				.default_text_style_700(styleSize: 11)
+				.font(Mango9CRMText.fieldLabel)
 				.foregroundStyle(Color.grayMain2c500)
 			if !viewModel.isEditing && field.key == viewModel.editableStatusField?.key && !viewModel.statusOptions.isEmpty {
 				statusMenu
@@ -7255,7 +7297,7 @@ struct Mango9LeadDetailFragment: View {
 				.buttonStyle(.plain)
 			} else {
 				Text(displayValue(rawValue, type: field.type))
-					.default_text_style(styleSize: 14)
+					.font(Mango9CRMText.fieldValue)
 					.foregroundStyle(rawValue.isEmpty ? Color.grayMain2c500 : Color.black)
 					.frame(maxWidth: .infinity, alignment: .leading)
 			}

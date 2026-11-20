@@ -1,0 +1,292 @@
+import XCTest
+@testable import LinphoneApp
+
+private final class OpportunityURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) throws -> (Int, Data))?
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        do {
+            let (status, data) = try XCTUnwrap(Self.handler)(request)
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
+        } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+    override func stopLoading() {}
+}
+
+@MainActor final class Mango9OpportunityTests: XCTestCase {
+    private func session(_ user: String = "opportunity-fixture", base: String = "https://crm.example.invalid/app/api/v2") -> Mango9Session {
+        .init(crmId: "fixture", crmBaseUrl: "https://crm.example.invalid/app", crmApiBaseUrl: base,
+              userId: user, parentClientId: "fixture", role: "buyer", loginId: "fixture@example.invalid", displayName: "Fixture",
+              accessToken: "fixture-token", refreshToken: "fixture-refresh", smsChatApi: "", connectWebsocket: "",
+              enrollmentExpiresAt: .distantFuture, sipIdentity: "sip:\(user)@crm.example.invalid")
+    }
+    private func metadata() throws -> Mango9OpportunityMetadata {
+        try .init(["userId": "101", "permissions": ["access": true, "create": true, "assign": false],
+            "users": [["id": "101", "name": "Fixture"]], "sources": ["Website"],
+            "statusSpecs": [
+                ["id": "custom-qualify", "name": "Assessment", "classification": "open", "probability": 37, "default": true, "retired": false],
+                ["id": "custom-won", "name": "Confirmed", "classification": "won", "probability": 100, "default": false, "retired": false],
+                ["id": "custom-lost", "name": "Declined", "classification": "lost", "probability": 0, "default": false, "retired": false],
+                ["id": "retired", "name": "Old", "classification": "open", "probability": 10, "default": false, "retired": true]]])
+    }
+    func testNativeActivityTargetsAndReadPathsAreStrict() throws {
+        let target = try XCTUnwrap(Mango9CRMActivityTarget(["screen": "quote", "id": 42]))
+        XCTAssertEqual(target.mobilePath, "documents/quotes/42")
+        for raw: [String: Any] in [["screen": "quote", "id": "../1"], ["screen": "web", "id": "https://other.invalid"], ["screen": "activity", "contactId": 1, "key": "sms:1"], ["screen": "sms", "conversationId": String(repeating: "a", count: 64), "phone": "../1"]] { XCTAssertNil(Mango9CRMActivityTarget(raw)) }
+        let request = try Mango9OpportunityAPI.request(session(), path: "", mobilePath: "contacts/7/activity")
+        XCTAssertEqual(request.url?.path, "/app/api/v2/mobile/contacts/7/activity")
+        XCTAssertThrowsError(try Mango9OpportunityAPI.request(session(), path: "", body: [:], mobilePath: "contacts/7/activity"))
+        XCTAssertThrowsError(try Mango9OpportunityAPI.request(session(), path: "", mobilePath: "contacts/7/../8/activity"))
+    }
+    func testDuplicateCreationMatchesActualSavedRecord() throws {
+        XCTAssertEqual(try Mango9OpportunityAPI.creationID(["id": 42, "action": "create", "saved": false, "duplicate": true, "unchanged": true]), 42)
+        XCTAssertThrowsError(try Mango9OpportunityAPI.creationID(["id": 42, "action": "create", "saved": false, "duplicate": true]))
+        let command: [String: Any] = ["contactId": 7, "values": ["title": "Deal", "value": "1.00", "next_due_at": "2026-11-20T15:00:00Z"]]
+        var row: [String: Any] = ["contact_id": 7, "title": "Deal", "value": "1.0", "next_due_at": "2026-11-20T07:00:00-08:00"]
+        XCTAssertTrue(Mango9OpportunityAPI.duplicateMatches(row, command: command))
+        row["value"] = "2.00"; XCTAssertFalse(Mango9OpportunityAPI.duplicateMatches(row, command: command))
+        row["value"] = "1.0"; row["contact_id"] = 8; XCTAssertFalse(Mango9OpportunityAPI.duplicateMatches(row, command: command))
+    }
+    func testMetadataPreservesCustomStagesAndFiltersRetired() throws {
+        let metadata = try metadata()
+        XCTAssertEqual(metadata.userID, 101)
+        XCTAssertEqual(metadata.owners.first?.id, 101)
+        XCTAssertEqual(metadata.stages.map(\.id), ["custom-qualify", "custom-won", "custom-lost"])
+        XCTAssertEqual(metadata.stages.first?.probability, 37)
+        XCTAssertTrue(metadata.stages.first?.isDefault == true)
+        XCTAssertFalse(metadata.permissions["assign"] == true)
+    }
+    func testOverviewCountsOpportunitiesNotContactsAndDoesNotCrossAccountsOrExpireSilently() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let data: [String: Any] = ["items": [
+            ["id": 7, "contact_id": 100, "title": "First deal", "stage": "custom-qualify"],
+            ["id": 8, "contact_id": 100, "title": "Second deal", "stage": "custom-qualify"]],
+            "summary": [[String: Any]](), "pagination": ["page": 1, "total": 12, "hasMore": true]]
+        let overview = try Mango9OpportunityOverview(session: session(), metadata: metadata(), data: data, now: now)
+        XCTAssertEqual(overview.total, 12, "The CRM counter uses the server total, not this page's contacts or rows")
+        XCTAssertEqual(overview.rows.map(\.id), [7, 8], "Two Opportunities for one lead stay separate")
+        XCTAssertTrue(overview.matches(session(), now: now.addingTimeInterval(29)))
+        XCTAssertFalse(overview.matches(session(), now: now.addingTimeInterval(30)))
+        XCTAssertFalse(overview.matches(session("other-account"), now: now))
+        XCTAssertFalse(overview.matches(session(base: "https://other.example.invalid/app/api/v2"), now: now))
+        var malformed = data
+        malformed["pagination"] = ["page": 1, "total": -1, "hasMore": false]
+        XCTAssertThrowsError(try Mango9OpportunityOverview(session: session(), metadata: metadata(), data: malformed))
+    }
+    func testCreatePayloadMatchesServerAndKeepsMoneyExact() throws {
+        var draft = Mango9OpportunityDraft(); draft.title = "  Consulting  "; draft.stage = "custom-qualify"
+        draft.value = "999999999999.99"; draft.hasNextDue = true; draft.nextAction = "Call back"
+        let values = try draft.values(metadata: metadata())
+        XCTAssertEqual(Set(values.keys), ["title", "stage", "value", "currency", "probability", "probability_mode", "close_date", "source", "description", "next_action", "next_due_at", "actual_value", "actual_close_date", "loss_reason"])
+        XCTAssertEqual(values["title"] as? String, "Consulting")
+        XCTAssertEqual(values["value"] as? String, "999999999999.99")
+        XCTAssertEqual(values["probability"] as? Int, 37)
+        XCTAssertEqual(values["probability_mode"] as? String, "stage")
+        XCTAssertTrue(values["close_date"] is NSNull)
+        XCTAssertNotNil(ISO8601DateFormatter().date(from: values["next_due_at"] as! String))
+        XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: values))
+    }
+    func testUnknownStageAndInvalidAmountsRejected() throws {
+        var draft = Mango9OpportunityDraft(); draft.title = "Fixture"; draft.stage = "retired"
+        XCTAssertThrowsError(try draft.values(metadata: metadata()))
+        draft.stage = "custom-qualify"
+        for amount in ["-1", "1.234", "1,000", "NaN", "1000000000000", "1e9"] {
+            draft.value = amount; XCTAssertThrowsError(try draft.values(metadata: metadata()), amount)
+        }
+        draft.value = ""; XCTAssertTrue(try draft.values(metadata: metadata())["value"] is NSNull)
+    }
+    func testLostOutcomeRequiresReasonAndOpenClearsOutcome() throws {
+        var draft = Mango9OpportunityDraft(); draft.title = "Fixture"; draft.stage = "custom-lost"
+        XCTAssertThrowsError(try draft.values(metadata: metadata()))
+        draft.lossReason = "Timing"; draft.actualValue = "0.00"
+        let lost = try draft.values(metadata: metadata())
+        XCTAssertEqual(lost["loss_reason"] as? String, "Timing")
+        XCTAssertNotNil(lost["actual_close_date"] as? String)
+        draft.stage = "custom-qualify"
+        let open = try draft.values(metadata: metadata())
+        XCTAssertTrue(open["actual_close_date"] is NSNull); XCTAssertTrue(open["actual_value"] is NSNull)
+        XCTAssertEqual(open["loss_reason"] as? String, "")
+    }
+    func testFollowupRequiresActionAndManualProbabilityIsUsed() throws {
+        var draft = Mango9OpportunityDraft(); draft.title = "Fixture"; draft.stage = "custom-qualify"; draft.hasNextDue = true
+        XCTAssertThrowsError(try draft.values(metadata: metadata()))
+        draft.nextAction = "Email proposal"; draft.manualProbability = true; draft.probability = 62
+        XCTAssertEqual(try draft.values(metadata: metadata())["probability"] as? Int, 62)
+    }
+    func testRequestsKeepOriginAndUseCorrectLegacyAndMobilePaths() throws {
+        let session = session()
+        let request = try Mango9OpportunityAPI.request(session, path: "metadata")
+        XCTAssertEqual(request.url?.absoluteString, "https://crm.example.invalid/app/api/opportunities/metadata")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fixture-token")
+        let conversion = try Mango9OpportunityAPI.request(session, path: "123/convert-to-client", contact: true, body: ["revision": String(repeating: "a", count: 64), "requestId": UUID().uuidString])
+        XCTAssertEqual(conversion.url?.path, "/app/api/v2/mobile/contacts/123/convert-to-client")
+        XCTAssertEqual(conversion.httpMethod, "POST")
+        XCTAssertThrowsError(try Mango9OpportunityAPI.request(self.session(base: "http://crm.example.invalid/app/api/v2"), path: "metadata"))
+        XCTAssertThrowsError(try Mango9OpportunityAPI.request(self.session(base: "https://user:pass@crm.example.invalid/app/api/v2"), path: "metadata"))
+        XCTAssertThrowsError(try Mango9OpportunityAPI.request(session, path: "../other"))
+    }
+    func testSuccessEnvelopeDoesNotRequireMessageAndErrorsAreNotEmptyLists() throws {
+        let payload = Data(#"{"success":true,"data":{"counts":[{"id":"12","count":"3"}]}}"#.utf8)
+        let result = try Mango9OpportunityAPI.decode(payload, status: 200)
+        XCTAssertNotNil(result["counts"])
+        XCTAssertThrowsError(try Mango9OpportunityAPI.decode(Data(#"{"success":false,"message":"Permission denied"}"#.utf8), status: 403))
+        XCTAssertThrowsError(try Mango9OpportunityAPI.decode(Data(#"{"success":true}"#.utf8), status: 200))
+        XCTAssertNil(Mango9OpportunityAPI.integer(true))
+        XCTAssertNil(Mango9OpportunityAPI.integer(1.5))
+    }
+    func testPendingCommandSurvivesReadWithExactRequestIDAndBody() throws {
+        let session = session(), operation = "fixture-create"
+        defer { try? Mango9OpportunityCommands.save(nil, session: session, contact: 123, operation: operation) }
+        let body: [String: Any] = ["requestId": UUID().uuidString, "contactId": 123, "ownerId": 101, "values": ["title": "Fixture", "value": "0.01"]]
+        try Mango9OpportunityCommands.save(body, session: session, contact: 123, operation: operation)
+        let restored = try XCTUnwrap(Mango9OpportunityCommands.load(session, contact: 123, operation: operation))
+        XCTAssertEqual(restored["requestId"] as? String, body["requestId"] as? String)
+        XCTAssertEqual(restored["values"] as? [String: String], body["values"] as? [String: String])
+        XCTAssertNil(try Mango9OpportunityCommands.load(self.session("different"), contact: 123, operation: operation))
+    }
+    func testNetworkResponseCannotCrossAccountSwitch() async throws {
+        let previous = Mango9SessionStore.activeIdentity, current = session(), replacement = session("replacement")
+        try Mango9SessionStore.save(current, persist: false, makeActive: true)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [OpportunityURLProtocol.self]
+        let transport = URLSession(configuration: config)
+        defer {
+            transport.invalidateAndCancel(); OpportunityURLProtocol.handler = nil
+            try? Mango9SessionStore.remove(for: current.sipIdentity!); try? Mango9SessionStore.remove(for: replacement.sipIdentity!)
+            Mango9SessionStore.activate(sipIdentity: previous)
+        }
+        OpportunityURLProtocol.handler = { _ in
+            try Mango9SessionStore.save(replacement, persist: false, makeActive: true)
+            return (200, Data(#"{"success":true,"data":{"items":[]}}"#.utf8))
+        }
+        do { _ = try await Mango9OpportunityAPI.send(current, transport: transport); XCTFail("Stale account accepted") }
+        catch { XCTAssertEqual((error as? Mango9OpportunityFailure)?.message, Mango9OpportunityFailure.accountChanged.message) }
+    }
+    func testSharingDirectionsAndReadOnlyCapabilitiesDecode() throws {
+        let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let sharing = try decoder.decode(Mango9ContactSharing.self, from: Data(#"{"shared_with_me":true,"shared_by_me":false,"entries":[{"id":17,"shared_by":101,"shared_by_name":"Alex","target_user_id":102,"shared_with_name":"Jordan","via":"appointment"}]}"#.utf8))
+        XCTAssertTrue(sharing.sharedWithMe); XCTAssertFalse(sharing.sharedByMe)
+        XCTAssertEqual(sharing.entries.first?.sharedByName, "Alex")
+        XCTAssertEqual(sharing.entries.first?.sharedWithName, "Jordan")
+        XCTAssertEqual(sharing.entries.first?.via, "appointment")
+        let permissions = try decoder.decode(Mango9ContactPermissions.self, from: Data(#"{"can_update":false,"can_delete":false}"#.utf8))
+        XCTAssertFalse(permissions.canUpdate); XCTAssertFalse(permissions.canDelete)
+        XCTAssertEqual(Mango9CRMSharingFilter.allCases.map(\.rawValue), ["", "with_me", "by_me"])
+    }
+
+    func testRestrictedOpportunityCannotRevealLinkedContact() throws {
+        let row = try Mango9Opportunity(["id": 12, "title": "Fixture", "stage": "new", "contact_id": 33,
+            "contact_state": "restricted", "canOpenContact": false, "contact": ["id": 33, "name": "Must not display"]])
+        XCTAssertNil(row.contactID)
+        XCTAssertEqual(row.contactName, "Restricted contact")
+        XCTAssertTrue(row.contact.isEmpty)
+    }
+
+    func testMoneyKeepsUnknownDistinctFromZeroAndWeightsExactDecimal() throws {
+        let row = try Mango9Opportunity(["id": 12, "title": "Fixture", "stage": "new", "value": "999999999999.99", "probability": 37, "currency": "USD"])
+        XCTAssertEqual(row.weightedValue, "369999999999.9963")
+        XCTAssertEqual(Mango9OpportunityStyle.money(nil, currency: "USD"), "Not entered")
+        XCTAssertEqual(Mango9OpportunityStyle.money("0.00", currency: "USD"), "$0")
+    }
+
+    func testRetiredStageCanOnlyBeRetainedByItsExistingRecord() throws {
+        let metadata = try metadata()
+        XCTAssertTrue(metadata.displayStages.contains { $0.id == "retired" })
+        var draft = Mango9OpportunityDraft(); draft.title = "Fixture"; draft.stage = "retired"
+        XCTAssertThrowsError(try draft.values(metadata: metadata))
+        XCTAssertThrowsError(try draft.values(metadata: metadata, existingStage: "custom-qualify"))
+        XCTAssertNoThrow(try draft.values(metadata: metadata, existingStage: "retired"))
+    }
+
+    func testServerDatesRoundTripWithoutShiftingDateOnlyFields() throws {
+        XCTAssertNotNil(Mango9OpportunityStyle.parseDate("2026-11-19 15:30:00+00"))
+        XCTAssertNotNil(Mango9OpportunityStyle.parseDate("2026-11-19T15:30:00.123Z"))
+        XCTAssertEqual(Mango9OpportunityStyle.date("2026-12-05"), "Dec 5, 2026")
+        let row = try Mango9Opportunity(["id": 12, "title": "Fixture", "stage": "new", "next_due_at": "2026-11-19T15:30:00Z", "close_date": "2026-12-05"])
+        XCTAssertEqual(Mango9OpportunityDraft.date(row.draft.closeDate), "2026-12-05")
+        XCTAssertTrue(row.draft.hasNextDue)
+    }
+
+    func testFollowupUsesCalendarAndReusesEventAfterLinkRetryAndReschedule() async throws {
+        try await exerciseCalendarFollowup(lostCreate: false)
+    }
+    func testUncertainCalendarCreateIsNotResentAfterReopening() async throws {
+        try await exerciseCalendarFollowup(lostCreate: true)
+    }
+    private func exerciseCalendarFollowup(lostCreate: Bool) async throws {
+        let previous = Mango9SessionStore.activeIdentity
+        let identity = try Mango9SessionStore.save(session("followup-fixture"), persist: false, makeActive: true)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [OpportunityURLProtocol.self]
+        let transport = URLSession(configuration: config)
+        defer {
+            OpportunityURLProtocol.handler = nil; transport.invalidateAndCancel()
+            for operation in ["followup", "mutate"] { try? Mango9OpportunityCommands.save(nil, session: identity, contact: 12, operation: operation) }
+            try? Mango9SessionStore.remove(for: identity.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous)
+        }
+        var row: [String: Any] = ["id": 12, "title": "Fixture", "stage": "custom-qualify", "revision": "1", "currency": "USD", "probability": 37,
+            "contact_id": 33, "canOpenContact": true, "contact_state": "available", "contact": ["id": 33, "name": "Test contact", "is_client": false]]
+        var event: [String: Any] = [:], creates = 0, patches = 0, failLink = !lostCreate
+        let calendarMeta: [String: Any] = ["timezone": "America/Los_Angeles", "statuses": [], "activities": ["follow_up"], "priorities": ["medium"],
+            "reminder_minutes": [], "reminder_channels": [], "share_recipients": [], "assignees": [], "capabilities": ["create": true, "assign": false, "push": false]]
+        let meta: [String: Any] = ["userId": "101", "permissions": ["access": true, "edit": true], "users": [], "sources": [],
+            "statusSpecs": [["id": "custom-qualify", "name": "Assessment", "classification": "open", "probability": 37, "default": true, "retired": false]]]
+        OpportunityURLProtocol.handler = { request in
+            let path = request.url!.path, method = request.httpMethod ?? "GET"
+            var bytes = request.httpBody ?? Data()
+            if bytes.isEmpty, let stream = request.httpBodyStream {
+                stream.open(); defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; bytes.append(buffer, count: count) }
+            }
+            let body = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] ?? [:]
+            var data: [String: Any]
+            if path.hasSuffix("/calendar/metadata") { data = calendarMeta }
+            else if path.hasSuffix("/opportunities/metadata") { data = meta }
+            else if path.hasSuffix("/calendar/events") && method == "POST" {
+                creates += 1
+                event = ["id": 91, "owner_id": 101, "title": body["title"]!, "description": "", "start_at": body["start_at"]!, "end_at": body["end_at"]!, "timezone": "America/Los_Angeles", "activity": "follow_up", "priority": "medium", "status": NSNull(), "contact": ["id": 33, "name": "Test contact", "kind": "lead"], "recurrence": ["frequency": "none", "weekdays": []], "reminders": [], "origin": "appointment", "shared_by_me_user_ids": [], "permissions": ["can_edit": true, "can_delete": true, "can_assign": false, "can_share": true, "can_change_contact": true], "revision": String(repeating: "a", count: 64)]
+                if lostCreate { throw URLError(.timedOut) }
+                data = event
+            } else if path.hasSuffix("/calendar/events/91") {
+                if method == "PATCH" { patches += 1; event.merge(body) { _, new in new } }
+                data = event
+            } else if path.hasSuffix("/12/activity") {
+                if failLink { failLink = false; return (500, Data(#"{"success":false,"message":"Temporary link error"}"#.utf8)) }
+                row["activity_key"] = body["activityKey"]; row["activity"] = ["event_id": 91, "managed": false]; row["revision"] = "2"
+                data = ["id": 12, "action": "activity", "saved": true]
+            } else if path.hasSuffix("/12/update") {
+                row.merge(body["values"] as? [String: Any] ?? [:]) { _, new in new }; row["revision"] = "3"
+                data = ["id": 12, "action": "update", "saved": true]
+            } else if path.hasSuffix("/opportunities/12") { data = row }
+            else { throw URLError(.badURL) }
+            return (200, try JSONSerialization.data(withJSONObject: ["success": true, "data": data]))
+        }
+        let detail = Mango9OpportunityDetailModel(id: 12, session: identity, metadata: nil, transport: transport)
+        await detail.load()
+        _ = try XCTUnwrap(detail.row, detail.error ?? "Detail load returned no row")
+        let schedule = Mango9OpportunityFollowupModel(detail)
+        await schedule.load()
+        XCTAssertTrue(schedule.writable, schedule.error ?? "")
+        schedule.title = "Test follow-up"
+        schedule.start = Date(timeIntervalSince1970: 1796148000); schedule.end = schedule.start.addingTimeInterval(1800)
+        let first = await schedule.save()
+        XCTAssertFalse(first); XCTAssertEqual(creates, 1)
+        let reopened = Mango9OpportunityFollowupModel(detail); await reopened.load()
+        let retry = await reopened.save()
+        if lostCreate {
+            XCTAssertFalse(retry); XCTAssertTrue(reopened.waitingForCalendar); XCTAssertEqual(creates, 1)
+        } else {
+            XCTAssertTrue(retry, reopened.error ?? ""); XCTAssertEqual(creates, 1)
+            XCTAssertEqual(detail.row?.raw["activity_key"] as? String, "event-91")
+            XCTAssertEqual(detail.row?.nextAction, "Test follow-up")
+            XCTAssertEqual(detail.row?.nextDue, event["start_at"] as? String)
+            let edit = Mango9OpportunityFollowupModel(detail); await edit.load()
+            edit.start = edit.start.addingTimeInterval(3600); edit.end = edit.end.addingTimeInterval(3600)
+            let rescheduled = await edit.save()
+            XCTAssertTrue(rescheduled, edit.error ?? ""); XCTAssertEqual(creates, 1); XCTAssertEqual(patches, 1)
+        }
+    }
+
+}
