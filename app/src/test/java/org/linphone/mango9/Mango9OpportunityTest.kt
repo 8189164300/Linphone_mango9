@@ -86,4 +86,25 @@ class Mango9OpportunityTest {
         d.stage = "custom"; d.value = "01"; assertThrows(IllegalArgumentException::class.java){d.values(m)}
     }
 
+    @Test fun visibilityCanBeRestrictedClearedAndRestoredWithoutLosingOriginalShares() {
+        fun choices(ids: List<Int>) = Mango9OpportunityMetadata(
+            JSONObject(metadata().raw.toString()).put(
+                "users",
+                org.json.JSONArray(
+                    ids.map {
+            JSONObject().put("id", it).put("name", "Member $it")
+        }
+                )
+            )
+        )
+        val all = choices(listOf(7, 8, 9)); val limited = choices(listOf(7, 9)); val empty = choices(emptyList())
+        val prior = listOf(7, 8, 9, 9, 999)
+        assertEquals(listOf(8, 9), all.visibleRecipients(prior, 7))
+        assertEquals(listOf(9), limited.visibleRecipients(prior, 7))
+        assertEquals("", limited.visibleOwnerFilter("8")); assertEquals("9", limited.visibleOwnerFilter("9"))
+        assertEquals(emptyList<Int>(), empty.visibleRecipients(prior, 7))
+        assertEquals(listOf(8, 9), all.visibleRecipients(prior, 7)); assertEquals("8", all.visibleOwnerFilter("8"))
+        assertEquals(listOf(7, 8, 9, 9, 999), prior)
+    }
+
 }

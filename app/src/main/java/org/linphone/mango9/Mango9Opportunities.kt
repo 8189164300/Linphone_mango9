@@ -32,6 +32,14 @@ internal class Mango9OpportunityMetadata(val raw: JSONObject) {
     }
     val activeStages get() = stages.filterNot { it.retired }
     val owners = raw.getJSONArray("users").opportunityObjects().map { it.getInt("id") to it.getString("name") }
+
+    fun visibleRecipients(ids: Collection<Int>, ownerId: Int): List<Int> {
+        val available = owners.map { it.first }.toSet() - ownerId
+        return ids.filter { it in available }.distinct().sorted()
+    }
+
+    fun visibleOwnerFilter(id: String) = id.takeIf { selected -> owners.any { it.first.toString() == selected } } ?: ""
+
     val canCreate get() = permissions.optBoolean("create")
     val canAccess get() = permissions.optBoolean("access")
 }

@@ -143,6 +143,8 @@ internal class Mango9OpportunityWorkspaceUI(
         val query = mutableMapOf("sort" to "updated_at", "direction" to "desc", "limit" to "25")
         if (contact != null) query["contactId"] = contact.id.toString()
 
+        val choiceButtons = mutableMapOf<String, Button>()
+
         fun choices(label: String, options: () -> List<Pair<String, String>>, key: String): Button {
             lateinit var button: Button
             button = action(label) {
@@ -152,6 +154,7 @@ internal class Mango9OpportunityWorkspaceUI(
                     queryJob?.cancel(); search.setText(search.text.toString())
                 }.show()
             }
+            choiceButtons[key] = button
             return button
         }
 
@@ -160,7 +163,11 @@ internal class Mango9OpportunityWorkspaceUI(
             scope.launch {
                 if (reset) { status.removeAllViews(); add(status, text("Loading…", color = muted)) }
                 try {
-                    val meta = metadata ?: Mango9OpportunityMetadata(api.request(lease, listOf("metadata"))).also { metadata = it }
+                    val meta = if (reset || metadata == null) Mango9OpportunityMetadata(api.request(lease, listOf("metadata"))) else metadata!!
+                    if (!current() || !p.isShowing || version != seq) return@launch
+                    metadata = meta
+                    query["owner"] = meta.visibleOwnerFilter(query["owner"].orEmpty())
+                    choiceButtons["owner"]?.text = meta.owners.firstOrNull { it.first.toString() == query["owner"] }?.second ?: "All owners"
                     val raw = api.request(lease, query = query + mapOf("q" to search.text.toString(), "page" to (if (reset) 1 else next).toString()))
                     val pagination = raw.getJSONObject("pagination"); val items = raw.getJSONArray("items").opportunityObjects()
                     if (!current() || !p.isShowing || version != seq) return@launch
@@ -315,6 +322,15 @@ internal class Mango9OpportunityWorkspaceUI(
             busy = true; p.setCancelable(false)
             scope.launch {
                 try {
+                val fields = JSONObject(fields.toString())
+                if (old == null && action == "share") {
+                    val latest = Mango9OpportunityMetadata(api.request(lease, listOf("metadata")))
+                    if (!current() || !p.isShowing) return@launch
+                    metadata = latest
+                    require(latest.permissions.optBoolean("share")) { "Sharing is no longer available. Reload this Opportunity." }
+                    val selected = fields.getJSONArray("userIds").let { ids -> (0 until ids.length()).map(ids::getInt) }
+                    fields.put("userIds", JSONArray(latest.visibleRecipients(selected, row!!.optInt("owner_id"))))
+                }
                 val command = old ?: JSONObject(fields.toString()).put("action", action).put("requestId", UUID.randomUUID().toString()).put("revision", row!!.getString("revision"))
                 commands.save(lease, id, "mutate", command); val originalAction = command.getString("action"); val payload = JSONObject(command.toString()).apply{
                     remove("action")
@@ -416,13 +432,22 @@ internal class Mango9OpportunityWorkspaceUI(
             fetch(true)
         }
 
-        fun sharing(r: JSONObject, meta: Mango9OpportunityMetadata) {
+        fun renderSharing(r: JSONObject, meta: Mango9OpportunityMetadata) {
             val content = column(14); val child = quick("Sharing", content); p.whenDismissed {
                 child.dismiss()
-            }; val ids = r.optJSONArray("shares")?.opportunityObjects()?.filter{
+            }
+            val prior = r.optJSONArray("shares")?.opportunityObjects()?.filter {
                 it.optInt("shared_by") == meta.userId
-            }?.map{it.getInt("id")}?.toMutableSet() ?: mutableSetOf()
-            add(content, text("Shared by you", 17f, bold = true)); meta.owners.filter{
+            }?.map { it.getInt("id") }.orEmpty()
+            val ids = meta.visibleRecipients(prior, r.optInt("owner_id")).toMutableSet()
+            add(content, text("Shared by you", 17f, bold = true))
+            if (meta.owners.none {
+                it.first != r.optInt("owner_id")
+            }
+            ) {
+                add(content, text("No people are available to share with.", color = muted))
+            }
+            meta.owners.filter{
                 it.first != r.optInt("owner_id")
             }.forEach{(uid, name) ->
                 add(
@@ -438,6 +463,23 @@ internal class Mango9OpportunityWorkspaceUI(
                 mutate("share", JSONObject().put("userIds", JSONArray(ids.toList()))){child.dismiss()}
             }
             )
+        }
+
+        fun sharing(r: JSONObject, meta: Mango9OpportunityMetadata) {
+            if (busy) return
+            busy = true
+            scope.launch {
+                try {
+                    val latest = Mango9OpportunityMetadata(api.request(lease, listOf("metadata")))
+                    if (!current() || !p.isShowing) return@launch
+                    metadata = latest
+                    require(latest.permissions.optBoolean("share")) { "Sharing is no longer available. Reload this Opportunity." }
+                    renderSharing(r, latest)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    if (current() && p.isShowing) failure(body, e) { sharing(r, meta) }
+                } finally { busy = false }
+            }
         }
 
         fun renderTab(r: JSONObject, meta: Mango9OpportunityMetadata) {
