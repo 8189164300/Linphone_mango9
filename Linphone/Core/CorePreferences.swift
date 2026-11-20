@@ -38,14 +38,21 @@ enum Mango9Configuration {
 	static let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.mango9.phone"
 
 	static var applePushProvider: String {
-		applePushProvider(forAPSEnvironment: signedAPSEnvironment)
+		applePushProvider(forAPSEnvironment: configuredAPSEnvironment)
+	}
+
+	static var messagePushEnvironment: String {
+		applePushProvider == "apns.dev" ? "sandbox" : "production"
 	}
 
 	static func applePushProvider(forAPSEnvironment environment: String?) -> String {
 		environment?.lowercased() == "development" ? "apns.dev" : "apns"
 	}
 
-	private static var signedAPSEnvironment: String? {
+	// This value is supplied by the build, not read from the code signature.
+	// Device installation must verify it against the final signed entitlement:
+	// a Release build can still be signed with a development profile.
+	private static var configuredAPSEnvironment: String? {
 		Bundle.main.object(forInfoDictionaryKey: "Mango9APSEnvironment") as? String
 	}
 

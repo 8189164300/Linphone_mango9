@@ -809,11 +809,7 @@ final class Mango9ChatStore: ObservableObject {
 		request.timeoutInterval = 15
 		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 		request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
-		#if DEBUG
-		let pushEnvironment = "sandbox"
-		#else
-		let pushEnvironment = "production"
-		#endif
+		let pushEnvironment = Mango9Configuration.messagePushEnvironment
 		let payload: [String: String] = [
 			"token": token.lowercased(),
 			"device_id": Self.deviceIdentifier,

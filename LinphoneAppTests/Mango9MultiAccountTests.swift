@@ -612,7 +612,7 @@ final class Mango9MultiAccountTests: XCTestCase {
 		)
 	}
 
-	func testApplePushProviderUsesSignedAPSEnvironment() {
+	func testApplePushProviderUsesConfiguredAPSEnvironment() {
 		XCTAssertEqual(
 			Mango9Configuration.applePushProvider(forAPSEnvironment: "development"),
 			"apns.dev"
@@ -625,6 +625,15 @@ final class Mango9MultiAccountTests: XCTestCase {
 			Mango9Configuration.applePushProvider(forAPSEnvironment: nil),
 			"apns"
 		)
+	}
+
+	func testMessageAndCallPushUseTheSameEnvironment() {
+		let configured = Bundle.main.object(forInfoDictionaryKey: "Mango9APSEnvironment") as? String
+		XCTAssertTrue(["development", "production"].contains(configured ?? ""))
+		XCTAssertEqual(Mango9Configuration.messagePushEnvironment,
+			configured == "development" ? "sandbox" : "production")
+		XCTAssertEqual(Mango9Configuration.applePushProvider,
+			configured == "development" ? "apns.dev" : "apns")
 	}
 }
 

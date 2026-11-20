@@ -43,6 +43,17 @@ own Apple team, App ID, application groups, PushKit/APNs configuration, and
 service credentials; no private credentials are included in this public
 repository.
 
+### Physical-device push signing
+
+An optimized Release build can still be development-signed when installed
+directly from Xcode. For that build, pass `MANGO9_APS_ENVIRONMENT=development`
+to `xcodebuild`; keep `production` for App Store and TestFlight distribution.
+Use `sh scripts/install-device-build.sh /path/to/LinphoneApp.app DEVICE_ID`
+to install: it rejects bundles whose push configuration differs from their
+actual signed entitlement. Run `scripts/verify-app-store-bundle.sh` on the
+final distribution-exported app before uploading it. This verifies production
+push signing as well as privacy manifests.
+
 ## Upstream build documentation
 
 ## What's new

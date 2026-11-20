@@ -10,6 +10,10 @@ if [ -z "${app_path}" ] || [ ! -d "${app_path}" ]; then
 fi
 
 failure=0
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+if ! python3 "$script_dir/verify-push-environment.py" "$app_path" --expect production; then
+	failure=1
+fi
 
 check_manifest() {
 	manifest_path="$1"
