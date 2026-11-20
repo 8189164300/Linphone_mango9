@@ -1,6 +1,6 @@
-# App Store metadata for Mango9 6.2.20
+# App Store metadata for Mango9 6.2.25
 
-These files are the app-only metadata for build 60. Paste the contents
+These files are the app-only metadata for build 76. Paste the contents
 into the English (U.S.) localization in App Store Connect. Server implementation
 details are intentionally excluded because they are not part of the iOS release.
 

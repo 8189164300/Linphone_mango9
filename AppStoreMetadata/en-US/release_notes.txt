@@ -1,1 +1,6 @@
-We have discontinued the AI assistant and removed its chat and voice features. Business calling, messaging and CRM functionality remain available.
+• Manage CRM Opportunities with values, stages, activity links and new-item alerts.
+• Convert Leads to Clients and view sharing details, subject to your account permissions.
+• Find Opportunities faster with saved creator, due-date and amount filters.
+• Schedule Opportunity follow-ups with automatic Calendar synchronization.
+• Enjoy a faster phone keypad with keypress sounds, quick call history access and improved missed-call and voicemail badges.
+• Improved incoming-call and push-notification reliability.

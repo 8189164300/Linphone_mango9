@@ -1,11 +1,15 @@
-Mango9 6.2.24 (73): business communications and CRM companion, iOS 15+.
+Mango9 6.2.25 (76): business communications and CRM companion, iOS 15+.
 
-We have decided to discontinue the AI assistant. This update removes its chat and voice features while retaining the app’s other functionality. The assistant button, AI chat screens, voice sessions and assistant notification routing have been removed.
+This update adds native CRM Opportunities, including values, stages, details, activity links, account-scoped filters and new-item alerts. Open CRM > Opportunities, or open a Lead or Client and use its Opportunity actions. Lead conversion and all record visibility follow the account's server permissions. Follow-ups are saved through the Opportunity API and synchronized to the responsible user's Calendar when the opportunity is open and has a next action, due time and Calendar access. Activity content loads when opened.
+
+Calls now opens the phone keypad directly. Call history is available at the top; missed-call and voicemail badges are shown on their controls. Voicemail number settings are under Settings > Calls. Keypress sounds, navigation performance and incoming-call push handling have been improved.
+
+The AI assistant remains discontinued, as in approved version 6.2.24. This build does not restore AI chat, voice sessions, the assistant button or assistant notification routing.
 
 Use the existing review credentials in App Store Connect. Sign-in provisions the assigned calling line and CRM. There is no native consumer signup or purchase flow.
 
-Chat contains SMS, Team Chat, Social and Live Chat. Settings > Conversations controls visible tabs; account permissions still apply. Social requires a connected provider and an open reply window. Live Chat requires a connected website.
+Chat contains SMS, Team Chat, Social and Live Chat. Settings > Conversations controls visible tabs; account permissions still apply. Social requires a connected provider and an open reply window. Live Chat requires a connected website. Chats retain templates, supported attachments and message actions.
 
-Contacts, Calls and CRM use the main footer. CRM includes Leads, Clients, Calendar and Tasks, subject to account permissions. Chats retain templates, media preview/export and message actions.
+Contacts, Calls, Chat and CRM use the main footer. CRM includes Leads, Clients, Opportunities, Calendar and Tasks, subject to account permissions.
 
-The sign-in gear opens optional manual SIP setup. Its settings code is the displayed app version, 6.2.24. This opens a form for SIP credentials supplied by an administrator and does not grant CRM permissions. Normal sign-in does not require this setup.
+The sign-in gear opens optional manual SIP setup. Its settings code is the displayed app version, 6.2.25. This opens a form for SIP credentials supplied by an administrator and does not grant CRM permissions. Normal sign-in does not require this setup.

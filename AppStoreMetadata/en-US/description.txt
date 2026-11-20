@@ -10,6 +10,8 @@ Use your existing Mango9 account to:
 • Support website visitors through Live Chat with assignment, visitor details and supported attachments
 • Manage multiple business lines
 • Open customer records directly from call and message activity
+• Manage Leads and Clients, convert Leads to Clients and view record sharing details
+• Track CRM Opportunities with values, stages, activity links, saved filters and Calendar follow-ups
 • Manage CRM appointments with calendar and list views, status updates, sharing and assignment
 • Customize in-app appointment reminders and messaging notification preferences
 
