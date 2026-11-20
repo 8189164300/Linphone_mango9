@@ -241,7 +241,8 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
         XCTAssertTrue(app.textFields["crm.followup.title"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.buttons["crm.followup.save"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.buttons["CRM"].firstMatch.frame.minY,footerBefore.minY,accuracy: 2)
-        capture("Follow-up uses calendar start and end times")
+        XCTAssertFalse(app.datePickers["crm.followup.ends"].exists)
+        capture("Follow-up uses server-managed Calendar due time")
         app.buttons["crm.opportunity.back"].firstMatch.tap()
         let notes = app.buttons["crm.opportunity.tab.Notes"]
         if !notes.isHittable { app.swipeUp() }

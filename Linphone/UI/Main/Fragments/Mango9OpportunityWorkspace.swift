@@ -75,6 +75,13 @@ private struct OpportunitySurface: ViewModifier {
 
 extension Mango9Opportunity {
     var revision: String? { raw["revision"] as? String }
+    var followupCalendarStatus: String {
+        guard raw["onCalendar"] as? Bool == true else { return "Not on Calendar" }
+        let info = raw["followUp"] as? [String: Any] ?? [:]
+        if info["mine"] as? Bool == true { return "On your Calendar" }
+        let name = info["holderName"] as? String ?? ""
+        return name.isEmpty ? "On Calendar" : "On " + name + "’s Calendar"
+    }
     var contact: [String: Any] { canOpenContact ? raw["contact"] as? [String: Any] ?? [:] : [:] }
     var canOpenContact: Bool { raw["canOpenContact"] as? Bool == true && raw["contact_state"] as? String == "available" }
     var contactID: Int? { canOpenContact ? Mango9OpportunityAPI.integer(raw["contact_id"]) : nil }
@@ -258,6 +265,7 @@ struct Mango9OpportunityDetail: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("NEXT FOLLOW-UP · " + Mango9OpportunityStyle.date(row.nextDue, time: true)).font(Mango9CRMText.fieldLabel).foregroundColor(Mango9OpportunityStyle.blue)
                 Text(row.nextAction.isEmpty ? "No next action" : row.nextAction).font(Mango9CRMText.emphasizedValue)
+                Text(row.followupCalendarStatus).font(Mango9CRMText.metadata).foregroundColor(Mango9OpportunityStyle.muted)
             }.frame(maxWidth: .infinity, alignment: .leading)
             if model.can("update") { NavigationLink { Mango9OpportunityFollowupPage(model: model) } label: { Image(systemName: "pencil").foregroundStyle(Mango9OpportunityStyle.blue).frame(width: 32, height: 32) }.accessibilityLabel("Edit follow-up") }
         }.padding(13).background(Mango9OpportunityStyle.blue.opacity(0.055)).cornerRadius(13)
@@ -303,6 +311,7 @@ struct Mango9OpportunityDetail: View {
             VStack(alignment: .leading, spacing: 12) {
                 OpportunityFact("Next action", row.nextAction.isEmpty ? "No next action" : row.nextAction)
                 OpportunityFact("Due date", Mango9OpportunityStyle.date(row.nextDue, time: true))
+                OpportunityFact("Calendar", row.followupCalendarStatus)
                 if model.can("update") { NavigationLink("Edit follow-up") { Mango9OpportunityFollowupPage(model: model) }.font(Mango9CRMText.fieldValue) }
                 Divider()
                 OpportunityFact("Linked task or appointment", (row.raw["activity"] as? [String: Any])?["restricted"] as? Bool == true ? "Restricted activity" : (row.raw["activity"] as? [String: Any])?["title"] as? String ?? "None linked")
@@ -340,135 +349,70 @@ private struct OpportunityError: View {
     var body: some View { VStack(alignment: .leading, spacing: 8) { Text(message).font(.system(size: 13)).foregroundColor(.red); Button("Retry", action: retry) }.modifier(OpportunitySurface()) }
 }
 
-/// Calendar creates are not idempotent. Fence the write before sending and retain
-/// its confirmed event ID until both Opportunity mutations finish.
+/// One idempotent Opportunity update owns the follow-up. Calendar is maintained by
+/// the server, including rescheduling, reassignment, archive and removal.
 @MainActor final class Mango9OpportunityFollowupModel: ObservableObject {
     let opportunity: Mango9OpportunityDetailModel
-    @Published var metadata: Mango9CalendarMetadata?
-    @Published var event: Mango9Appointment?
     @Published var title = ""
     @Published var start = Date()
-    @Published var end = Date().addingTimeInterval(1800)
+    @Published var scheduled = true
     @Published var busy = false
     @Published var error: String?
     @Published var journal: [String: Any]?
-    private var loaded = false
+    @Published var loaded = false
     init(_ opportunity: Mango9OpportunityDetailModel) { self.opportunity = opportunity }
-    var waitingForCalendar: Bool { journal?["phase"] as? String == "sending" }
     var writable: Bool {
-        guard loaded, let row = opportunity.row, row.contactID != nil, !row.archived else { return false }
-        return opportunity.metadata?.permissions["edit"] == true &&
-            (event.map { $0.permissions.canEdit && !$0.isRecurring } ?? (metadata?.capabilities.create == true))
+        loaded && opportunity.row?.archived == false && opportunity.row?.revision != nil &&
+            opportunity.metadata?.permissions["edit"] == true && journal == nil
     }
     func load() async {
-        guard !busy, !loaded, let session = opportunity.session, let row = opportunity.row else { return }
+        guard !busy, !loaded, let session = opportunity.session else { return }
         busy = true; defer { busy = false }; error = nil
         do {
-            guard row.contactID != nil else { throw failure("Contact access is required to schedule a follow-up.") }
-            metadata = try await Mango9CalendarAPI.send(Mango9CalendarMetadata.self, session: session, path: "metadata", transport: opportunity.transport)
+            await opportunity.load()
+            guard let row = opportunity.row else { throw failure(opportunity.error ?? "The Opportunity is unavailable.") }
+            // Preserve uncertain writes from the old Calendar workflow for review;
+            // never replay them or remove an existing calendar event automatically.
             journal = try Mango9OpportunityCommands.load(session, contact: row.id, operation: "followup")
-            let activity = row.raw["activity"] as? [String: Any] ?? [:]
-            if activity["managed"] as? Bool == true || (row.raw["activity_key"] as? String ?? "").hasPrefix("task-") {
-                throw failure("This follow-up is a managed task. Change its schedule in Events & Tasks so its task and calendar stay in sync.")
-            }
-            if let id = Mango9OpportunityAPI.integer(journal?["eventId"]) ?? Mango9OpportunityAPI.integer(activity["event_id"]) {
-                let found = try await Mango9CalendarAPI.send(Mango9Appointment.self, session: session, path: "events/\(id)", transport: opportunity.transport)
-                guard found.id == id, found.contact?.id == row.contactID else { throw failure("The linked event no longer belongs to this contact. Refresh the Opportunity.") }
-                event = found
-            } else if row.raw["activity_key"] as? String != nil {
-                throw failure("The linked activity is unavailable. Review its access before changing this follow-up.")
-            }
-            title = event?.title ?? row.nextAction
-            start = event?.startAt ?? Mango9OpportunityStyle.parseDate(row.nextDue) ?? Date().addingTimeInterval(3600)
-            end = event?.endAt ?? start.addingTimeInterval(1800)
-            if let body = journal?["body"] as? [String: Any] {
-                title = body["title"] as? String ?? title
-                start = Mango9OpportunityStyle.parseDate(body["start_at"] as? String) ?? start
-                end = Mango9OpportunityStyle.parseDate(body["end_at"] as? String) ?? end
-            }
+            let pendingValues = (opportunity.pending?["body"] as? [String: Any])?["values"] as? [String: Any]
+            title = pendingValues?["next_action"] as? String ?? row.nextAction
+            let due = pendingValues == nil ? row.nextDue : pendingValues?["next_due_at"] as? String
+            scheduled = pendingValues == nil ? true : due != nil
+            start = Mango9OpportunityStyle.parseDate(due) ?? Date().addingTimeInterval(3600)
             loaded = true
-            if !writable { throw failure("You do not have permission to edit this calendar event.") }
+            if journal != nil { error = "A previous Calendar save needs review. Check Calendar before starting a server-managed follow-up. Existing events will be kept." }
+            else if !writable { error = "You do not have permission to edit this follow-up." }
         } catch { self.error = error.localizedDescription }
     }
     func save() async -> Bool {
-        guard !busy, let session = opportunity.session, let row = opportunity.row, let metadata else { return false }
+        guard !busy, writable, let row = opportunity.row, let meta = opportunity.metadata else { return false }
         busy = true; error = nil; defer { busy = false }
         do {
-            if journal == nil {
-                guard writable, opportunity.pending == nil else { throw failure("Finish the previous change before scheduling this follow-up.") }
-                let body = try Self.body(title: title, start: start, end: end, row: row, metadata: metadata, event: event)
-                var pending: [String: Any] = ["phase": "sending", "body": body]
-                if let event { pending["eventId"] = event.id; pending["revision"] = event.revision }
-                try persist(pending)
-                do {
-                    let saved = try await Mango9AppointmentSave.save(session: session, event: event, body: body, transport: opportunity.transport)
-                    guard saved.contact?.id == row.contactID, Self.matches(saved, body: body) else { throw failure("The saved event did not match this follow-up. Check the calendar before retrying.") }
-                    pending["phase"] = "calendarSaved"; pending["eventId"] = saved.id
-                    try persist(pending); event = saved
-                    NotificationCenter.default.post(name: .mango9AppointmentDidChange, object: nil)
-                } catch {
-                    if let failure = error as? Mango9CalendarFailure, [400,401,403,404,409,422,428,429].contains(failure.status) { try persist(nil) }
-                    throw error
-                }
+            if let pending = opportunity.pending {
+                guard pending["action"] as? String == "update" else { throw failure("Finish the previous Opportunity change first.") }
             }
-            guard var pending = journal else { throw failure("The follow-up save could not be confirmed.") }
-            // An existing event can be read back after a lost PATCH response. A
-            // lost create response has no authoritative ID and must not be resent.
-            if pending["phase"] as? String == "sending" {
-                guard let id = Mango9OpportunityAPI.integer(pending["eventId"]), let body = pending["body"] as? [String: Any] else {
-                    throw failure("The calendar save is unconfirmed. Open Calendar to check it before starting another follow-up; this request will not be resent.")
-                }
-                let saved = try await Mango9CalendarAPI.send(Mango9Appointment.self, session: session, path: "events/\(id)", transport: opportunity.transport)
-                guard Self.matches(saved, body: body), saved.contact?.id == row.contactID else { throw failure("The calendar does not confirm these changes. Review the event before starting again.") }
-                pending["phase"] = "calendarSaved"; try persist(pending); event = saved
+            var draft = row.draft
+            draft.nextAction = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            draft.hasNextDue = scheduled; draft.nextDue = start
+            // The original request/revision is retained by mutate after a timeout.
+            let values = opportunity.pending == nil ? try draft.values(metadata: meta, existingStage: row.stage) : [:]
+            guard await opportunity.mutate("update", values: ["values": values]) else {
+                if opportunity.pending == nil { loaded = false }
+                throw failure(opportunity.error ?? "The follow-up save could not be confirmed. Retry to check the same request.")
             }
-            guard let id = Mango9OpportunityAPI.integer(pending["eventId"]), let body = pending["body"] as? [String: Any] else { throw failure("The saved follow-up needs review.") }
-            // Link first: a later failed field update still leaves the event
-            // discoverable from this Opportunity, including on another device.
-            if pending["phase"] as? String == "calendarSaved" {
-                if opportunity.pending != nil, !(await opportunity.mutate("", values: [:])) { throw failure(opportunity.error ?? "Finish the pending Opportunity change.") }
-                await opportunity.load()
-                guard opportunity.row?.contactID == row.contactID else { throw failure("The linked contact changed. Review the saved calendar event.") }
-                if opportunity.row?.raw["activity_key"] as? String != "event-\(id)" {
-                    guard await opportunity.mutate("activity", values: ["activityKey": "event-\(id)"]) else { throw failure(opportunity.error ?? "The calendar event is saved, but its Opportunity link needs retrying.") }
-                }
-                pending["phase"] = "linked"; try persist(pending)
-            }
-            if opportunity.pending != nil, !(await opportunity.mutate("", values: [:])) { throw failure(opportunity.error ?? "Finish the pending Opportunity change.") }
-            await opportunity.load()
-            guard let latest = opportunity.row, let meta = opportunity.metadata, latest.contactID == row.contactID,
-                latest.raw["activity_key"] as? String == "event-\(id)" else { throw failure("The Opportunity changed. Review its linked calendar event before continuing.") }
-            var draft = latest.draft; draft.nextAction = body["title"] as? String ?? title
-            draft.hasNextDue = true; draft.nextDue = Mango9OpportunityStyle.parseDate(body["start_at"] as? String) ?? start
-            let values = try draft.values(metadata: meta, existingStage: latest.stage)
-            guard await opportunity.mutate("update", values: ["values": values]) else { throw failure(opportunity.error ?? "The calendar event is saved. Retry to finish updating the Opportunity.") }
-            try persist(nil)
+            NotificationCenter.default.post(name: .mango9AppointmentDidChange, object: nil)
             return true
         } catch { self.error = error.localizedDescription; return false }
     }
     func clearAfterReview() {
-        do { try persist(nil); loaded = false; error = nil } catch { self.error = error.localizedDescription }
+        do {
+            guard let session = opportunity.session else { throw Mango9OpportunityFailure.accountChanged }
+            guard opportunity.pending == nil else { throw failure("Finish the pending Opportunity change before clearing this older Calendar request.") }
+            try Mango9OpportunityCommands.save(nil, session: session, contact: opportunity.id, operation: "followup")
+            journal = nil; loaded = false; error = nil
+        } catch { self.error = error.localizedDescription }
     }
-    private func persist(_ value: [String: Any]?) throws {
-        guard let session = opportunity.session else { throw Mango9CalendarFailure.accountChanged }
-        try Mango9OpportunityCommands.save(value, session: session, contact: opportunity.id, operation: "followup"); journal = value
-    }
-    private func failure(_ message: String) -> Mango9CalendarFailure { .init(status: 0, code: "followup_unconfirmed", message: message) }
-    static func matches(_ event: Mango9Appointment, body: [String: Any]) -> Bool {
-        event.title == body["title"] as? String && Mango9AppointmentSave.datesMatch(body, event: event)
-    }
-    static func body(title: String, start: Date, end: Date, row: Mango9Opportunity, metadata: Mango9CalendarMetadata, event: Mango9Appointment?) throws -> [String: Any] {
-        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, title.count <= 255, end > start, let contactID = row.contactID else {
-            throw Mango9CalendarFailure(status: 422, code: "invalid_followup", message: "Enter a follow-up title and an end time after the start time.")
-        }
-        var body: [String: Any] = ["title": title, "start_at": Mango9CalendarAPI.timestamp(start), "end_at": Mango9CalendarAPI.timestamp(end)]
-        if event == nil {
-            body.merge(["activity": "follow_up", "priority": "medium", "timezone": metadata.timezone,
-                "contact_id": contactID, "description": "", "reminders": [], "share_user_ids": []]) { _, new in new }
-        }
-        return body
-    }
+    private func failure(_ message: String) -> Mango9OpportunityFailure { .init(status: 0, message: message) }
 }
 
 struct Mango9OpportunityFollowupPage: View {
@@ -480,35 +424,34 @@ struct Mango9OpportunityFollowupPage: View {
         Mango9OpportunityPage(title: "Follow-up", actions: { EmptyView() }) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Save this follow-up to your CRM calendar.").font(.system(size: 13)).foregroundColor(Mango9OpportunityStyle.muted)
-                    if let error = scheduler.error { Text(error).font(.system(size: 13)).foregroundColor(.red) }
-                    if scheduler.metadata == nil {
-                        if scheduler.error == nil { ProgressView("Loading schedule…") }
+                    Text("The Opportunity manages its Calendar follow-up. Open opportunities with a next action and due time get a 30-minute entry when the responsible user has Calendar access.").font(Mango9CRMText.metadata).foregroundColor(Mango9OpportunityStyle.muted)
+                    if let error = scheduler.error { Text(error).font(Mango9CRMText.metadata).foregroundColor(.red) }
+                    if !scheduler.loaded {
+                        if scheduler.error == nil { ProgressView("Loading follow-up…") }
                         else { Button("Retry") { Task { await scheduler.load() } } }
                     }
                     VStack(alignment: .leading, spacing: 12) {
+                        Text("Next action").font(Mango9CRMText.fieldLabel)
                         TextField("Next action", text: $scheduler.title).accessibilityIdentifier("crm.followup.title")
-                        DatePicker("Starts", selection: Binding(get: { scheduler.start }, set: { value in
-                            scheduler.end = value.addingTimeInterval(scheduler.end.timeIntervalSince(scheduler.start)); scheduler.start = value
-                        })).accessibilityIdentifier("crm.followup.starts")
-                        DatePicker("Ends", selection: $scheduler.end).accessibilityIdentifier("crm.followup.ends")
-                        Text("Times shown in \(scheduler.metadata?.timezone ?? TimeZone.current.identifier)").font(.caption).foregroundColor(Mango9OpportunityStyle.muted)
-                    }.modifier(OpportunitySurface()).disabled(scheduler.busy || scheduler.journal != nil || !scheduler.writable)
-                    if scheduler.waitingForCalendar {
+                        Toggle("Schedule in Calendar", isOn: $scheduler.scheduled)
+                        if scheduler.scheduled { DatePicker("Due", selection: $scheduler.start).accessibilityIdentifier("crm.followup.starts") }
+                        Text("Times shown in \(TimeZone.current.identifier)").font(Mango9CRMText.metadata).foregroundColor(Mango9OpportunityStyle.muted)
+                    }.modifier(OpportunitySurface()).disabled(scheduler.busy || !scheduler.writable || scheduler.opportunity.pending != nil)
+                    if scheduler.journal != nil {
                         NavigationLink("Open Calendar") { Mango9AppointmentsFragment(presentation: .calendar) }
-                        Button("I checked Calendar — start over") { confirmReset = true }.font(.system(size: 13))
+                        Button("I checked Calendar — continue") { confirmReset = true }.font(Mango9CRMText.fieldValue)
                     }
-                    Button(scheduler.busy ? "Saving…" : scheduler.journal == nil ? "Save follow-up" : "Check and finish save") {
+                    Button(scheduler.busy ? "Saving…" : scheduler.opportunity.pending == nil ? "Save follow-up" : "Retry save") {
                         Task { if await scheduler.save() { dismiss() } }
                     }.buttonStyle(OpportunityPrimaryButton()).disabled(scheduler.busy || !scheduler.writable)
                         .accessibilityIdentifier("crm.followup.save")
                 }.padding(14)
-            }.environment(\.timeZone, TimeZone(identifier: scheduler.metadata?.timezone ?? "") ?? .current)
+            }
         }.task { await scheduler.load() }
-            .alert("Start another calendar request?", isPresented: $confirmReset) {
+            .alert("Keep the existing Calendar events?", isPresented: $confirmReset) {
                 Button("Cancel", role: .cancel) {}
-                Button("I checked the calendar") { scheduler.clearAfterReview(); Task { await scheduler.load() } }
-            } message: { Text("The previous request may already be saved. If the event exists, link it from Follow-up instead of creating another. Clearing this request does not remove any calendar event.") }
+                Button("I reviewed the events") { scheduler.clearAfterReview(); Task { await scheduler.load() } }
+            } message: { Text("This clears only the older pending request. Existing Calendar events are kept. Review any older appointment separately to avoid duplicate reminders.") }
     }
 }
 

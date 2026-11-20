@@ -3,6 +3,10 @@ import linphonesw
 @testable import LinphoneApp
 
 final class Mango9PhoneKeypadTests: XCTestCase {
+    func testLocalKeyToneAcceptsOnlyIndividualDialpadKeys() {
+        for key in "0123456789*#" { XCTAssertEqual(Mango9PhonePolicy.localKeyTone(String(key)), String(key).utf8.first.map { CChar($0) }) }
+        for value in ["+", "", "12", "١", "sip:100@example.invalid"] { XCTAssertNil(Mango9PhonePolicy.localKeyTone(value)) }
+    }
     func testCallKitRingingRepairsSavedEarlyMediaWithoutChangingOutgoingMedia() throws {
         for outgoing in [false, true] {
             let config = try Factory.Instance.createConfigFromString(data: "[sip]\nincoming_calls_early_media=1\nauto_send_ringing=0\nreal_early_media=\(outgoing ? 1 : 0)\n")

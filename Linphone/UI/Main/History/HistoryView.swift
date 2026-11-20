@@ -65,6 +65,11 @@ struct Mango9KeypadLayout {
 }
 
 enum Mango9PhonePolicy {
+    static func localKeyTone(_ value: String) -> CChar? {
+        guard value.utf8.count == 1, let byte = value.utf8.first,
+              "0123456789*#".utf8.contains(byte) else { return nil }
+        return CChar(byte)
+    }
     static func mailboxNumber(_ raw: String, domain: String) -> String? {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if value.isEmpty { return "*97" }
@@ -145,6 +150,10 @@ final class Mango9PhoneModel: ObservableObject {
         if let field = numberField, field.isFirstResponder { field.insertText(value); number = field.text ?? "" }
         else { number += value }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if let tone = Mango9PhonePolicy.localKeyTone(value) {
+            // Local feedback only. Predial keys must never transmit DTMF to a call.
+            CoreContext.shared.doOnCoreQueue { core in core.playDtmf(dtmf: tone, durationMs: 120) }
+        }
     }
     func erase() {
         if let field = numberField, field.isFirstResponder { field.deleteBackward(); number = field.text ?? "" }

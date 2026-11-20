@@ -318,13 +318,7 @@ private final class OpportunityURLProtocol: URLProtocol {
         XCTAssertTrue(row.draft.hasNextDue)
     }
 
-    func testFollowupUsesCalendarAndReusesEventAfterLinkRetryAndReschedule() async throws {
-        try await exerciseCalendarFollowup(lostCreate: false)
-    }
-    func testUncertainCalendarCreateIsNotResentAfterReopening() async throws {
-        try await exerciseCalendarFollowup(lostCreate: true)
-    }
-    private func exerciseCalendarFollowup(lostCreate: Bool) async throws {
+    func testFollowupUsesOneOpportunityUpdateAndRetryKeepsRequestID() async throws {
         let previous = Mango9SessionStore.activeIdentity
         let identity = try Mango9SessionStore.save(session("followup-fixture"), persist: false, makeActive: true)
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [OpportunityURLProtocol.self]
@@ -335,14 +329,12 @@ private final class OpportunityURLProtocol: URLProtocol {
             try? Mango9SessionStore.remove(for: identity.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous)
         }
         var row: [String: Any] = ["id": 12, "title": "Fixture", "stage": "custom-qualify", "revision": "1", "currency": "USD", "probability": 37,
-            "contact_id": 33, "canOpenContact": true, "contact_state": "available", "contact": ["id": 33, "name": "Test contact", "is_client": false]]
-        var event: [String: Any] = [:], creates = 0, patches = 0, failLink = !lostCreate
-        let calendarMeta: [String: Any] = ["timezone": "America/Los_Angeles", "statuses": [], "activities": ["follow_up"], "priorities": ["medium"],
-            "reminder_minutes": [], "reminder_channels": [], "share_recipients": [], "assignees": [], "capabilities": ["create": true, "assign": false, "push": false]]
+            "value": "123.45", "description": "Keep", "contact_id": 33, "canOpenContact": true, "contact_state": "available", "contact": ["id": 33]]
         let meta: [String: Any] = ["userId": "101", "permissions": ["access": true, "edit": true], "users": [], "sources": [],
             "statusSpecs": [["id": "custom-qualify", "name": "Assessment", "classification": "open", "probability": 37, "default": true, "retired": false]]]
+        var requests: [String] = [], applied = Set<String>(), calendarRequests = 0
         OpportunityURLProtocol.handler = { request in
-            let path = request.url!.path, method = request.httpMethod ?? "GET"
+            let path = request.url!.path
             var bytes = request.httpBody ?? Data()
             if bytes.isEmpty, let stream = request.httpBodyStream {
                 stream.open(); defer { stream.close() }
@@ -350,52 +342,40 @@ private final class OpportunityURLProtocol: URLProtocol {
                 while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; bytes.append(buffer, count: count) }
             }
             let body = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] ?? [:]
-            var data: [String: Any]
-            if path.hasSuffix("/calendar/metadata") { data = calendarMeta }
+            let data: [String: Any]
+            if path.contains("/calendar/") { calendarRequests += 1; throw URLError(.badURL) }
             else if path.hasSuffix("/opportunities/metadata") { data = meta }
-            else if path.hasSuffix("/calendar/events") && method == "POST" {
-                creates += 1
-                event = ["id": 91, "owner_id": 101, "title": body["title"]!, "description": "", "start_at": body["start_at"]!, "end_at": body["end_at"]!, "timezone": "America/Los_Angeles", "activity": "follow_up", "priority": "medium", "status": NSNull(), "contact": ["id": 33, "name": "Test contact", "kind": "lead"], "recurrence": ["frequency": "none", "weekdays": []], "reminders": [], "origin": "appointment", "shared_by_me_user_ids": [], "permissions": ["can_edit": true, "can_delete": true, "can_assign": false, "can_share": true, "can_change_contact": true], "revision": String(repeating: "a", count: 64)]
-                if lostCreate { throw URLError(.timedOut) }
-                data = event
-            } else if path.hasSuffix("/calendar/events/91") {
-                if method == "PATCH" { patches += 1; event.merge(body) { _, new in new } }
-                data = event
-            } else if path.hasSuffix("/12/activity") {
-                if failLink { failLink = false; return (500, Data(#"{"success":false,"message":"Temporary link error"}"#.utf8)) }
-                row["activity_key"] = body["activityKey"]; row["activity"] = ["event_id": 91, "managed": false]; row["revision"] = "2"
-                data = ["id": 12, "action": "activity", "saved": true]
-            } else if path.hasSuffix("/12/update") {
-                row.merge(body["values"] as? [String: Any] ?? [:]) { _, new in new }; row["revision"] = "3"
+            else if path.hasSuffix("/12/update") {
+                let requestID = try XCTUnwrap(body["requestId"] as? String); requests.append(requestID)
+                let values = try XCTUnwrap(body["values"] as? [String: Any])
+                XCTAssertEqual(values["value"] as? String, "123.45"); XCTAssertEqual(values["description"] as? String, "Keep")
+                if applied.insert(requestID).inserted { row.merge(values) { _, new in new }; row["revision"] = String(applied.count + 1) }
+                row["onCalendar"] = !(row["next_due_at"] is NSNull)
+                row["followUp"] = ["eventId": 91, "holderName": "Owner", "mine": true]
+                if requests.count == 1 { throw URLError(.timedOut) }
                 data = ["id": 12, "action": "update", "saved": true]
             } else if path.hasSuffix("/opportunities/12") { data = row }
             else { throw URLError(.badURL) }
             return (200, try JSONSerialization.data(withJSONObject: ["success": true, "data": data]))
         }
         let detail = Mango9OpportunityDetailModel(id: 12, session: identity, metadata: nil, transport: transport)
-        await detail.load()
-        _ = try XCTUnwrap(detail.row, detail.error ?? "Detail load returned no row")
-        let schedule = Mango9OpportunityFollowupModel(detail)
-        await schedule.load()
+        let schedule = Mango9OpportunityFollowupModel(detail); await schedule.load()
         XCTAssertTrue(schedule.writable, schedule.error ?? "")
-        schedule.title = "Test follow-up"
-        schedule.start = Date(timeIntervalSince1970: 1796148000); schedule.end = schedule.start.addingTimeInterval(1800)
-        let first = await schedule.save()
-        XCTAssertFalse(first); XCTAssertEqual(creates, 1)
+        schedule.title = "Test follow-up"; schedule.start = Date(timeIntervalSince1970: 1796148000)
+        let first = await schedule.save(); XCTAssertFalse(first); XCTAssertEqual(requests.count, 1)
         let reopened = Mango9OpportunityFollowupModel(detail); await reopened.load()
-        let retry = await reopened.save()
-        if lostCreate {
-            XCTAssertFalse(retry); XCTAssertTrue(reopened.waitingForCalendar); XCTAssertEqual(creates, 1)
-        } else {
-            XCTAssertTrue(retry, reopened.error ?? ""); XCTAssertEqual(creates, 1)
-            XCTAssertEqual(detail.row?.raw["activity_key"] as? String, "event-91")
-            XCTAssertEqual(detail.row?.nextAction, "Test follow-up")
-            XCTAssertEqual(detail.row?.nextDue, event["start_at"] as? String)
-            let edit = Mango9OpportunityFollowupModel(detail); await edit.load()
-            edit.start = edit.start.addingTimeInterval(3600); edit.end = edit.end.addingTimeInterval(3600)
-            let rescheduled = await edit.save()
-            XCTAssertTrue(rescheduled, edit.error ?? ""); XCTAssertEqual(creates, 1); XCTAssertEqual(patches, 1)
-        }
+        let retry = await reopened.save(); XCTAssertTrue(retry, reopened.error ?? "")
+        XCTAssertEqual(requests[0], requests[1]); XCTAssertEqual(applied.count, 1); XCTAssertEqual(calendarRequests, 0)
+        XCTAssertEqual(detail.row?.followupCalendarStatus, "On your Calendar")
+        let reschedule = Mango9OpportunityFollowupModel(detail); await reschedule.load()
+        reschedule.start = reschedule.start.addingTimeInterval(3600)
+        let moved = await reschedule.save(); XCTAssertTrue(moved); XCTAssertEqual(applied.count, 2)
+        let clear = Mango9OpportunityFollowupModel(detail); await clear.load(); clear.scheduled = false
+        let cleared = await clear.save(); XCTAssertTrue(cleared); XCTAssertEqual(detail.row?.followupCalendarStatus, "Not on Calendar")
+        XCTAssertEqual(calendarRequests, 0)
+        try Mango9OpportunityCommands.save(["phase": "sending"], session: identity, contact: 12, operation: "followup")
+        let legacy = Mango9OpportunityFollowupModel(detail); await legacy.load()
+        XCTAssertFalse(legacy.writable); let blocked = await legacy.save(); XCTAssertFalse(blocked)
+        XCTAssertNotNil(legacy.journal); XCTAssertEqual(calendarRequests, 0)
     }
-
 }
