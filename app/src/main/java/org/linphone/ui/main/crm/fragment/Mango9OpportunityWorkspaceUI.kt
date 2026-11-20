@@ -610,7 +610,7 @@ internal class Mango9OpportunityWorkspaceUI(
                     Mango9OpportunityFollowupUI(context, scope, lease, page).open(r) { changed(); load() }
                 }
                     )
-                }; val activity = r.optJSONObject("activity"); add(c, text("Linked task or appointment", 12f, muted)); add(c, text(if (activity?.optBoolean("restricted") == true)"Restricted activity" else activity?.optString("title") ?: "None linked")); if (P.contact(r) != null && permitted("activity")){
+                }; add(c, text(Mango9OpportunityFollowup.calendarStatus(r), Mango9CrmText.label, muted)); val activity = r.optJSONObject("activity"); add(c, text("Linked task or appointment", 12f, muted)); add(c, text(if (activity?.optBoolean("restricted") == true)"Restricted activity" else activity?.optString("title") ?: "None linked")); if (P.contact(r) != null && permitted("activity")){
                     add(
                         c,
                         action("Link an existing activity"){
