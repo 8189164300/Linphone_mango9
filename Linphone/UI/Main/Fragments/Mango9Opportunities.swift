@@ -120,6 +120,14 @@ struct Mango9OpportunityMetadata {
     let owners: [Owner]
     let sources: [String]
     let permissions: [String: Bool]
+    /// Choices come only from fresh server metadata; stored shares are not a directory.
+    func visibleRecipients(_ ids: [Int], ownerID: Int) -> [Int] {
+        let available = Set(owners.map(\.id)).subtracting([ownerID])
+        return Set(ids).intersection(available).sorted()
+    }
+    func visibleOwnerFilter(_ id: String) -> String {
+        owners.contains { String($0.id) == id } ? id : ""
+    }
     init(_ data: [String: Any]) throws {
         guard let user = Mango9OpportunityAPI.integer(data["userId"]), user > 0,
               let permissions = data["permissions"] as? [String: Bool],

@@ -136,6 +136,13 @@ extension Notification.Name { static let mango9OpportunityDidChange = Notificati
         busy = true; error = nil
         var success = false
         do {
+            var values = values
+            if pending == nil && action == "share" {
+                let latest = try Mango9OpportunityMetadata(await Mango9OpportunityAPI.send(session, path: "metadata", transport: transport))
+                metadata = latest
+                guard latest.permissions["share"] == true else { throw Mango9OpportunityFailure(status: 403, message: "Sharing is no longer available. Reload this Opportunity.") }
+                values["userIds"] = latest.visibleRecipients(values["userIds"] as? [Int] ?? [], ownerID: Mango9OpportunityAPI.integer(row.raw["owner_id"]) ?? 0)
+            }
             let command = pending ?? ["action": action, "body": values.merging(["requestId": UUID().uuidString, "revision": revision]) { _, new in new }]
             guard let action = command["action"] as? String, let body = command["body"] as? [String: Any] else { throw Mango9OpportunityFailure.invalid }
             try Mango9OpportunityCommands.save(command, session: session, contact: id, operation: "mutate"); pending = command
@@ -579,13 +586,22 @@ struct Mango9OpportunitySharingPage: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if let error = model.error { Text(error).foregroundColor(.red) }
                     Text("Shared by you").font(.headline)
-                    ForEach(model.metadata?.owners.filter { $0.id != Mango9OpportunityAPI.integer(model.row?.raw["owner_id"]) } ?? []) { owner in
+                    if !loaded { ProgressView("Loading people…") }
+                    if loaded && model.metadata?.owners.filter({ $0.id != Mango9OpportunityAPI.integer(model.row?.raw["owner_id"]) }).isEmpty == true { Text("No people are available to share with.").foregroundColor(Mango9OpportunityStyle.muted) }
+                    ForEach(loaded ? (model.metadata?.owners.filter { $0.id != Mango9OpportunityAPI.integer(model.row?.raw["owner_id"]) } ?? []) : []) { owner in
                         Toggle(owner.name, isOn: Binding(get: { selected.contains(owner.id) }, set: { if $0 { selected.insert(owner.id) } else { selected.remove(owner.id) } })).padding(.vertical, 8)
                     }
-                    Button("Save sharing") { Task { if await model.mutate("share", values: ["userIds": selected.sorted()]) { dismiss() } } }.buttonStyle(OpportunityPrimaryButton()).disabled(!model.can("share"))
+                    Button("Save sharing") { Task { if await model.mutate("share", values: ["userIds": selected.sorted()]) { dismiss() } } }.buttonStyle(OpportunityPrimaryButton()).disabled(!loaded || !model.can("share"))
                 }.padding(14)
             }
-        }.task { guard !loaded else { return }; selected = Set((model.row?.shares ?? []).filter { Mango9OpportunityAPI.integer($0["shared_by"]) == model.metadata?.userID }.compactMap { Mango9OpportunityAPI.integer($0["id"]) }); loaded = true }
+        }.task {
+            guard !loaded else { return }
+            await model.load()
+            guard let row = model.row, let meta = model.metadata else { return }
+            let ids = row.shares.filter { Mango9OpportunityAPI.integer($0["shared_by"]) == meta.userID }.compactMap { Mango9OpportunityAPI.integer($0["id"]) }
+            selected = Set(meta.visibleRecipients(ids, ownerID: Mango9OpportunityAPI.integer(row.raw["owner_id"]) ?? 0))
+            loaded = true
+        }
     }
 }
 
@@ -832,11 +848,15 @@ struct Mango9OpportunityWorkspace: View {
         do {
             var query = ["q": search, "stage": stage, "currency": currency, "owner": owner, "shared": shared, "followup": followup, "sort": "updated_at", "direction": "desc", "page": String(next), "limit": "25"]
             if archived { query["archived"] = "1" }; if let contact { query["contactId"] = String(contact.id) }
-            async let response = Mango9OpportunityAPI.send(session, query: query.filter { !$0.value.isEmpty }.map { .init(name: $0.key, value: $0.value) })
             let meta: Mango9OpportunityMetadata
-            if let metadata, !refreshMetadata { meta = metadata }
+            if let metadata, !refreshMetadata && !reset { meta = metadata }
             else { meta = try Mango9OpportunityMetadata(await Mango9OpportunityAPI.send(session, path: "metadata")) }
-            let data = try await response
+            guard request == generation, requestedQuery == queryKey, !Task.isCancelled else { return }
+            if meta.visibleOwnerFilter(owner) != owner {
+                metadata = meta; owner = meta.visibleOwnerFilter(owner)
+                return // Changing the filter starts one new first-page request.
+            }
+            let data = try await Mango9OpportunityAPI.send(session, query: query.filter { !$0.value.isEmpty }.map { .init(name: $0.key, value: $0.value) })
             guard request == generation, requestedQuery == queryKey, !Task.isCancelled else { return }
             guard let raw = data["items"] as? [[String: Any]], let summary = data["summary"] as? [[String: Any]], let pagination = data["pagination"] as? [String: Any], let total = Mango9OpportunityAPI.integer(pagination["total"]), let hasMore = pagination["hasMore"] as? Bool, let returned = Mango9OpportunityAPI.integer(pagination["page"]), returned == next else { throw Mango9OpportunityFailure.invalid }
             let incoming = try raw.map(Mango9Opportunity.init)

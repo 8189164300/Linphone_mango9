@@ -23,6 +23,62 @@ private final class OpportunityURLProtocol: URLProtocol {
               accessToken: "fixture-token", refreshToken: "fixture-refresh", smsChatApi: "", connectWebsocket: "",
               enrollmentExpiresAt: .distantFuture, sipIdentity: "sip:\(user)@crm.example.invalid")
     }
+
+    func testVisibilityRestrictionsAndRestorationKeepStoredSharesSeparate() throws {
+        func choices(_ ids: [Int]) throws -> Mango9OpportunityMetadata {
+            try .init(["userId": 7, "permissions": ["access": true, "share": true], "statusSpecs": [], "users": ids.map { ["id": $0, "name": "Member \($0)"] as [String: Any] }])
+        }
+        let all = try choices([7, 8, 9]), limited = try choices([7, 9]), empty = try choices([])
+        let prior = [7, 8, 9, 9, 999]
+        XCTAssertEqual(all.visibleRecipients(prior, ownerID: 7), [8, 9])
+        XCTAssertEqual(limited.visibleRecipients(prior, ownerID: 7), [9])
+        XCTAssertEqual(limited.visibleOwnerFilter("8"), ""); XCTAssertEqual(limited.visibleOwnerFilter("9"), "9")
+        XCTAssertEqual(empty.visibleRecipients(prior, ownerID: 7), [])
+        XCTAssertEqual(all.visibleRecipients(prior, ownerID: 7), [8, 9]); XCTAssertEqual(all.visibleOwnerFilter("8"), "8")
+        XCTAssertEqual(prior, [7, 8, 9, 9, 999])
+    }
+    func testSharingRefreshesChoicesButNeverRewritesAnUncertainRequest() async throws {
+        let previous = Mango9SessionStore.activeIdentity
+        let identity = try Mango9SessionStore.save(session("visibility-fixture"), persist: false, makeActive: true)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [OpportunityURLProtocol.self]
+        let transport = URLSession(configuration: config)
+        defer {
+            OpportunityURLProtocol.handler = nil; transport.invalidateAndCancel()
+            try? Mango9OpportunityCommands.save(nil, session: identity, contact: 12, operation: "mutate")
+            try? Mango9SessionStore.remove(for: identity.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous)
+        }
+        var visible = [101, 103], failFirst = true, sends = [[String: Any]](), metadataReads = 0
+        let row: [String: Any] = ["id": 12, "title": "Fixture", "stage": "new", "revision": "1", "owner_id": 101, "canManage": true]
+        OpportunityURLProtocol.handler = { request in
+            var bytes = request.httpBody ?? Data()
+            if bytes.isEmpty, let stream = request.httpBodyStream {
+                stream.open(); defer { stream.close() }; var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; bytes.append(buffer, count: count) }
+            }
+            let path = request.url!.path
+            var data: [String: Any]
+            if path.hasSuffix("/metadata") {
+                metadataReads += 1
+                data = ["userId": 101, "permissions": ["access": true, "share": true], "statusSpecs": [], "users": visible.map { ["id": $0, "name": "Member \($0)"] as [String: Any] }]
+            } else if path.hasSuffix("/share") {
+                sends.append(try JSONSerialization.jsonObject(with: bytes) as! [String: Any])
+                if failFirst { failFirst = false; throw URLError(.timedOut) }
+                data = ["id": 12, "action": "share", "saved": true]
+            } else { data = row }
+            return (200, try JSONSerialization.data(withJSONObject: ["success": true, "data": data]))
+        }
+        let detail = Mango9OpportunityDetailModel(id: 12, session: identity, metadata: nil, transport: transport)
+        await detail.load()
+        let first = await detail.mutate("share", values: ["userIds": [101, 102, 103]])
+        XCTAssertFalse(first); XCTAssertEqual(sends.first?["userIds"] as? [Int], [103])
+        XCTAssertEqual(metadataReads, 2, "Refresh before a fresh save, even when details were already loaded")
+        visible = [101, 102]
+        let retry = await detail.mutate("share", values: ["userIds": [102]])
+        XCTAssertTrue(retry, detail.error ?? "")
+        XCTAssertEqual(sends.count, 2); XCTAssertEqual(sends[0]["requestId"] as? String, sends[1]["requestId"] as? String)
+        XCTAssertEqual(sends[1]["userIds"] as? [Int], [103], "A timeout retry retains its original body and idempotency key")
+        XCTAssertEqual(detail.metadata?.owners.map(\.id), [101, 102])
+    }
     private func metadata() throws -> Mango9OpportunityMetadata {
         try .init(["userId": "101", "permissions": ["access": true, "create": true, "assign": false],
             "users": [["id": "101", "name": "Fixture"]], "sources": ["Website"],
