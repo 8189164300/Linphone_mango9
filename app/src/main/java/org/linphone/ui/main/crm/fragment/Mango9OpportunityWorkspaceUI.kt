@@ -25,7 +25,7 @@ internal class Mango9OpportunityWorkspaceUI(
     private val context: Context, private val scope: CoroutineScope, private val lease: Mango9SessionLease,
     private val page: (String, LinearLayout) -> Mango9FullPage,
     private val openContact: (Mango9AppointmentContact) -> Unit,
-    private val create: (Mango9CrmRecord) -> Unit,
+    private val create: (Mango9CrmRecord?) -> Unit,
     private val edit: (JSONObject, Mango9OpportunityMetadata, () -> Unit) -> Unit,
     private val changed: () -> Unit,
     private val beforeChat: () -> Unit = {},
@@ -121,7 +121,7 @@ internal class Mango9OpportunityWorkspaceUI(
         screenChanged(null)
         val body = column(14); val p = page("Opportunities", body)
         val addButton = icon(R.drawable.plus_circle, "Add Opportunity") {
-            if (contact != null) create(contact) else contactPicker()
+            create(contact)
         }.apply { visibility = View.GONE }
         p.headerAction(addButton)
         val metrics = column(); val rows = column(); val status = column()
@@ -366,6 +366,8 @@ internal class Mango9OpportunityWorkspaceUI(
         search.doAfterTextChanged { ++seq; queryJob?.cancel(); queryJob = scope.launch{delay(250); load(true)} }
         load(true)
     }
+
+    fun refresh() = refreshList()
 
     private fun contactPicker() {
         val body = column(14); val p = page("Choose contact", body); val search = EditText(context).apply{

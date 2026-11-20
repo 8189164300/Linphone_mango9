@@ -5,6 +5,7 @@ import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.Context
 import android.graphics.Typeface
+import androidx.core.widget.doAfterTextChanged
 import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
@@ -45,9 +46,7 @@ internal class Mango9OpportunityUI(
 
     fun restore(state: Mango9OpportunityScreen) {
         if (!current(state.lease)) return
-        when (state.mode) { "create" -> state.record?.let {
-            create(it, state.lease, state.draft)
-        }; "convert" -> state.record?.let {
+        when (state.mode) { "create" -> create(state.record, state.lease, state.draft); "convert" -> state.record?.let {
             convert(it, state.lease)
         }; "edit" -> {
             val row = state.editingRow?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return
@@ -162,15 +161,40 @@ internal class Mango9OpportunityUI(
 
     fun actions(record: Mango9CrmRecord, kind: Mango9RecordKind, canCreate: Boolean) {
         val lease = capture() ?: return
-        val actions = mutableListOf<Pair<String, () -> Unit>>()
-        if (canCreate)actions.add("Add Opportunity" to {create(record, lease)})
-        if (kind == Mango9RecordKind.Lead && record.canUpdate)actions.add("Convert to Client" to {convert(record, lease)})
-        if (actions.isEmpty())return
-        popup = MaterialAlertDialogBuilder(context).setTitle(record.name).setItems(
-            actions.map {
-            it.first
-        }.toTypedArray()
-        ) {_, index -> if (current(lease))actions[index].second()}.setNegativeButton(android.R.string.cancel, null).show()
+        val content = column()
+        popup?.dismiss()
+        val dialog = MaterialAlertDialogBuilder(context).setTitle(record.name).setView(content)
+            .setNegativeButton(android.R.string.cancel, null).create()
+        popup = dialog
+        dialog.setOnDismissListener { if (popup === dialog) popup = null }
+
+        fun render(allowed: Boolean) {
+            content.removeAllViews()
+            if (allowed) content.addView(button("Add Opportunity") { dialog.dismiss(); if (current(lease)) create(record, lease) })
+            if (kind == Mango9RecordKind.Lead && record.canUpdate) {
+                content.addView(button("Convert to Client") { dialog.dismiss(); if (current(lease)) convert(record, lease) })
+            }
+        }
+
+        fun checkPermission() {
+            render(false)
+            content.addView(label("Loading Opportunity actions…"))
+            scope.launch {
+                try {
+                    val meta = Mango9OpportunityMetadata(api.request(lease, listOf("metadata")))
+                    if (current(lease) && dialog.isShowing) render(meta.canCreate)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    if (current(lease) && dialog.isShowing) {
+                        render(false); error(content, e) { checkPermission() }
+                    }
+                }
+            }
+        }
+        dialog.show()
+        // Counts load separately from the cards. A tap before that request completes
+        // must not permanently omit the create action from the open menu.
+        if (canCreate) render(true) else checkPermission()
     }
 
     fun list(record: Mango9CrmRecord) = workspace(record)
@@ -196,11 +220,12 @@ internal class Mango9OpportunityUI(
     fun workspace(record: Mango9CrmRecord? = null, openId: Int? = null) {
         val lease = capture() ?: return
         snapshotProvider = { Mango9OpportunityScreen(record, lease, "list") }
-        val workspace = Mango9OpportunityWorkspaceUI(
+        lateinit var workspace: Mango9OpportunityWorkspaceUI
+        workspace = Mango9OpportunityWorkspaceUI(
             context, scope, lease, ::page,
             openContact = { openContact(lease, it) },
             beforeChat = beforeChat,
-            create = { create(it, lease) },
+            create = { create(it, lease, updated = { workspace.refresh() }) },
             edit = { row, meta, refreshed ->
                 val previous = snapshotProvider
                 val body = column(); val p = page("Edit Opportunity", body).whenDismissed {
@@ -268,27 +293,139 @@ internal class Mango9OpportunityUI(
         body.addView(label("Checking record…")); load()
     }
 
-    private fun create(record: Mango9CrmRecord, lease: Mango9SessionLease, restoredDraft: String? = null) {
+    private class FormHost(val showing: () -> Boolean, val cancelable: (Boolean) -> Unit, val dismissAction: () -> Unit, val addSave: ((Button) -> Unit)? = null) {
+        val isShowing get() = showing()
+
+        fun setCancelable(value: Boolean) = cancelable(value)
+
+        fun dismiss() = dismissAction()
+    }
+
+    private fun create(
+        record: Mango9CrmRecord?, lease: Mango9SessionLease, restoredDraft: String? = null,
+        updated: () -> Unit = {
+        }
+    ) {
         val previous = snapshotProvider
-        snapshotProvider = {Mango9OpportunityScreen(record, lease, "create", restoredDraft)}
-        val body = column(); val p = page("New Opportunity", body).whenDismissed {
-            if (pages.isNotEmpty()) snapshotProvider = previous
-        }; body.addView(label("Loading fields…"))
-        scope.launch {
-            try {
-                val meta = Mango9OpportunityMetadata(api.request(lease, listOf("metadata")))
-                require(meta.activeStages.isNotEmpty()) {"No active Opportunity stages are available."}
-                require(meta.canCreate) {"Creating Opportunities is not available for this account."}
-                if (!current(lease) || !p.isShowing)return@launch
-                body.removeAllViews(); form(body, p, record, lease, meta, restoredDraft)
-            }catch (e: Exception){
-                if (e is CancellationException)throw e; if (current(lease) && p.isShowing){body.removeAllViews(); error(body, e)}
+        snapshotProvider = { Mango9OpportunityScreen(record, lease, "create", restoredDraft) }
+        val body = column()
+        val footer = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.END }
+        val content = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = ScrollView(context).apply { isFillViewport = false; addView(body) }
+        content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f)); content.addView(footer)
+        val dialog = MaterialAlertDialogBuilder(context).setBackground(
+            android.graphics.drawable.GradientDrawable().apply {
+            setColor(android.graphics.Color.WHITE); cornerRadius = dp(20).toFloat()
+        }
+        ).setTitle("Add Opportunity").setView(content).create()
+        val cancel = button("Cancel") { dialog.dismiss() }; footer.addView(cancel)
+        popup?.dismiss(); popup = dialog
+        var searchJob: Job? = null; var sequence = 0
+        dialog.setOnDismissListener {
+            sequence++; searchJob?.cancel(); if (popup === dialog) popup = null; snapshotProvider = previous
+        }
+        dialog.show()
+        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        dialog.window?.setLayout((context.resources.displayMetrics.widthPixels * 0.94).toInt().coerceAtMost(dp(620)), (context.resources.displayMetrics.heightPixels * 0.88).toInt())
+        val formHost =
+            FormHost({
+                dialog.isShowing
+            }, {
+                dialog.setCancelable(it); cancel.isEnabled = it
+            }, { dialog.dismiss() }, { footer.addView(it, LinearLayout.LayoutParams(0, -2, 1f)) })
+
+        fun selected(linked: Mango9CrmRecord) {
+            sequence++; searchJob?.cancel(); snapshotProvider = { Mango9OpportunityScreen(linked, lease, "create", restoredDraft) }
+            body.removeAllViews(); body.addView(label("Loading Opportunity fields…"))
+
+            fun loadFields() {
+                scope.launch {
+                try {
+                    val meta = Mango9OpportunityMetadata(api.request(lease, listOf("metadata")))
+                    require(meta.activeStages.isNotEmpty()) { "No active Opportunity stages are available." }
+                    require(meta.canCreate) { "Creating Opportunities is not available for this account." }
+                    if (!current(lease) || !dialog.isShowing) return@launch
+                    body.removeAllViews(); form(body, formHost, linked, lease, meta, restoredDraft, updated = updated)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    if (current(lease) && dialog.isShowing) {
+                        body.removeAllViews(); error(body, e); body.addView(button("Retry") { loadFields() })
+                    }
+                }
+            }
+            }
+            loadFields()
+        }
+        if (record != null) { selected(record); return }
+        body.addView(label("Lead or Client"))
+        val search = EditText(context).apply {
+            hint = "Search name, company, email, or phone"; contentDescription = "Search leads or clients"; setSingleLine(); textSize = 16f; setTextColor(context.getColor(R.color.mango9_calendar_ink))
+        }
+        body.addView(search); val rows = column().apply { setPadding(0, 0, 0, 0) }; body.addView(rows)
+        var page = 0; var loading = false
+
+        fun load(append: Boolean = false) {
+            if (append && loading) return
+            val token = ++sequence; loading = true
+            if (!append) { rows.removeAllViews(); rows.addView(label("Searching…")) }
+            scope.launch {
+                try {
+                    val data = api.request(lease, listOf("contacts"), mapOf("q" to search.text.toString(), "page" to (if (append) page + 1 else 1).toString()))
+                    if (!current(lease) || !dialog.isShowing || sequence != token) return@launch
+                    if (!append) rows.removeAllViews()
+                    rows.findViewWithTag<View>("more")?.let(rows::removeView)
+                    val items = data.getJSONArray("items").opportunityObjects()
+                    items.forEach { r ->
+                        val linked =
+                            Mango9CrmRecord(r.getInt("id"), r.optInt("owner_id"), "", r.getString("name"), Mango9OpportunityPresentation.text(r, "phone"), Mango9OpportunityPresentation.text(r, "email"), "", Mango9OpportunityPresentation.text(r, "source"), "")
+                        val kind = if (r.optBoolean("is_client") || r.optInt("is_client") == 1) "Client" else "Lead"
+                        val choice = button(linked.name) { selected(linked) }.apply { contentDescription = "$kind: ${linked.name}" }
+                        rows.addView(choice)
+                        rows.addView(
+                            label(
+                                listOf(kind, Mango9OpportunityPresentation.text(r, "company"), linked.email, linked.phone).filter {
+                            it.isNotBlank()
+                        }.joinToString(" · ")
+                            ).apply { textSize = 13f }
+                        )
+                    }
+                    page = data.getJSONObject("pagination").getInt("page")
+                    if (items.isEmpty() && !append) rows.addView(label("No matching leads or clients."))
+                    if (data.getJSONObject("pagination").getBoolean("hasMore")) {
+                        rows.addView(
+                            button("Load more") {
+                        load(true)
+                    }.apply { tag = "more" }
+                        )
+                    }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    if (current(lease) && dialog.isShowing && sequence == token) {
+                        rows.removeAllViews(); error(rows, e); rows.addView(button("Retry search") { load() })
+                    }
+                } finally { if (sequence == token) loading = false }
             }
         }
+        search.doAfterTextChanged {
+            sequence++; searchJob?.cancel(); rows.removeAllViews(); searchJob = scope.launch { delay(250); load() }
+        }; load()
     }
 
     private fun form(
         body: LinearLayout, p: Mango9FullPage, record: Mango9CrmRecord, lease: Mango9SessionLease, meta: Mango9OpportunityMetadata, restoredDraft: String? = null, existing: JSONObject? = null,
+        updated: () -> Unit = {
+        }
+    ) =
+        form(
+            body,
+            FormHost({
+            p.isShowing
+        }, { p.setCancelable(it) }, { p.dismiss() }),
+            record, lease, meta, restoredDraft, existing, updated
+        )
+
+    private fun form(
+        body: LinearLayout, p: FormHost, record: Mango9CrmRecord, lease: Mango9SessionLease, meta: Mango9OpportunityMetadata, restoredDraft: String? = null, existing: JSONObject? = null,
         updated: () -> Unit = {
         }
     ) {
@@ -332,6 +469,7 @@ internal class Mango9OpportunityUI(
             }
             parent.addView(button("Clear $title") {input.setText("")}.also {inputs.add(it)}); return input
         }
+        if (existing == null) body.addView(label("Lead or Client"))
         body.addView(label(record.name).apply {setTypeface(typeface, Typeface.BOLD)})
         val title = field(body, "Title (required)"); val stages = meta.stages.filter {
             !it.retired || it.id == existing?.optString("stage")
@@ -387,8 +525,9 @@ internal class Mango9OpportunityUI(
 
         override fun onNothingSelected(a: AdapterView<*>?) {}}
         stageChanged()
-        val errors = column().apply {setPadding(0, 0, 0, 0)}; body.addView(errors)
-        val save = button(if (pending == null)"Save Opportunity" else "Retry saved Opportunity") {}; body.addView(save)
+        val errors = column().apply {setPadding(0, 0, 0, 0)}; body.addView(errors, 0)
+        val save = button(if (pending == null)"Save Opportunity" else "Retry saved Opportunity") {
+            }; if (p.addSave != null) p.addSave.invoke(save) else body.addView(save)
         val restoration = pending ?: restoredDraft?.let {
             runCatching {
                 JSONObject(it)
@@ -456,12 +595,13 @@ internal class Mango9OpportunityUI(
                     require(receipt.getInt("id") == commandId && receipt.getString("action") == action && receipt.getBoolean("saved"))
                 }
                 commands.save(lease, commandId, operation, null); pending = null
-                if (current(lease)){if (existing == null) {close(); workspace()} else {p.dismiss(); updated()}; changed()}
+                if (current(lease)) { p.dismiss(); updated(); changed() }
             }catch (e: Exception){
                 if (e is CancellationException)throw e
                 if (Mango9OpportunityCommands.definite(e)){commands.save(lease, commandId, operation, null); pending = null}
                 if (current(lease) && p.isShowing){
                     error(errors, e)
+                    (body.parent as? ScrollView)?.post { (body.parent as? ScrollView)?.smoothScrollTo(0, 0) }
                     if (existing != null && e is Mango9OpportunityFailure && e.status == 409) {
                         inputs.forEach { it.isEnabled = false }; save.visibility = View.GONE
                         errors.addView(button("Reload latest Opportunity") { p.dismiss(); updated() })

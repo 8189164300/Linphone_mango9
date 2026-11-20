@@ -90,6 +90,49 @@ class Mango9OpportunityNavigationInstrumentedTest {
         )
     }
 
+    /** Draft-only regression on either installed app. Uses a dedicated QA Lead, never a customer record. */
+    @Test fun opportunityModalSearchValidationAndCancelFromBothEntries() {
+        openWorkspace()
+        tap(label("Add Opportunity"))
+
+        fun input(name: String) = waitFor(name) { it.className?.toString() == "android.widget.EditText" && text(it) == name }
+
+        fun set(node: AccessibilityNodeInfo, value: String) {
+            val data = android.os.Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
+            }
+            assertTrue(node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, data)); SystemClock.sleep(700)
+        }
+        val search = input("Search leads or clients")
+        set(search, "NoSuchOpportunityPickerRecordXYZ")
+        label("No matching leads or clients.")
+        set(input("Search leads or clients"), "opportunity-modal-20261120")
+        tap(waitFor("QA Lead search result") { actionable(it) && text(it).contains("QA Opportunity Modal") })
+        input("Title (required)")
+        tap(label("Save Opportunity"))
+        label("Enter a title and choose a valid stage, currency and probability.")
+        set(input("Title (required)"), "QA cancelled draft")
+        snapshot("opportunity-modal-validation")
+        tap(waitFor("Cancel") { text(it).equals("Cancel", true) })
+        label("Search Opportunities")
+        tap(label("Back"))
+        tap(waitFor("Leads") { text(it) == "Leads" && actionable(it) })
+        val leadSearch =
+            waitFor("Lead search") { it.className?.toString() == "android.widget.EditText" && text(it).contains("Search", true) }
+        set(leadSearch, "opportunity-modal-20261120")
+        waitFor("Dedicated QA Lead") { text(it).contains("QA Opportunity Modal") }
+        tap(waitFor("Lead actions") { text(it) == "Contact actions" || text(it) == "⋯" })
+        tap(label("Add Opportunity"))
+        val title = input("Title (required)")
+        assertTrue(title.text.isNullOrBlank() || title.text.toString() == "Title (required)")
+        assertFalse(nodes().any { text(it) == "Search leads or clients" })
+        waitFor("Preselected QA Lead") { text(it) == "QA Opportunity Modal 20261120" }
+        snapshot("opportunity-modal-preselected-lead")
+        tap(waitFor("Cancel") { text(it).equals("Cancel", true) })
+        waitFor("Lead list restored") { text(it) == "Contact actions" || text(it) == "⋯" }
+        snapshot("opportunity-modal-cancel-restores-leads")
+    }
+
     @Test fun ownerChoicesAndEmptyListStayNavigable() {
         openWorkspace()
         label("Search Opportunities")
