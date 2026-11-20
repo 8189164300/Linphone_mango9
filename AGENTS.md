@@ -16,3 +16,9 @@ dependency licenses, and user-facing release notes here.
   requirements. Removing private operational notes must not remove app code.
 - A deletion commit does not erase old Git history. History rewrites, release-tag
   changes, and force pushes require separate user authorization.
+- Before installing on a physical device, run
+  `python3 scripts/verify-push-environment.py /path/to/App.app`, or use
+  `scripts/install-device-build.sh`. A development-signed Release build needs
+  `MANGO9_APS_ENVIRONMENT=development`; optimization level does not determine
+  the signed APNs environment. Verify distribution exports again with
+  `scripts/verify-app-store-bundle.sh` before uploading.
