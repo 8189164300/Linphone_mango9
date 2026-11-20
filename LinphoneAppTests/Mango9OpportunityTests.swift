@@ -27,6 +27,26 @@ private final class OpportunityURLProtocol: URLProtocol {
         XCTAssertEqual(try Mango9OpportunityFilters().query(), [:]); XCTAssertEqual(Mango9OpportunityFilters().activeCount, 0)
     }
 
+    func testOpportunityFiltersPersistPerAccountAndListAcrossReload() throws {
+        let name = "opportunity-preferences-test-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        var value = Mango9OpportunityPreference(); value.stage = "qualified"; value.filters.currency = "USD"; value.filters.closeFrom = "2026-11-20"; value.filters.minValue = "10"
+        let actor = session()
+        value.save(actor, contact: nil, defaults: defaults)
+        let reopened = try XCTUnwrap(UserDefaults(suiteName: name))
+        XCTAssertEqual(Mango9OpportunityPreference.load(actor, contact: nil, defaults: reopened), value)
+        XCTAssertEqual(Mango9OpportunityPreference.load(session("other"), contact: nil, defaults: reopened), .init())
+        XCTAssertEqual(Mango9OpportunityPreference.load(session(base: "https://other.example.invalid/app/api/v2"), contact: nil, defaults: reopened), .init())
+        XCTAssertEqual(Mango9OpportunityPreference.load(actor, contact: 42, defaults: reopened), .init())
+        var draft = value; draft.filters.currency = "EUR"
+        XCTAssertEqual(Mango9OpportunityPreference.load(actor, contact: nil, defaults: reopened), value)
+        Mango9OpportunityPreference().save(actor, contact: nil, defaults: defaults)
+        XCTAssertEqual(Mango9OpportunityPreference.load(actor, contact: nil, defaults: reopened), .init())
+        defaults.set(Data("broken".utf8), forKey: Mango9OpportunityPreference.key(actor, contact: nil))
+        XCTAssertEqual(Mango9OpportunityPreference.load(actor, contact: nil, defaults: reopened), .init())
+    }
+
     private func session(_ user: String = "opportunity-fixture", base: String = "https://crm.example.invalid/app/api/v2") -> Mango9Session {
         .init(crmId: "fixture", crmBaseUrl: "https://crm.example.invalid/app", crmApiBaseUrl: base,
               userId: user, parentClientId: "fixture", role: "buyer", loginId: "fixture@example.invalid", displayName: "Fixture",

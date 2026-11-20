@@ -749,7 +749,10 @@ struct Mango9OpportunityWorkspace: View {
     init(contact: Mango9Lead? = nil, preloaded: Mango9OpportunityOverview? = nil) {
         self.contact = contact
         let current = Mango9SessionStore.load()
-        let page = contact == nil && current.map({ preloaded?.matches($0) == true }) == true ? preloaded : nil
+        let preference = current.map { Mango9OpportunityPreference.load($0, contact: contact?.id) } ?? .init()
+        _stage = State(initialValue: preference.stage)
+        _filters = State(initialValue: preference.filters)
+        let page = contact == nil && preference == Mango9OpportunityPreference() && current.map({ preloaded?.matches($0) == true }) == true ? preloaded : nil
         self.preloaded = page
         _session = State(initialValue: current)
         _metadata = State(initialValue: page?.metadata)
@@ -811,7 +814,9 @@ struct Mango9OpportunityWorkspace: View {
             }.refreshable { await load(reset: true, refreshMetadata: true) }
         }.sheet(isPresented: $showFilters) {
             Mango9OpportunityFilterSheet(value: filters, metadata: metadata) { filters = $0 }
-        }.task(id: queryKey) {
+        }.onChange(of: stage) { _ in saveFilters() }
+            .onChange(of: filters) { _ in saveFilters() }
+            .task(id: queryKey) {
             session = Mango9SessionStore.load()
             if initialLoad {
                 initialLoad = false
@@ -825,6 +830,10 @@ struct Mango9OpportunityWorkspace: View {
             } catch {}
         }
             .onReceive(NotificationCenter.default.publisher(for: .mango9OpportunityDidChange)) { _ in Task { await load(reset: true) } }
+    }
+    private func saveFilters() {
+        guard let session, Mango9SessionStore.isActive(session) else { return }
+        Mango9OpportunityPreference(stage: stage, filters: filters).save(session, contact: contact?.id)
     }
     private func filterLabel(_ title: String) -> some View {
         HStack(spacing: 6) {
@@ -851,6 +860,7 @@ struct Mango9OpportunityWorkspace: View {
             if let metadata, !refreshMetadata && !reset { meta = metadata }
             else { meta = try Mango9OpportunityMetadata(await Mango9OpportunityAPI.send(session, path: "metadata")) }
             guard request == generation, requestedQuery == queryKey, !Task.isCancelled else { return }
+            if !stage.isEmpty && !meta.displayStages.contains(where: { $0.id == stage }) { metadata = meta; stage = ""; return }
             let owner = meta.visibleOwnerFilter(filters.owner), creator = meta.visibleOwnerFilter(filters.createdBy)
             if owner != filters.owner || creator != filters.createdBy {
                 metadata = meta; filters.owner = owner; filters.createdBy = creator

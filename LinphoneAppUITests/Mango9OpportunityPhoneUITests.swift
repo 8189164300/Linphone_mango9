@@ -2,6 +2,24 @@ import XCTest
 
 /// Exercises actual server-backed lists and validation without modifying an existing customer.
 final class Mango9OpportunityPhoneUITests: XCTestCase {
+    func testSavedOpportunityFiltersAfterExternalRestart() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.activate()
+        let crm=app.buttons["CRM"].firstMatch; XCTAssertTrue(crm.waitForExistence(timeout:30));crm.tap()
+        let link=app.buttons["crm.opportunities"].firstMatch
+        XCTAssertTrue(link.waitForExistence(timeout:30));link.tap()
+        let filters=app.buttons["crm.opportunity.filter.more"]
+        XCTAssertTrue(filters.waitForExistence(timeout:20));filters.tap()
+        let minimum=app.textFields["crm.opportunity.filter.minValue"],maximum=app.textFields["crm.opportunity.filter.maxValue"]
+        for _ in 0..<5 {if minimum.isHittable {break};app.swipeUp()}
+        XCTAssertEqual(minimum.value as? String,"10");XCTAssertEqual(maximum.value as? String,"20")
+        capture("Persistent filters after external process restart")
+        let reset=app.buttons["crm.opportunity.filter.reset"]
+        for _ in 0..<6 {if reset.isHittable {break};app.swipeUp()}
+        reset.tap();app.buttons["crm.opportunity.filter.apply"].tap()
+        app.buttons["crm.opportunity.back"].firstMatch.tap()
+    }
+
     func testOpportunityConfigurationFilters() throws {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
@@ -19,7 +37,12 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
         let apply=app.buttons["crm.opportunity.filter.apply"]
         XCTAssertFalse(apply.isEnabled)
         maximum.typeText(XCUIKeyboardKey.delete.rawValue+"20"); XCTAssertTrue(apply.isEnabled); capture("Opportunity amount range validation")
-        apply.tap(); XCTAssertTrue(filters.waitForExistence(timeout:15)); filters.tap()
+        apply.tap(); XCTAssertTrue(filters.waitForExistence(timeout:15))
+        app.terminate(); app.launch(); XCTAssertTrue(crm.waitForExistence(timeout:30)); crm.tap()
+        XCTAssertTrue(link.waitForExistence(timeout:20)); link.tap(); XCTAssertTrue(filters.waitForExistence(timeout:15)); filters.tap()
+        for _ in 0..<5 {if minimum.isHittable {break};app.swipeUp()}
+        XCTAssertEqual(minimum.value as? String,"10"); XCTAssertEqual(maximum.value as? String,"20")
+        capture("Saved filters restored after app restart")
         let reset=app.buttons["crm.opportunity.filter.reset"]
         for _ in 0..<6 {if reset.isHittable {break};app.swipeUp()}
         XCTAssertTrue(reset.isHittable); reset.tap(); apply.tap()

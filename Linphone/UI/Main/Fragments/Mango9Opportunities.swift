@@ -645,7 +645,7 @@ struct Mango9SharingBadges: View {
 }
 
 /// Server filters shared by the list and its configuration sheet.
-struct Mango9OpportunityFilters: Equatable {
+struct Mango9OpportunityFilters: Equatable, Codable {
     var createdBy = "", owner = "", shared = "", currency = "", followup = ""
     var closeFrom = "", closeTo = "", createdFrom = "", createdTo = ""
     var minValue = "", maxValue = "", source = ""
@@ -664,5 +664,23 @@ struct Mango9OpportunityFilters: Equatable {
         for key in ["minValue", "maxValue"] { if let value = result[key], value.range(of: #"^\d{1,12}(\.\d{1,2})?$"#, options: .regularExpression) == nil { throw invalid("Enter amounts with up to two decimal places.") } }
         if let a = result["minValue"].flatMap({ Decimal(string: $0, locale: Locale(identifier: "en_US_POSIX")) }), let b = result["maxValue"].flatMap({ Decimal(string: $0, locale: Locale(identifier: "en_US_POSIX")) }), a > b { throw invalid("Minimum amount must not exceed maximum amount.") }
         if archived { result["archived"] = "1" }; return result
+    }
+}
+
+/// Device preference: stable CRM identity, independent of login/refresh tokens.
+struct Mango9OpportunityPreference: Codable, Equatable {
+    var stage = ""
+    var filters = Mango9OpportunityFilters()
+    static func key(_ session: Mango9Session, contact: Int?) -> String {
+        let scope = [session.crmApiBaseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")), session.userId, session.parentClientId, contact.map(String.init) ?? "list"]
+        return "mango9.opportunity.filters.v1." + (try! JSONEncoder().encode(scope)).base64EncodedString()
+    }
+    static func load(_ session: Mango9Session, contact: Int?, defaults: UserDefaults = .standard) -> Self {
+        guard let data = defaults.data(forKey: key(session, contact: contact)), let value = try? JSONDecoder().decode(Self.self, from: data), (try? value.filters.query()) != nil else { return .init() }
+        return value
+    }
+    func save(_ session: Mango9Session, contact: Int?, defaults: UserDefaults = .standard) {
+        guard (try? filters.query()) != nil, let data = try? JSONEncoder().encode(self) else { return }
+        defaults.set(data, forKey: Self.key(session, contact: contact))
     }
 }
