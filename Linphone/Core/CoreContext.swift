@@ -300,6 +300,7 @@ class CoreContext: ObservableObject {
 			
 			self.mCoreDelegate = CoreDelegateStub(onGlobalStateChanged: { (core: Core, state: GlobalState, _: String) in
 				if state == GlobalState.On {
+					if let config = core.config { CorePreferences.configureIncomingCallKitRinging(config) }
 					self.enforceMango9AccountRouting(core: core)
 					Task { @MainActor in
 						Mango9LogoutCoordinator.shared.start()
@@ -324,6 +325,7 @@ class CoreContext: ObservableObject {
 						self.coreHasStartedOnce = true
 						self.coreIsStarted = true
 						self.accounts = accountModels
+                        SharedMainViewModel.shared.updateMissedCallsCount()
 					}
 				} else {
 					DispatchQueue.main.async {
@@ -387,7 +389,11 @@ class CoreContext: ObservableObject {
 						}
 					}
 				}
-			}, onTransferStateChanged: { (_: Core, transferred: Call, callState: Call.State) in
+            }, onCallLogUpdated: { (_, _) in
+                // The keypad is the default Calls page, so history may not exist yet.
+                // Refresh durable missed-call receipts even before history is opened.
+                DispatchQueue.main.async { SharedMainViewModel.shared.updateMissedCallsCount() }
+            }, onTransferStateChanged: { (_: Core, transferred: Call, callState: Call.State) in
 				Log.info("[CoreContext] Transferred call \(transferred.remoteAddress!.asStringUriOnly()) state changed \(callState)")
 				DispatchQueue.main.async {
 					if callState == Call.State.Connected {
@@ -481,6 +487,7 @@ class CoreContext: ObservableObject {
 					}
 				}
 			}, onDefaultAccountChanged: { (_: Core, account: Account?) in
+                DispatchQueue.main.async { SharedMainViewModel.shared.updateMissedCallsCount() }
 				if let account = account, self.mCore.globalState == GlobalState.On {
 					Log.info("[CoreContext][onDefaultAccountChanged] Default account set to: \(account.displayName())")
 					Mango9SessionStore.activate(
@@ -515,30 +522,11 @@ class CoreContext: ObservableObject {
 					self.accounts = accountModels
 				}
 			}, onMessageWaitingIndicationChanged: { (core: Core, event: Event, mwi: MessageWaitingIndication) in
-                if (mwi.hasMessageWaiting()) {
-                    let summaries = mwi.summaries
-                    Log.info(
-                        "[CoreContext][onMessageWaitingIndicationChanged] MWI NOTIFY received, messages are waiting (\(summaries.count) summaries)"
-                    )
-                    
-                    if let defaultAccount = core.defaultAccount?.params?.identityAddress, let mwiAccount = mwi.accountAddress, defaultAccount.weakEqual(address2: mwiAccount){
-                        if !summaries.isEmpty {
-                            let summary = summaries.first
-                            DispatchQueue.main.async {
-                                withAnimation {
-                                    SharedMainViewModel.shared.waitingMessageCount = Int(summary?.nbNew ?? 0)
-                                }
-                            }
-                        }
-                    }
-				} else {
-					Log.info("[CoreContext][onMessageWaitingIndicationChanged] MWI NOTIFY received, no message is waiting")
-					DispatchQueue.main.async {
-						withAnimation {
-							SharedMainViewModel.shared.waitingMessageCount = 0
-						}
-					}
-				}
+                guard let active = core.defaultAccount?.params?.identityAddress,
+                      let recipient = mwi.accountAddress, active.weakEqual(address2: recipient) else { return }
+                let count = mwi.hasMessageWaiting() ? Int(mwi.summaries.first(where: { $0.contextClass == .Voice })?.nbNew ?? 0) : 0
+                DispatchQueue.main.async { SharedMainViewModel.shared.waitingMessageCount = count }
+
 			})
 			
 			self.mCore.addDelegate(delegate: self.mCoreDelegate)
@@ -562,6 +550,7 @@ class CoreContext: ObservableObject {
 	private func startAfterLogoutRecovery(_ core: Core) {
 		do {
 			try Mango9LogoutCoordinator.recoverLocalRemovals(core: core)
+			if let config = core.config { CorePreferences.configureIncomingCallKitRinging(config) }
 			try core.start()
 			logoutRecoveryAttempts = 0
 		} catch {

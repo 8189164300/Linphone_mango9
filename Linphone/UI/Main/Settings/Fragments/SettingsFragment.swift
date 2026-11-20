@@ -31,6 +31,7 @@ struct SettingsFragment: View {
 	
 	@State var securityIsOpen: Bool = false
 	@State var callsIsOpen: Bool = false
+    @ObservedObject private var phoneCore = CoreContext.shared
 	@State var conversationsIsOpen: Bool = false
 	@State var contactsIsOpen: Bool = false
 	@State var meetingsIsOpen: Bool = false
@@ -178,7 +179,8 @@ struct SettingsFragment: View {
 							.padding(.vertical, 10)
 							.padding(.horizontal, 20)
 							.background(Color.gray100)
-							.onTapGesture {
+							.accessibilityIdentifier("settings.callsDisclosure")
+                            .onTapGesture {
 								withAnimation {
 									callsIsOpen.toggle()
 								}
@@ -192,7 +194,10 @@ struct SettingsFragment: View {
 							if callsIsOpen {
 								VStack(spacing: 0) {
 									VStack(spacing: 30) {
-										Mango9CallRoutingSettings(
+										if let account = phoneCore.accounts.first(where: { $0.isDefaultAccount }) {
+                                            Mango9VoicemailSettings(account: account).id(ObjectIdentifier(account))
+                                        }
+                                        Mango9CallRoutingSettings(
 											viewModel: mango9CallSettingsViewModel
 										)
 

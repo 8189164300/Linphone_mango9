@@ -100,15 +100,14 @@ class CorePreferences: ObservableObject {
 		self.config = config
 	}
 	
-	var acceptEarlyMedia: Bool {
-		get {
-			config.getBool(section: "sip", key: "incoming_calls_early_media", defaultValue: false)
-		}
-		set {
-			config.setBool(section: "sip", key: "incoming_calls_early_media", value: newValue)
-		}
-	}
-	
+    /// CallKit activates audio only after answering. Offering incoming early media
+    /// before that suppresses the caller's ringback with a silent SDP response.
+    /// Outgoing early media (carrier tones and announcements) is independent.
+    static func configureIncomingCallKitRinging(_ config: Config) {
+        config.setBool(section: "sip", key: "incoming_calls_early_media", value: false)
+        config.setBool(section: "sip", key: "auto_send_ringing", value: true)
+    }
+
 	var allowOutgoingEarlyMedia: Bool {
 		get {
 			config.getBool(section: "sip", key: "real_early_media", defaultValue: false)

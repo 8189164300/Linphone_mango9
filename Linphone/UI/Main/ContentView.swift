@@ -62,6 +62,8 @@ struct ContentView: View {
 	@State var isShowEditContactFragmentInContactDetails = false
 	@State var isShowEditContactFragmentAddress = ""
 	@State var isShowStartCallFragment = false
+    @State private var showCallHistory = false
+    @State private var avatarRefreshID = UUID()
 	@State var isShowStartConversationFragment = false
 	@State var isShowDismissPopup = false
 	@State var isShowDeleteMeetingNotificationPopup = false
@@ -132,17 +134,20 @@ struct ContentView: View {
 		if searchIsActive == false || isShowCRMFragment {
 			HStack {
 				Button {
-					openMenu()
+                    if sharedMainViewModel.indexView == 1 && showCallHistory && !isShowCRMFragment {
+                        showCallHistory = false; sharedMainViewModel.displayedCall = nil
+                        text = ""; searchIsActive = false
+                    } else { openMenu() }
 				} label: {
-					Image("list")
+                    Image(sharedMainViewModel.indexView == 1 && showCallHistory && !isShowCRMFragment ? "caret-left" : "list")
 						.renderingMode(.template)
 						.resizable()
 						.foregroundStyle(.white)
 						.frame(width: 25, height: 25, alignment: .leading)
 						.padding(.all, 5)
 				}
-				.accessibilityIdentifier("main.menu")
-				.accessibilityLabel("Open menu")
+				.accessibilityIdentifier(sharedMainViewModel.indexView == 1 && showCallHistory && !isShowCRMFragment ? "calls.back" : "main.menu")
+                .accessibilityLabel(sharedMainViewModel.indexView == 1 && showCallHistory && !isShowCRMFragment ? "Back to keypad" : "Open menu")
 
                                                 if let index = accountProfileViewModel.defaultAccountModelIndex,
                                                    index < coreContext.accounts.count {
@@ -157,7 +162,7 @@ struct ContentView: View {
                                                             }
                                                     } else {
                                                         let imagePath = account.getImagePath()
-                                                        let finalUrl = imagePath.appendingQueryItem("v", value: UUID().uuidString)
+                                                        let finalUrl = imagePath.appendingQueryItem("v", value: avatarRefreshID.uuidString)
 
                                                         AsyncImage(url: finalUrl)
                                                             { image in
@@ -199,6 +204,7 @@ struct ContentView: View {
                                                             }
                                                             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImageChanged"))) { _ in
                                                                 imageTmp = nil
+                                                                avatarRefreshID = UUID()
                                                             }
                                                     }
 
@@ -216,7 +222,7 @@ struct ContentView: View {
                                                         .frame(width: avatarSize, height: avatarSize)
                                                 }
 
-				Text(isShowCRMFragment ? "CRM" : String(localized: sharedMainViewModel.indexView == 0 ? "bottom_navigation_contacts_label" : (sharedMainViewModel.indexView == 1 ? "bottom_navigation_calls_label" : (sharedMainViewModel.indexView == 2 ? "bottom_navigation_conversations_label" : "bottom_navigation_meetings_label"))))
+				Text(isShowCRMFragment ? "CRM" : (sharedMainViewModel.indexView == 1 && showCallHistory ? "Call history" : String(localized: sharedMainViewModel.indexView == 0 ? "bottom_navigation_contacts_label" : (sharedMainViewModel.indexView == 1 ? "bottom_navigation_calls_label" : (sharedMainViewModel.indexView == 2 ? "bottom_navigation_conversations_label" : "bottom_navigation_meetings_label")))))
 					.default_text_style_white_800(styleSize: 20)
 					.lineLimit(1)
 					.minimumScaleFactor(0.8)
@@ -224,7 +230,7 @@ struct ContentView: View {
 
 				Spacer()
 
-				if !isShowCRMFragment { Button {
+				if !isShowCRMFragment && (sharedMainViewModel.indexView != 1 || showCallHistory) { Button {
 					withAnimation {
 						searchIsActive.toggle()
 					}
@@ -290,18 +296,26 @@ struct ContentView: View {
 						isMenuOpen = true
 					}
 				} else if !isShowCRMFragment && sharedMainViewModel.indexView == 1 {
-					Button {
-						isShowDeleteAllHistoryPopup.toggle()
-					} label: {
-						Image("trash-simple")
-							.renderingMode(.template)
-							.resizable()
-							.foregroundStyle(.white)
-							.frame(width: 25, height: 25, alignment: .leading)
-							.padding(.all, 10)
-					}
-					.padding(.trailing, 10)
-				} else if !isShowCRMFragment && sharedMainViewModel.indexView == 3 {
+                    Button {
+                        if showCallHistory { isShowDeleteAllHistoryPopup.toggle() }
+                        else { showCallHistory = true; sharedMainViewModel.resetMissedCallsCount() }
+                    } label: {
+                        Image(systemName: showCallHistory ? "trash" : "clock.arrow.circlepath")
+                            .font(.system(size: 23)).foregroundColor(showCallHistory ? .white : Color.orangeMain500)
+                            .frame(width: 39, height: 39).background(showCallHistory ? Color.clear : Color.white, in: Circle())
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                            .overlay(alignment: .topTrailing) {
+                                if !showCallHistory && sharedMainViewModel.missedCallsCount > 0 {
+                                    Text(String(min(99, sharedMainViewModel.missedCallsCount)))
+                                        .font(.system(size: 11, weight: .bold)).foregroundColor(.white)
+                                        .padding(4).background(Color.red, in: Circle())
+                                }
+                            }
+                    }.accessibilityLabel(showCallHistory ? "Delete call history" : "Call history")
+                        .accessibilityIdentifier(showCallHistory ? "calls.deleteHistory" : "calls.history")
+                        .accessibilityValue(showCallHistory ? "" : "\(sharedMainViewModel.missedCallsCount) missed calls")
+                        .padding(.trailing, 12)
+                } else if !isShowCRMFragment && sharedMainViewModel.indexView == 3 {
 					Button {
 						NotificationCenter.default.post(name: MeetingsListViewModel.ScrollToTodayNotification, object: nil)
 					} label: {
@@ -535,7 +549,7 @@ struct ContentView: View {
                                 resetFilter(); sharedMainViewModel.displayedFriend = nil; sharedMainViewModel.displayedCall = nil
                                 sharedMainViewModel.displayedSMS = nil; sharedMainViewModel.displayedConversation = nil; sharedMainViewModel.displayedMeeting = nil
                                 sharedMainViewModel.changeIndexView(indexViewInt: destination); isShowCRMFragment = false
-                                if destination == 1 { sharedMainViewModel.resetMissedCallsCount() }
+                                if destination == 1 && showCallHistory { sharedMainViewModel.resetMissedCallsCount() }
                             }
                         }.background(Color.orangeMain500.ignoresSafeArea(edges: .top))
                             .zIndex(3)
@@ -622,7 +636,7 @@ struct ContentView: View {
 											sharedMainViewModel.displayedFriend = nil
 											sharedMainViewModel.displayedConversation = nil
 											sharedMainViewModel.displayedMeeting = nil
-											if SharedMainViewModel.shared.missedCallsCount > 0 {
+											if showCallHistory && SharedMainViewModel.shared.missedCallsCount > 0 {
                                                 SharedMainViewModel.shared.resetMissedCallsCount()
 											}
 										}, label: {
@@ -746,7 +760,7 @@ struct ContentView: View {
     @ViewBuilder private func nativePages(_ geometry: GeometryProxy) -> some View {
 					VStack(spacing: 0) {
 						HStack(spacing: 0) {
-							if sharedMainViewModel.indexView != 2 && !isConversationOpen && (orientation == .landscapeLeft
+							if sharedMainViewModel.indexView != 2 && (sharedMainViewModel.indexView != 1 || showCallHistory) && !isConversationOpen && (orientation == .landscapeLeft
 								|| orientation == .landscapeRight
 								|| UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height) {
 								VStack(spacing: 0) {
@@ -828,7 +842,7 @@ struct ContentView: View {
 												sharedMainViewModel.displayedFriend = nil
 												sharedMainViewModel.displayedConversation = nil
 												sharedMainViewModel.displayedMeeting = nil
-												if SharedMainViewModel.shared.missedCallsCount > 0 {
+												if showCallHistory && SharedMainViewModel.shared.missedCallsCount > 0 {
                                                     SharedMainViewModel.shared.resetMissedCallsCount()
 												}
 											}, label: {
@@ -983,6 +997,7 @@ struct ContentView: View {
 											)
 										} else if sharedMainViewModel.indexView == 1 {
 											HistoryContainer(
+                                                showHistory: showCallHistory,
 												historyListViewModel: $historyListViewModel,
 												isShowStartCallFragment: $isShowStartCallFragment,
 												isShowEditContactFragment: $isShowEditContactFragment,
@@ -1018,7 +1033,7 @@ struct ContentView: View {
 								}
 							}
 							.frame(maxWidth:
-									sharedMainViewModel.indexView != 2 && (orientation == .landscapeLeft
+									sharedMainViewModel.indexView != 2 && (sharedMainViewModel.indexView != 1 || showCallHistory) && (orientation == .landscapeLeft
 									 || orientation == .landscapeRight
 									 || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)
 								   ? geometry.size.width/100*40
@@ -1030,14 +1045,14 @@ struct ContentView: View {
 									.mask(Rectangle().padding(.horizontal, -8))
 							)
 
-							if sharedMainViewModel.indexView != 2 && (orientation == .landscapeLeft
+							if sharedMainViewModel.indexView != 2 && (sharedMainViewModel.indexView != 1 || showCallHistory) && (orientation == .landscapeLeft
 								|| orientation == .landscapeRight
 								|| UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height) {
 								Spacer()
 							}
 						}
 
-						if (sharedMainViewModel.indexView == 2 || !(orientation == .landscapeLeft
+						if (sharedMainViewModel.indexView == 2 || (sharedMainViewModel.indexView == 1 && !showCallHistory) || !(orientation == .landscapeLeft
 							 || orientation == .landscapeRight
 							 || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)) && !searchIsActive && !isConversationOpen {
                             portraitFooter(bottomInset: geometry.safeAreaInsets.bottom)
@@ -1055,7 +1070,7 @@ struct ContentView: View {
 						HStack(spacing: 0) {
 							Spacer()
 								.frame(maxWidth:
-										sharedMainViewModel.indexView != 2 && (orientation == .landscapeLeft
+										sharedMainViewModel.indexView != 2 && (sharedMainViewModel.indexView != 1 || showCallHistory) && (orientation == .landscapeLeft
 										 || orientation == .landscapeRight
 										 || UIScreen.main.bounds.size.width > UIScreen.main.bounds.size.height)
 									   ? (geometry.size.width/100*40) + 75
@@ -1246,7 +1261,7 @@ struct ContentView: View {
 						}
 						.environmentObject(callViewModel)
 						.zIndex(6)
-						.transition(.opacity.combined(with: .move(edge: .bottom)))
+						.transition(.identity)
 					}
 
 					if let conversationsListVM = conversationsListViewModel, isShowStartConversationFragment {
@@ -2263,6 +2278,7 @@ struct ContentView: View {
 		.onChange(of: scenePhase) { newPhase in
 			orientation = UIDevice.current.orientation
 			if newPhase == .active {
+                sharedMainViewModel.updateMissedCallsCount()
 				if let conversationsListVM = conversationsListViewModel {
 					conversationsListVM.computeChatRoomsList()
 				}
@@ -2523,6 +2539,7 @@ struct ContactsContainer: View {
 }
 
 struct HistoryContainer: View {
+    var showHistory: Bool
 	@Binding var historyListViewModel: HistoryListViewModel?
 	@Binding var isShowStartCallFragment: Bool
 	@Binding var isShowEditContactFragment: Bool
@@ -2532,7 +2549,9 @@ struct HistoryContainer: View {
 
 	var body: some View {
 		Group {
-			if let historyListVM = historyListViewModel {
+			if !showHistory {
+                Mango9PhoneView { isShowStartCallFragment = true }
+            } else if let historyListVM = historyListViewModel {
 				HistoryView(
 					isShowStartCallFragment: $isShowStartCallFragment,
 					isShowEditContactFragment: $isShowEditContactFragment,

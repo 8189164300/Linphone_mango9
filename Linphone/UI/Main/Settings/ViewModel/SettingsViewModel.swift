@@ -55,7 +55,6 @@ class SettingsViewModel: ObservableObject {
 	@Published var enableFec: Bool = false
 	@Published var mediaEncryption: String = ""
 	@Published var mediaEncryptionMandatory: Bool = false
-	@Published var acceptEarlyMedia: Bool = false
 	@Published var allowOutgoingEarlyMedia: Bool = false
 	@Published var deviceId: String = ""
 	@Published var remoteProvisioningUrl: String = ""
@@ -110,7 +109,6 @@ class SettingsViewModel: ObservableObject {
 				mediaEncryptionTmp = "DTLS"
 			}
 			let mediaEncryptionMandatoryTmp = core.isMediaEncryptionMandatory
-			let acceptEarlyMediaTmp = AppServices.corePreferences.acceptEarlyMedia
 			let allowOutgoingEarlyMediaTmp = AppServices.corePreferences.allowOutgoingEarlyMedia
 			let deviceIdTmp = AppServices.corePreferences.deviceName
    			let remoteProvisioningUrlTmp = core.provisioningUri
@@ -141,7 +139,6 @@ class SettingsViewModel: ObservableObject {
 				self.enableFec = enableFecTmp
 				self.mediaEncryption = mediaEncryptionTmp
 				self.mediaEncryptionMandatory = mediaEncryptionMandatoryTmp
-				self.acceptEarlyMedia = acceptEarlyMediaTmp
 				self.allowOutgoingEarlyMedia = allowOutgoingEarlyMediaTmp
 				
 				self.deviceId = deviceIdTmp
@@ -488,10 +485,6 @@ class SettingsViewModel: ObservableObject {
 			
 			if core.isMediaEncryptionMandatory != self.mediaEncryptionMandatory {
 				core.mediaEncryptionMandatory = self.mediaEncryptionMandatory
-			}
-			
-			if AppServices.corePreferences.acceptEarlyMedia != self.acceptEarlyMedia {
-				AppServices.corePreferences.acceptEarlyMedia = self.acceptEarlyMedia
 			}
 			
 			if AppServices.corePreferences.allowOutgoingEarlyMedia != self.allowOutgoingEarlyMedia {

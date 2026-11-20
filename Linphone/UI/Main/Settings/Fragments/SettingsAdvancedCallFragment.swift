@@ -150,9 +150,6 @@ struct SettingsAdvancedCallFragment: View {
 						if earlyMediaIsOpen {
 							VStack(spacing: 0) {
 								VStack(spacing: 30) {
-									Toggle("settings_advanced_accept_early_media_title", isOn: $settingsViewModel.acceptEarlyMedia)
-										.default_text_style_700(styleSize: 15)
-									
 									Toggle("settings_advanced_allow_outgoing_early_media_title", isOn: $settingsViewModel.allowOutgoingEarlyMedia)
 										.default_text_style_700(styleSize: 15)
 								}

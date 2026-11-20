@@ -212,37 +212,28 @@ class SharedMainViewModel: ObservableObject {
     
     func resetMissedCallsCount() {
         CoreContext.shared.doOnCoreQueue { core in
-            let account = core.defaultAccount
-            if account != nil {
-                account?.resetMissedCallsCount()
-                DispatchQueue.main.async {
-                    self.missedCallsCount = 0
-                }
-            } else {
-                DispatchQueue.main.async {
-                    self.missedCallsCount = 0
-                }
+            if let account = core.defaultAccount {
+                _ = Mango9MissedCallReceipts.refresh(account: account, logs: core.callLogs, markSeen: true)
+                account.resetMissedCallsCount()
             }
+            DispatchQueue.main.async { self.missedCallsCount = 0 }
         }
     }
-    
+
     func updateMissedCallsCount() {
         CoreContext.shared.doOnCoreQueue { core in
-            let account = core.defaultAccount
-            if account != nil {
-                let count = account?.missedCallsCount != nil ? account!.missedCallsCount : core.missedCallsCount
-                
-                DispatchQueue.main.async {
-                    self.missedCallsCount = count
-                }
-            } else {
-                DispatchQueue.main.async {
-                    self.missedCallsCount = 0
-                }
+            var count = 0
+            let logs = core.callLogs
+            // Initialize every line before its first call, not just the selected line.
+            for account in core.accountList {
+                let unread = Mango9MissedCallReceipts.refresh(account: account, logs: logs)
+                if core.defaultAccount.map({ $0 == account }) == true { count = unread }
             }
+            let unread = count
+            DispatchQueue.main.async { self.missedCallsCount = unread }
         }
     }
-    
+
     func updateUnreadMessagesCount() {
         CoreContext.shared.doOnCoreQueue { core in
             let account = core.defaultAccount
@@ -320,4 +311,47 @@ class SharedMainViewModel: ObservableObject {
 	func updateCardDavFriendsListsCount(cardDavFriendsListsCount: Int) {
 		self.cardDavFriendsListsCount = cardDavFriendsListsCount
 	}
+}
+
+/// A persisted receipt journal, independent of the SDK's in-memory missed counter.
+/// Only current missed call IDs are retained; deleted/answered/declined calls cannot badge.
+struct Mango9MissedCallState: Codable {
+    private(set) var known: Set<String>
+    private(set) var unread: Set<String>
+
+    init(current: [String], legacyUnreadCount: Int) {
+        known = Set(current)
+        // On upgrade retain the SDK's current unread calls without badging old history.
+        unread = Set(current.prefix(max(0, legacyUnreadCount)))
+    }
+
+    mutating func reconcile(current: [String], markSeen: Bool = false) -> Int {
+        let present = Set(current)
+        unread.formUnion(present.subtracting(known))
+        unread.formIntersection(present)
+        known = present
+        if markSeen { unread.removeAll() }
+        return unread.count
+    }
+}
+
+private enum Mango9MissedCallReceipts {
+    /// SDK objects and preferences are accessed only on the serialized core queue.
+    static func refresh(account: Account, logs: [CallLog], markSeen: Bool = false) -> Int {
+        guard let owner = account.params?.identityAddress else { return 0 }
+        let key = "phone.missedReceipts.v1." + owner.asStringUriOnly()
+        let defaults = UserDefaults.standard
+        let missed = logs.filter {
+            $0.dir == .Incoming && $0.status == .Missed && $0.localAddress?.weakEqual(address2: owner) == true
+        }.sorted { $0.startDate > $1.startDate }
+        let ids = missed.map { log in
+            if let id = log.callId, !id.isEmpty { return id }
+            return "\(log.startDate)|\(log.remoteAddress?.asStringUriOnly() ?? "")"
+        }
+        var state = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(Mango9MissedCallState.self, from: $0) }
+            ?? Mango9MissedCallState(current: ids, legacyUnreadCount: account.missedCallsCount)
+        let count = state.reconcile(current: ids, markSeen: markSeen)
+        if let data = try? JSONEncoder().encode(state) { defaults.set(data, forKey: key) }
+        return count
+    }
 }

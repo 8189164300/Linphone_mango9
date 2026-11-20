@@ -46,7 +46,6 @@ struct StartCallFragment: View {
 	
 	
 	@FocusState var isSearchFieldFocused: Bool
-	@State private var delayedColor = Color.white
 	
 	var resetCallView: () -> Void
 	
@@ -89,37 +88,23 @@ struct StartCallFragment: View {
 		ZStack {
 			VStack(spacing: 1) {
 				
-				Rectangle()
-					.foregroundColor(delayedColor)
-					.edgesIgnoringSafeArea(.top)
-					.frame(height: 0)
-					.task(delayColor)
-				
 				HStack {
-					Image("caret-left")
-						.renderingMode(.template)
-						.resizable()
-						.foregroundStyle(Color.orangeMain500)
-						.frame(width: 25, height: 25, alignment: .leading)
-						.padding(.all, 10)
-						.padding(.top, 2)
-						.padding(.leading, -10)
-						.onTapGesture {
-							startCallViewModel.searchField = ""
-							magicSearch.currentFilter = ""
-							magicSearch.searchForContacts()
-							
-							if callViewModel.isTransferInsteadCall == true {
-								callViewModel.isTransferInsteadCall = false
-							}
-							
-							resetCallView()
-							
-							delayColorDismiss()
-							withAnimation {
-								isShowStartCallFragment.toggle()
-							}
-						}
+                    Button {
+                        isSearchFieldFocused = false
+                        callViewModel.isTransferInsteadCall = false
+                        if telecomManager.callInProgress { resetCallView() }
+                        var transaction = Transaction(); transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            showingDialer = false
+                            isShowStartCallFragment = false
+                        }
+                    } label: {
+                        Image("caret-left").renderingMode(.template).resizable()
+                            .foregroundStyle(Color.white)
+                            .frame(width: 25, height: 25)
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                        .accessibilityIdentifier("dial.contacts.back").accessibilityLabel("Back")
 					
 					let address = callViewModel.currentCall?.remoteAddress
 
@@ -137,7 +122,7 @@ struct StartCallFragment: View {
 						  )
 					)
 					.multilineTextAlignment(.leading)
-					.default_text_style_orange_800(styleSize: 16)
+					.default_text_style_white_800(styleSize: 20)
 					
 					Spacer()
 					
@@ -146,7 +131,7 @@ struct StartCallFragment: View {
 				.frame(height: 50)
 				.padding(.horizontal)
 				.padding(.bottom, 4)
-				.background(.white)
+                .background(Color.orangeMain500.ignoresSafeArea(edges: .top))
 				
 				VStack(spacing: 0) {
 					if callViewModel.isTransferInsteadCall {
@@ -177,11 +162,16 @@ struct StartCallFragment: View {
 							.default_text_style(styleSize: 15)
 							.frame(height: 25)
 							.focused($isSearchFieldFocused)
+                            .accessibilityIdentifier("dial.contacts.search")
 							.padding(.horizontal, 30)
-							.onChange(of: startCallViewModel.searchField) { newValue in
-								magicSearch.currentFilter = newValue
-								magicSearch.searchForContacts()
-							}
+							.task(id: startCallViewModel.searchField) {
+                                let value = startCallViewModel.searchField
+                                do { try await Task.sleep(nanoseconds: 250_000_000) } catch { return }
+                                guard !Task.isCancelled else { return }
+                                if value.isEmpty && magicSearch.currentFilter.isEmpty && magicSearch.previousFilter == "" && !contactsManager.lastSearch.isEmpty { return }
+                                magicSearch.currentFilter = value
+                                magicSearch.searchForContacts()
+                            }
 							.simultaneousGesture(TapGesture().onEnded {
 								showingDialer = false
 							})
@@ -223,8 +213,6 @@ struct StartCallFragment: View {
 							} else {
 								Button(action: {
 									startCallViewModel.searchField = ""
-									magicSearch.currentFilter = ""
-									magicSearch.searchForContacts()
 								}, label: {
 									Image("x")
 										.renderingMode(.template)
@@ -288,6 +276,7 @@ struct StartCallFragment: View {
 					
 					ZStack {
 						ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 12) {
 							if !ContactsManager.shared.lastSearch.isEmpty {
 								HStack(alignment: .center) {
 									Text("contacts_list_all_contacts_title")
@@ -323,7 +312,7 @@ struct StartCallFragment: View {
 													
 													resetCallView()
 													
-													delayColorDismiss()
+
 													
 													withAnimation {
 														isShowStartCallFragment.toggle()
@@ -349,7 +338,7 @@ struct StartCallFragment: View {
 														
 														resetCallView()
 														
-														delayColorDismiss()
+
 														
 														withAnimation {
 															isShowStartCallFragment.toggle()
@@ -380,6 +369,7 @@ struct StartCallFragment: View {
 								
 								suggestionsList
 							}
+                            }
 						}
 						
 						if magicSearch.isLoading {
@@ -452,7 +442,7 @@ struct StartCallFragment: View {
 									
 									resetCallView()
 									
-									delayColorDismiss()
+
 									
 									withAnimation {
 										isShowSipAddressesPopup = false
@@ -507,7 +497,7 @@ struct StartCallFragment: View {
 											
 											resetCallView()
 											
-											delayColorDismiss()
+
 											
 											withAnimation {
 												isShowSipAddressesPopup = false
@@ -569,7 +559,7 @@ struct StartCallFragment: View {
 							
 							resetCallView()
 							
-							delayColorDismiss()
+
 							
 							withAnimation {
 								isShowStartCallFragment.toggle()
@@ -603,24 +593,6 @@ struct StartCallFragment: View {
 		}
 		.navigationTitle("")
 		.navigationBarHidden(true)
-		.onAppear {
-			if !magicSearch.currentFilter.isEmpty || (self.contactsManager.lastSearch.isEmpty && self.contactsManager.lastSearchSuggestions.isEmpty) {
-				magicSearch.currentFilter = ""
-				magicSearch.searchForContacts()
-			}
-		}
-	}
-	
-	@Sendable private func delayColor() async {
-		try? await Task.sleep(nanoseconds: 250_000_000)
-		delayedColor = Color.orangeMain500
-	}
-	
-	func delayColorDismiss() {
-		Task {
-			try? await Task.sleep(nanoseconds: 80_000_000)
-			delayedColor = .white
-		}
 	}
 	
 	func callsList(remoteAddress: Address) -> some View {
@@ -714,7 +686,7 @@ struct StartCallFragment: View {
 					
 					resetCallView()
 					
-					delayColorDismiss()
+
 					
 					withAnimation {
 						isShowStartCallFragment.toggle()

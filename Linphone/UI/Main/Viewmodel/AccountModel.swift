@@ -56,6 +56,12 @@ class AccountModel: ObservableObject {
 	
 	init(account: Account, core: Core) {
 		self.account = account
+        // Keep the last confirmed server indication visible until a fresh NOTIFY arrives.
+        if let owner = account.params?.identityAddress?.asStringUriOnly(),
+           let saved = Mango9VoicemailReceipts.read(owner: owner) {
+            showMwi = saved.waiting
+            voicemailCount = saved.count
+        }
 		
 		self.computeNotificationsCount()
 		
@@ -67,19 +73,15 @@ class AccountModel: ObservableObject {
 				}
 			}, onMessageWaitingIndicationChanged: { (account: Account, mwi: MessageWaitingIndication) in
 				Log.info("\(AccountModel.TAG) Account \(account.params?.identityAddress?.asStringUriOnly() ?? "Error") has received a MWI NOTIFY. \(mwi.hasMessageWaiting() ? "Message(s) are waiting." : "No message is waiting.")")
-				let showMwiTmp = mwi.hasMessageWaiting()
-				var voicemailCountTmp = 0
-				for summary in mwi.summaries {
-					let contextClass = summary.contextClass
-					let nbNew = summary.nbNew
-					let nbNewUrgent = summary.nbNewUrgent
-					let nbOld = summary.nbOld
-					let nbOldUrgent = summary.nbOldUrgent
-					Log.info("\(AccountModel.TAG) [MWI] \(contextClass): new \(nbNew) urgent \(nbNewUrgent), old \(nbOld) urgent \(nbOldUrgent)")
-					
-					voicemailCountTmp = Int(nbNew)
-				}
-				
+                // Only the voice summary contributes to voicemail, not fax/text counts.
+                let voice = mwi.summaries.first { $0.contextClass == .Voice }
+                let status = Mango9PhonePolicy.voicemailStatus(waiting: mwi.hasMessageWaiting(), voiceCount: voice.map { Int($0.nbNew) })
+                let voicemailCountTmp = status.count
+                let showMwiTmp = status.waiting
+                if let owner = account.params?.identityAddress?.asStringUriOnly() {
+                    Mango9VoicemailReceipts.save(owner: owner, waiting: status.waiting, count: status.count)
+                }
+
 				DispatchQueue.main.async {
 					self.showMwi = showMwiTmp
 					self.voicemailCount = voicemailCountTmp
@@ -102,6 +104,12 @@ class AccountModel: ObservableObject {
 		core.addDelegate(delegate: coreDelegate!)
 		
 		CoreContext.shared.doOnCoreQueue { _ in
+            // Subscribe using the existing Linphone MWI support, scoped to this line.
+            if let params = self.account.params?.clone(), params.mwiServerAddress == nil,
+               let identity = params.identityAddress {
+                params.mwiServerAddress = identity
+                self.account.params = params
+            }
 			self.update()
 		}
 	}
@@ -324,14 +332,48 @@ class AccountModel: ObservableObject {
 		self.isDefaultAccount = true
 	}
 	
-	func callVoicemailUri() {
-		CoreContext.shared.doOnCoreQueue { core in
-			if let voicemail = self.account.params?.voicemailAddress {
-				Log.info("\(AccountModel.TAG) Calling voicemail address \(voicemail.asStringUriOnly())")
-				TelecomManager.shared.doCallOrJoinConf(address: voicemail)
-			}
-		}
-	}
+    func loadVoicemail(completion: @escaping (String) -> Void) {
+        CoreContext.shared.doOnCoreQueue { _ in
+            let domain = self.account.params?.identityAddress?.domain ?? ""
+            let value = Mango9PhonePolicy.mailboxNumber(self.account.params?.voicemailAddress?.asStringUriOnly() ?? "", domain: domain) ?? "*97"
+            DispatchQueue.main.async { completion(value) }
+        }
+    }
+
+    func saveVoicemail(_ raw: String, completion: @escaping (Result<String, Error>) -> Void) {
+        CoreContext.shared.doOnCoreQueue { core in
+            guard core.defaultAccount.map({ $0 == self.account }) == true,
+                  let params = self.account.params?.clone(), let identity = params.identityAddress,
+                  let value = Mango9PhonePolicy.mailboxNumber(raw, domain: identity.domain ?? ""),
+                  let mailbox = identity.clone() else {
+                DispatchQueue.main.async { completion(.failure(NSError(domain: "Phone", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Enter up to 12 digits, * or # for the current phone line."]))) }
+                return
+            }
+            do {
+                try mailbox.setUsername(newValue: value)
+                try mailbox.setDisplayname(newValue: "")
+                params.voicemailAddress = mailbox
+                if params.mwiServerAddress == nil { params.mwiServerAddress = identity }
+                self.account.params = params
+                DispatchQueue.main.async { completion(.success(value)) }
+            } catch { DispatchQueue.main.async { completion(.failure(error)) } }
+        }
+    }
+
+    func callVoicemailUri() {
+        CoreContext.shared.doOnCoreQueue { core in
+            guard core.defaultAccount.map({ $0 == self.account }) == true, let identity = self.account.params?.identityAddress,
+                  let value = Mango9PhonePolicy.mailboxNumber(self.account.params?.voicemailAddress?.asStringUriOnly() ?? "", domain: identity.domain ?? ""),
+                  let mailbox = identity.clone() else { return }
+            do {
+                try mailbox.setUsername(newValue: value)
+                try mailbox.setDisplayname(newValue: "")
+                TelecomManager.shared.doCallOrJoinConf(address: mailbox)
+            } catch { Log.error("[AccountModel] Unable to prepare voicemail call") }
+        }
+    }
+
 }
 
 class AccountDeviceModel: ObservableObject {
@@ -365,4 +407,25 @@ class AccountDeviceModel: ObservableObject {
 			accountDevice.userAgent.contains("LinphoneAndroid") ||
 			accountDevice.userAgent.contains("LinphoneiOS")
 	}
+}
+
+struct Mango9VoicemailReceipt: Codable, Equatable {
+    let waiting: Bool
+    let count: Int
+}
+
+enum Mango9VoicemailReceipts {
+    static func read(owner: String, defaults: UserDefaults = .standard) -> Mango9VoicemailReceipt? {
+        guard !owner.isEmpty, let data = defaults.data(forKey: "phone.voicemailReceipt.v1." + owner),
+              let saved = try? JSONDecoder().decode(Mango9VoicemailReceipt.self, from: data), saved.count >= 0 else { return nil }
+        return saved
+    }
+
+    static func save(owner: String, waiting: Bool, count: Int, defaults: UserDefaults = .standard) {
+        guard !owner.isEmpty else { return }
+        let receipt = Mango9VoicemailReceipt(waiting: waiting, count: waiting ? max(0, count) : 0)
+        if let data = try? JSONEncoder().encode(receipt) {
+            defaults.set(data, forKey: "phone.voicemailReceipt.v1." + owner)
+        }
+    }
 }
