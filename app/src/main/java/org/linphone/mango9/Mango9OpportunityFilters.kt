@@ -39,3 +39,22 @@ internal object Mango9OpportunityFilters {
             !input[it.first].isNullOrBlank() || !input[it.second].isNullOrBlank()
         } + if (input["archived"] == "1") 1 else 0
 }
+
+/** Structured filters only; search and pagination are intentionally transient. */
+internal class Mango9OpportunityFilterPreferences(context: android.content.Context, session: Mango9Session, contact: Int?) {
+    private val preferences = context.getSharedPreferences("mango9_opportunity_filters_v1", android.content.Context.MODE_PRIVATE)
+    private val key = java.security.MessageDigest.getInstance("SHA-256").digest(
+        org.json.JSONArray(listOf(session.crmApiBaseUrl.trimEnd('/'), session.userId, session.parentClientId, contact?.toString() ?: "list")).toString().toByteArray()
+    ).joinToString("") { "%02x".format(it) }
+
+    fun load(): Map<String, String> = runCatching {
+        val raw = org.json.JSONObject(preferences.getString(key, "{}") ?: "{}")
+        val saved = (Mango9OpportunityFilters.keys + "stage").associateWith { raw.optString(it, "") }
+        Mango9OpportunityFilters.query(saved) + mapOf("stage" to saved.getValue("stage"))
+    }.getOrDefault(emptyMap())
+
+    fun save(value: Map<String, String>) {
+        val saved = Mango9OpportunityFilters.query(value) + mapOf("stage" to value["stage"].orEmpty())
+        preferences.edit().putString(key, org.json.JSONObject(saved).toString()).apply()
+    }
+}

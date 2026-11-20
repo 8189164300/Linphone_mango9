@@ -142,7 +142,10 @@ internal class Mango9OpportunityWorkspaceUI(
         }
         p.whenDismissed { badgeJob.cancel(); badgeViews.clear() }
         var metadata: Mango9OpportunityMetadata? = null; var next = 1; var seq = 0; var queryJob: Job? = null
-        val query = mutableMapOf("sort" to "updated_at", "direction" to "desc", "limit" to "25")
+        val preferences = Mango9OpportunityFilterPreferences(context, lease.session, contact?.id)
+        val query = mutableMapOf("sort" to "updated_at", "direction" to "desc", "limit" to "25").apply {
+            putAll(preferences.load())
+        }
         if (contact != null) query["contactId"] = contact.id.toString()
 
         val choiceButtons = mutableMapOf<String, Button>()
@@ -152,7 +155,7 @@ internal class Mango9OpportunityWorkspaceUI(
             button = action(label) {
                 val values = options()
                 MaterialAlertDialogBuilder(context).setTitle(label).setItems(values.map { it.second }.toTypedArray()) { _, i ->
-                    query[key] = values[i].first; button.text = values[i].second
+                    query[key] = values[i].first; button.text = values[i].second; if (current()) preferences.save(query)
                     queryJob?.cancel(); search.setText(search.text.toString())
                 }.show()
             }
@@ -168,8 +171,11 @@ internal class Mango9OpportunityWorkspaceUI(
                     val meta = if (reset || metadata == null) Mango9OpportunityMetadata(api.request(lease, listOf("metadata"))) else metadata!!
                     if (!current() || !p.isShowing || version != seq) return@launch
                     metadata = meta
+                    if (!query["stage"].isNullOrEmpty() && meta.stages.none { it.id == query["stage"] }) query["stage"] = ""
+                    choiceButtons["stage"]?.text = meta.stages.firstOrNull { it.id == query["stage"] }?.name ?: "All stages"
                     query["owner"] = meta.visibleOwnerFilter(query["owner"].orEmpty())
                     query["createdBy"] = meta.visibleOwnerFilter(query["createdBy"].orEmpty())
+                    preferences.save(query)
                     choiceButtons["createdBy"]?.text = meta.owners.firstOrNull {
                         it.first.toString() == query["createdBy"]
                     }?.second ?: "Created by"
@@ -347,6 +353,7 @@ internal class Mango9OpportunityWorkspaceUI(
                     try {
                         val validated = Mango9OpportunityFilters.query(draft)
                         Mango9OpportunityFilters.keys.forEach { query.remove(it) }; query.putAll(validated)
+                        if (current()) preferences.save(query)
                         dialog.dismiss(); queryJob?.cancel(); search.setText(search.text.toString())
                     } catch (e: IllegalArgumentException) { error.text = e.message; scroll.post { scroll.fullScroll(View.FOCUS_DOWN) } }
                 }

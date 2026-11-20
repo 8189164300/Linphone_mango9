@@ -93,14 +93,38 @@ class Mango9OpportunityNavigationInstrumentedTest {
     @Test fun ownerChoicesAndEmptyListStayNavigable() {
         openWorkspace()
         label("Search Opportunities")
+        if (args.getString("filterPersistencePhase") == "verify") {
+            tap(waitFor("More filters") { text(it).startsWith("More filters") || text(it).startsWith("Filters") })
+            waitFor("Restored overdue after restart") { text(it).contains("Overdue") || it.text?.toString() == "Overdue" }
+            snapshot("saved-filter-after-restart")
+            tap(waitFor("Reset filters") { text(it).equals("Reset", true) || text(it) == "Reset filters" })
+            tap(waitFor("Apply filters") { text(it).equals("Apply", true) || text(it) == "Apply filters" })
+            label("Search Opportunities"); tap(label("Back"))
+            return
+        }
         assertFalse(
             "Currency moved out of the list toolbar",
             nodes().any {
             it.isVisibleToUser && text(it) == "All currencies"
         }
         )
+        tap(waitFor("More filters") { text(it).startsWith("More filters") || text(it).startsWith("Filters") })
+        tap(
+            waitFor("Follow-up filter") {
+            text(it) == "Filter followup" || text(it).startsWith("Follow-up,") || text(it) == "Follow-up" && actionable(it) || text(it) == "All follow-ups" && actionable(it)
+        }
+        )
+        tap(waitFor("Overdue option") { text(it) == "Overdue" && actionable(it) })
+        tap(waitFor("Apply filters") { text(it).equals("Apply", true) || text(it) == "Apply filters" })
+        label("Search Opportunities")
+        if (args.getString("filterPersistencePhase") == "prepare") return
+        tap(label("Back")); openWorkspace()
+        tap(waitFor("More filters") { text(it).startsWith("More filters") || text(it).startsWith("Filters") })
+        waitFor("Restored overdue filter") { text(it).contains("Overdue") || it.text?.toString() == "Overdue" }
+        snapshot("saved-filter-reopened")
+        tap(waitFor("Cancel configuration") { text(it).equals("Cancel", true) || text(it) == "Close filters" })
         repeat(2) {
-            tap(waitFor("More filters") { text(it) == "Filters" || text(it).startsWith("More filters") })
+            tap(waitFor("More filters") { text(it).startsWith("Filters") || text(it).startsWith("More filters") })
             label("Opportunity filters")
             tap(
                 waitFor("Owner filter") {
@@ -116,7 +140,7 @@ class Mango9OpportunityNavigationInstrumentedTest {
             tap(waitFor("Apply filters") { text(it).equals("Apply", true) || text(it) == "Apply filters" })
             label("Search Opportunities")
         }
-        tap(waitFor("More filters") { text(it) == "Filters" || text(it).startsWith("More filters") })
+        tap(waitFor("More filters") { text(it).startsWith("Filters") || text(it).startsWith("More filters") })
         label("Opportunity filters")
         tap(waitFor("Cancel configuration") { text(it).equals("Cancel", true) || text(it) == "Close filters" })
         label("Search Opportunities")
