@@ -124,13 +124,15 @@ internal class Mango9OpportunityWorkspaceUI(
             if (contact != null) create(contact) else contactPicker()
         }.apply { visibility = View.GONE }
         p.headerAction(addButton)
-        val metrics = column(); val rows = column(); val status = column(); val filters = column()
+        val metrics = column(); val rows = column(); val status = column()
         val search = EditText(context).apply {
             hint = "Search Opportunities or contacts"; contentDescription = "Search Opportunities"; textSize = 14f; setSingleLine(); background = bg(Color.WHITE, 12, true); setPadding(dp(12), dp(10), dp(12), dp(10)); setTextColor(ink)
         }
-        val filterLine = line(); val moreFilters = column().apply { visibility = View.GONE }
+        val filterLine = line()
+        var filterDialog: androidx.appcompat.app.AlertDialog? = null
+        p.whenDismissed { filterDialog?.dismiss() }
         if (contact != null) add(body, text(contact.name, 17f, bold = true))
-        add(body, metrics); add(body, search); add(body, filterLine); add(body, moreFilters); add(body, status); add(body, rows)
+        add(body, metrics); add(body, search); add(body, filterLine); add(body, status); add(body, rows)
         val displayedIds = mutableSetOf<Int>()
         val badgeViews = mutableMapOf<Int, TextView>()
         val badgeJob = scope.launch {
@@ -167,7 +169,11 @@ internal class Mango9OpportunityWorkspaceUI(
                     if (!current() || !p.isShowing || version != seq) return@launch
                     metadata = meta
                     query["owner"] = meta.visibleOwnerFilter(query["owner"].orEmpty())
-                    choiceButtons["owner"]?.text = meta.owners.firstOrNull { it.first.toString() == query["owner"] }?.second ?: "All owners"
+                    query["createdBy"] = meta.visibleOwnerFilter(query["createdBy"].orEmpty())
+                    choiceButtons["createdBy"]?.text = meta.owners.firstOrNull {
+                        it.first.toString() == query["createdBy"]
+                    }?.second ?: "Created by"
+                    choiceButtons["filters"]?.text = "Filters" + Mango9OpportunityFilters.count(query).let { if (it > 0) " ($it)" else "" }
                     val raw = api.request(lease, query = query + mapOf("q" to search.text.toString(), "page" to (if (reset) 1 else next).toString()))
                     val pagination = raw.getJSONObject("pagination"); val items = raw.getJSONArray("items").opportunityObjects()
                     if (!current() || !p.isShowing || version != seq) return@launch
@@ -218,6 +224,7 @@ internal class Mango9OpportunityWorkspaceUI(
                     if (pagination.getBoolean("hasMore"))add(rows, action("Load more"){load(false)}.apply{tag = "more"})
                 } catch (e: Exception) {
                     if (e is CancellationException)throw e; if (current() && p.isShowing && version == seq){
+                        if (reset) { rows.removeAllViews(); badgeViews.clear(); displayedIds.clear(); metrics.removeAllViews() }
                         status.removeAllViews(); failure(status, e){load(reset)}
                     }
                 }
@@ -234,35 +241,122 @@ internal class Mango9OpportunityWorkspaceUI(
             LinearLayout.LayoutParams(0, -2, 1f)
         )
         filterLine.addView(
-            choices("All currencies", {
-            listOf("" to "All currencies") + Mango9OpportunityDraft.currencies.map{
-                it to it
-            }
-        }, "currency"),
+            choices("Created by", {
+            listOf("" to "Anyone") + (metadata?.owners?.map { it.first.toString() to it.second } ?: emptyList())
+        }, "createdBy"),
             LinearLayout.LayoutParams(0, -2, 1f)
         )
-        filterLine.addView(
-            action("Filters"){
-            moreFilters.visibility = if (moreFilters.visibility == View.GONE)View.VISIBLE else View.GONE
-        }
-        )
-        moreFilters.addView(
-            choices("Owner", {
-            listOf("" to "All owners") + (metadata?.owners?.map{it.first.toString() to it.second} ?: emptyList())
-        }, "owner")
-        )
-        moreFilters.addView(
-            choices("Sharing", {
-            listOf("" to "All sharing", "with_me" to "Shared with me", "by_me" to "Shared by me")
-        }, "shared")
-        )
-        moreFilters.addView(
-            choices("Show", {
-            listOf("0" to "Active Opportunities", "1" to "Archived Opportunities")
-        }, "archived")
-        )
+        val configuration = action("Filters") {
+            val draft = query.filterKeys { it in Mango9OpportunityFilters.keys }.toMutableMap()
+            val content = column(16)
+            val error = text("", 13f, Color.rgb(170, 45, 65))
+            lateinit var render: () -> Unit
+
+            fun heading(title: String) { add(content, text(title, 15f, ink, true), 6) }
+
+            fun row(label: String, control: View) {
+                val row = line(); row.addView(text(label, 14f), LinearLayout.LayoutParams(dp(96), -2))
+                row.addView(control, LinearLayout.LayoutParams(0, -2, 1f)); add(content, row, 5)
+            }
+
+            fun choice(label: String, key: String, options: List<Pair<String, String>>) {
+                row(
+                    label,
+                    action(options.firstOrNull { it.first == draft[key].orEmpty() }?.second ?: options.first().second) {
+                    MaterialAlertDialogBuilder(context).setTitle(label).setItems(options.map { it.second }.toTypedArray()) { _, i ->
+                        draft[key] = options[i].first; render()
+                    }.setNegativeButton("Cancel", null).show()
+                }.apply { contentDescription = "Filter $key" }
+                )
+            }
+
+            fun date(label: String, key: String) {
+                val box = line()
+                box.addView(
+                    action(draft[key]?.takeIf { it.isNotBlank() } ?: "Any date") {
+                    val day = runCatching { java.time.LocalDate.parse(draft[key]) }.getOrDefault(java.time.LocalDate.now())
+                    android.app.DatePickerDialog(context, { _, y, m, d -> draft[key] = java.time.LocalDate.of(y, m + 1, d).toString(); render() }, day.year, day.monthValue - 1, day.dayOfMonth).show()
+                }.apply { contentDescription = "Filter $key" },
+                    LinearLayout.LayoutParams(0, -2, 1f)
+                )
+                if (!draft[key].isNullOrBlank()) {
+                    box.addView(
+                        action("×") {
+                    draft[key] = ""; render()
+                }.apply { contentDescription = "Clear $key" },
+                    LinearLayout.LayoutParams(dp(44), -2)
+                    )
+                }
+                row(label, box)
+            }
+
+            fun amount(label: String, key: String, hintText: String) {
+                row(
+                    label,
+                    EditText(context).apply {
+                    contentDescription = "$label amount"; hint = hintText; setSingleLine(); textSize = 14f; setTextColor(ink)
+                    inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                    setText(draft[key].orEmpty()); doAfterTextChanged { draft[key] = it.toString(); error.text = "" }
+                }
+                )
+            }
+            render = {
+                content.removeAllViews()
+                heading("People")
+                val people = metadata?.owners?.map { it.first.toString() to it.second } ?: emptyList()
+                choice("Created by", "createdBy", listOf("" to "Anyone") + people)
+                choice("Owner", "owner", listOf("" to "All owners") + people)
+                choice("Sharing", "shared", listOf("" to "All sharing", "with_me" to "Shared with me", "by_me" to "Shared by me"))
+                heading("Due dates")
+                choice("Follow-up", "followup", listOf("" to "All follow-ups", "overdue" to "Overdue", "missing" to "Next step needed", "stale" to "No activity for 14+ days"))
+                add(content, text("Expected close date", 12f, muted), 4); date("From", "closeFrom"); date("To", "closeTo")
+                heading("Amount"); amount("Minimum", "minValue", "No minimum"); amount("Maximum", "maxValue", "No maximum")
+                choice("Currency", "currency", listOf("" to "All currencies") + Mango9OpportunityDraft.currencies.map { it to it })
+                add(content, text("Amounts use each Opportunity’s currency.", 12f, muted))
+                heading("Created date"); date("From", "createdFrom"); date("To", "createdTo")
+                heading("More")
+                choice(
+                    "Source", "source",
+                    listOf("" to "All sources") + (
+                        metadata?.raw?.optJSONArray("sources")?.let { a ->
+                            (0 until a.length()).map {
+                    a.getString(it) to a.getString(it)
+                }
+                } ?: emptyList()
+                    )
+                )
+                row(
+                    "Archived",
+                    Switch(context).apply {
+                    contentDescription = "Show archived Opportunities"; isChecked = draft["archived"] == "1"; setOnCheckedChangeListener { _, yes -> draft["archived"] = if (yes) "1" else "" }
+                }
+                )
+                add(content, error)
+            }
+            render()
+            val scroll = ScrollView(context).apply { addView(content) }
+            val dialog = MaterialAlertDialogBuilder(context).setTitle("Opportunity filters").setView(scroll)
+                .setNegativeButton("Cancel", null).setNeutralButton("Reset", null).setPositiveButton("Apply", null).create()
+            filterDialog = dialog
+            dialog.setOnShowListener {
+                scroll.layoutParams = scroll.layoutParams.apply {
+                    height = (context.resources.displayMetrics.heightPixels * 0.62).toInt()
+                }
+                dialog.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener { draft.clear(); error.text = ""; render() }
+                dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+                    try {
+                        val validated = Mango9OpportunityFilters.query(draft)
+                        Mango9OpportunityFilters.keys.forEach { query.remove(it) }; query.putAll(validated)
+                        dialog.dismiss(); queryJob?.cancel(); search.setText(search.text.toString())
+                    } catch (e: IllegalArgumentException) { error.text = e.message; scroll.post { scroll.fullScroll(View.FOCUS_DOWN) } }
+                }
+            }
+            dialog.setOnDismissListener { if (filterDialog === dialog) filterDialog = null }; dialog.show()
+        }.apply { contentDescription = "More filters" }
+        choiceButtons["filters"] = configuration
+        filterLine.addView(configuration)
         refreshList = { if (p.isShowing) load(true) }
-        search.doAfterTextChanged { queryJob?.cancel(); queryJob = scope.launch{delay(250); load(true)} }
+        search.doAfterTextChanged { ++seq; queryJob?.cancel(); queryJob = scope.launch{delay(250); load(true)} }
         load(true)
     }
 

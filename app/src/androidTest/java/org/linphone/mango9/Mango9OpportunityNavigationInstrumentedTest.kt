@@ -93,15 +93,33 @@ class Mango9OpportunityNavigationInstrumentedTest {
     @Test fun ownerChoicesAndEmptyListStayNavigable() {
         openWorkspace()
         label("Search Opportunities")
+        assertFalse(
+            "Currency moved out of the list toolbar",
+            nodes().any {
+            it.isVisibleToUser && text(it) == "All currencies"
+        }
+        )
         repeat(2) {
-            tap(waitFor("More filters") { text(it) in setOf("More filters", "Filters") })
-            tap(waitFor("Owner filter") { text(it) in setOf("All owners", "Owner") || text(it).startsWith("Owner,") })
+            tap(waitFor("More filters") { text(it) == "Filters" || text(it).startsWith("More filters") })
+            label("Opportunity filters")
+            tap(
+                waitFor("Owner filter") {
+                text(it) == "Filter owner" || text(it) == "Owner" && actionable(it) || text(it).startsWith("Owner,") || text(it) == "All owners" && actionable(it)
+            }
+            )
             label("All owners")
             snapshot("owner-choices-$it")
             tap(waitFor("All owners option") { text(it) == "All owners" && actionable(it) })
+            label("Opportunity filters")
+            snapshot("configuration-$it")
+            tap(waitFor("Reset filters") { text(it).equals("Reset", true) || text(it) == "Reset filters" })
+            tap(waitFor("Apply filters") { text(it).equals("Apply", true) || text(it) == "Apply filters" })
             label("Search Opportunities")
-            tap(waitFor("More filters") { text(it) in setOf("More filters", "Filters") })
         }
+        tap(waitFor("More filters") { text(it) == "Filters" || text(it).startsWith("More filters") })
+        label("Opportunity filters")
+        tap(waitFor("Cancel configuration") { text(it).equals("Cancel", true) || text(it) == "Close filters" })
+        label("Search Opportunities")
         tap(label("Back"))
         waitFor("CRM workspace restored") { text(it) == "Opportunities" || it.viewIdResourceName == "crm.open.opportunities" }
     }

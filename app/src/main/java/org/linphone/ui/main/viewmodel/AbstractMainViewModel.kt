@@ -199,7 +199,9 @@ open class AbstractMainViewModel
     }
 
     init {
-        viewModelScope.launch { org.linphone.mango9.Mango9CrmUnread.counts.collect { crmNewCount.value = it.values.sum() } }
+        viewModelScope.launch {
+            org.linphone.mango9.Mango9CrmUnread.revision.collect { crmNewCount.value = org.linphone.mango9.Mango9CrmUnread.total }
+        }
         viewModelScope.launch {
             org.linphone.mango9.Mango9InboxUnread.counts.collect {
                 if (org.linphone.mango9.Mango9SessionStore(coreContext.context).load() != null) unreadMessages.value = org.linphone.mango9.Mango9InboxUnread.total()
