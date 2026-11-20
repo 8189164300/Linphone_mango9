@@ -19,6 +19,8 @@ sealed interface Mango9MessagePushTarget {
 
     data class Sms(val phone: String, val name: String) : Mango9MessagePushTarget
 
+    data class Opportunity(val id: Int) : Mango9MessagePushTarget
+
     data class Lead(val id: Int) : Mango9MessagePushTarget
 
     data object Leads : Mango9MessagePushTarget
@@ -59,6 +61,7 @@ data class Mango9MessagePush(
                 put("phone", value.phone)
                 put("name", value.name)
             }
+            is Mango9MessagePushTarget.Opportunity -> { put("type", "opportunity"); put("opportunity_id", value.id) }
             is Mango9MessagePushTarget.Lead -> {
                 put("type", "lead")
                 put("lead_id", value.id)
@@ -90,7 +93,7 @@ data class Mango9MessagePush(
             val crm = value("crm_id", "crmId")
             val identity = value("sip_identity", "sipIdentity")
             val recipient = value("recipient_user_id")?.toIntOrNull()?.takeIf { it > 0 }?.toString()
-            if (event in setOf("lead.created", "lead.assigned", "leads.imported", "appointment.booked", "social.message", "livechat.message", "supervisor.reply")) {
+            if (event in setOf("opportunity.created", "lead.created", "lead.assigned", "leads.imported", "appointment.booked", "social.message", "livechat.message", "supervisor.reply")) {
                 if (crm == null || Mango9SessionStore.normalizedIdentity(identity) == null) return null
                 if (event !in setOf("social.message", "livechat.message") && recipient == null) return null
             }
@@ -109,6 +112,10 @@ data class Mango9MessagePush(
                     val digits = Mango9PhoneNumber.normalized(value("phone").orEmpty())
                     if (digits.length < 10) return null
                     Mango9MessagePushTarget.Sms(digits, value("name") ?: digits)
+                }
+                "opportunity.created" -> {
+                    if (value("lead_id", "event_id") != null) return null
+                    Mango9MessagePushTarget.Opportunity(value("opportunity_id")?.toIntOrNull()?.takeIf { it > 0 } ?: return null)
                 }
                 "lead.created", "lead.assigned" -> {
                     val leadId = value("lead_id", "leadId")?.toIntOrNull()?.takeIf { it > 0 }
@@ -166,6 +173,7 @@ data class Mango9MessagePush(
                     val phone = json.optionalString("phone") ?: return null
                     Mango9MessagePushTarget.Sms(phone, json.optionalString("name") ?: phone)
                 }
+                "opportunity" -> Mango9MessagePushTarget.Opportunity(json.optInt("opportunity_id").takeIf { it > 0 } ?: return null)
                 "lead" -> Mango9MessagePushTarget.Lead(json.optInt("lead_id").takeIf { it > 0 } ?: return null)
                 "leads" -> Mango9MessagePushTarget.Leads
                 "appointment" -> Mango9MessagePushTarget.Appointment(json.optInt("event_id").takeIf { it > 0 } ?: return null)

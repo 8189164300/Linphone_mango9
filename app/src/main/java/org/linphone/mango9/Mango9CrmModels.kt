@@ -29,6 +29,9 @@ data class Mango9CrmRecord(
     val status: String,
     val source: String,
     val createdAt: String,
+    val sharing: Mango9ContactSharing = Mango9ContactSharing(),
+    val canUpdate: Boolean = true,
+    val canDelete: Boolean = true,
 )
 
 data class Mango9CrmPagination(
@@ -102,3 +105,20 @@ data class Mango9CallSettings(
     val forwardingEnabled: Boolean,
     val forwardingDestination: String,
 )
+
+data class Mango9ContactSharing(val incoming: Boolean = false, val outgoing: Boolean = false, val entries: List<Entry> = emptyList()) {
+    data class Entry(val id: Int, val sharedBy: String, val sharedWith: String, val via: String)
+
+    companion object {
+        fun parse(raw: org.json.JSONObject?): Mango9ContactSharing {
+            if (raw == null) return Mango9ContactSharing()
+            val entries = raw.optJSONArray("entries") ?: org.json.JSONArray()
+            return Mango9ContactSharing(
+                raw.optBoolean("shared_with_me"), raw.optBoolean("shared_by_me"),
+                (0 until entries.length()).map {
+                val row = entries.getJSONObject(it); Entry(row.getInt("id"), row.optString("shared_by_name"), row.optString("shared_with_name"), row.optString("via"))
+            }
+            )
+        }
+    }
+}

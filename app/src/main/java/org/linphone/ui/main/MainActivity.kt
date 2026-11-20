@@ -771,6 +771,12 @@ class MainActivity : GenericActivity() {
                                 },
                             )
                         }
+                        is Mango9MessagePushTarget.Opportunity -> findNavController().navigate(
+                            R.id.action_global_mango9CrmFragment,
+                            Bundle().apply {
+                            Mango9NavigationSession.bind(this, lease); putInt("mango9_opportunity_id", target.id)
+                        }
+                        )
                         is Mango9MessagePushTarget.Lead -> openMango9Lead(target.id, lease)
                         Mango9MessagePushTarget.Leads -> findNavController().navigate(
                             R.id.action_global_mango9CrmFragment,

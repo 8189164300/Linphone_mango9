@@ -15,6 +15,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Mango9MessagePushTest {
+    @Test fun opportunityAlertIsScopedAndNeverBecomesALeadOrSms() {
+        val p =
+            mapOf("event" to "opportunity.created", "opportunity_id" to "42", "crm_id" to "fixture", "recipient_user_id" to "7", "sip_identity" to "sip:7@tenant.example.invalid")
+        val parsed = requireNotNull(Mango9MessagePush.parse(p)); assertEquals(Mango9MessagePushTarget.Opportunity(42), parsed.target); assertEquals(parsed, Mango9MessagePush.fromJson(parsed.toJson()))
+        for (k in listOf("crm_id", "recipient_user_id", "sip_identity", "opportunity_id")) assertNull(Mango9MessagePush.parse(p - k))
+        for (v in listOf("0", "-1", "../lead", "abc")) assertNull(Mango9MessagePush.parse(p + ("opportunity_id" to v)))
+        assertNull(Mango9MessagePush.parse(p + ("lead_id" to "42")))
+    }
+
     @Test
     fun liveChatGatewayPayloadKeepsConversationAccountAndPreviewThroughNotificationTap() {
         val id = "24b39eb4-03da-4cc1-82eb-e9d039d8336a"

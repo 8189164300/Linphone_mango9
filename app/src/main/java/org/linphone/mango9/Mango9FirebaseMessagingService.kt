@@ -122,7 +122,7 @@ object Mango9MessagePushCoordinator {
                 if (sessions.currentLogin(login) == null || !sessions.isActive(identity)) return@launch
                 val store = Mango9ChatStore.get(appContext)
                 Mango9InboxUnread.refreshSoon()
-                if (resolved.target is Mango9MessagePushTarget.Lead || resolved.target == Mango9MessagePushTarget.Leads) Mango9CrmUnread.refreshSoon()
+                if (resolved.target is Mango9MessagePushTarget.Opportunity || resolved.target is Mango9MessagePushTarget.Lead || resolved.target == Mango9MessagePushTarget.Leads) Mango9CrmUnread.refreshSoon()
                 when (resolved.target) {
                     is Mango9MessagePushTarget.Chat -> store.refreshDirectory()
                     is Mango9MessagePushTarget.Sms -> store.refreshSmsDirectory()
@@ -216,6 +216,7 @@ object Mango9MessagePushCoordinator {
         val (title, body) = when (val target = push.target) {
             is Mango9MessagePushTarget.Chat -> (push.previewTitle ?: target.name) to (push.previewBody ?: context.getString(R.string.mango9_push_team_chat))
             is Mango9MessagePushTarget.Sms -> target.name to context.getString(R.string.mango9_push_sms)
+            is Mango9MessagePushTarget.Opportunity -> (push.previewTitle ?: "New Opportunity") to (push.previewBody ?: "Open Opportunities to view it.")
             is Mango9MessagePushTarget.Lead -> (push.previewTitle ?: context.getString(R.string.mango9_crm_title)) to
                 (push.previewBody ?: context.getString(R.string.mango9_push_lead))
             Mango9MessagePushTarget.Leads -> (push.previewTitle ?: "Leads imported") to (push.previewBody ?: "Open your leads to view the completed import.")

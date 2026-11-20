@@ -70,6 +70,8 @@ class Mango9CrmFragment : GenericMainFragment() {
     private lateinit var viewModel: Mango9CrmViewModel
     private lateinit var navModel: org.linphone.ui.main.viewmodel.AbstractMainViewModel
     private lateinit var adapter: Mango9CrmRecordAdapter
+    private var opportunityTools: Mango9OpportunityUI? = null
+    private var preserveOpportunityOnReturn = false
     private val messagingStore by lazy { Mango9ChatStore.get(requireContext()) }
     private var renderingFilters = false
     private var recordDialog: Mango9FullPage? = null
@@ -77,12 +79,14 @@ class Mango9CrmFragment : GenericMainFragment() {
     private var recordActionPopup: Mango9MessageActionPopup? = null
 
     private fun dismissRecordDialogs() {
+        opportunityTools?.close()
         recordActionPopup?.dismiss(); recordActionPopup = null
         recordChildDialog?.dismiss(); recordChildDialog = null
         recordDialog?.dismiss(); recordDialog = null
     }
 
     override fun onDestroyView() {
+        if (::viewModel.isInitialized) viewModel.opportunityScreen = if (activity?.isChangingConfigurations == true || preserveOpportunityOnReturn) opportunityTools?.snapshot() else null
         dismissRecordDialogs()
         super.onDestroyView()
     }
@@ -124,10 +128,29 @@ class Mango9CrmFragment : GenericMainFragment() {
         }
         binding.topBar.searchToggle.setOnClickListener { viewModel.selectLeads(); binding.search.requestFocus() }
 
-        adapter = Mango9CrmRecordAdapter(viewModel::openRecord) { record ->
-            val kind = if (viewModel.recordTitle.value == getString(R.string.mango9_crm_clients)) Mango9RecordKind.Client else Mango9RecordKind.Lead
-            org.linphone.mango9.Mango9CrmUnread.isNew(kind, record.id)
-        }
+        opportunityTools = Mango9OpportunityUI(
+            requireContext(), viewLifecycleOwner.lifecycleScope, binding.content,
+            viewModel::currentReadSession,
+            changed = { viewModel.refresh(); org.linphone.mango9.Mango9CrmUnread.refreshSoon() },
+            openContact = { lease, linked ->
+                preserveOpportunityOnReturn = true
+                findNavController().navigate(
+                    R.id.action_global_mango9CrmFragment,
+                    recordArguments(linked, lease).apply {
+                    putBoolean(ARG_OPPORTUNITY_RETURN, true)
+                }
+                )
+            },
+            beforeChat = { preserveOpportunityOnReturn = true },
+            visibilityChanged = { renderMode() }
+        )
+        adapter = Mango9CrmRecordAdapter(
+            viewModel::openRecord,
+            isNew = { record -> org.linphone.mango9.Mango9CrmUnread.isNew(currentRecordKind(), record.id) },
+            onAction = { record -> opportunityTools?.actions(record, currentRecordKind(), adapter.canCreateOpportunity) },
+            onOpportunity = { record -> opportunityTools?.list(record) },
+            onSharing = { record -> opportunityTools?.sharing(record) }
+        )
         binding.records.layoutManager = LinearLayoutManager(requireContext())
         binding.records.adapter = adapter
 
@@ -139,6 +162,7 @@ class Mango9CrmFragment : GenericMainFragment() {
         binding.leadsRow.setOnClickListener { viewModel.selectLeads() }
         binding.clientsMetric.setOnClickListener { viewModel.selectClients() }
         binding.clientsRow.setOnClickListener { viewModel.selectClients() }
+        binding.opportunitiesRow.setOnClickListener { opportunityTools?.workspace() }
         binding.appointmentsRow.setOnClickListener {
             findNavController().navigate(
                 R.id.action_global_mango9CalendarFragment,
@@ -201,7 +225,13 @@ class Mango9CrmFragment : GenericMainFragment() {
             val position = DATE_FILTER_VALUES.indexOf(value.orEmpty()).coerceAtLeast(0)
             if (binding.dateFilter.selectedItemPosition != position) binding.dateFilter.setSelection(position)
         }
-        viewModel.records.observe(viewLifecycleOwner, adapter::submitList)
+        viewModel.records.observe(viewLifecycleOwner) { records ->
+            adapter.isLead = currentRecordKind() == Mango9RecordKind.Lead
+            adapter.submitList(records)
+            opportunityTools?.counts(records) { counts, canCreate ->
+                adapter.opportunityCounts = counts; adapter.canCreateOpportunity = canCreate; adapter.notifyDataSetChanged()
+            }
+        }
         viewModel.schema.observe(viewLifecycleOwner, ::renderStatusFilters)
         viewModel.groups.observe(viewLifecycleOwner, ::renderGroupFilter)
         viewModel.showDashboard.observe(viewLifecycleOwner) { renderMode() }
@@ -235,12 +265,38 @@ class Mango9CrmFragment : GenericMainFragment() {
                         val count = counts[kind] ?: 0; badge.visibility = if (count > 0) View.VISIBLE else View.GONE
                         badge.text = if (count > 99) "99+" else count.toString(); badge.contentDescription = "$count new ${kind.path}"
                     }
+                    val n = org.linphone.mango9.Mango9CrmUnread.opportunities.value.size
+                    binding.opportunitiesNewBadge.visibility = if (n > 0) View.VISIBLE else View.GONE; binding.opportunitiesNewBadge.text = if (n > 99) "99+" else n.toString(); binding.opportunitiesNewBadge.contentDescription = "$n new opportunities"
                     adapter.notifyDataSetChanged(); renderMode()
                 }
             }
         }
         org.linphone.mango9.Mango9CrmUnread.refreshSoon()
         setupDateFilter()
+        val sharingValues = listOf("", "with_me", "by_me")
+        binding.sharingFilter.adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_dropdown_item, listOf("All sharing", "Shared with me", "Shared by me"))
+        binding.sharingFilter.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
+                val value = sharingValues[position]; if (viewModel.selectedSharing.value != value)viewModel.setSharing(value)
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+        viewModel.selectedSharing.observe(viewLifecycleOwner) {
+            binding.sharingFilter.setSelection(sharingValues.indexOf(it).coerceAtLeast(0))
+        }
+        binding.root.post {
+            if (isAdded && view === binding.root) {
+                viewModel.opportunityScreen?.let { opportunityTools?.restore(it) } ?: run {
+                    val id = arguments?.getInt("mango9_opportunity_id", 0) ?: 0
+                    if (id > 0 && Mango9NavigationSession.resolve(requireArguments(), Mango9SessionStore(requireContext())) != null) {
+                        arguments?.remove("mango9_opportunity_id"); opportunityTools?.workspace(openId = id)
+                    }
+                }
+                preserveOpportunityOnReturn = false
+                viewModel.opportunityScreen = null
+            }
+        }
         if (savedInstanceState == null && arguments?.getInt(ARG_PUSH_RECORD_ID, 0) != 0) {
             val kind = when (arguments?.getString(ARG_PUSH_RECORD_KIND)) {
                 "client" -> Mango9RecordKind.Client
@@ -268,6 +324,14 @@ class Mango9CrmFragment : GenericMainFragment() {
 
     private fun renderSession(session: org.linphone.mango9.Mango9Session?) {
         val connected = session != null
+        if (!connected) binding.opportunitiesRow.visibility = View.GONE
+        if (connected) {
+            opportunityTools?.access { allowed, total ->
+            binding.opportunitiesRow.visibility = if (allowed) View.VISIBLE else View.GONE
+            binding.opportunitiesCount.text = total?.toString().orEmpty()
+            binding.opportunitiesCount.visibility = if (total != null) View.VISIBLE else View.GONE
+        }
+        }
         binding.connectedContent.visibility = if (connected) View.VISIBLE else View.GONE
         binding.appointmentsRow.visibility = if (connected && viewModel.showDashboard.value == true) View.VISIBLE else View.GONE
         binding.calendarRow.visibility = binding.appointmentsRow.visibility
@@ -283,15 +347,16 @@ class Mango9CrmFragment : GenericMainFragment() {
     private fun renderMode() {
         if (!::navModel.isInitialized) return
         val recordsVisible = viewModel.showRecords.value == true
-        binding.back.visibility = if (recordsVisible && recordDialog == null) View.VISIBLE else View.GONE
-        binding.titleBlock.visibility = if (recordsVisible && recordDialog == null) View.VISIBLE else View.GONE
+        binding.topBar.root.visibility = if (opportunityTools?.ownsHeader == true) View.GONE else View.VISIBLE
+        binding.back.visibility = if (recordsVisible && recordDialog == null && opportunityTools?.isShowing != true) View.VISIBLE else View.GONE
+        binding.titleBlock.visibility = if (recordsVisible && recordDialog == null && opportunityTools?.isShowing != true) View.VISIBLE else View.GONE
         binding.refresh.visibility = View.GONE
 
-        binding.dashboardScroll.visibility = if (recordsVisible) View.GONE else View.VISIBLE
+        binding.dashboardScroll.visibility = if (recordsVisible || opportunityTools?.isShowing == true) View.GONE else View.VISIBLE
         binding.appointmentsRow.visibility = if (!recordsVisible && viewModel.activeSession.value != null) View.VISIBLE else View.GONE
         binding.calendarRow.visibility = binding.appointmentsRow.visibility
-        binding.recordsContent.visibility = if (recordsVisible) View.VISIBLE else View.GONE
-        binding.addRecord.visibility = if (recordsVisible && recordDialog == null) View.VISIBLE else View.GONE
+        binding.recordsContent.visibility = if (recordsVisible && opportunityTools?.isShowing != true) View.VISIBLE else View.GONE
+        binding.addRecord.visibility = if (recordsVisible && recordDialog == null && opportunityTools?.isShowing != true) View.VISIBLE else View.GONE
         binding.title.text = if (recordsVisible) viewModel.recordTitle.value else getString(R.string.mango9_crm_title)
         binding.subtitle.text = if (recordsVisible) {
             getString(R.string.mango9_crm_records_scope) + run {
@@ -308,6 +373,8 @@ class Mango9CrmFragment : GenericMainFragment() {
             getString(R.string.mango9_crm_search_leads)
         }
     }
+
+    private fun currentRecordKind() = if (viewModel.recordTitle.value == getString(R.string.mango9_crm_clients)) Mango9RecordKind.Client else Mango9RecordKind.Lead
 
     private fun renderStatusFilters(schema: Mango9CrmSchema?) {
         renderingFilters = true
@@ -463,6 +530,7 @@ class Mango9CrmFragment : GenericMainFragment() {
         editing: Boolean = false,
     ) {
         val owner = viewModel.editorOwner(kind, detail.record.id) ?: return
+        if (editing && !detail.record.canUpdate) return
         org.linphone.mango9.Mango9CrmUnread.read(kind, detail.record.id, owner.lease)
         val originalView = view
         val schema = viewModel.schema.value
@@ -566,13 +634,13 @@ class Mango9CrmFragment : GenericMainFragment() {
             }
             )
         }
-        if (!editing && status.options.isNotEmpty()) statusButton(container)
+        if (!editing && detail.record.canUpdate && status.options.isNotEmpty()) statusButton(container)
         container.addView(error)
 
         val readers = linkedMapOf<String, () -> String>()
         val visibleFields = schema?.fields.orEmpty().filter { field ->
             field.visible && field.key !in HIDDEN_MOBILE_FIELDS &&
-                (editing || status.options.isEmpty() || field.key != Mango9CrmStatusPolicy.editableField(schema)?.key) &&
+                (editing || !detail.record.canUpdate || status.options.isEmpty() || field.key != Mango9CrmStatusPolicy.editableField(schema)?.key) &&
                 !(field.key == "contact_name" && schema?.fields.orEmpty().any { it.key == "first_name" })
         }
         val fieldsBySection = visibleFields.groupBy(Mango9CrmSchema.Field::section)
@@ -591,7 +659,7 @@ class Mango9CrmFragment : GenericMainFragment() {
                     val value = detail.values[field.key].orEmpty()
                     if (editing && field.editable) {
                         readers[field.key] = addDynamicInput(cell, field, value)
-                    } else if (!editing && field.key == Mango9CrmStatusPolicy.editableField(schema)?.key && status.options.isNotEmpty()) {
+                    } else if (!editing && detail.record.canUpdate && field.key == Mango9CrmStatusPolicy.editableField(schema)?.key && status.options.isNotEmpty()) {
                         statusButton(cell)
                     } else {
                         addValue(cell, field.label, displayValue(value, field.type))
@@ -613,6 +681,7 @@ class Mango9CrmFragment : GenericMainFragment() {
                 }
             }
         }
+        if (!editing) opportunityTools?.activitySection(detail.record.id)?.let { container.addView(it) }
         // Never reveal hidden fields through a raw-values fallback when schema permissions are absent.
         val scroll = ScrollView(requireContext()).apply { addView(container) }
         dialog = Mango9FullPage(requireContext()).setHost(binding.content)
@@ -629,7 +698,20 @@ class Mango9CrmFragment : GenericMainFragment() {
                 if (editing) setNeutralButton(R.string.mango9_crm_delete, null)
             }
             .create()
+        if (!editing && arguments?.getBoolean(ARG_OPPORTUNITY_RETURN) == true) {
+            dialog.setOnCancelListener {
+                if (view === originalView && recordDialog === dialog && viewModel.isEditorCurrent(owner)) {
+                    dialog.dismiss()
+                    findNavController().popBackStack()
+                }
+            }
+        }
         dialog.setOnShowListener {
+            if (!editing && arguments?.getBoolean(ARG_OPPORTUNITY_RETURN) == true) {
+                dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).setOnClickListener { dialog.cancel() }
+            }
+            if (!detail.record.canUpdate) dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).visibility = View.GONE
+            if (!detail.record.canDelete) dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).visibility = View.GONE
             dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 if (view !== originalView || recordDialog !== dialog || !viewModel.isEditorCurrent(owner)) return@setOnClickListener
                 if (!editing) {
@@ -874,14 +956,14 @@ class Mango9CrmFragment : GenericMainFragment() {
     private fun addValue(parent: LinearLayout, label: String, value: String) {
         TextView(requireContext()).apply {
             text = label
-            textSize = 12f
+            textSize = Mango9CrmText.label
             setTextColor(resources.getColor(R.color.gray_main2_500, requireContext().theme))
             setPadding(0, dp(7), 0, 0)
             parent.addView(this)
         }
         TextView(requireContext()).apply {
             text = value.ifBlank { getString(R.string.mango9_crm_not_set) }
-            textSize = 14f
+            textSize = Mango9CrmText.value
             setTextColor(resources.getColor(R.color.gray_main2_800, requireContext().theme))
             setPadding(0, dp(2), 0, dp(4))
             parent.addView(this)
@@ -961,6 +1043,7 @@ class Mango9CrmFragment : GenericMainFragment() {
         private val DATE_FILTER_VALUES = listOf("", "today", "last_7_days", "last_30_days")
         const val ARG_PUSH_RECORD_KIND = "mango9_push_record_kind"
         const val ARG_PUSH_RECORD_ID = "mango9_push_record_id"
+        private const val ARG_OPPORTUNITY_RETURN = "mango9_opportunity_return"
         private const val ARG_RECORD_IDENTITY = "mango9_record_identity"
         private const val ARG_RECORD_LOGIN = "mango9_record_login"
         private const val ARG_RECORD_SELECTION = "mango9_record_selection"

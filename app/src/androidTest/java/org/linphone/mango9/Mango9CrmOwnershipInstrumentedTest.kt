@@ -78,7 +78,7 @@ class Mango9CrmOwnershipInstrumentedTest {
 
         override suspend fun records(
             lease: Mango9SessionLease, kind: Mango9RecordKind, search: String, status: String,
-                                     groupId: String, dateFilter: String, page: Int
+                                     groupId: String, dateFilter: String, page: Int, sharing: String
         ): Mango9CrmRecordPage {
             calls += "records:${lease.session.userId}:${kind.path}:$page:$search:$status:$groupId:$dateFilter"
             holdRecords?.await()

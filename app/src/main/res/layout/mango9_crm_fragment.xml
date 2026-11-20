@@ -404,6 +404,30 @@
                                 android:paddingHorizontal="5dp" android:visibility="gone" />
 </LinearLayout>
 
+                        <LinearLayout android:id="@+id/opportunities_row" style="@style/Mango9.Crm.WorkspaceRow"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp" android:background="@drawable/shape_squircle_white_background"
+                            android:clickable="true" android:focusable="true" android:visibility="gone"
+                            android:contentDescription="Opportunities" android:gravity="center_vertical"
+                            android:minHeight="70dp" android:orientation="horizontal" android:padding="13dp">
+                            <TextView android:layout_width="45dp" android:layout_height="45dp" android:text="$"
+                                android:gravity="center" android:textStyle="bold" android:textSize="28sp"
+                                android:textColor="#19824C" android:background="@drawable/mango9_crm_icon_background" android:backgroundTint="#E8F5ED" />
+                            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                                android:layout_marginStart="12dp" android:orientation="vertical">
+                                <TextView style="@style/default_text_style_700" android:layout_width="match_parent" android:layout_height="wrap_content"
+                                    android:text="Opportunities" android:textSize="14sp" android:singleLine="true" />
+                                <TextView style="@style/default_text_style" android:layout_width="match_parent" android:layout_height="wrap_content"
+                                    android:text="Values, stages and follow-ups" android:textSize="11sp" android:textColor="?attr/color_main2_500" android:layout_marginTop="3dp" />
+                            </LinearLayout>
+                            <TextView android:id="@+id/opportunities_new_badge" style="@style/unread_count_text_style"
+                                android:layout_width="wrap_content" android:layout_height="22dp" android:minWidth="22dp"
+                                android:paddingHorizontal="5dp" android:visibility="gone" />
+                            <TextView android:id="@+id/opportunities_count" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:textSize="14sp" android:textColor="?attr/color_main2_500" android:layout_marginEnd="8dp" android:visibility="gone" />
+                            <ImageView style="@style/Mango9.Crm.Chevron" />
+                        </LinearLayout>
+
 
                     </LinearLayout>
 
@@ -585,6 +609,10 @@
                         android:contentDescription="@string/mango9_crm_date_filter"
                         android:paddingHorizontal="10dp" />
                 </LinearLayout>
+
+                <Spinner android:id="@+id/sharing_filter" android:layout_width="match_parent" android:layout_height="44dp"
+                    android:layout_marginTop="8dp" android:background="@drawable/edit_text_background"
+                    android:contentDescription="Sharing filter" android:paddingHorizontal="10dp" />
 
                 <HorizontalScrollView
                     android:layout_width="match_parent"

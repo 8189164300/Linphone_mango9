@@ -40,6 +40,7 @@ class Mango9CrmViewModel internal constructor(
 ) : GenericViewModel() {
     constructor() : this(Mango9CrmScreenRepository(coreContext.context), Mango9SessionStore.contextChanges)
 
+    internal var opportunityScreen: org.linphone.ui.main.crm.fragment.Mango9OpportunityScreen? = null
     val accountRevision = MutableLiveData(0L)
     val connectionLabel = MutableLiveData("CONNECTING")
     val activeIdentity = MutableLiveData<String?>()
@@ -51,6 +52,7 @@ class Mango9CrmViewModel internal constructor(
     val selectedStatus = MutableLiveData("")
     val selectedGroupId = MutableLiveData("")
     val selectedDateFilter = MutableLiveData("")
+    val selectedSharing = MutableLiveData("")
     val search = MutableLiveData("")
     val loading = MutableLiveData(false)
     val loadingMore = MutableLiveData(false)
@@ -112,6 +114,7 @@ class Mango9CrmViewModel internal constructor(
             errorMessage.value = null
             loading.value = false; loadingMore.value = false
             showDashboard.value = true; showRecords.value = false; recordTitle.value = ""
+            opportunityScreen = null
             accountRevision.value = accountRevision.value!! + 1
         }
         screenSession = current
@@ -265,6 +268,12 @@ class Mango9CrmViewModel internal constructor(
         loadRecords(reset = true)
     }
 
+    fun setSharing(value: String) {
+        require(value in setOf("", "with_me", "by_me"))
+        selectedSharing.value = value
+        loadRecords(reset = true)
+    }
+
     fun setDateFilter(value: String) {
         selectedDateFilter.value = value
         loadRecords(reset = true)
@@ -328,7 +337,7 @@ class Mango9CrmViewModel internal constructor(
         detailLoadedEvent.value = null; createRequestedEvent.value = null
         records.value = emptyList(); schema.value = null; groups.value = emptyList()
         page = 1; pages = 1
-        search.value = ""; selectedStatus.value = ""; selectedGroupId.value = ""; selectedDateFilter.value = ""
+        search.value = ""; selectedStatus.value = ""; selectedGroupId.value = ""; selectedDateFilter.value = ""; selectedSharing.value = ""
     }
 
     private fun selectRecords(kind: Mango9RecordKind) {
@@ -425,6 +434,7 @@ class Mango9CrmViewModel internal constructor(
         val status = selectedStatus.value.orEmpty()
         val groupId = selectedGroupId.value.orEmpty()
         val dateFilter = selectedDateFilter.value.orEmpty()
+        val sharing = selectedSharing.value.orEmpty()
         val requestedPage = if (reset) 1 else page + 1
         if (reset) {
             // Keep visible rows stable during a refresh, but never reuse their
@@ -448,6 +458,7 @@ class Mango9CrmViewModel internal constructor(
                     groupId,
                     dateFilter,
                     requestedPage,
+                    sharing,
                 )
                 if (
                     !repository.isCurrent(lease) || !recordsRequests.isLatest(request) ||

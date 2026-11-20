@@ -32,6 +32,8 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
         setBackgroundColor(context.getColor(R.color.mango9_calendar_surface))
     }
     private val title = TextView(context).apply {
+        maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+        androidx.core.widget.TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(this, 14, 19, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
         textSize = 19f; setTypeface(typeface, android.graphics.Typeface.BOLD)
         setTextColor(context.getColor(R.color.mango9_calendar_ink))
         setPadding(dp(8), dp(12), dp(8), dp(12))
@@ -43,9 +45,16 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
 
     private var shown: ((DialogInterface) -> Unit)? = null
     private var dismissed: ((DialogInterface) -> Unit)? = null
+    private val dismissActions = mutableListOf<() -> Unit>()
+
+    fun whenDismissed(action: () -> Unit) = apply { dismissActions.add(action) }
+
     private var cancelled: ((DialogInterface) -> Unit)? = null
     private var cancelable = true
     private val siblings = mutableMapOf<View, Int>()
+    private val previousPageVisibility = mutableMapOf<View, Int>()
+    private var opportunityPage = false
+    val isOpportunityList get() = title.text.toString() == "Opportunities"
     var isShowing = false
         private set
     private val back = object : OnBackPressedCallback(true) {
@@ -67,6 +76,32 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
     fun setTitle(value: CharSequence) = apply { title.text = value }
 
     fun setTitle(value: Int) = setTitle(context.getString(value))
+
+    /** Opportunity pages own their blue header; other CRM pages keep their existing toolbar. */
+    fun opportunityChrome() = apply {
+        opportunityPage = true
+        val list = isOpportunityList
+        toolbar.setBackgroundColor(if (list) android.graphics.Color.WHITE else android.graphics.Color.rgb(66, 83, 199))
+        title.setTextColor(if (list) android.graphics.Color.rgb(66, 83, 199) else android.graphics.Color.WHITE); title.textSize = if (list) 18f else 22f
+        androidx.core.widget.TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(title, 18, 22, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+        root.setBackgroundColor(android.graphics.Color.rgb(246, 247, 251))
+        buttons[DialogInterface.BUTTON_NEGATIVE]?.let { old ->
+            toolbar.removeView(old)
+            toolbar.addView(
+                android.widget.ImageButton(context).apply {
+                setImageResource(R.drawable.caret_left); imageTintList = android.content.res.ColorStateList.valueOf(if (list) android.graphics.Color.rgb(66, 83, 199) else android.graphics.Color.WHITE)
+                background = null; contentDescription = "Back"; setPadding(dp(12), dp(12), dp(12), dp(12)); setOnClickListener {
+                    cancel()
+                }
+            },
+                0, LinearLayout.LayoutParams(dp(48), dp(56))
+            )
+        }
+    }
+
+    fun headerAction(view: View) = apply {
+        toolbar.addView(view, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(12) })
+    }
 
     fun setView(view: View) = apply { root.addView(view, LinearLayout.LayoutParams(-1, 0, 1f)) }
 
@@ -113,6 +148,9 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
         if (isShowing) return
         val host = pageHost ?: activity.findViewById<ViewGroup>(android.R.id.content)
         for (i in 0 until host.childCount) host.getChildAt(i).let {
+            if (opportunityPage && it.tag == "mango9.fullpage") {
+                previousPageVisibility[it] = it.visibility; it.visibility = View.INVISIBLE
+            }
             siblings[it] = it.importantForAccessibility
             it.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         }
@@ -130,6 +168,7 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
         isShowing = false; back.remove()
         (root.parent as? ViewGroup)?.removeView(root)
         siblings.forEach { (view, mode) -> view.importantForAccessibility = mode }; siblings.clear()
-        dismissed?.invoke(this)
+        previousPageVisibility.forEach { (view, visibility) -> view.visibility = visibility }; previousPageVisibility.clear()
+        dismissed?.invoke(this); dismissActions.forEach { it() }
     }
 }

@@ -50,3 +50,6 @@ internal class Mango9CrmFieldRow(context: Context) : ViewGroup(context) {
 
     override fun generateDefaultLayoutParams() = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
 }
+
+/** Shared by Leads and Opportunities; use sp to respect the phone font scale. */
+internal object Mango9CrmText { const val label = 12f; const val value = 14f }

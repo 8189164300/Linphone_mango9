@@ -229,8 +229,11 @@ internal class Mango9ApiClient(context: Context) {
         groupId: String = "",
         dateFilter: String = "",
         page: Int = 1,
+        sharing: String = "",
     ): Mango9CrmRecordPage {
+        require(sharing in setOf("", "with_me", "by_me"))
         val query = linkedMapOf("page" to page.toString(), "limit" to "50")
+        if (sharing.isNotEmpty()) query["sharing"] = sharing
         search.trim().takeIf { it.isNotEmpty() }?.let { query["search"] = it }
         status.takeIf { it.isNotEmpty() }?.let { query["status"] = it }
         groupId.takeIf { it.isNotEmpty() }?.let { query["group_id"] = it }
@@ -443,6 +446,9 @@ internal class Mango9ApiClient(context: Context) {
         status = json.optString("status"),
         source = json.optString("source"),
         createdAt = json.optString("created_at"),
+        sharing = Mango9ContactSharing.parse(json.optJSONObject("sharing")),
+        canUpdate = json.optJSONObject("permissions")?.optBoolean("can_update", false) ?: true,
+        canDelete = json.optJSONObject("permissions")?.optBoolean("can_delete", false) ?: true,
     )
 
     private fun parseRecordDetail(data: JSONObject, kind: Mango9RecordKind): Mango9CrmRecordDetail {

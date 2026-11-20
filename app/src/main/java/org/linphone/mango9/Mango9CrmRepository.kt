@@ -62,8 +62,10 @@ class Mango9CrmRepository(context: Context) {
 
     internal suspend fun records(
         lease: Mango9SessionLease, kind: Mango9RecordKind, search: String, status: String,
-        groupId: String, dateFilter: String, page: Int,
-    ): Mango9CrmRecordPage = requests.execute(lease) { api.records(it, kind, search, status, groupId, dateFilter, page) }
+        groupId: String, dateFilter: String, page: Int, sharing: String = "",
+    ): Mango9CrmRecordPage = requests.execute(lease) {
+        api.records(it, kind, search, status, groupId, dateFilter, page, sharing)
+    }
 
     suspend fun records(
         kind: Mango9RecordKind,

@@ -24,7 +24,7 @@ internal interface Mango9CrmScreenAccess {
 
     suspend fun records(
         lease: Mango9SessionLease, kind: Mango9RecordKind, search: String, status: String,
-                        groupId: String, dateFilter: String, page: Int
+                        groupId: String, dateFilter: String, page: Int, sharing: String
     ): Mango9CrmRecordPage
 
     suspend fun createRecord(
@@ -59,9 +59,9 @@ internal class Mango9CrmScreenRepository(context: Context) : Mango9CrmScreenAcce
 
     override suspend fun records(
         lease: Mango9SessionLease, kind: Mango9RecordKind, search: String, status: String,
-                                 groupId: String, dateFilter: String, page: Int
+                                 groupId: String, dateFilter: String, page: Int, sharing: String
     ) =
-        repository.records(lease, kind, search, status, groupId, dateFilter, page)
+        repository.records(lease, kind, search, status, groupId, dateFilter, page, sharing)
 
     override suspend fun createRecord(
         lease: Mango9SessionLease, kind: Mango9RecordKind, firstName: String, lastName: String,
