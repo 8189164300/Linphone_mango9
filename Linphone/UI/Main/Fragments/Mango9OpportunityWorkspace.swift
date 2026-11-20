@@ -586,7 +586,8 @@ struct Mango9OpportunitySharingPage: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if let error = model.error { Text(error).foregroundColor(.red) }
                     Text("Shared by you").font(.headline)
-                    if !loaded { ProgressView("Loading people…") }
+                    if !loaded && model.error == nil { ProgressView("Loading people…") }
+                    if !loaded && model.error != nil { Button("Retry") { Task { await loadChoices() } } }
                     if loaded && model.metadata?.owners.filter({ $0.id != Mango9OpportunityAPI.integer(model.row?.raw["owner_id"]) }).isEmpty == true { Text("No people are available to share with.").foregroundColor(Mango9OpportunityStyle.muted) }
                     ForEach(loaded ? (model.metadata?.owners.filter { $0.id != Mango9OpportunityAPI.integer(model.row?.raw["owner_id"]) } ?? []) : []) { owner in
                         Toggle(owner.name, isOn: Binding(get: { selected.contains(owner.id) }, set: { if $0 { selected.insert(owner.id) } else { selected.remove(owner.id) } })).padding(.vertical, 8)
@@ -594,14 +595,15 @@ struct Mango9OpportunitySharingPage: View {
                     Button("Save sharing") { Task { if await model.mutate("share", values: ["userIds": selected.sorted()]) { dismiss() } } }.buttonStyle(OpportunityPrimaryButton()).disabled(!loaded || !model.can("share"))
                 }.padding(14)
             }
-        }.task {
-            guard !loaded else { return }
-            await model.load()
-            guard let row = model.row, let meta = model.metadata else { return }
-            let ids = row.shares.filter { Mango9OpportunityAPI.integer($0["shared_by"]) == meta.userID }.compactMap { Mango9OpportunityAPI.integer($0["id"]) }
-            selected = Set(meta.visibleRecipients(ids, ownerID: Mango9OpportunityAPI.integer(row.raw["owner_id"]) ?? 0))
-            loaded = true
-        }
+        }.task { await loadChoices() }
+    }
+    private func loadChoices() async {
+        guard !loaded else { return }
+        await model.load()
+        guard let row = model.row, let meta = model.metadata else { return }
+        let ids = row.shares.filter { Mango9OpportunityAPI.integer($0["shared_by"]) == meta.userID }.compactMap { Mango9OpportunityAPI.integer($0["id"]) }
+        selected = Set(meta.visibleRecipients(ids, ownerID: Mango9OpportunityAPI.integer(row.raw["owner_id"]) ?? 0))
+        loaded = true
     }
 }
 

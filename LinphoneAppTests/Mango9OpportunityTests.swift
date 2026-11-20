@@ -37,6 +37,29 @@ private final class OpportunityURLProtocol: URLProtocol {
         XCTAssertEqual(all.visibleRecipients(prior, ownerID: 7), [8, 9]); XCTAssertEqual(all.visibleOwnerFilter("8"), "8")
         XCTAssertEqual(prior, [7, 8, 9, 9, 999])
     }
+    func testFailedVisibilityRefreshCannotSendStaleSharingChoices() async throws {
+        let previous = Mango9SessionStore.activeIdentity
+        let identity = try Mango9SessionStore.save(session("offline-visibility"), persist: false, makeActive: true)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [OpportunityURLProtocol.self]
+        let transport = URLSession(configuration: config)
+        defer {
+            OpportunityURLProtocol.handler = nil; transport.invalidateAndCancel()
+            try? Mango9OpportunityCommands.save(nil, session: identity, contact: 12, operation: "mutate")
+            try? Mango9SessionStore.remove(for: identity.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous)
+        }
+        let meta = try Mango9OpportunityMetadata(["userId": 101, "permissions": ["access": true, "share": true], "statusSpecs": [], "users": [["id": 102, "name": "Fixture member"]]])
+        let detail = Mango9OpportunityDetailModel(id: 12, session: identity, metadata: meta, transport: transport)
+        detail.row = try Mango9Opportunity(["id": 12, "title": "Fixture", "stage": "new", "revision": "1", "owner_id": 101, "canManage": true])
+        var mutations = 0
+        OpportunityURLProtocol.handler = { request in
+            if request.httpMethod != "GET" { mutations += 1 }
+            throw URLError(.notConnectedToInternet)
+        }
+        let saved = await detail.mutate("share", values: ["userIds": [102]])
+        XCTAssertFalse(saved); XCTAssertEqual(mutations, 0)
+        XCTAssertFalse(detail.busy); XCTAssertNotNil(detail.error); XCTAssertNil(detail.pending)
+        XCTAssertNil(try Mango9OpportunityCommands.load(identity, contact: 12, operation: "mutate"))
+    }
     func testSharingRefreshesChoicesButNeverRewritesAnUncertainRequest() async throws {
         let previous = Mango9SessionStore.activeIdentity
         let identity = try Mango9SessionStore.save(session("visibility-fixture"), persist: false, makeActive: true)
