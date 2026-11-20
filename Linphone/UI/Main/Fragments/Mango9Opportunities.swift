@@ -643,3 +643,26 @@ struct Mango9SharingBadges: View {
             .accessibilityIdentifier(incoming ? "crm.sharing.incoming" : "crm.sharing.outgoing")
     }
 }
+
+/// Server filters shared by the list and its configuration sheet.
+struct Mango9OpportunityFilters: Equatable {
+    var createdBy = "", owner = "", shared = "", currency = "", followup = ""
+    var closeFrom = "", closeTo = "", createdFrom = "", createdTo = ""
+    var minValue = "", maxValue = "", source = ""
+    var archived = false
+    var key: String { [createdBy, owner, shared, currency, followup, closeFrom, closeTo, createdFrom, createdTo, minValue, maxValue, source, String(archived)].joined(separator: "|") }
+    var activeCount: Int { [createdBy, owner, shared, currency, followup, closeFrom + closeTo, createdFrom + createdTo, minValue + maxValue, source, archived ? "1" : ""].filter { !$0.isEmpty }.count }
+    func query() throws -> [String: String] {
+        var result = ["createdBy": createdBy, "owner": owner, "shared": shared, "currency": currency, "followup": followup, "closeFrom": closeFrom, "closeTo": closeTo, "createdFrom": createdFrom, "createdTo": createdTo, "minValue": minValue, "maxValue": maxValue, "source": source]
+        result = result.mapValues { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.value.isEmpty }
+        func invalid(_ message: String) -> NSError { NSError(domain: "OpportunityFilters", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"; formatter.isLenient = false
+        for (from, to, label) in [("closeFrom", "closeTo", "Expected close"), ("createdFrom", "createdTo", "Created")] {
+            for key in [from, to] { if let value = result[key] { guard let date = formatter.date(from: value), formatter.string(from: date) == value else { throw invalid("Choose a valid \(label.lowercased()) date.") } } }
+            if let a = result[from], let b = result[to], a > b { throw invalid("\(label) date From must be on or before To.") }
+        }
+        for key in ["minValue", "maxValue"] { if let value = result[key], value.range(of: #"^\d{1,12}(\.\d{1,2})?$"#, options: .regularExpression) == nil { throw invalid("Enter amounts with up to two decimal places.") } }
+        if let a = result["minValue"].flatMap({ Decimal(string: $0, locale: Locale(identifier: "en_US_POSIX")) }), let b = result["maxValue"].flatMap({ Decimal(string: $0, locale: Locale(identifier: "en_US_POSIX")) }), a > b { throw invalid("Minimum amount must not exceed maximum amount.") }
+        if archived { result["archived"] = "1" }; return result
+    }
+}

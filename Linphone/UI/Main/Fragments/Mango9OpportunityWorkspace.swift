@@ -738,11 +738,8 @@ struct Mango9OpportunityWorkspace: View {
     @State private var summary: [[String: Any]] = []
     @State private var search = ""
     @State private var stage = ""
-    @State private var currency = ""
-    @State private var owner = ""
-    @State private var shared = ""
-    @State private var followup = ""
-    @State private var archived = false
+    @State private var filters = Mango9OpportunityFilters()
+    @State private var showFilters = false
     @State private var page = 0
     @State private var more = false
     @State private var busy = false
@@ -761,9 +758,9 @@ struct Mango9OpportunityWorkspace: View {
         _total = State(initialValue: page?.total ?? 0)
         _page = State(initialValue: page == nil ? 0 : 1)
         _more = State(initialValue: page?.more ?? false)
-        _loadedQuery = State(initialValue: page == nil ? nil : ["", "", "", "", "", "", "false"].joined(separator: "|"))
+        _loadedQuery = State(initialValue: page == nil ? nil : ["", "", Mango9OpportunityFilters().key].joined(separator: "|"))
     }
-    private var queryKey: String { [search, stage, currency, owner, shared, followup, String(archived)].joined(separator: "|") }
+    private var queryKey: String { [search, stage, filters.key].joined(separator: "|") }
     var body: some View {
         Mango9OpportunityPage(title: "Opportunities") {
             if metadata?.permissions["create"] == true {
@@ -787,16 +784,13 @@ struct Mango9OpportunityWorkspace: View {
                             filterLabel(metadata?.displayStages.first(where: { $0.id == stage })?.name ?? "All stages")
                         }.accessibilityIdentifier("crm.opportunity.filter.stage")
                         Menu {
-                            Picker("Currency", selection: $currency) { Text("All currencies").tag(""); ForEach(Mango9OpportunityDraft.currencies, id: \.self) { Text($0).tag($0) } }
-                        } label: { filterLabel(currency.isEmpty ? "All currencies" : currency) }
-                            .accessibilityIdentifier("crm.opportunity.filter.currency")
-                        Menu {
-                            Picker("Owner", selection: $owner) { Text("All owners").tag(""); ForEach(metadata?.owners ?? []) { Text($0.name).tag(String($0.id)) } }
-                            Picker("Sharing", selection: $shared) { Text("All sharing").tag(""); Text("Shared with me").tag("with_me"); Text("Shared by me").tag("by_me") }
-                            Picker("Follow-up", selection: $followup) { Text("All follow-ups").tag(""); Text("Overdue").tag("overdue"); Text("Next step needed").tag("missing"); Text("No activity for 14+ days").tag("stale") }
-                            Toggle("Archived", isOn: $archived)
-                        } label: { Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44).background(Mango9OpportunityStyle.blue.opacity(0.06)).cornerRadius(10) }
-                            .accessibilityLabel("More filters").accessibilityIdentifier("crm.opportunity.filter.more")
+                            Picker("Created by", selection: $filters.createdBy) { Text("Anyone").tag(""); ForEach(metadata?.owners ?? []) { Text($0.name).tag(String($0.id)) } }
+                        } label: { filterLabel(metadata?.owners.first(where: { String($0.id) == filters.createdBy })?.name ?? "Created by") }
+                            .accessibilityIdentifier("crm.opportunity.filter.createdBy")
+                        Button { showFilters = true } label: {
+                            Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44).background(Mango9OpportunityStyle.blue.opacity(0.06)).cornerRadius(10)
+                                .overlay(alignment: .topTrailing) { if filters.activeCount > 0 { Text(String(filters.activeCount)).font(.system(size: 10, weight: .bold)).foregroundColor(.white).padding(3).background(Mango9OpportunityStyle.blue).clipShape(Circle()) } }
+                        }.accessibilityLabel("More filters").accessibilityIdentifier("crm.opportunity.filter.more")
                     }.buttonStyle(.plain).foregroundColor(Mango9OpportunityStyle.blue)
                     HStack { Text(page == 0 ? "Opportunities" : "\(total) Opportunities").accessibilityIdentifier("crm.opportunity.total"); Spacer(); Text("Latest updated") }.font(.system(size: 12)).foregroundColor(Mango9OpportunityStyle.muted)
                     if let error { OpportunityError(message: error) { Task { await load(reset: true) } } }
@@ -815,6 +809,8 @@ struct Mango9OpportunityWorkspace: View {
                     if more { Button("Load more") { Task { await load(reset: false) } }.disabled(busy) }
                 }.padding(14).foregroundColor(Mango9OpportunityStyle.ink)
             }.refreshable { await load(reset: true, refreshMetadata: true) }
+        }.sheet(isPresented: $showFilters) {
+            Mango9OpportunityFilterSheet(value: filters, metadata: metadata) { filters = $0 }
         }.task(id: queryKey) {
             session = Mango9SessionStore.load()
             if initialLoad {
@@ -848,15 +844,17 @@ struct Mango9OpportunityWorkspace: View {
         defer { if generation == request { busy = false } }
         let next = reset ? 1 : page + 1
         do {
-            var query = ["q": search, "stage": stage, "currency": currency, "owner": owner, "shared": shared, "followup": followup, "sort": "updated_at", "direction": "desc", "page": String(next), "limit": "25"]
-            if archived { query["archived"] = "1" }; if let contact { query["contactId"] = String(contact.id) }
+            var query = try filters.query()
+            query.merge(["q": search, "stage": stage, "sort": "updated_at", "direction": "desc", "page": String(next), "limit": "25"]) { _, new in new }
+            if let contact { query["contactId"] = String(contact.id) }
             let meta: Mango9OpportunityMetadata
             if let metadata, !refreshMetadata && !reset { meta = metadata }
             else { meta = try Mango9OpportunityMetadata(await Mango9OpportunityAPI.send(session, path: "metadata")) }
             guard request == generation, requestedQuery == queryKey, !Task.isCancelled else { return }
-            if meta.visibleOwnerFilter(owner) != owner {
-                metadata = meta; owner = meta.visibleOwnerFilter(owner)
-                return // Changing the filter starts one new first-page request.
+            let owner = meta.visibleOwnerFilter(filters.owner), creator = meta.visibleOwnerFilter(filters.createdBy)
+            if owner != filters.owner || creator != filters.createdBy {
+                metadata = meta; filters.owner = owner; filters.createdBy = creator
+                return // Changed visibility starts one new first-page request.
             }
             let data = try await Mango9OpportunityAPI.send(session, query: query.filter { !$0.value.isEmpty }.map { .init(name: $0.key, value: $0.value) })
             guard request == generation, requestedQuery == queryKey, !Task.isCancelled else { return }
@@ -1152,5 +1150,62 @@ private struct Mango9CRMCompactSheet: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
         if #available(iOS 16.0, *) { content.presentationDetents([.medium, .large]).presentationDragIndicator(.visible) }
         else { content }
+    }
+}
+
+private struct Mango9OpportunityFilterSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: Mango9OpportunityFilters
+    let metadata: Mango9OpportunityMetadata?
+    let apply: (Mango9OpportunityFilters) -> Void
+    init(value: Mango9OpportunityFilters, metadata: Mango9OpportunityMetadata?, apply: @escaping (Mango9OpportunityFilters) -> Void) {
+        _draft = State(initialValue: value); self.metadata = metadata; self.apply = apply
+    }
+    private var validation: String? { do { _ = try draft.query(); return nil } catch { return error.localizedDescription } }
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("People") {
+                    Picker("Created by", selection: $draft.createdBy) { Text("Anyone").tag(""); people }
+                    Picker("Owner", selection: $draft.owner) { Text("All owners").tag(""); people }
+                    Picker("Sharing", selection: $draft.shared) { Text("All sharing").tag(""); Text("Shared with me").tag("with_me"); Text("Shared by me").tag("by_me") }
+                }
+                Section("Due dates") {
+                    Picker("Follow-up", selection: $draft.followup) { Text("All follow-ups").tag(""); Text("Overdue").tag("overdue"); Text("Next step needed").tag("missing"); Text("No activity for 14+ days").tag("stale") }
+                    Text("Expected close date").font(.footnote).foregroundColor(.secondary)
+                    day("From", value: $draft.closeFrom, id: "closeFrom")
+                    day("To", value: $draft.closeTo, id: "closeTo")
+                }
+                Section {
+                    HStack { Text("Minimum"); TextField("No minimum", text: $draft.minValue).keyboardType(.decimalPad).multilineTextAlignment(.trailing).accessibilityIdentifier("crm.opportunity.filter.minValue") }
+                    HStack { Text("Maximum"); TextField("No maximum", text: $draft.maxValue).keyboardType(.decimalPad).multilineTextAlignment(.trailing).accessibilityIdentifier("crm.opportunity.filter.maxValue") }
+                    Picker("Currency", selection: $draft.currency) { Text("All currencies").tag(""); ForEach(Mango9OpportunityDraft.currencies, id: \.self) { Text($0).tag($0) } }
+                } header: { Text("Amount") } footer: { Text("Amounts use each Opportunity’s currency.") }
+                Section("Created date") { day("From", value: $draft.createdFrom, id: "createdFrom"); day("To", value: $draft.createdTo, id: "createdTo") }
+                Section("More") {
+                    Picker("Source", selection: $draft.source) { Text("All sources").tag(""); ForEach(metadata?.sources ?? [], id: \.self) { Text($0).tag($0) } }
+                    Toggle("Archived", isOn: $draft.archived)
+                }
+                if let validation { Text(validation).foregroundColor(.red).font(.footnote) }
+                Button("Reset filters") { draft = Mango9OpportunityFilters() }.accessibilityIdentifier("crm.opportunity.filter.reset")
+            }.font(.system(size: 15)).navigationTitle("Filters").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) { Button("Apply") { apply(draft); dismiss() }.disabled(validation != nil).accessibilityIdentifier("crm.opportunity.filter.apply") }
+                }
+        }.navigationViewStyle(.stack).tint(Mango9OpportunityStyle.blue).preferredColorScheme(.light)
+    }
+    private var people: some View { ForEach(metadata?.owners ?? []) { Text($0.name).tag(String($0.id)) } }
+    private func day(_ label: String, value: Binding<String>, id: String) -> some View {
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"
+        return HStack {
+            Text(label); Spacer()
+            if value.wrappedValue.isEmpty {
+                Button("Any date") { value.wrappedValue = formatter.string(from: Date()) }.accessibilityIdentifier("crm.opportunity.filter." + id)
+            } else {
+                DatePicker(label, selection: Binding(get: { formatter.date(from: value.wrappedValue) ?? Date() }, set: { value.wrappedValue = formatter.string(from: $0) }), displayedComponents: .date).labelsHidden().datePickerStyle(.compact)
+                Button { value.wrappedValue = "" } label: { Image(systemName: "xmark.circle") }.accessibilityLabel("Clear " + id)
+            }
+        }.frame(minHeight: 38)
     }
 }

@@ -17,6 +17,16 @@ private final class OpportunityURLProtocol: URLProtocol {
 }
 
 @MainActor final class Mango9OpportunityTests: XCTestCase {
+    func testConfigurationFilterRangesUseServerKeys() throws {
+        var f = Mango9OpportunityFilters(); f.createdBy = "11"; f.owner = "12"; f.minValue = "0"; f.maxValue = "1000.50"; f.closeFrom = "2026-11-20"; f.closeTo = "2026-11-30"; f.currency = "USD"
+        let q = try f.query(); XCTAssertEqual(q["createdBy"], "11"); XCTAssertEqual(q["owner"], "12"); XCTAssertEqual(q["minValue"], "0"); XCTAssertEqual(q["closeTo"], "2026-11-30")
+        var draft = f; draft.minValue = "2000"; XCTAssertThrowsError(try draft.query()); XCTAssertEqual(f.minValue, "0")
+        draft = f; draft.closeFrom = "2026-02-30"; XCTAssertThrowsError(try draft.query())
+        draft = f; draft.createdFrom = "2026-11-21"; draft.createdTo = "2026-11-20"; XCTAssertThrowsError(try draft.query())
+        draft = f; draft.maxValue = "1.999"; XCTAssertThrowsError(try draft.query())
+        XCTAssertEqual(try Mango9OpportunityFilters().query(), [:]); XCTAssertEqual(Mango9OpportunityFilters().activeCount, 0)
+    }
+
     private func session(_ user: String = "opportunity-fixture", base: String = "https://crm.example.invalid/app/api/v2") -> Mango9Session {
         .init(crmId: "fixture", crmBaseUrl: "https://crm.example.invalid/app", crmApiBaseUrl: base,
               userId: user, parentClientId: "fixture", role: "buyer", loginId: "fixture@example.invalid", displayName: "Fixture",

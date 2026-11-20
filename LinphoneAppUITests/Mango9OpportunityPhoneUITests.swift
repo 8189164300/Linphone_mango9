@@ -2,6 +2,31 @@ import XCTest
 
 /// Exercises actual server-backed lists and validation without modifying an existing customer.
 final class Mango9OpportunityPhoneUITests: XCTestCase {
+    func testOpportunityConfigurationFilters() throws {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication(); app.activate()
+        let crm=app.buttons["CRM"].firstMatch; XCTAssertTrue(crm.waitForExistence(timeout:30)); crm.tap()
+        let link=app.buttons["crm.opportunities"].firstMatch; XCTAssertTrue(link.waitForExistence(timeout:20)); link.tap()
+        let filters=app.buttons["crm.opportunity.filter.more"]
+        XCTAssertTrue(filters.waitForExistence(timeout:20))
+        XCTAssertTrue(app.buttons["crm.opportunity.filter.createdBy"].exists)
+        XCTAssertFalse(app.buttons["crm.opportunity.filter.currency"].exists)
+        filters.tap(); XCTAssertTrue(app.navigationBars["Filters"].waitForExistence(timeout:5)); capture("Opportunity filter configuration")
+        let minimum=app.textFields["crm.opportunity.filter.minValue"], maximum=app.textFields["crm.opportunity.filter.maxValue"]
+        for _ in 0..<5 {if minimum.isHittable {break};app.swipeUp()}
+        minimum.tap(); minimum.typeText("10"); maximum.tap(); maximum.typeText("5")
+        let apply=app.buttons["crm.opportunity.filter.apply"]
+        XCTAssertFalse(apply.isEnabled)
+        maximum.typeText(XCUIKeyboardKey.delete.rawValue+"20"); XCTAssertTrue(apply.isEnabled); capture("Opportunity amount range validation")
+        apply.tap(); XCTAssertTrue(filters.waitForExistence(timeout:15)); filters.tap()
+        let reset=app.buttons["crm.opportunity.filter.reset"]
+        for _ in 0..<6 {if reset.isHittable {break};app.swipeUp()}
+        XCTAssertTrue(reset.isHittable); reset.tap(); apply.tap()
+        XCTAssertTrue(filters.waitForExistence(timeout:10)); filters.tap(); app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertTrue(filters.waitForExistence(timeout:10)); app.buttons["crm.opportunity.back"].firstMatch.tap(); XCTAssertTrue(link.waitForExistence(timeout:10))
+    }
+
     func testNativeActivityLinksAndCompactSharing() throws {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
@@ -51,9 +76,9 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
             let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "crm.opportunity.row.")).firstMatch
             XCTAssertTrue(row.waitForExistence(timeout: 5))
             let stage = app.buttons["crm.opportunity.filter.stage"]
-            let currency = app.buttons["crm.opportunity.filter.currency"]
-            XCTAssertEqual(stage.frame.minY, currency.frame.minY, accuracy: 1)
-            XCTAssertEqual(stage.frame.width, currency.frame.width, accuracy: 2)
+            let creator = app.buttons["crm.opportunity.filter.createdBy"]
+            XCTAssertEqual(stage.frame.minY, creator.frame.minY, accuracy: 1)
+            XCTAssertEqual(stage.frame.width, creator.frame.width, accuracy: 2)
             XCTAssertEqual(crm.frame.minY, footerY, accuracy: 2)
             if let previous = filterY { XCTAssertEqual(stage.frame.minY, previous, accuracy: 2) }
             filterY = stage.frame.minY
@@ -90,11 +115,11 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
         XCTAssertTrue(app.buttons["CRM"].firstMatch.isHittable, "Native CRM footer stays visible")
         XCTAssertEqual(app.buttons["CRM"].firstMatch.frame.minY, footerBefore.minY, accuracy: 2, "Footer must not move when entering Opportunities")
         let stageFilter=app.buttons["crm.opportunity.filter.stage"].firstMatch
-        let currencyFilter=app.buttons["crm.opportunity.filter.currency"].firstMatch
-        XCTAssertTrue(stageFilter.waitForExistence(timeout: 10)); XCTAssertTrue(currencyFilter.exists)
-        XCTAssertEqual(stageFilter.frame.minY,currencyFilter.frame.minY,accuracy: 1)
-        XCTAssertEqual(stageFilter.frame.height,currencyFilter.frame.height,accuracy: 1)
-        XCTAssertEqual(stageFilter.frame.width,currencyFilter.frame.width,accuracy: 2)
+        let creatorFilter=app.buttons["crm.opportunity.filter.createdBy"].firstMatch
+        XCTAssertTrue(stageFilter.waitForExistence(timeout: 10)); XCTAssertTrue(creatorFilter.exists)
+        XCTAssertEqual(stageFilter.frame.minY,creatorFilter.frame.minY,accuracy: 1)
+        XCTAssertEqual(stageFilter.frame.height,creatorFilter.frame.height,accuracy: 1)
+        XCTAssertEqual(stageFilter.frame.width,creatorFilter.frame.width,accuracy: 2)
         capture("Aligned Opportunity filters and stable footer")
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "crm.opportunity.row.")).firstMatch
         guard row.waitForExistence(timeout: 30) else { throw XCTSkip("No accessible Opportunities on this account; detail needs a populated account") }
