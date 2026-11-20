@@ -5277,7 +5277,7 @@ struct Mango9LeadsFragment: View {
 					.foregroundStyle(Color.orangeMain500)
 					.frame(width: 25, height: 25)
 					.padding(10)
-			}
+			}.accessibilityLabel("Back").accessibilityIdentifier("crm.leads.back")
 
 			VStack(alignment: .leading, spacing: 1) {
 				HStack(spacing: 6) { Text("Leads").default_text_style_orange_800(styleSize: 18); Mango9CRMNewBadge(count: newRecords.count(.lead)) }

@@ -287,6 +287,7 @@ struct Mango9CRMCardActions: View {
     @ObservedObject var opportunities: Mango9OpportunityCards
     private enum Destination: String, Identifiable { case opportunities, create, convert; var id: String { rawValue } }
     @State private var destination: Destination?
+    @State private var showCreate = false
     var body: some View {
         VStack(spacing: 0) {
           HStack(spacing: 2) {
@@ -301,7 +302,7 @@ struct Mango9CRMCardActions: View {
             if (kind == .lead && record.permissions?.canUpdate != false) || opportunities.metadata?.permissions["create"] == true {
                 Menu {
                     if opportunities.metadata?.permissions["create"] == true {
-                        Button { destination = .create } label: { Label("Add Opportunity", systemImage: "plus.circle") }
+                        Button { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil); showCreate = true } label: { Label("Add Opportunity", systemImage: "plus.circle") }
                     }
                     if kind == .lead && record.permissions?.canUpdate != false { Button { destination = .convert } label: { Label("Convert to Client", systemImage: "person.crop.circle.badge.checkmark") } }
                 } label: {
@@ -314,19 +315,31 @@ struct Mango9CRMCardActions: View {
         .background {
             // A contact can have multiple Opportunities; always open its list.
             NavigationLink(tag: Destination.opportunities, selection: $destination) { Mango9OpportunityWorkspace(contact: record) } label: { EmptyView() }.hidden()
-            NavigationLink(tag: Destination.create, selection: $destination) { Mango9NewContactOpportunity(record: record) } label: { EmptyView() }.hidden()
             NavigationLink(tag: Destination.convert, selection: $destination) { Mango9ConvertLead(record: record) } label: { EmptyView() }.hidden()
         }
+        .sheet(isPresented: $showCreate, onDismiss: { Task { await opportunities.refresh(ids: Array(opportunities.counts.keys) + [record.id]) } }) { Mango9OpportunityCreateModal(record: record) }
         .onChange(of: destination) { value in
             if value == nil { Task { await opportunities.refresh(ids: Array(opportunities.counts.keys) + [record.id]) } }
         }
     }
 }
 
+/// Both entry points share one sheet and one idempotent save flow.
+struct Mango9OpportunityCreateModal: View {
+    var record: Mango9Lead? = nil
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationView {
+            if let record { Mango9NewContactOpportunity(record: record, close: { dismiss() }) }
+            else { Mango9OpportunityContactPicker(close: { dismiss() }) }
+        }.navigationViewStyle(.stack).tint(.mango9Primary)
+    }
+}
+
 /// Present creation directly, avoiding a second sheet during the first sheet's animation.
 struct Mango9NewContactOpportunity: View {
     let record: Mango9Lead
-    @Environment(\.dismiss) private var dismiss
+    let close: () -> Void
     @State private var session: Mango9Session?
     @State private var metadata: Mango9OpportunityMetadata?
     @State private var error: String?
@@ -334,14 +347,14 @@ struct Mango9NewContactOpportunity: View {
     var body: some View {
         Group {
             if let session, let metadata, metadata.permissions["create"] == true {
-                Mango9OpportunityForm(record: record, session: session, metadata: metadata) { dismiss() }
+                Mango9OpportunityForm(record: record, session: session, metadata: metadata, close: close, saved: close)
             } else {
-                Mango9OpportunityPage(title: "New Opportunity", actions: { EmptyView() }) {
-                    VStack(spacing: 16) {
-                        if busy { ProgressView("Loading Opportunity fields…") }
-                        if let error { Text(error); Button("Retry") { Task { await load() } } }
-                    }.padding()
-                }
+                VStack(spacing: 16) {
+                    if busy { ProgressView("Loading Opportunity fields…") }
+                    if let error { Text(error); Button("Retry") { Task { await load() } } }
+                }.padding().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .navigationTitle("Add Opportunity").navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: close) } }
             }
         }.tint(.mango9Primary).task { await load() }
     }
@@ -464,8 +477,8 @@ struct Mango9OpportunityForm: View {
     let record: Mango9Lead
     let session: Mango9Session
     let metadata: Mango9OpportunityMetadata
+    let close: () -> Void
     let saved: () -> Void
-    @Environment(\.dismiss) private var dismiss
     @State private var draft = Mango9OpportunityDraft()
     @State private var expanded = false
     @State private var busy = false
@@ -474,11 +487,7 @@ struct Mango9OpportunityForm: View {
     @State private var pending: [String: Any]?
     private var stage: Mango9OpportunityMetadata.Stage? { metadata.stages.first { $0.id == draft.stage } }
     var body: some View {
-        Mango9OpportunityPage(title: "New Opportunity") {
-            Button(busy ? "Saving…" : pending == nil ? "Save" : "Retry save") { Task { await save() } }
-                .disabled(busy || !loaded).accessibilityIdentifier("crm.opportunity.save")
-        } content: {
-            Form {
+        Form {
                 if let error { Section { Text(error).foregroundColor(.red) } }
                 if let pending {
                     Section("Save pending") {
@@ -495,11 +504,20 @@ struct Mango9OpportunityForm: View {
                     do { pending = try Mango9OpportunityCommands.load(session, contact: record.id, operation: "create"); loaded = true }
                     catch { self.error = error.localizedDescription }
                 }
+        .navigationTitle("Add Opportunity").navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(busy)
+        .interactiveDismissDisabled(busy)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: close).disabled(busy).accessibilityIdentifier("crm.opportunity.cancel") }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(busy ? "Saving…" : pending == nil ? "Save" : "Retry save") { Task { await save() } }
+                    .disabled(busy || !loaded).accessibilityIdentifier("crm.opportunity.save")
+            }
         }.tint(.mango9Primary)
     }
     private var fields: some View {
         Group {
-            Section("Linked contact") { Text(record.name) }
+            Section("Lead or Client") { VStack(alignment: .leading, spacing: 4) { Text(record.name).accessibilityIdentifier("crm.opportunity.linkedRecord"); Text([record.email, record.phone].filter { !$0.isEmpty }.joined(separator: " · ")).font(.footnote).foregroundColor(.secondary) } }
             Section("Opportunity") {
                 TextField("Title (required)", text: $draft.title).accessibilityIdentifier("crm.opportunity.title")
                 Picker("Stage", selection: $draft.stage) { ForEach(metadata.stages) { Text($0.name).tag($0.id) } }

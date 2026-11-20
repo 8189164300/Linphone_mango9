@@ -740,6 +740,7 @@ struct Mango9OpportunityWorkspace: View {
     @State private var stage = ""
     @State private var filters = Mango9OpportunityFilters()
     @State private var showFilters = false
+    @State private var showCreate = false
     @State private var page = 0
     @State private var more = false
     @State private var busy = false
@@ -767,7 +768,7 @@ struct Mango9OpportunityWorkspace: View {
     var body: some View {
         Mango9OpportunityPage(title: "Opportunities") {
             if metadata?.permissions["create"] == true {
-                NavigationLink { if let contact { Mango9NewContactOpportunity(record: contact) } else { Mango9OpportunityContactPicker() } } label: { Image(systemName: "plus").font(.system(size: 23)).frame(width: 40, height: 44) }.accessibilityLabel("Add Opportunity").accessibilityIdentifier("crm.opportunity.add")
+                Button { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil); showCreate = true } label: { Image(systemName: "plus").font(.system(size: 23)).frame(width: 40, height: 44) }.accessibilityLabel("Add Opportunity").accessibilityIdentifier("crm.opportunity.add")
             }
         } content: {
             ScrollView {
@@ -812,7 +813,8 @@ struct Mango9OpportunityWorkspace: View {
                     if more { Button("Load more") { Task { await load(reset: false) } }.disabled(busy) }
                 }.padding(14).foregroundColor(Mango9OpportunityStyle.ink)
             }.refreshable { await load(reset: true, refreshMetadata: true) }
-        }.sheet(isPresented: $showFilters) {
+        }.sheet(isPresented: $showCreate) { Mango9OpportunityCreateModal(record: contact) }
+        .sheet(isPresented: $showFilters) {
             Mango9OpportunityFilterSheet(value: filters, metadata: metadata) { filters = $0 }
         }.onChange(of: stage) { _ in saveFilters() }
             .onChange(of: filters) { _ in saveFilters() }
@@ -891,6 +893,9 @@ struct Mango9OpportunityWorkspace: View {
 }
 
 struct Mango9OpportunityContactPicker: View {
+    let close: () -> Void
+    @State private var types: [Int: String] = [:]
+    @State private var companies: [Int: String] = [:]
     @State private var search = ""
     @State private var rows: [Mango9Lead] = []
     @State private var session: Mango9Session?
@@ -900,16 +905,18 @@ struct Mango9OpportunityContactPicker: View {
     @State private var error: String?
     @State private var generation = UUID()
     var body: some View {
-        Mango9OpportunityPage(title: "Choose contact", actions: { EmptyView() }) {
-            List {
-                TextField("Search leads or clients", text: $search)
+        List {
+                Section("Lead or Client") {
+                    TextField("Search name, company, email, or phone", text: $search).autocorrectionDisabled().accessibilityIdentifier("crm.opportunity.recordSearch")
+                }
                 if let error { Text(error).foregroundColor(.red); Button("Retry") { Task { await load(reset: true) } } }
-                ForEach(rows) { row in NavigationLink { Mango9NewContactOpportunity(record: row) } label: { VStack(alignment: .leading, spacing: 4) { Text(row.name); Text([row.email, row.phone].filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundColor(.secondary) } } }
+                ForEach(rows) { row in NavigationLink { Mango9NewContactOpportunity(record: row, close: close) } label: { VStack(alignment: .leading, spacing: 4) { HStack { Text(row.name); Spacer(); Text(types[row.id] ?? "Lead").font(.caption).foregroundColor(.secondary) }; Text([companies[row.id] ?? "", row.email, row.phone].filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundColor(.secondary) } }.accessibilityIdentifier("crm.opportunity.record.\(row.id)") }
                 if busy { ProgressView() }
                 if !busy && error == nil && rows.isEmpty { Text("No matching leads or clients.").foregroundColor(.secondary) }
                 if more { Button("Load more") { Task { await load(reset: false) } }.disabled(busy) }
-            }.listStyle(.plain)
-        }.task(id: search) { session = Mango9SessionStore.load(); do { try await Task.sleep(nanoseconds: 250_000_000); await load(reset: true) } catch {} }
+        }.listStyle(.insetGrouped).navigationTitle("Add Opportunity").navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: close).accessibilityIdentifier("crm.opportunity.cancel") } }
+        .task(id: search) { session = Mango9SessionStore.load(); do { try await Task.sleep(nanoseconds: 250_000_000); await load(reset: true) } catch {} }
     }
     private func load(reset: Bool) async {
         guard let session else { return }; let request = UUID(); generation = request; busy = true; error = nil
@@ -919,6 +926,7 @@ struct Mango9OpportunityContactPicker: View {
             let result = try await Mango9OpportunityAPI.send(session, path: "contacts", query: [.init(name: "q", value: search), .init(name: "page", value: String(page + 1))])
             guard generation == request, !Task.isCancelled else { return }
             guard let contacts = result["items"] as? [[String: Any]] else { throw Mango9OpportunityFailure.invalid }
+            for c in contacts { if let id = Mango9OpportunityAPI.integer(c["id"]) { companies[id] = c["company"] as? String ?? ""; types[id] = (c["is_client"] as? Bool == true || Mango9OpportunityAPI.integer(c["is_client"]) == 1) ? "Client" : "Lead" } }
             rows += contacts.compactMap { c in guard let id = Mango9OpportunityAPI.integer(c["id"]), let name = c["name"] as? String else { return nil }; return Mango9Lead(id: id, ownerUserId: Mango9OpportunityAPI.integer(c["owner_id"]) ?? 0, ownerName: "", name: name, phone: c["phone"] as? String ?? "", email: c["email"] as? String ?? "", status: "", source: c["source"] as? String ?? "", createdAt: "") }
             page += 1; more = (result["pagination"] as? [String: Any])?["hasMore"] as? Bool == true
         } catch { if generation == request && !Task.isCancelled { self.error = error.localizedDescription } }
