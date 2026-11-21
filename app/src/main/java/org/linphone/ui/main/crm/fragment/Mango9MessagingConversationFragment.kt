@@ -494,8 +494,25 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         binding.loadEarlier.isEnabled = viewModel.isCurrentConversation() && !socialState.loading
         if (isSms) renderSmsSenders(state)
         if (isSocial) {
-            if (!adapter.selectionMode) binding.title.text = socialState.thread?.title ?: targetName
-            binding.title.isClickable = !adapter.selectionMode && org.linphone.mango9.Mango9SocialProfileLink.url(socialState.thread) != null
+            val profile = org.linphone.mango9.Mango9SocialProfileLink.url(socialState.thread)
+            if (!adapter.selectionMode) binding.title.text = (socialState.thread?.title ?: targetName) + if (profile != null) " ↗" else ""
+            binding.title.isClickable = !adapter.selectionMode && profile != null
+            val brand = if (adapter.selectionMode) {
+                null
+            } else {
+                when (socialState.thread?.platform) {
+                "instagram" -> R.drawable.social_instagram
+                "facebook" -> R.drawable.social_facebook
+                "tiktok" -> R.drawable.social_tiktok
+                else -> null
+            }
+            }
+            val logo = brand?.let { androidx.appcompat.content.res.AppCompatResources.getDrawable(requireContext(), it)?.mutate() }
+            val logoSize = (20 * resources.displayMetrics.density).toInt()
+            logo?.setBounds(0, 0, logoSize, logoSize)
+            binding.title.setCompoundDrawablesRelative(logo, null, null, null)
+            binding.title.compoundDrawablePadding = (6 * resources.displayMetrics.density).toInt()
+            binding.title.contentDescription = (socialState.thread?.title ?: targetName) + if (profile != null) ", open ${socialState.thread?.platform} profile" else ""
             binding.status.text = when {
                 socialState.pending -> "Delivery unconfirmed — refresh to check"
                 socialState.thread == null && socialState.loading -> "Loading conversation…"
