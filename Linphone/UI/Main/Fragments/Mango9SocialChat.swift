@@ -1315,8 +1315,11 @@ struct Mango9SocialConversation: View {
 		.navigationTitle(profileThread.title).navigationBarTitleDisplayMode(.inline)
 		.toolbar {
 			ToolbarItem(placement: .principal) {
-				profileName(profileThread.title).font(.headline).lineLimit(1).frame(minHeight: 44)
-					.accessibilityIdentifier("social.conversation.profile")
+				HStack(spacing: 6) {
+					Mango9SocialPlatformLogo(platform: profileThread.platform, size: 20)
+					profileName(profileThread.title).font(.headline).lineLimit(1).frame(minHeight: 44)
+						.accessibilityIdentifier("social.conversation.profile")
+				}
 			}
 			ToolbarItem(placement: .navigationBarTrailing) {
 				if let muted = store.muted {
