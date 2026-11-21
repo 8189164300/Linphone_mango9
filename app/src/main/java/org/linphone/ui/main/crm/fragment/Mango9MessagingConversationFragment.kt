@@ -249,6 +249,16 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
             }
         )
         Mango9ChatNavigation.bind(binding.messages, latestButton)
+        adapter.retrySocialAttachment = { message, index -> social.retryAttachment(message, index) }
+        adapter.openCard = { value ->
+            org.linphone.mango9.Mango9SocialCardURL.safe(value)?.let { url ->
+                if (isSocial && !adapter.selectionMode && viewModel.isCurrentConversation() && viewLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                    runCatching {
+                        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE))
+                    }.onFailure { showLocalError("Unable to open this link.") }
+                }
+            }
+        }
         adapter.socialProfile = { message ->
             if (isSocial && viewModel.isCurrentConversation()) org.linphone.mango9.Mango9SocialProfileLink.url(social.current().thread, message.outgoing) else null
         }
@@ -435,7 +445,15 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         val socialState = social.current()
         val items = if (isSocial) {
             socialState.messages.map { message ->
-            Mango9MessageListItem.Social(message, message.attachments.mapNotNull { socialState.media["${message.id}:${it.index}"] })
+            Mango9MessageListItem.Social(
+                message, message.attachments.mapNotNull { socialState.media["${message.id}:${it.index}"] },
+                message.attachments.mapNotNull { a -> socialState.media["${message.id}:${a.index}"]?.let { a.index to it } }.toMap(),
+                message.attachments.mapNotNull { a ->
+                    socialState.mediaErrors["${message.id}:${a.index}"]?.let {
+                    a.index to it
+                }
+                }.toMap()
+            )
         }
         } else if (isSms) {
             smsMessages(state)

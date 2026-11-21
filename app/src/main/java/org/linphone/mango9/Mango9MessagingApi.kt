@@ -20,7 +20,7 @@ import org.json.JSONObject
 
 enum class Mango9MessageChannel { team, sms, social }
 
-internal class Mango9MessagingFailure(val status: Int, val code: String) : Exception(
+internal class Mango9MessagingFailure(val status: Int, val code: String, val retryAfterSeconds: Int? = null) : Exception(
     when {
     code == "posting_session_required" -> "Social Chat is not authorized for this account’s supervisor access. Team Chat and SMS are still available."
     code.contains("version_changed") -> "This message changed on another device. Refresh and try again."
@@ -92,7 +92,8 @@ internal class Mango9MessagingApi internal constructor(
             if (response.status !in 200..299) {
                 throw Mango9MessagingFailure(
                     response.status,
-                json?.optJSONObject("error")?.optString("code") ?: (json?.opt("error") as? String) ?: "request_rejected"
+                json?.optJSONObject("error")?.optString("code") ?: (json?.opt("error") as? String) ?: "request_rejected",
+                    json?.optJSONObject("error")?.optInt("retryAfterSeconds", 0)?.takeIf { it > 0 }?.coerceAtMost(86400)
                 )
             }
             if (!envelope && json != null) return json

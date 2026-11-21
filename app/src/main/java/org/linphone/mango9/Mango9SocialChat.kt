@@ -52,7 +52,29 @@ data class Mango9SocialMessage(
     val version: Int, val capabilities: Mango9ReactionCapabilities?, val status: String,
     val attachments: List<Media>,
 ) {
-    data class Media(val index: Int, val type: String, val name: String)
+    data class Card(val title: String, val subtitle: String, val imageUrl: String?, val url: String?, val buttons: List<Action>)
+
+    data class Action(val title: String, val url: String?)
+
+    data class Media(val index: Int, val type: String, val name: String, val downloadable: Boolean = true, val cards: List<Card> = emptyList(), val unavailableReason: String? = null) {
+        val isCard get() = !downloadable || type in setOf("template", "share", "unsupported_type")
+
+        companion object {
+            fun parse(j: JSONObject): Media = Media(
+                j.getInt("index"), j.getString("type"), j.optString("name"), j.opt("downloadable") != false,
+                j.optJSONArray("cards")?.objects()?.take(10)?.map { c ->
+                    Card(
+                        c.optString("title").take(1000), c.optString("subtitle").take(2000),
+                    Mango9SocialCardURL.safe(c.stringOrNull("imageUrl")), Mango9SocialCardURL.safe(c.stringOrNull("url")),
+                    c.optJSONArray("buttons")?.objects()?.take(5)?.map {
+                        Action(it.optString("title").take(200), Mango9SocialCardURL.safe(it.stringOrNull("url")))
+                    }.orEmpty()
+                    )
+                }.orEmpty(),
+                    j.stringOrNull("unavailableReason")?.takeIf { it == "ephemeral" }
+            )
+        }
+    }
 
     companion object {
         fun parse(j: JSONObject) = Mango9SocialMessage(
@@ -62,7 +84,7 @@ data class Mango9SocialMessage(
             j.optInt("reactionVersion", j.optInt("version", 0)), Mango9ReactionCapabilities.parse(j.optJSONObject("reactionCapabilities")),
             j.stringOrNull("deliveryStatus").orEmpty(),
                 j.optJSONArray("attachments")?.objects()?.map {
-                Media(it.getInt("index"), it.getString("type"), it.getString("name"))
+                Media.parse(it)
             }.orEmpty()
         )
     }
@@ -212,6 +234,7 @@ internal class Mango9SocialRepository(context: Context, private val api: Mango9M
     }
 
     suspend fun attachment(lease: Mango9SessionLease, id: String, message: Int, media: Mango9SocialMessage.Media): Mango9ChatMedia {
+        require(!media.isCard) { "Shared cards are not downloadable files." }
         val link = api.request(lease, channel, listOf("inbox-attachment"), mapOf("id" to id, "messageId" to message.toString(), "index" to media.index.toString()))
         val url = Mango9Configuration.verifiedHttpsUrl(link.getString("url"))?.toString() ?: throw Mango9MessagingFailure(0, "invalid_response")
         val mime = if (media.type == "video") "video/mp4" else if (media.name.endsWith(".png", true)) "image/png" else "image/jpeg"

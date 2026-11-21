@@ -14,6 +14,20 @@ internal class Mango9ThumbnailView(context: Context) : AppCompatImageView(contex
     private var owner: Mango9ThumbnailLoader? = null
     private var media: Mango9ChatMedia? = null
     private var subscription: AutoCloseable? = null
+    private var completed = false
+    var showPlaceholder = false
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        super.onDraw(canvas)
+        if (showPlaceholder && drawable == null) {
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = androidx.core.content.ContextCompat.getColor(context, org.linphone.R.color.mango9_team_secondary)
+                textSize = 12 * resources.displayMetrics.scaledDensity
+                textAlign = android.graphics.Paint.Align.CENTER
+            }
+            canvas.drawText(if (completed) "Preview unavailable" else "Loading preview…", width / 2f, height / 2f, paint)
+        }
+    }
 
     fun bind(value: Mango9ChatMedia?, loader: Mango9ThumbnailLoader?) {
         if (value == media && owner === loader) return
@@ -37,13 +51,15 @@ internal class Mango9ThumbnailView(context: Context) : AppCompatImageView(contex
         val loader = owner ?: return
         if (!isAttachedToWindow || width <= 0 || height <= 0 || subscription != null) return
         subscription = loader.observe(item, width, height) { image ->
-            setImageDrawable(image?.asDrawable(resources))
+            completed = true
+            setImageDrawable(image?.asDrawable(resources)); invalidate()
         }
     }
 
     private fun clear() {
         subscription?.close()
         subscription = null
+        completed = false
         setImageDrawable(null)
     }
 }

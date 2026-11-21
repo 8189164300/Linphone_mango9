@@ -91,4 +91,28 @@ class Mango9SocialPresentationTest {
         assertNotEquals(row.thread.summary, row.preview)
     }
 
+    @Test fun richCardsHaveDisplayDataWithoutDownloadRequests() {
+        val card = Mango9SocialMessage.Media.parse(JSONObject("""{"index":0,"type":"template","name":"","downloadable":false,"cards":[{"title":"Welcome","subtitle":"How can we help?","buttons":[{"title":"Visit website","url":"https://example.com/"},{"title":"Choose","url":null}]}]}"""))
+        assertTrue(card.isCard); assertEquals("Welcome", card.cards.first().title)
+        assertEquals("https://example.com/", card.cards.first().buttons.first().url)
+        assertNull(card.cards.first().buttons[1].url)
+        val unavailable = Mango9SocialMessage.Media.parse(JSONObject("""{"index":0,"type":"unsupported_type","name":"","downloadable":false,"unavailableReason":"ephemeral"}"""))
+        assertTrue(unavailable.isCard); assertEquals("ephemeral", unavailable.unavailableReason)
+        for (kind in listOf("image", "video", "sticker", "file")) {
+            val media = Mango9SocialMessage.Media.parse(JSONObject().put("index", 3).put("type", kind).put("name", "asset"))
+            assertFalse(media.isCard); assertEquals(3, media.index)
+        }
+    }
+
+    @Test fun cardLinksRejectCredentialsScriptsAndLocalHosts() {
+        for (url in listOf("javascript:alert(1)", "http://example.com/", "https://u:p@example.com/", "https://127.0.0.1/", "https://example.local/", "https://example.com/?access_token=x", "https://example.com/?%74oken=x", "https://example.com/\\evil")) assertNull(url, Mango9SocialCardURL.safe(url))
+    }
+
+    @Test fun attachmentCooldownIsRetainedFromTheServer() {
+        val error = runCatching {
+            Mango9MessagingApi.decode(Mango9CalendarResponse(404, """{"error":{"code":"inbox_attachment_unavailable","retryAfterSeconds":900}}"""))
+        }.exceptionOrNull() as Mango9MessagingFailure
+        assertEquals(900, error.retryAfterSeconds)
+    }
+
 }

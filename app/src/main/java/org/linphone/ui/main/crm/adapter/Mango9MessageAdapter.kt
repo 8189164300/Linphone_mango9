@@ -68,7 +68,7 @@ sealed class Mango9MessageListItem(val stableId: String) {
 
     data class Sms(val message: Mango9SmsMessage) : Mango9MessageListItem("sms:${message.id}")
 
-    data class Social(val message: Mango9SocialMessage, val media: List<Mango9ChatMedia>) : Mango9MessageListItem("social:${message.id}")
+    data class Social(val message: Mango9SocialMessage, val media: List<Mango9ChatMedia>, val resolved: Map<Int, Mango9ChatMedia> = emptyMap(), val errors: Map<Int, String> = emptyMap()) : Mango9MessageListItem("social:${message.id}")
 }
 
 class Mango9MessageAdapter(
@@ -88,6 +88,8 @@ class Mango9MessageAdapter(
     var onSelection: ((Set<String>) -> Unit)? = null
     var socialProfile: ((Mango9SocialMessage) -> String?)? = null
     var openProfile: ((String) -> Unit)? = null
+    var openCard: ((String) -> Unit)? = null
+    var retrySocialAttachment: ((Int, Int) -> Unit)? = null
 
     fun select(ids: Set<String>?, notify: Boolean = true) {
         selectionMode = ids != null; selected = ids.orEmpty()
@@ -249,7 +251,7 @@ class Mango9MessageAdapter(
             }
             binding.reactions.text = reactions.joinToString("  ")
             binding.reactions.visibility = if (reactions.isEmpty()) View.GONE else View.VISIBLE
-            bindMedia(item.stableId, if (item is Mango9MessageListItem.Social) item.media else Mango9ChatMedia.parse(files), team != null)
+            bindMedia(item.stableId, if (item is Mango9MessageListItem.Social) item.media else Mango9ChatMedia.parse(files), team != null, item as? Mango9MessageListItem.Social)
             for (index in 0 until binding.media.childCount) {
                 (binding.media.getChildAt(index) as? Mango9AudioMessageView)?.apply {
                     setInk(binding.message.currentTextColor)
@@ -294,16 +296,33 @@ class Mango9MessageAdapter(
             }
         }
 
-        private fun bindMedia(messageId: String, media: List<Mango9ChatMedia>, cardStyle: Boolean) {
-            if (messageId == boundMessageId && media == boundMedia && cardStyle == boundCardStyle) return
+        private var boundSocial: Mango9MessageListItem.Social? = null
+
+        private fun bindMedia(messageId: String, media: List<Mango9ChatMedia>, cardStyle: Boolean, social: Mango9MessageListItem.Social? = null) {
+            if (messageId == boundMessageId && media == boundMedia && cardStyle == boundCardStyle && social == boundSocial) return
+            boundSocial = social
             boundCardStyle = cardStyle
             boundMessageId = messageId
             boundMedia = media
             binding.media.removeAllViews()
-            binding.media.visibility = if (media.isEmpty()) View.GONE else View.VISIBLE
-            media.forEachIndexed { index, item ->
+            val parts = if (social != null) {
+                (if (social.message.deleted) emptyList() else social.message.attachments).map { it to social.resolved[it.index] }
+            } else {
+                media.map { null to it }
+            }
+            binding.media.visibility = if (parts.isEmpty()) View.GONE else View.VISIBLE
+            parts.forEachIndexed { index, (part, item) ->
                 val owner = audioController
-                val view = if (item.kind == Mango9ChatMedia.Kind.Audio && owner != null) {
+                val view = if (part?.isCard == true) {
+                    socialCard(part)
+                } else if (item == null) {
+                    TextView(binding.root.context).apply {
+                        text = social?.errors?.get(part?.index) ?: "Loading attachment…"
+                        textSize = 14f; setTextColor(binding.message.currentTextColor); setPadding(dp(12))
+                        layoutParams = LinearLayout.LayoutParams(dp(230), ViewGroup.LayoutParams.WRAP_CONTENT)
+                        minHeight = dp(56)
+                    }
+                } else if (item.kind == Mango9ChatMedia.Kind.Audio && owner != null) {
                     Mango9AudioMessageView(binding.root.context, cardStyle).apply {
                         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                             if (index > 0) topMargin = dp(7)
@@ -318,6 +337,7 @@ class Mango9MessageAdapter(
                         }
                         addView(
                             Mango9ThumbnailView(context).apply {
+                            showPlaceholder = social != null
                             scaleType = ImageView.ScaleType.CENTER_CROP
                             bind(item, thumbnails)
                         },
@@ -359,7 +379,11 @@ class Mango9MessageAdapter(
                 if (view !is Mango9AudioMessageView) {
                     view.setOnClickListener {
                     val message = currentList.firstOrNull { it.stableId == boundMessageId }
-                    if (selectionMode && message != null) toggleSelection(message) else onMediaClick(item)
+                    if (selectionMode && message != null) {
+                        toggleSelection(message)
+                    } else if (item != null) {
+                        onMediaClick(item)
+                    } else if (social != null && part != null && !part.isCard) retrySocialAttachment?.invoke(social.message.id, part.index)
                 }
                 }
                 view.setOnLongClickListener {
@@ -369,6 +393,63 @@ class Mango9MessageAdapter(
                     true
                 }
                 binding.media.addView(view)
+            }
+        }
+
+        private fun socialCard(part: Mango9SocialMessage.Media): View = LinearLayout(binding.root.context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(dp(minOf(280, resources.configuration.screenWidthDp - 80)), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(6)
+            }
+            background = GradientDrawable().apply {
+                cornerRadius = dp(12).toFloat(); setColor(ContextCompat.getColor(context, R.color.mango9_team_card)); setStroke(dp(1), ContextCompat.getColor(context, R.color.mango9_team_border))
+            }
+
+            fun label(value: String, heading: Boolean = false) {
+                if (value.isNotEmpty()) {
+                    addView(
+                        TextView(context).apply {
+                    text = value; textSize = if (heading) 16f else 14f; setTextColor(ContextCompat.getColor(context, R.color.mango9_team_ink)); setPadding(dp(12)); if (heading) setTypeface(typeface, Typeface.BOLD)
+                }
+                    )
+                }
+            }
+
+            fun link(title: String, url: String?) {
+                addView(
+                    TextView(context).apply {
+                        text = title + if (url != null) " ↗" else "\nAvailable in the social app"; textSize = 15f; setPadding(dp(12)); minHeight = dp(44)
+                    setTextColor(ContextCompat.getColor(context, if (url != null) R.color.orange_main_500 else R.color.mango9_team_ink))
+                    setOnClickListener {
+                        val message = currentList.firstOrNull {
+                            it.stableId == boundMessageId
+                        }; if (selectionMode && message != null) toggleSelection(message) else if (url != null) openCard?.invoke(url)
+                    }
+                }
+                )
+            }
+            if (part.cards.isEmpty()) label(if (part.unavailableReason == "ephemeral") "Disappearing media is not available from the social provider." else "Shared content is unavailable. View it in the social app.")
+            part.cards.forEach { card ->
+                card.imageUrl?.let { url ->
+                    addView(
+                        Mango9ThumbnailView(context).apply {
+                    showPlaceholder = true
+                    scaleType = ImageView.ScaleType.CENTER_CROP; bind(
+                        Mango9ChatMedia(
+                            url, url,
+                            card.title.ifEmpty {
+                        "Shared image"
+                    },
+                        "image/jpeg", Mango9ChatMedia.Kind.Image
+                        ),
+                        thumbnails
+                    )
+                },
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(150))
+                    )
+                }
+                label(card.title, true); label(card.subtitle)
+                card.url?.let { link(it, it) }; card.buttons.forEach { link(it.title, it.url) }
             }
         }
 

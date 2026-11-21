@@ -20,6 +20,7 @@ internal data class Mango9SocialState(
     val accountWarning: String? = null, val providerWarning: String? = null,
     val thread: Mango9SocialThread? = null, val messages: List<Mango9SocialMessage> = emptyList(), val nextMessage: String? = null,
     val media: Map<String, Mango9ChatMedia> = emptyMap(), val muted: Boolean? = null,
+    val mediaErrors: Map<String, String> = emptyMap(),
     val loading: Boolean = false, val error: String? = null, val pending: Boolean = false,
     val sendNotice: String? = null,
     val previews: Map<String, String> = emptyMap(), val previewEpoch: Long = 0,
@@ -49,6 +50,8 @@ internal class Mango9SocialViewModel(
     private var pendingInbox = false
     private var pendingAccounts = false
     private var restartMessagePaging = false
+    private val attachmentRetries = mutableMapOf<String, Long>()
+    private val attachmentReads = mutableSetOf<String>()
 
     private data class ThreadRead(val id: String, val more: Boolean, val refresh: Boolean, val poll: Boolean)
 
@@ -332,16 +335,46 @@ internal class Mango9SocialViewModel(
             if (!valid(owner, request)) return
             val visibleIds = current().messages.filterNot { it.deleted }.map { it.id }.toSet()
             for (message in attachmentMessages.values.filter { it.id in visibleIds }) for (media in message.attachments) {
-                val key = "${message.id}:${media.index}"
-                if (current().media.containsKey(key)) continue
-                val resolved = try { repository.attachment(owner, id, message.id, media) } catch (e: Exception) {
-                    if (e is CancellationException || revoked(e)) throw e
-                    null
-                } ?: continue
-                if (!valid(owner, request)) return
-                state.value = current().copy(media = current().media + (key to resolved))
+                if (media.isCard || current().media.containsKey("${message.id}:${media.index}")) continue
+                resolveAttachment(owner, id, message.id, media, request)
             }
         } catch (e: Exception) { failure(owner, request, e) }
+    }
+
+    fun retryAttachment(messageId: Int, index: Int) {
+        val owner = activeLease() ?: return
+        val snapshot = current(); val thread = snapshot.thread ?: return
+        val message = snapshot.messages.firstOrNull { it.id == messageId && !it.deleted } ?: return
+        val part = message.attachments.firstOrNull { it.index == index && !it.isCard } ?: return
+        val request = generation
+        viewModelScope.launch {
+            try {
+                resolveAttachment(owner, thread.id, messageId, part, request)
+            } catch (e: Exception) { if (e is CancellationException) throw e; failure(owner, request, e) }
+        }
+    }
+
+    private suspend fun resolveAttachment(owner: Mango9SessionLease, thread: String, message: Int, part: Mango9SocialMessage.Media, request: Long) {
+        val key = "$message:${part.index}"
+        val scoped = "${Mango9MessagingApi.account(owner.session)}:${owner.loginGeneration}:$thread:$key"
+        if (clock() < (attachmentRetries[scoped] ?: 0) || !attachmentReads.add(scoped)) return
+        try {
+            val resolved = repository.attachment(owner, thread, message, part)
+            if (!valid(owner, request) || current().thread?.id != thread || current().messages.none {
+                it.id == message && !it.deleted && part in it.attachments
+            }
+            ) {
+                return
+            }
+            attachmentRetries.remove(scoped)
+            state.value = current().copy(media = current().media + (key to resolved), mediaErrors = current().mediaErrors - key)
+        } catch (e: Exception) {
+            if (e is CancellationException || revoked(e) && !(e is Mango9MessagingFailure && e.status == 404)) throw e
+            if (!valid(owner, request) || current().thread?.id != thread) return
+            val delay = (e as? Mango9MessagingFailure)?.retryAfterSeconds ?: 30
+            attachmentRetries[scoped] = clock() + delay * 1000L
+            state.value = current().copy(mediaErrors = current().mediaErrors + (key to "Preview unavailable · Tap to retry"))
+        } finally { attachmentReads.remove(scoped) }
     }
 
     private suspend fun loadSaved(owner: Mango9SessionLease, detail: Mango9SocialThread, more: Boolean, request: Long): List<Mango9SocialMessage> {
@@ -368,6 +401,16 @@ internal class Mango9SocialViewModel(
         Mango9SocialRecency.record(owner, activity)
         state.value = current().copy(
             thread = detail, messages = visible, loading = false, error = current().providerWarning,
+            media = current().media.filterKeys { key ->
+                visible.any { m ->
+                    !m.deleted && m.attachments.any { a ->
+                        !a.isCard && key == "${m.id}:${a.index}" && prior.messages.firstOrNull {
+                it.id == m.id
+            }?.attachments?.contains(a) == true
+            }
+            }
+            },
+            mediaErrors = current().mediaErrors.filterKeys { key -> visible.any { m -> !m.deleted && m.attachments.any { a -> !a.isCard && key == "${m.id}:${a.index}" } } },
             nextMessage = if (more || restartMessagePaging || prior.thread?.id != detail.id || prior.messages.isEmpty()) page.next else prior.nextMessage,
             pending = detail.openSend || repository.hasPending(owner, detail.id)
         )
