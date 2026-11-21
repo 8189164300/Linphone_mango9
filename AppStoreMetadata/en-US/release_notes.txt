@@ -1,3 +1,4 @@
+• Social Chat now displays shared cards and attachments more reliably, with platform icons and direct profile links.
 • Manage CRM Opportunities with values, stages, activity links and new-item alerts.
 • Convert Leads to Clients and view sharing details, subject to your account permissions.
 • Find Opportunities faster with saved creator, due-date and amount filters.

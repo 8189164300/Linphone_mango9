@@ -1,4 +1,6 @@
-Mango9 6.2.25 (76): business communications and CRM companion, iOS 15+.
+Mango9 6.2.25 (77): business communications and CRM companion, iOS 15+.
+
+Build 77 includes fixes for Social Chat attachment and shared-card display, plus platform icons and public profile links in conversation headers. Existing unread and deleted-chat behavior is preserved.
 
 This update adds native CRM Opportunities, including values, stages, details, activity links, account-scoped filters and new-item alerts. Open CRM > Opportunities, or open a Lead or Client and use its Opportunity actions. Lead conversion and all record visibility follow the account's server permissions. Follow-ups are saved through the Opportunity API and synchronized to the responsible user's Calendar when the opportunity is open and has a next action, due time and Calendar access. Activity content loads when opened.
 
