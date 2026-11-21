@@ -1204,3 +1204,27 @@ private final class ReactionMockProtocol: URLProtocol {
 		return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
 	}
 }
+
+final class Mango9SocialCardTests: XCTestCase {
+    func testTemplateKeepsItsTitleAndWebsiteWithoutBeingDownloaded() throws {
+        let json = #"{"index":0,"type":"template","name":"","downloadable":false,"presentationVersion":1,"cards":[{"title":"Welcome","subtitle":"How can we help?","imageUrl":null,"url":null,"buttons":[{"title":"Visit website","url":"https://example.com/"}]}]}"#
+        let part = try JSONDecoder().decode(Mango9SocialMessage.Media.self, from: Data(json.utf8))
+        XCTAssertTrue(part.isCard)
+        XCTAssertEqual(part.cards?.first?.title, "Welcome")
+        XCTAssertEqual(Mango9SocialCardLink.url(part.cards?.first?.buttons.first?.url)?.absoluteString, "https://example.com/")
+        let legacy = try JSONDecoder().decode(Mango9SocialMessage.Media.self, from: Data(#"{"index":0,"type":"file","name":""}"#.utf8))
+        XCTAssertFalse(legacy.isCard)
+        XCTAssertNotEqual(legacy.revision, part.revision)
+    }
+    func testPhotosVideosAndStickersKeepTheOriginalIndex() throws {
+        for kind in ["image", "video", "sticker", "file"] {
+            let part = try JSONDecoder().decode(Mango9SocialMessage.Media.self, from: JSONSerialization.data(withJSONObject: ["index": 3, "type": kind, "name": "asset", "downloadable": true]))
+            XCTAssertFalse(part.isCard); XCTAssertEqual(part.index, 3)
+        }
+    }
+    func testCardURLsNeverExecuteScriptsOrCarryCredentials() {
+        for value in ["javascript:alert(1)", "http://example.com", "https://user:pass@example.com", "https://127.0.0.1/", "https://example.local/", "https://example.com/?access_token=secret", "https://example.com/?%74oken=secret", "https://example.com/\\evil"] {
+            XCTAssertNil(Mango9SocialCardLink.url(value), value)
+        }
+    }
+}

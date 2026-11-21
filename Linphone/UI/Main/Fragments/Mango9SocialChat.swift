@@ -32,7 +32,7 @@ import CryptoKit
 		let scope = Mango9ReactionTarget.accountKey(session)
 		if account != scope { clear(); account = scope }
 		let generation = self.generation
-		let key = "\(scope):\(thread):\(message):\(media.index)"
+		let key = "\(scope):\(thread):\(message):\(media.revision)"
 		if let image = images.object(forKey: key as NSString) { return image }
 		if let task = tasks[key] { return try await task.value }
 		let slot = nextSlot; nextSlot = (nextSlot + 1) % slots.count
@@ -94,7 +94,7 @@ private struct Mango9SocialAttachmentPreview: View {
 				if media.type == "video" { Image(systemName: "play.circle.fill").font(.system(size: 40)).foregroundStyle(.white).shadow(radius: 2) }
 			} else {
 				VStack(spacing: 8) {
-					if failed { Image(systemName: "photo").font(.title2); Text("Open attachment").font(.caption) }
+					if failed { Image(systemName: "photo").font(.title2); Text("Preview unavailable · Tap to open").font(.caption) }
 					else { ProgressView(); Text("Loading preview…").font(.caption) }
 				}.frame(width: 200, height: 130).background(Color(uiColor: .secondarySystemBackground))
 			}
@@ -104,7 +104,8 @@ private struct Mango9SocialAttachmentPreview: View {
 			.accessibilityIdentifier("social.attachment.\(message.id).\(media.index)")
 			.accessibilityValue(thumbnail != nil ? "Preview loaded" : failed ? "Preview unavailable" : "Loading preview")
 			.mango9MessageActions(enabled: !selectionMode, onTap: open, actions: actions)
-			.task(id: "\(Mango9ReactionTarget.accountKey(session)):\(thread):\(message.id):\(media.index)") {
+			.task(id: "\(Mango9ReactionTarget.accountKey(session)):\(thread):\(message.id):\(media.revision)") {
+				thumbnail = nil; failed = false
 				do {
 					let image = try await Mango9SocialThumbnailCache.shared.thumbnail(session: session, thread: thread, message: message.id, media: media, api: api)
 					guard !Task.isCancelled, Mango9SessionStore.isActive(session) else { return }
@@ -112,6 +113,46 @@ private struct Mango9SocialAttachmentPreview: View {
 				} catch { if !Task.isCancelled { failed = true } }
 			}
 			.onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in thumbnail = nil }
+	}
+}
+
+/// Cards are display content, not downloadable attachments or provider postbacks.
+enum Mango9SocialCardLink {
+	static func url(_ value: String?) -> URL? {
+		guard let value, value.count <= 8192, !value.contains("\\"),
+			!value.unicodeScalars.contains(where: { $0.value <= 32 || $0.value == 127 }),
+			let c = URLComponents(string: value), c.scheme == "https", c.user == nil, c.password == nil, c.port == nil,
+			let host = c.host, host.contains("."), !host.hasSuffix(".local"), !host.hasSuffix(".localhost"),
+			host.range(of: "^[0-9]+(\\.[0-9]+){3}$", options: .regularExpression) == nil,
+			!(c.queryItems ?? []).contains(where: { ["access_token", "api_key", "apikey", "authorization", "token"].contains($0.name.lowercased()) }) else { return nil }
+		return c.url
+	}
+}
+private struct Mango9SocialCardView: View {
+	let media: Mango9SocialMessage.Media
+	let selectionMode: Bool
+	var body: some View {
+		VStack(alignment: .leading, spacing: 10) {
+			if (media.cards ?? []).isEmpty { Text(media.unavailableReason == "ephemeral" ? "Disappearing media is not available from the social provider." : "Shared content is unavailable. View it in the social app.").font(.subheadline).foregroundStyle(.secondary).padding(12) }
+			ForEach(Array((media.cards ?? []).enumerated()), id: \.offset) { _, card in
+				VStack(alignment: .leading, spacing: 0) {
+					if let url = Mango9SocialCardLink.url(card.imageUrl) {
+						AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { Image(systemName: "photo").foregroundStyle(.secondary).frame(height: 120) }.frame(maxWidth: 260, maxHeight: 180).clipped()
+					}
+					if !card.title.isEmpty { Text(card.title).font(.system(size: 16, weight: .semibold)).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true).padding(12) }
+					if !card.subtitle.isEmpty { Text(card.subtitle).font(.system(size: 14)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.horizontal, 12).padding(.bottom, 12) }
+					if let url = Mango9SocialCardLink.url(card.url) { cardLink(url.absoluteString, url: url) }
+					ForEach(Array(card.buttons.enumerated()), id: \.offset) { _, action in
+						if let url = Mango9SocialCardLink.url(action.url) { cardLink(action.title, url: url) }
+						else { Divider(); VStack(alignment: .leading, spacing: 3) { Text(action.title); Text("Available in the social app").font(.caption) }.font(.subheadline).foregroundStyle(.secondary).padding(12) }
+					}
+				}.frame(maxWidth: 260, alignment: .leading).background(Color(uiColor: .secondarySystemGroupedBackground))
+					.clipShape(RoundedRectangle(cornerRadius: 14)).overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.secondary.opacity(0.2)))
+			}
+		}.accessibilityIdentifier("social.attachment.card.\(media.index)")
+	}
+	private func cardLink(_ title: String, url: URL) -> some View {
+		VStack(alignment: .leading, spacing: 0) { Divider(); Link(destination: url) { Label(title, systemImage: "arrow.up.right").font(.system(size: 15)).foregroundStyle(Color.orangeMain500).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading).padding(12) }.disabled(selectionMode) }
 	}
 }
 
@@ -480,7 +521,21 @@ struct Mango9SocialMessage: Decodable, Identifiable, Equatable {
 		let index: Int
 		let type: String
 		let name: String
+		var downloadable: Bool? = nil
+		var unavailableReason: String? = nil
+		var cards: [Card]? = nil
+		var presentationVersion: Int? = nil
+		var isCard: Bool { downloadable == false || ["template", "share", "unsupported_type"].contains(type) }
+		var revision: String { "\(index):\(type):\(name):\(presentationVersion ?? 0)" }
 		var id: Int { index }
+		struct Card: Decodable, Equatable {
+			let title: String
+			let subtitle: String
+			let imageUrl: String?
+			let url: String?
+			let buttons: [Action]
+			struct Action: Decodable, Equatable { let title: String; let url: String? }
+		}
 	}
 	var outgoing: Bool { direction == "outbound" || direction == "outgoing" }
 }
@@ -1202,9 +1257,13 @@ struct Mango9SocialConversation: View {
 								.mango9MessageActions(enabled: !selectionMode) { socialActions(message) }
 							}
 							if !message.deleted { ForEach(message.attachments ?? []) { media in
+								if media.isCard {
+									Mango9SocialCardView(media: media, selectionMode: selectionMode)
+								} else {
 								Mango9SocialAttachmentPreview(session: store.session, thread: original.id, message: message, media: media, api: store.api,
 									open: { Task { await openMedia(message, media: media) } }, actions: { socialActions(message) }, selectionMode: selectionMode)
 									.disabled(preparingMedia)
+								}
 							} }
 							if !message.deleted {
 								if let entry = message.reactions?.activeAccount { Mango9ReactionBadge(text: "\(entry.emoji) Your account") }
