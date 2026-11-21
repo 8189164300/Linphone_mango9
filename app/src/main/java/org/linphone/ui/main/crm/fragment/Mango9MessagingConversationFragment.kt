@@ -207,6 +207,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
             binding.title.text = if (adapter.selectionMode) "${selected.size} selected" else targetName
             binding.composerPanel.visibility = if (adapter.selectionMode) View.GONE else View.VISIBLE
             renderGroupActions(viewModel.currentState())
+            if (isSocial) renderSocialProfileHeader()
             if (adapter.selectionMode) binding.more.contentDescription = getString(R.string.mango9_select)
         }
         adapter.setThumbnailLoader(requireNotNull(thumbnails))
@@ -494,25 +495,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         binding.loadEarlier.isEnabled = viewModel.isCurrentConversation() && !socialState.loading
         if (isSms) renderSmsSenders(state)
         if (isSocial) {
-            val profile = org.linphone.mango9.Mango9SocialProfileLink.url(socialState.thread)
-            if (!adapter.selectionMode) binding.title.text = (socialState.thread?.title ?: targetName) + if (profile != null) " ↗" else ""
-            binding.title.isClickable = !adapter.selectionMode && profile != null
-            val brand = if (adapter.selectionMode) {
-                null
-            } else {
-                when (socialState.thread?.platform) {
-                "instagram" -> R.drawable.social_instagram
-                "facebook" -> R.drawable.social_facebook
-                "tiktok" -> R.drawable.social_tiktok
-                else -> null
-            }
-            }
-            val logo = brand?.let { androidx.appcompat.content.res.AppCompatResources.getDrawable(requireContext(), it)?.mutate() }
-            val logoSize = (20 * resources.displayMetrics.density).toInt()
-            logo?.setBounds(0, 0, logoSize, logoSize)
-            binding.title.setCompoundDrawablesRelative(logo, null, null, null)
-            binding.title.compoundDrawablePadding = (6 * resources.displayMetrics.density).toInt()
-            binding.title.contentDescription = (socialState.thread?.title ?: targetName) + if (profile != null) ", open ${socialState.thread?.platform} profile" else ""
+            renderSocialProfileHeader()
             binding.status.text = when {
                 socialState.pending -> "Delivery unconfirmed — refresh to check"
                 socialState.thread == null && socialState.loading -> "Loading conversation…"
@@ -644,6 +627,29 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         binding.statusDot.setBackgroundResource(
             if (online && !blocked) R.drawable.mango9_chat_online_background else R.drawable.mango9_chat_offline_background,
         )
+    }
+
+    private fun renderSocialProfileHeader() {
+        val socialState = social.current()
+        val profile = org.linphone.mango9.Mango9SocialProfileLink.url(socialState.thread)
+        if (!adapter.selectionMode) binding.title.text = (socialState.thread?.title ?: targetName) + if (profile != null) " ↗" else ""
+        binding.title.isClickable = !adapter.selectionMode && profile != null
+        val brand = if (adapter.selectionMode) {
+            null
+        } else {
+            when (socialState.thread?.platform) {
+                "instagram" -> R.drawable.social_instagram
+                "facebook" -> R.drawable.social_facebook
+                "tiktok" -> R.drawable.social_tiktok
+                else -> null
+            }
+        }
+        val logo = brand?.let { androidx.appcompat.content.res.AppCompatResources.getDrawable(requireContext(), it)?.mutate() }
+        val logoSize = (20 * resources.displayMetrics.density).toInt()
+        logo?.setBounds(0, 0, logoSize, logoSize)
+        binding.title.setCompoundDrawablesRelative(logo, null, null, null)
+        binding.title.compoundDrawablePadding = (6 * resources.displayMetrics.density).toInt()
+        binding.title.contentDescription = if (adapter.selectionMode) binding.title.text.toString() else (socialState.thread?.title ?: targetName) + if (profile != null) ", open ${socialState.thread?.platform} profile" else ""
     }
 
     private fun renderSmsSenders(state: Mango9ChatState) {
