@@ -333,6 +333,7 @@ struct Mango9SocialThread: Decodable, Identifiable, Equatable {
 	var accountId: String? = nil
 	var activityAt: String? = nil
 	var readThrough: Int? = nil
+	var markedUnread: Bool? = nil
 	var source: Source? = nil
 	struct Source: Decodable, Equatable { let accountName: String?; let summary: String?; var providerStatus: String? = nil }
 	struct OpenSend: Decodable, Equatable { let sendId: String; let state: String }
@@ -996,6 +997,7 @@ struct Mango9SocialChatList: View {
 }
 
 struct SocialInboxListContent: View {
+    @StateObject private var selection = Mango9ChatListSelection()
 	@ObservedObject var store: Mango9SocialInboxStore
 	@StateObject private var conversationVisibility: Mango9PersonalConversationVisibility
 	let search: String
@@ -1009,12 +1011,34 @@ struct SocialInboxListContent: View {
 	var body: some View {
 		VStack(spacing: 0) {
 			Mango9SocialInboxFilters(store: store)
+            Mango9ChatListToolbar(selection: selection,
+                scope: Mango9ReactionTarget.accountKey(store.session) + ":social:" + store.selectedPlatform + ":" + store.selectedAccount + ":" + search,
+                ids: visibleThreads.map(\.id), loadAll: {
+                    var cursors = Set<String>()
+                    while let cursor = store.nextThread {
+                        guard !store.busy, cursors.insert(cursor).inserted, cursors.count <= 200 else { throw Mango9MessagingError.invalidResponse }
+                        await store.loadInbox(search: search, more: true)
+                        if store.error != nil { throw Mango9MessagingError.invalidResponse }
+                    }
+                    try await conversationVisibility.refresh(session: store.session, channel: .social, ids: store.threads.map(\.id))
+                    return visibleThreads.map(\.id)
+                }, work: { id, action in
+                    if action == .delete { try await conversationVisibility.delete(session: store.session, channel: .social, id: id); return }
+                    var body: [String: Any] = ["id": id, "requestId": UUID().uuidString.lowercased()]
+                    if action == .read {
+                        let detail = try await store.api.request(Mango9SocialThread.self, session: store.session, social: true, path: ["inbox-detail"], query: [.init(name: "id", value: id)])
+                        guard let sequence = detail.readThrough else { throw Mango9MessagingError.invalidResponse }; body["readThrough"] = sequence
+                    }
+                    let result = try await store.api.request(Mango9SocialThread.self, session: store.session, social: true, path: [action == .read ? "inbox-read" : "inbox-unread"], body: body)
+                    guard result.id == id, action != .unread || result.unread else { throw Mango9MessagingError.invalidResponse }
+                    Mango9InboxUnread.shared.socialReceipt(result, session: store.session)
+                }, refresh: { await store.loadInbox(search: search) })
 			Divider()
 		List {
 			if let warning = store.accountError { Text(warning).font(.caption).foregroundStyle(.secondary) }
 			if let error = store.error { Section { Text(error); Button("Try again") { Task { await store.loadInbox(search: search) } } } }
 			ForEach(visibleThreads) { thread in
-				NavigationLink(destination: Mango9SocialConversation(thread: thread, session: store.session).id(thread.id)) {
+				Mango9SelectableChatRow(selection: selection, id: thread.id, destination: Mango9SocialConversation(thread: thread, session: store.session).id(thread.id)) {
 					Mango9SocialInboxRow(thread: thread, session: store.session, api: store.api)
 				}
 				.accessibilityIdentifier("social.thread." + thread.id)

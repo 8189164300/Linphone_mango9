@@ -123,6 +123,7 @@ struct Mango9LiveVisitorContext {
 }
 
 struct Mango9LiveConversation: Identifiable {
+    var lastMessageID: Int?
 	let id: String
 	let siteID: String
 	let title: String
@@ -137,6 +138,7 @@ struct Mango9LiveConversation: Identifiable {
 	init?(_ data: [String: Any]) {
 		guard let id = data["id"] as? String, UUID(uuidString: id) != nil, let site = data["site_id"] as? String else { return nil }
 		self.id = id; siteID = site
+        lastMessageID = (data["last_message_id"] as? Int) ?? (data["last_message_id"] as? String).flatMap(Int.init)
 		let name = data["name"] as? String ?? ""
 		title = name.isEmpty ? "Website visitor" : name
 		email = data["email"] as? String ?? ""; siteName = data["site_name"] as? String ?? "Live Chat"

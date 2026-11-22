@@ -15,7 +15,7 @@ import QuickLook
 	@Published var assigned = false
 	@Published var unread = false
 	private(set) var next: String?
-	private var nextID: String?
+	private(set) var nextID: String?
 	private var generation = 0
 	private var loadedFilter: String?
 	private(set) var expanded = false
@@ -53,6 +53,26 @@ import QuickLook
 			expanded = more; loadedFilter = requested; error = nil
 		} catch { if current == generation { fail(error) } }
 	}
+    func listAction(id: String, action: Mango9ChatListSelection.Action) async throws {
+        guard let session, Mango9SessionStore.isActive(session) else { throw Mango9MessagingError.scopeChanged }
+        let api = Mango9LiveChatAPI.shared
+        if action == .delete {
+            let key = "mango9.livechat.delete." + Mango9ReactionTarget.accountKey(session) + ":" + id
+            let request = UserDefaults.standard.string(forKey: key) ?? UUID().uuidString.lowercased()
+            UserDefaults.standard.set(request, forKey: key)
+            let raw = try await api.request("conversation-visibility", session: session, body: ["conversationIds": [id], "hide": true, "requestId": request])
+            guard Mango9SessionStore.isActive(session), raw["scope"] as? String == "user", raw["channel"] as? String == "livechat", raw["state"] as? String == "succeeded", raw["requestId"] as? String == request,
+                raw["conversationIds"] as? [String] == [id], raw["clearedConversationIds"] as? [String] == [id] else { throw Mango9MessagingError.invalidResponse }
+            UserDefaults.standard.removeObject(forKey: key)
+        } else if action == .unread {
+            let raw = try await api.request("unread", session: session, body: ["id": id])
+            guard raw["id"] as? String == id, raw["unread"] as? Bool == true else { throw Mango9MessagingError.invalidResponse }
+        } else {
+            guard let through = conversations.first(where: { $0.id == id })?.lastMessageID else { throw Mango9MessagingError.invalidResponse }
+            let raw = try await api.request("read", session: session, body: ["id": id, "messageId": through])
+            guard raw["read"] as? Bool == true else { throw Mango9MessagingError.invalidResponse }
+        }
+    }
 	private func fail(_ failure: Error) {
 		guard !Task.isCancelled else { return }
 		if case Mango9MessagingError.scopeChanged = failure { conversations = []; sites = [] }
@@ -87,6 +107,7 @@ import QuickLook
 }
 
 struct Mango9LiveChatList: View {
+    @StateObject private var selection = Mango9ChatListSelection()
 	let searchText: String
 	@StateObject private var store = Mango9LiveChatStore()
 	@ObservedObject private var presence = Mango9LivePresence.shared
@@ -125,6 +146,19 @@ struct Mango9LiveChatList: View {
 				}
 			}.padding(.leading, 16).padding(.trailing, 4)
 
+            Mango9ChatListToolbar(selection: selection,
+                scope: (store.session.map(Mango9ReactionTarget.accountKey) ?? "") + ":live:" + store.filter(searchText),
+                ids: store.conversations.map(\.id), loadAll: {
+                    var cursors = Set<String>()
+                    while let cursor = store.next {
+                        let key = cursor + ":" + (store.nextID ?? "")
+                        guard !store.busy, cursors.insert(key).inserted, cursors.count <= 200 else { throw Mango9MessagingError.invalidResponse }
+                        await store.load(searchText, more: true)
+                        if store.error != nil { throw Mango9MessagingError.invalidResponse }
+                    }
+                    return store.conversations.map(\.id)
+                }, work: { id, action in try await store.listAction(id: id, action: action) },
+                refresh: { await store.load(searchText) })
 			Divider()
 			List {
 				if let error = store.error ?? presence.error {
@@ -132,7 +166,7 @@ struct Mango9LiveChatList: View {
 				}
 				ForEach(store.conversations) { conversation in
 					if let session = store.session {
-						NavigationLink(destination: Mango9LiveChatConversation(conversation: conversation, session: session).id(conversation.id)) {
+						Mango9SelectableChatRow(selection: selection, id: conversation.id, destination: Mango9LiveChatConversation(conversation: conversation, session: session).id(conversation.id)) {
 							HStack(spacing: 12) {
 								Image(systemName: "globe").font(.system(size: 30)).foregroundStyle(Color.orangeMain500).frame(width: 46, height: 46)
 								VStack(alignment: .leading, spacing: 4) {

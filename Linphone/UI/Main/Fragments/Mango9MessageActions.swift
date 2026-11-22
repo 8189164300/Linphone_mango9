@@ -991,3 +991,115 @@ private struct Mango9CameraPhotoPicker: UIViewControllerRepresentable {
 		}
 	}
 }
+
+// A selection belongs to one account, channel and filter. New rows are never
+// selected merely because a background refresh adds them to the list.
+@MainActor final class Mango9ChatListSelection: ObservableObject {
+    enum Action: String { case read, unread, delete }
+    @Published var selecting = false
+    @Published private(set) var selected = Set<String>()
+    @Published private(set) var busy = false
+    @Published private(set) var error: String?
+    @Published private(set) var allPagesSelected = false
+    private var scope = "", revision = 0
+    private var preserveSnapshot = false
+    func bind(_ value: String) {
+        guard scope != value else { return }
+        scope = value; revision += 1; selecting = false; selected = []; busy = false; error = nil; allPagesSelected = false; preserveSnapshot = false
+    }
+    func toggle(_ id: String) { guard !busy else { return }; allPagesSelected = false; selecting = true; if !selected.insert(id).inserted { selected.remove(id) } }
+    func finish() { guard !busy else { return }; selected = []; selecting = false; error = nil; preserveSnapshot = false; allPagesSelected = false }
+    func prune(_ ids: [String]) { if !busy && error == nil && !preserveSnapshot { selected.formIntersection(ids) } }
+    func all(_ load: @escaping @MainActor () async throws -> [String]) async {
+        guard !busy else { return }; let turn = revision
+        busy = true; error = nil
+        defer { if turn == revision { busy = false } }
+        do { let ids = try await load(); guard turn == revision else { return }; selected = Set(ids); selecting = true; allPagesSelected = true; preserveSnapshot = true }
+        catch { if turn == revision { self.error = "Could not load every chat. Retry Select all." } }
+    }
+    func deselectAll() { guard !busy else { return }; selected = []; preserveSnapshot = false; allPagesSelected = false }
+    func run(_ action: Action, work: @escaping @MainActor (String, Action) async throws -> Void) async {
+        guard !busy, !selected.isEmpty, let session = Mango9SessionStore.load() else { return }
+        let turn = revision, ids = Array(selected).sorted(); busy = true; error = nil
+        let current = { self.revision == turn && Mango9SessionStore.isActive(session) }
+        await withTaskGroup(of: (String, Bool).self) { group in
+            var next = 0
+            func enqueue(_ id: String) { group.addTask { @MainActor in guard current() else { return (id, false) }; do { try await work(id, action); return (id, true) } catch { return (id, false) } } }
+            for id in ids.prefix(4) { enqueue(id); next += 1 }
+            while let (id, ok) = await group.next() {
+                guard current() else { group.cancelAll(); break }
+                if ok { selected.remove(id) }
+                if next < ids.count { enqueue(ids[next]); next += 1 }
+            }
+        }
+        guard current() else { return }
+        busy = false; selecting = !selected.isEmpty
+        if selecting { error = "Some chats could not be updated. They remain selected for retry." }
+    }
+}
+
+struct Mango9ChatListToolbar: View {
+    @ObservedObject var selection: Mango9ChatListSelection
+    let scope: String, ids: [String]
+    var loadAll: (@MainActor () async throws -> [String])?
+    let work: @MainActor (String, Mango9ChatListSelection.Action) async throws -> Void
+    let refresh: @MainActor () async -> Void
+    @State private var confirmDelete = false
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                control(selection.selecting ? "xmark" : "checkmark.circle", selection.selecting ? "Cancel selection" : "Select chats") {
+                    if selection.selecting { selection.finish() } else { selection.selecting = true }
+                }.disabled(!selection.selecting && ids.isEmpty)
+                if selection.selecting {
+                    let all = selection.allPagesSelected && !ids.isEmpty && Set(ids).isSubset(of: selection.selected)
+                    control(all ? "checkmark.square.fill" : "square", all ? "Deselect all" : "Select all chats in this list") {
+                        if all { selection.deselectAll() }
+                        else { Task { await selection.all(loadAll ?? { ids }) } }
+                    }
+                    Text("\(selection.selected.count) selected").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 0)
+                    if selection.busy { ProgressView().padding(.horizontal, 12) }
+                    else {
+                        control("envelope.open", "Mark selected chats read") { perform(.read) }.disabled(selection.selected.isEmpty)
+                        control("envelope.badge", "Mark selected chats unread") { perform(.unread) }.disabled(selection.selected.isEmpty)
+                        control("trash", "Delete selected chats") { confirmDelete = true }.foregroundStyle(.red).disabled(selection.selected.isEmpty)
+                    }
+                } else { Spacer(minLength: 0) }
+            }.disabled(selection.busy).padding(.horizontal, 8)
+            if let error = selection.error { Text(error).font(.caption).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.bottom, 6) }
+        }.background(Color(UIColor.systemBackground)).tint(Color.orangeMain500)
+        .onAppear { selection.bind(scope) }.onChange(of: scope) { selection.bind($0) }
+        .onChange(of: ids) { selection.prune($0) }
+        .alert("Delete selected chats?", isPresented: $confirmDelete) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) { perform(.delete) }
+        } message: { Text("This removes saved history for you. Other participants keep their messages. New messages can bring a chat back.") }
+    }
+    private func control(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol).font(.system(size: 20)).frame(width: 44, height: 44).contentShape(Rectangle()) }
+            .buttonStyle(.plain).accessibilityLabel(title)
+    }
+    private func perform(_ action: Mango9ChatListSelection.Action) {
+        Task { await selection.run(action, work: work); await refresh(); await Mango9InboxUnread.shared.refresh() }
+    }
+}
+
+struct Mango9SelectableChatRow<Row: View, Destination: View>: View {
+    @ObservedObject var selection: Mango9ChatListSelection
+    let id: String?
+    let destination: Destination
+    @ViewBuilder let row: () -> Row
+    var body: some View {
+        if selection.selecting {
+            Button { if let id { selection.toggle(id) } } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: id.map { selection.selected.contains($0) } == true ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 21)).foregroundStyle(Color.orangeMain500).frame(width: 28)
+                    row()
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain).disabled(id == nil || selection.busy)
+                .accessibilityAddTraits(id.map { selection.selected.contains($0) } == true ? .isSelected : [])
+        } else { NavigationLink(destination: destination, label: row) }
+    }
+}

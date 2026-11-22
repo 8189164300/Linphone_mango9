@@ -37,7 +37,7 @@ struct Mango9InboxReadLedger {
 
     func socialUnread(_ row: Mango9SocialThread, session: Mango9Session) -> Bool {
         guard scope == Mango9ReactionTarget.accountKey(session), login == session.loginGeneration else { return row.unread }
-        return reads.unread(row.unread, id: row.id, channel: "social", version: row.readThrough.map(Double.init))
+        return row.markedUnread == true ? row.unread : reads.unread(row.unread, id: row.id, channel: "social", version: row.readThrough.map(Double.init))
     }
     func socialReceipt(_ row: Mango9SocialThread, session: Mango9Session) {
         guard Mango9SessionStore.isActive(session) else { return }; bind(session)

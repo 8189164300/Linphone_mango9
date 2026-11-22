@@ -1181,6 +1181,43 @@ final class Mango9ChatStore: ObservableObject {
 		}
 	}
 
+	func changeConversationRead(id: String, sms: Bool, unread: Bool) async throws {
+        await connectIfNeeded()
+        guard isConnected, let session = Mango9SessionStore.load() else { throw Mango9ChatError.invalidResponse }
+        let target = sms ? Self.normalizedPhone(id) : id
+        let argument: Any = sms ? target : ((Int(target) ?? 0) as Any)
+        if !sms && Int(target) == nil { throw Mango9ChatError.invalidResponse }
+        func current() throws { guard Mango9SessionStore.isActive(session) else { throw CancellationError() } }
+        if unread {
+            let raw = try await rpcCall("markConversationUnreadV3", params: [sms ? "sms" : "team", argument])
+            try current()
+            guard let result = raw as? [String: Any], result["unread"] as? Bool == true,
+                result["channel"] as? String == (sms ? "sms" : "team"), result["target"] as? String == target else { throw Mango9ChatError.invalidResponse }
+            return
+        }
+        var selected = Set<String>(), offset = 0
+        repeat {
+            try current()
+            let raw = try await rpcCall(sms ? "getSmsMessagesV2" : "getChatMessagesV2", params: [argument, offset])
+            try current()
+            guard let result = raw as? [String: Any], let rows = result["list"] as? [[String: Any]], rows.count <= 100 else { throw Mango9ChatError.invalidResponse }
+            for row in rows where row["unread"] as? Bool == true || row["markedUnread"] as? Bool == true {
+                guard let id = row["id"] as? String, !id.isEmpty else { throw Mango9ChatError.invalidResponse }; selected.insert(id)
+            }
+            if rows.count < 100 { break }; offset += rows.count
+            if offset >= 10000 { throw Mango9ChatError.invalidResponse }
+        } while true
+        let ids = Array(selected)
+        for start in stride(from: 0, to: ids.count, by: 100) {
+            try current()
+            let chunk = Array(ids[start..<min(start + 100, ids.count)])
+            let raw = try await rpcCall(sms ? "markSmsMessagesReadV2" : "markChatMessagesReadV2", params: [argument, chunk])
+            try current()
+            guard let result = raw as? [String: Any], let read = result["readIds"] as? [String], Set(chunk).isSubset(of: Set(read)),
+                result["channel"] as? String == (sms ? "sms" : "team"), result["target"] as? String == target else { throw Mango9ChatError.invalidResponse }
+        }
+    }
+
 	private func loadDirectory() async throws {
 		let generation = connectionGeneration
 		let rawUsers = try await rpcCall("getAllUsers", params: [])
@@ -1214,7 +1251,7 @@ final class Mango9ChatStore: ObservableObject {
 	}
 
 	private func loadSMSDirectory() async throws {
-		let rawParties = try await rpcCall("getUserSmsParties", params: [])
+		let rawParties = try await rpcCall("getUserSmsPartiesV2", params: [])
 		let rawSenders = try await rpcCall("getSmsSenders", params: [])
 		smsParties = Self.array(from: rawParties)
 			.compactMap(Self.smsParty(from:))
@@ -1259,7 +1296,7 @@ final class Mango9ChatStore: ObservableObject {
 	private func loadMessages(roomId: String) async throws {
 		let generation = connectionGeneration
 		let request = chatOpenState.current
-		let result = try await rpcCall("getChatMessages", params: [roomId, 0])
+		let result = try await rpcCall("getChatMessagesV2", params: [Int(roomId) ?? 0, 0])
 		guard !Task.isCancelled,
 		      connectionGeneration == generation,
 		      activeRoomId == roomId,
@@ -1280,15 +1317,11 @@ final class Mango9ChatStore: ObservableObject {
 			}
 			.sorted { $0.time < $1.time }
 
-		let inboundIds = messages
-			.filter { $0.fromUserId != currentUserId && $0.status < 3 }
-			.map(\.id)
-		if !inboundIds.isEmpty {
-			_ = try? await rpcCall(
-				"notifyChatMessageStatus",
-				params: [roomId, inboundIds, 3]
-			)
-		}
+        let readIDs = Self.array(from: dictionary["list"] as Any).compactMap { raw -> String? in
+            guard let item = raw as? [String: Any], item["unread"] as? Bool == true || item["markedUnread"] as? Bool == true else { return nil }
+            return item["id"] as? String
+        }
+        if !readIDs.isEmpty { _ = try await rpcCall("markChatMessagesReadV2", params: [Int(roomId) ?? 0, readIDs]) }
 		guard connectionGeneration == generation,
 		      activeRoomId == roomId,
 		      chatOpenState.current == request else { throw CancellationError() }
@@ -1883,6 +1916,7 @@ enum Mango9SMSRouting {
 }
 
 struct Mango9TeamChatListFragment: View {
+    @StateObject private var selection = Mango9ChatListSelection()
 	@ObservedObject private var store = Mango9ChatStore.shared
 	@ObservedObject private var conversationVisibility = Mango9PersonalConversationVisibility.shared
 	@State private var isShowingCreateGroup = false
@@ -1924,11 +1958,20 @@ struct Mango9TeamChatListFragment: View {
 				}
 				.padding(24)
 			} else {
+                VStack(spacing: 0) {
+                    Mango9ChatListToolbar(selection: selection,
+                        scope: (Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey) ?? "") + ":team:" + searchText,
+                        ids: groupRooms.map(\.id) + visibleUsers.compactMap { store.roomPreview(for: $0.id)?.id },
+                        work: { id, action in
+                            guard let session = Mango9SessionStore.load() else { throw Mango9MessagingError.scopeChanged }
+                            if action == .delete { try await conversationVisibility.delete(session: session, channel: .team, id: id) }
+                            else { try await store.changeConversationRead(id: id, sms: false, unread: action == .unread) }
+                        }, refresh: { await store.refreshDirectory() })
 				List {
 					if !groupRooms.isEmpty {
 						Section {
 							ForEach(groupRooms) { room in
-								NavigationLink(destination: Mango9ChatFragment(room: room)) {
+								Mango9SelectableChatRow(selection: selection, id: room.id, destination: Mango9ChatFragment(room: room)) {
 									Mango9GroupChatRow(room: room)
 								}
 								.accessibilityIdentifier("team.thread." + room.id)
@@ -1939,7 +1982,7 @@ struct Mango9TeamChatListFragment: View {
 					}
 					Section {
 						ForEach(visibleUsers) { user in
-							NavigationLink(destination: Mango9ChatFragment(user: user)) {
+							Mango9SelectableChatRow(selection: selection, id: store.roomPreview(for: user.id)?.id, destination: Mango9ChatFragment(user: user)) {
 								Mango9TeamChatRow(user: user)
 							}
 							.accessibilityIdentifier("team.thread.user." + String(user.id))
@@ -1953,6 +1996,7 @@ struct Mango9TeamChatListFragment: View {
 				.refreshable {
 					await store.refreshDirectory()
 				}
+                }
 			}
 			NavigationLink(
 				destination: Group {

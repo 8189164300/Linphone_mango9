@@ -43,6 +43,7 @@ struct ConversationsListFragment: View {
 	var onNewConversation: () -> Void
 	@ObservedObject private var sharedMainViewModel = SharedMainViewModel.shared
 	@State private var showingNewTeamChat = false
+	@StateObject private var smsSelection = Mango9ChatListSelection()
 	@ObservedObject private var chatTabs = Mango9ChatTabPreferences.shared
 	
 	var body: some View {
@@ -141,12 +142,25 @@ struct ConversationsListFragment: View {
 	}
 
 	private var mango9SMSConversationList: some View {
+        VStack(spacing: 0) {
+            Mango9ChatListToolbar(selection: smsSelection,
+                scope: (Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey) ?? "") + ":sms:" + conversationsListViewModel.currentFilter,
+                ids: visibleSMSParties.map(\.phone), work: { id, action in
+                    guard let session = Mango9SessionStore.load() else { throw Mango9MessagingError.scopeChanged }
+                    if action == .delete { try await conversationVisibility.delete(session: session, channel: .sms, id: id) }
+                    else { try await mango9ChatStore.changeConversationRead(id: id, sms: true, unread: action == .unread) }
+                }, refresh: { await mango9ChatStore.refreshSMSDirectory() })
 		List {
 			ForEach(visibleSMSParties) { party in
-				Mango9SMSConversationRow(party: party)
+				HStack(spacing: 10) {
+                    if smsSelection.selecting { Image(systemName: smsSelection.selected.contains(party.phone) ? "checkmark.circle.fill" : "circle").font(.system(size: 21)).foregroundStyle(Color.orangeMain500).frame(width: 28) }
+                    Mango9SMSConversationRow(party: party)
+                }
+                    .disabled(smsSelection.busy)
 					.accessibilityIdentifier("sms.thread." + party.phone)
 					.contentShape(Rectangle())
 					.onTapGesture {
+                        if smsSelection.selecting { smsSelection.toggle(party.phone); return }
 						Mango9SMSRouting.open(
 							Mango9SMSTarget(
 								phone: party.phone,
@@ -178,6 +192,7 @@ struct ConversationsListFragment: View {
 			}
 		}
 	}
+        }
 
 	private var legacyConversationList: some View {
 		List {
