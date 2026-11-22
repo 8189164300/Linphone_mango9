@@ -1,6 +1,8 @@
-Mango9 6.2.26 (78): business communications and CRM companion, iOS 15+.
+Mango9 6.2.27 (79): business communications and CRM companion, iOS 15+.
 
-Build 78 includes fixes for Social Chat attachment and shared-card display, plus platform icons and public profile links in conversation headers. Existing unread and deleted-chat behavior is preserved.
+Build 79 adds compact chat-list selection controls for SMS, Team Chat, Social and Live Chat. Open Chat, choose a channel and tap the checkmark to select chats. The toolbar offers Select all, Mark read, Mark unread and Delete. Delete removes saved chat history only for the signed-in user; other participants keep their messages, and a new message can bring the chat back. Mark unread is a personal reminder, not a change to another participant's read receipt. New arrivals are not automatically selected. Failed actions remain selected for retry.
+
+This build retains the Social Chat attachment, shared-card and profile-link improvements approved in version 6.2.26.
 
 As in approved version 6.2.25, the app includes native CRM Opportunities, including values, stages, details, activity links, account-scoped filters and new-item alerts. Open CRM > Opportunities, or open a Lead or Client and use its Opportunity actions. Lead conversion and all record visibility follow the account's server permissions. Follow-ups are saved through the Opportunity API and synchronized to the responsible user's Calendar when the opportunity is open and has a next action, due time and Calendar access. Activity content loads when opened.
 
@@ -14,4 +16,4 @@ Chat contains SMS, Team Chat, Social and Live Chat. Settings > Conversations con
 
 Contacts, Calls, Chat and CRM use the main footer. CRM includes Leads, Clients, Opportunities, Calendar and Tasks, subject to account permissions.
 
-The sign-in gear opens optional manual SIP setup. Its settings code is the displayed app version, 6.2.26. This opens a form for SIP credentials supplied by an administrator and does not grant CRM permissions. Normal sign-in does not require this setup.
+The sign-in gear opens optional manual SIP setup. Its settings code is the displayed app version, 6.2.27. This opens a form for SIP credentials supplied by an administrator and does not grant CRM permissions. Normal sign-in does not require this setup.

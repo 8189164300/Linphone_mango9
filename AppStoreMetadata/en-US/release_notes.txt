@@ -1,3 +1,3 @@
-• Improved Social Chat display for shared cards, images, videos and attachments.
-• Added platform icons and direct profile links to Social Chat headers.
-• Improved refresh behavior for attachment previews.
+• Select individual chats or all chats in SMS, Team Chat, Social and Live Chat.
+• Mark selected chats as read or unread, or delete their history for your account.
+• Improved unread badge updates and selection stability while chat lists refresh.
