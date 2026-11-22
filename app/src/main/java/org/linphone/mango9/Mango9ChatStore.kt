@@ -753,7 +753,7 @@ class Mango9ChatStore private constructor(context: Context) {
         val generation = connectionGeneration
         val identity = sessions.activeIdentity ?: throw Mango9ChatException(DISCONNECTED)
         val initialPhones = state.value.smsParties.map { it.phone }.toSet()
-        val parties = array(rpc("getUserSmsParties", JSONArray())).objects().mapNotNull(::parseSmsParty)
+        val parties = array(rpc("getUserSmsPartiesV2", JSONArray())).objects().mapNotNull(::parseSmsParty)
             .sortedByDescending(Mango9SmsParty::latest)
         val senders = array(rpc("getSmsSenders", JSONArray())).objects().mapNotNull(::parseSmsSender)
         val lease = currentConnectionSession() ?: throw Mango9ApiException.Unauthorized
@@ -776,7 +776,7 @@ class Mango9ChatStore private constructor(context: Context) {
         val generation = connectionGeneration
         val identity = sessions.activeIdentity ?: throw Mango9ChatException(DISCONNECTED)
         val owner = conversationOwnership.snapshot() ?: return
-        val result = rpc("getChatMessages", JSONArray().put(roomId).put(0)) as? JSONObject
+        val result = rpc("getChatMessagesV2", JSONArray().put(roomId.toInt()).put(0)) as? JSONObject
             ?: throw Mango9ChatException(INVALID_RESPONSE)
         val messages = result.optJSONArray("list").orEmpty().objects().mapNotNull(::parseMessage)
             .sortedBy(Mango9ChatMessage::time)
@@ -802,11 +802,13 @@ class Mango9ChatStore private constructor(context: Context) {
                 )
             }
         }
-        val inbound = messages.filter { it.fromUserId != state.value.currentUserId && it.status < 3 }.map { it.id }
+        val inbound = result.optJSONArray("list").orEmpty().objects().filter {
+            (it.optBoolean("unread") || it.optBoolean("markedUnread")) && it.getString("id") !in hidden
+        }.map { it.getString("id") }
         if (inbound.isNotEmpty()) {
-            runCatching {
-                rpc("notifyChatMessageStatus", JSONArray().put(roomId).put(JSONArray(inbound)).put(3))
-            }
+            val receipt = rpc("markChatMessagesReadV2", JSONArray().put(roomId.toInt()).put(JSONArray(inbound))) as? JSONObject
+                ?: throw Mango9ChatException(INVALID_RESPONSE)
+            check(receipt.getJSONArray("readIds").length() == inbound.size)
         }
         ensureCurrent(generation, identity)
         mutableState.update { current ->
@@ -860,6 +862,44 @@ class Mango9ChatStore private constructor(context: Context) {
                     current
                 }
             }
+        }
+    }
+
+    suspend fun changeConversationRead(lease: Mango9SessionLease, channel: String, target: String, unread: Boolean) {
+        require(channel == "sms" || channel == "team")
+
+        fun valid() {
+            if (sessions.currentSession(lease) == null || currentConnectionSession() != lease) throw Mango9ApiException.Unauthorized
+        }
+        valid()
+        val id = if (channel == "sms") normalizedPhone(target) else target
+        val rpcTarget: Any = if (channel == "team") id.toInt() else id
+        if (unread) {
+            val result = rpc("markConversationUnreadV3", JSONArray().put(channel).put(rpcTarget)) as? JSONObject
+                ?: throw Mango9ChatException(INVALID_RESPONSE)
+            valid(); check(result.getString("channel") == channel && result.getString("target") == id && result.optBoolean("unread"))
+            return
+        }
+        val ids = linkedSetOf<String>(); var offset = 0
+        while (true) {
+            valid()
+            val result = rpc(if (channel == "team")"getChatMessagesV2" else "getSmsMessagesV2", JSONArray().put(rpcTarget).put(offset)) as? JSONObject
+                ?: throw Mango9ChatException(INVALID_RESPONSE)
+            valid(); val page = result.getJSONArray("list").objects()
+            page.filter{it.optBoolean("unread") || it.optBoolean("markedUnread")}.forEach{ids.add(it.getString("id"))}
+            if (page.size < 100)break
+            offset += page.size; check(offset < 10000){"Too many messages. Open the chat to continue."}
+        }
+        ids.toList().chunked(100).forEach { chunk ->
+            valid()
+            val receipt = rpc(if (channel == "team")"markChatMessagesReadV2" else "markSmsMessagesReadV2", JSONArray().put(rpcTarget).put(JSONArray(chunk))) as? JSONObject
+                ?: throw Mango9ChatException(INVALID_RESPONSE)
+            valid(); val acknowledged = receipt.getJSONArray("readIds").let{raw ->
+                (0 until raw.length()).map{
+                raw.getString(it)
+            }.toSet()
+            }
+            check(receipt.getString("channel") == channel && receipt.getString("target") == id && acknowledged == chunk.toSet())
         }
     }
 

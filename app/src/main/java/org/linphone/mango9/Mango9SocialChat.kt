@@ -20,7 +20,7 @@ data class Mango9SocialThread(
     val summary: String, val accountId: String?, val accountName: String, val activityAt: String,
     val unread: Boolean, val connected: Boolean, val canReply: Boolean, val deleted: Boolean,
     val capabilities: Mango9ReactionCapabilities?, val readThrough: Int?, val openSend: Boolean,
-    val participantHandle: String? = null, val accountHandle: String? = null,
+    val participantHandle: String? = null, val accountHandle: String? = null, val markedUnread: Boolean = false,
 ) {
     // Preparing a local draft does not authorize a provider send. Keep those gates separate,
     // like SMS/Team, so an unavailable reply window does not make the attachment button inert.
@@ -41,7 +41,7 @@ data class Mango9SocialThread(
             j.stringOrNull("activityAt").orEmpty(), j.opt("unread") == true, j.opt("connectionCurrent") == true,
             j.opt("canReply") == true, j.opt("deleted") == true, Mango9ReactionCapabilities.parse(j.optJSONObject("reactionCapabilities")),
             if (j.isNull("readThrough")) null else j.getInt("readThrough"), j.optJSONObject("openSend") != null,
-            j.stringOrNull("participantHandle"), j.stringOrNull("accountHandle")
+            j.stringOrNull("participantHandle"), j.stringOrNull("accountHandle"), j.optBoolean("markedUnread")
         )
     }
 }
@@ -217,6 +217,13 @@ internal class Mango9SocialRepository(context: Context, private val api: Mango9M
         )
         require(result.id == thread.id)
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { Mango9InboxUnread.socialReceipt(result, lease) }
+        return result
+    }
+
+    suspend fun markUnread(lease: Mango9SessionLease, id: String): Mango9SocialThread {
+        val result = Mango9SocialThread.parse(api.request(lease, channel, listOf("inbox-unread"), body = JSONObject().put("id", id).put("requestId", UUID.randomUUID().toString())))
+        check(result.id == id && result.unread)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main){Mango9InboxUnread.socialReceipt(result, lease)}
         return result
     }
 

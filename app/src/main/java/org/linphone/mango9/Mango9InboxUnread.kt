@@ -88,7 +88,7 @@ internal object Mango9InboxUnread {
     }
 
     fun socialRow(row: Mango9SocialThread, owner: Mango9SessionLease): Mango9SocialThread =
-        if (sameAccount(owner)) row.copy(unread = reads.unread(row.unread, row.id, "social", row.readThrough?.toLong())) else row
+        if (sameAccount(owner) && !row.markedUnread) row.copy(unread = reads.unread(row.unread, row.id, "social", row.readThrough?.toLong())) else row
 
     private fun sameAccount(owner: Mango9SessionLease) = account?.loginGeneration == owner.loginGeneration &&
         account?.selectionGeneration == owner.selectionGeneration && account?.session?.let(Mango9MessagingApi::account) == Mango9MessagingApi.account(owner.session)

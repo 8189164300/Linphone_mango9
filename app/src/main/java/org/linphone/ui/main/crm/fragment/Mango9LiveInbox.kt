@@ -44,6 +44,7 @@ internal class Mango9LiveInbox(
     }
     private val list = RecyclerView(ui.context)
     private val adapter = Rows()
+    private lateinit var selection: Mango9ChatListSelection
     private var siteIds = listOf("")
     private var siteNames = emptyList<String>()
     private val statuses = listOf("", "open", "resolved")
@@ -81,6 +82,11 @@ internal class Mango9LiveInbox(
         )
         view.addView(options)
         view.addView(search, LinearLayout.LayoutParams(-1, ui.dp(44)).apply { setMargins(ui.dp(12), 0, ui.dp(12), 0) })
+        selection = Mango9ChatListSelection(
+            fragment, model::listScope, {model.owner() != null}, model::allForSelection, model::listAction,
+            {model.refresh(force = true); Mango9InboxUnread.refreshSoon()}, {adapter.notifyDataSetChanged()}
+        )
+        view.addView(selection.view)
         view.addView(progress, LinearLayout.LayoutParams(-1, ui.dp(2)))
         view.addView(notice)
         list.layoutManager = LinearLayoutManager(ui.context); list.adapter = adapter
@@ -170,7 +176,8 @@ internal class Mango9LiveInbox(
             "$it  Retry"
         } ?: if (state.conversations.isEmpty() && !state.loading) "No conversations match these filters." else ""
         notice.visibility = if (notice.text.isEmpty()) View.GONE else View.VISIBLE
-        adapter.submitList(state.conversations)
+        selection.bind(state.conversations.map{it.id})
+        adapter.submitList(state.conversations){adapter.notifyDataSetChanged()}
     }
 
     private inner class Rows : ListAdapter<Mango9LiveConversation, Holder>(object : DiffUtil.ItemCallback<Mango9LiveConversation>() {
@@ -184,6 +191,7 @@ internal class Mango9LiveInbox(
     }
 
     private inner class Holder(val root: LinearLayout) : RecyclerView.ViewHolder(root) {
+        private val checkbox = CheckBox(ui.context).apply{contentDescription = "Select chat"}
         private val title = ui.text(size = 17f, bold = true)
         private val preview = ui.text(size = 15f).apply { maxLines = 2; setTextColor(ui.secondary) }
         private val website = ui.text(size = 12f).apply { setTextColor(ui.secondary); ui.oneLine(this) }
@@ -192,7 +200,8 @@ internal class Mango9LiveInbox(
         init {
             root.layoutParams = RecyclerView.LayoutParams(-1, -2)
             ui.padded(root, 16, 8); ui.oneLine(title)
-            root.addView(title); root.addView(preview)
+            val header = ui.row(); header.addView(checkbox, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44))); header.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+            root.addView(header); root.addView(preview)
             val footer = ui.row(); footer.addView(website, LinearLayout.LayoutParams(0, -2, 1f)); footer.addView(date)
             root.addView(footer); root.addView(ui.line())
         }
@@ -202,7 +211,10 @@ internal class Mango9LiveInbox(
             preview.text = item.summary.ifBlank {
                 "No messages yet"
             }; website.text = item.siteName; date.text = ui.date(item.updated)
-            root.setOnClickListener { open(item) }
+            checkbox.visibility = if (selection.selecting)View.VISIBLE else View.GONE; checkbox.isChecked = selection.checked(item.id); checkbox.isEnabled = !selection.busy
+            checkbox.setOnClickListener{selection.toggle(item.id)}
+            root.isEnabled = !selection.busy
+            root.setOnClickListener { if (selection.selecting)selection.toggle(item.id) else open(item) }
         }
     }
 }

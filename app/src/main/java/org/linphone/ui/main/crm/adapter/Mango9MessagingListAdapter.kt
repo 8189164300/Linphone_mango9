@@ -110,6 +110,11 @@ class Mango9MessagingListAdapter(
 ) : ListAdapter<Mango9MessagingListItem, Mango9MessagingListAdapter.ViewHolder>(DiffCallback) {
     internal var notificationScope: org.linphone.mango9.Mango9SessionLease? = null
 
+    var selecting = false
+    var selectionBusy = false
+    var selected: (Mango9MessagingListItem) -> Boolean = { false }
+    var selectable: (Mango9MessagingListItem) -> Boolean = { true }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         val binding = Mango9MessagingListCellBinding.inflate(LayoutInflater.from(parent.context), parent, false)
         return ViewHolder(binding)
@@ -119,6 +124,11 @@ class Mango9MessagingListAdapter(
 
     inner class ViewHolder(private val binding: Mango9MessagingListCellBinding) : RecyclerView.ViewHolder(binding.root) {
         fun bind(item: Mango9MessagingListItem) {
+            binding.chatSelected.visibility = if (selecting)View.VISIBLE else View.GONE
+            binding.chatSelected.isChecked = selected(item)
+            binding.chatSelected.isEnabled = !selectionBusy && selectable(item)
+            binding.chatSelected.setOnClickListener{onClick(item)}
+            binding.root.isEnabled = !selectionBusy
             val context = binding.root.context
             val title: String
             val preview: String

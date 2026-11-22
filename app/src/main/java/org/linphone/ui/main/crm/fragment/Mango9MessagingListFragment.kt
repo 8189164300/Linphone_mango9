@@ -25,6 +25,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import org.linphone.mango9.*
 import org.linphone.R
 import org.linphone.databinding.Mango9MessagingListFragmentBinding
 import org.linphone.mango9.Mango9ChatConnectionState
@@ -52,6 +53,7 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     private var accountIds = emptyList<String>()
     private var accountLabels = emptyList<String>()
     private var mode = Mango9MessagingTab.Sms
+    private lateinit var selection: Mango9ChatListSelection
     private lateinit var liveInbox: Mango9LiveInbox
 
     private fun visibleTabs() {
@@ -90,6 +92,25 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         smsAdapter = Mango9MessagingListAdapter({ item -> openItem(Mango9MessagingTab.Sms, item) }, ::holdConversation)
         teamAdapter = Mango9MessagingListAdapter({ item -> openItem(Mango9MessagingTab.Team, item) }, ::holdConversation)
         socialAdapter = Mango9MessagingListAdapter({ item -> openItem(Mango9MessagingTab.Social, item) }, ::holdConversation, social::preview)
+        selection = Mango9ChatListSelection(
+            this, ::selectionScope,
+            {Mango9SessionStore(requireContext()).captureSession() != null},
+            {if (mode == Mango9MessagingTab.Social)social.allForSelection() else adapterFor(mode).currentList.mapNotNull(::target)},
+            {id, action ->
+                val lease = Mango9SessionStore(requireContext()).captureSession() ?: throw Mango9ApiException.Unauthorized
+                val channel = when (mode){Mango9MessagingTab.Sms -> Mango9MessageChannel.sms; Mango9MessagingTab.Team -> Mango9MessageChannel.team; else -> Mango9MessageChannel.social}
+                if (action == "delete"){
+                    Mango9MessageCommands(requireContext()).visibility(lease, channel, null, listOf(id), true, true)
+                } else if (channel == Mango9MessageChannel.social){
+                    social.changeListRead(id, action == "unread")
+                } else {
+                    Mango9ChatStore.get(requireContext()).changeConversationRead(lease, channel.name, id, action == "unread")
+                }
+            },
+            {if (mode == Mango9MessagingTab.Social)social.inbox() else viewModel.refresh(); Mango9InboxUnread.refreshSoon()},
+            ::selectionChanged
+        )
+        binding.chatSelectionHost.addView(selection.view)
         binding.list.layoutManager = LinearLayoutManager(requireContext())
         binding.list.adapter = adapterFor(mode)
         binding.back.setOnClickListener { goBack() }
@@ -166,6 +187,7 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     private fun render(state: Mango9ChatState) {
         val scope = Mango9SessionStore(requireContext()).captureSession()
         listOf(smsAdapter, teamAdapter, socialAdapter).forEach { it.notificationScope = scope }
+        binding.chatSelectionHost.visibility = if (mode == Mango9MessagingTab.Live)View.GONE else View.VISIBLE
         binding.socialFilters.visibility = if (mode == Mango9MessagingTab.Social) View.VISIBLE else View.GONE
         val live = mode == Mango9MessagingTab.Live
         liveInbox.show(live); binding.mango9LiveHost.visibility = if (live) View.VISIBLE else View.GONE
@@ -260,7 +282,9 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         val keepLatestVisible = binding.list.adapter === adapter &&
             (layout?.findFirstVisibleItemPosition() ?: -1) <= 0 &&
             adapter.currentList.firstOrNull()?.stableId != rows.firstOrNull()?.stableId
+        if (binding.list.adapter === adapter && ::selection.isInitialized) selection.bind(rows.mapNotNull(::target))
         adapter.submitList(rows) {
+            if (::selection.isInitialized) selectionChanged()
             // RecyclerView otherwise anchors the old first row, hiding the newly promoted row above it.
             // Preserve the reader's position when they are browsing older conversations.
             if (view === owner && binding.list.adapter === adapter && keepLatestVisible &&
@@ -283,6 +307,7 @@ class Mango9MessagingListFragment : GenericMainFragment() {
             render(viewModel.currentState())
             return
         }
+        if (selection.selecting){selection.toggle(target(item)); return}
         when (item) {
             is Mango9MessagingListItem.Social -> navigateConversation(TYPE_SOCIAL, 0, item.thread.id, item.thread.title, null, social.activeLease())
             is Mango9MessagingListItem.Group -> openRoom(item.room)
@@ -303,7 +328,35 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         }
     }
 
+    private fun target(item: Mango9MessagingListItem): String? = when (item){
+        is Mango9MessagingListItem.Sms -> item.party.phone
+        is Mango9MessagingListItem.Group -> item.room.id
+        is Mango9MessagingListItem.User -> item.room?.id
+        is Mango9MessagingListItem.Social -> item.thread.id
+    }
+
+    private fun selectionScope(): String {
+        val lease = Mango9SessionStore(requireContext()).captureSession()
+        val filters = social.current()
+        return listOf(
+            lease?.let{
+            Mango9MessagingApi.account(it.session)
+        },
+            lease?.loginGeneration, lease?.selectionGeneration, mode, filters.platform, filters.account, filters.search
+        ).joinToString("|")
+    }
+
+    private fun selectionChanged() {
+        if (!::selection.isInitialized)return
+        listOf(smsAdapter, teamAdapter, socialAdapter).forEach{adapter ->
+            adapter.selecting = selection.selecting; adapter.selectionBusy = selection.busy
+            adapter.selected = {target(it)?.let(selection::checked) == true}; adapter.selectable = {target(it) != null}
+            adapter.notifyDataSetChanged()
+        }
+    }
+
     private fun holdConversation(anchor: View, item: Mango9MessagingListItem) {
+        if (selection.selecting)return
         showMango9ConversationMenu(anchor, item) {
             listOf(smsAdapter, teamAdapter, socialAdapter).forEach { it.notifyDataSetChanged() }
             if (mode == Mango9MessagingTab.Social) social.inbox() else viewModel.refresh()

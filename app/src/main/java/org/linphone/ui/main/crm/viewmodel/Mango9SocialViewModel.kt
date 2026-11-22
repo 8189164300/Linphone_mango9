@@ -235,6 +235,34 @@ internal class Mango9SocialViewModel(
         } catch (e: Exception) { failure(owner, request, e) }
     }
 
+    suspend fun allForSelection(): List<String> {
+        val owner = activeLease() ?: throw Mango9ApiException.Unauthorized
+        val filters = current(); val scope = Triple(filters.platform, filters.account, filters.search)
+        val rows = linkedMapOf<String, Mango9SocialThread>(); val seen = mutableSetOf<String>(); var cursor: String? = null
+        repeat(200) {
+            val page = repository.inbox(owner, filters.platform, filters.account, cursor, filters.search)
+            check(activeLease() == owner && Triple(current().platform, current().account, current().search) == scope)
+            page.items.forEach{rows[it.id] = it}
+            cursor = page.next
+            if (cursor == null) {
+                val hidden = rows.keys.toList().chunked(100).flatMap{
+                    commands.visibility(owner, Mango9MessageChannel.social, null, it, false, true)
+                }.toSet()
+                check(activeLease() == owner && Triple(current().platform, current().account, current().search) == scope)
+                val visible = rows.values.filterNot{it.id in hidden}
+                state.value = current().copy(threads = visible, nextThread = null)
+                return visible.map{it.id}
+            }
+            check(seen.add(requireNotNull(cursor))){"Repeated page. Please retry."}
+        }
+        error("Too many chats. Narrow the filters.")
+    }
+
+    suspend fun changeListRead(id: String, unread: Boolean) {
+        val owner = activeLease() ?: throw Mango9ApiException.Unauthorized
+        if (unread)repository.markUnread(owner, id) else repository.markRead(owner, repository.thread(owner, id))
+    }
+
     fun poll(id: String) = requestRead(ThreadRead(id, false, false, true))
 
     fun open(id: String, more: Boolean = false, refreshProvider: Boolean = false) =

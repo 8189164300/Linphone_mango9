@@ -46,7 +46,7 @@ internal class Mango9LiveChatFailure(val status: Int) : Exception(
 
 internal data class Mango9LiveConversation(
     val id: String, val site: String, val name: String, val siteName: String, val summary: String,
-    val status: String, val unread: Boolean, val updated: String, val assignee: Int?, val context: JSONObject, val email: String,
+    val status: String, val unread: Boolean, val updated: String, val assignee: Int?, val context: JSONObject, val email: String, val lastMessageID: Long? = null,
 ) {
     companion object {
         fun parse(data: JSONObject): Mango9LiveConversation {
@@ -56,6 +56,9 @@ internal data class Mango9LiveConversation(
                 data.liveText("site_name").ifBlank { "Live Chat" }, data.liveText("summary"), data.liveText("status"),
                 data.opt("unread") == true, data.liveText("updated_at"), data.optInt("assignee_id").takeIf { it > 0 },
                 data.optJSONObject("visitorContext") ?: data.optJSONObject("context") ?: JSONObject(), data.liveText("email"),
+                    data.optLong("last_message_id").takeIf{
+                    it > 0
+                },
             )
         }
     }
@@ -151,7 +154,7 @@ internal class Mango9LiveChatApi internal constructor(
         fun wire(session: Mango9Session, operation: String, query: Map<String, String>, body: JSONObject?): Request {
             val reads = setOf("sites", "list", "messages", "capabilities", "availability", "analytics")
             val writes =
-                setOf("send", "read", "typing", "status", "assign", "presence", "preferences", "visibility", "conversation-visibility", "reaction")
+                setOf("send", "unread", "read", "typing", "status", "assign", "presence", "preferences", "visibility", "conversation-visibility", "reaction")
             require((body == null && operation in reads) || (body != null && operation in writes && query.isEmpty()))
             val base = Mango9Configuration.verifiedHttpsUrl(session.crmApiBaseUrl)?.toString()?.toHttpUrl() ?: throw Mango9LiveChatFailure(0)
             require(base.query == null)
