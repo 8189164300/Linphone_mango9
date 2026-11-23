@@ -132,16 +132,34 @@ internal class Mango9SocialViewModel : ViewModel() {
         state.value = previous.copy(loading = true, error = null, previews = emptyMap(), previewEpoch = request)
         viewModelScope.launch {
             try {
-                val accounts = if (previous.accounts.isEmpty()) repository.accounts(owner) else previous.accounts
-                val page = repository.inbox(owner, previous.platform, previous.account, if (more) previous.nextThread else null)
-                val merged = Mango9SocialPages.inbox(previous.threads, page, more)
+                val accounts = if (more) {
+                    previous.accounts
+                } else {
+                    try {
+                    repository.accounts(owner)
+                } catch (e: Exception) {
+                    if (e is CancellationException || e is Mango9ApiException || e is Mango9MessagingFailure && e.status in setOf(401, 403, 404)) throw e
+                    // A temporary filter-inventory failure must not stop saved messages refreshing.
+                    previous.accounts
+                }
+                }
+                if (!valid(owner, request)) return@launch
+                val platform = previous.platform.takeIf { p -> p.isEmpty() || accounts.any { it.platform == p } }.orEmpty()
+                val account = previous.account.takeIf { a ->
+                    a.isEmpty() || accounts.any {
+                    it.id == a && (platform.isEmpty() || it.platform == platform)
+                }
+                }.orEmpty()
+                val filterChanged = platform != previous.platform || account != previous.account
+                val page = repository.inbox(owner, platform, account, if (more && !filterChanged) previous.nextThread else null)
+                val merged = Mango9SocialPages.inbox(if (filterChanged) emptyList() else previous.threads, page, more && !filterChanged)
                 val ids = merged.map { it.id }
                 val hidden = if (ids.isEmpty()) emptySet() else commands.visibility(owner, Mango9MessageChannel.social, null, ids, false, true)
                 if (!valid(owner, request)) return@launch
                 state.value = current().copy(
-                    accounts = accounts,
+                    accounts = accounts, platform = platform, account = account,
                     threads = Mango9SocialRecency.overlay(owner, merged.filterNot { it.id in hidden }),
-                    nextThread = Mango9SocialPages.cursor(previous.nextThread, page, more, previous.threads.isNotEmpty()), loading = false
+                    nextThread = Mango9SocialPages.cursor(if (filterChanged) null else previous.nextThread, page, more && !filterChanged, !filterChanged && previous.threads.isNotEmpty()), loading = false
                 )
             } catch (e: Exception) { failure(owner, request, e) }
         }
