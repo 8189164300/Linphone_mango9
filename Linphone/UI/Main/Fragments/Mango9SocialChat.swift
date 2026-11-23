@@ -741,7 +741,8 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 			struct Inventory: Decodable { let items: [Mango9SocialAccount] }
 			let result = try await api.request(Inventory.self, session: session, social: true, path: ["accounts"])
 			guard life == lifetime else { return }
-			accounts = result.items.filter { $0.connectedDM }
+			var seen = Set<String>()
+			accounts = result.items.filter { $0.connectedDM && seen.insert($0.id).inserted }
 				.sorted { ($0.platform, $0.title) < ($1.platform, $1.title) }
 			accountsLoadedAt = Date(); accountError = nil
 			let oldPlatform = selectedPlatform, oldAccount = selectedAccount
@@ -1100,12 +1101,22 @@ struct SocialInboxListContent: View {
 		.mango9ConversationVisibilityRefresh(store: conversationVisibility, channel: .social, ids: store.threads.map(\.id))
 		.refreshable { await store.loadAccounts(force: true); await store.loadInbox(search: search) }
 		}.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+		// Account filters must be ready even when the chat list is slow or offline.
+		// Keep inventory independent of search and pagination, and refresh on return.
+		.task(id: phase) {
+			guard phase == .active else { return }
+			await store.loadAccounts(force: true)
+			while !Task.isCancelled {
+				try? await Task.sleep(nanoseconds: 60_000_000_000)
+				guard !Task.isCancelled else { return }
+				await store.loadAccounts()
+			}
+		}
 		.task(id: RefreshKey(query: store.inboxQuery(search: search), active: phase == .active)) {
 			guard phase == .active else { return }
 			try? await Task.sleep(nanoseconds: 300_000_000)
 			guard !Task.isCancelled else { return }
 			await store.loadInbox(search: search)
-			await store.loadAccounts()
 			while !Task.isCancelled {
 				try? await Task.sleep(nanoseconds: 20_000_000_000)
 				guard !Task.isCancelled else { return }
