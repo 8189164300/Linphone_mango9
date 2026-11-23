@@ -25,9 +25,9 @@ import linphonesw
 /// Mango9-managed enrollment.
 ///
 /// SIP credentials and tenant details are delivered by the Mango9 provisioning
-/// service after either CRM password login or the CRM's existing email-code
-/// verification flow. The public Linphone account creator and arbitrary
-/// SIP-account paths are intentionally not exposed.
+/// service after either Mango9 password login or email-code verification.
+/// Optional manual SIP configuration is available directly from Connection
+/// settings. The public Linphone account creator is not exposed.
 struct LoginFragment: View {
 	private enum LoginMode: Equatable {
 		case password
@@ -42,10 +42,6 @@ struct LoginFragment: View {
 
 	@State private var isShowHelpFragment = false
 	@State private var isShowingManual = false
-	@State private var isShowingSettingsGate = false
-	@State private var settingsUnlocked = false
-	@State private var settingsPassword = ""
-	@State private var settingsPasswordError = false
 	@State private var username = ""
 	@State private var password = ""
 	@State private var loginMode: LoginMode = .password
@@ -93,10 +89,6 @@ struct LoginFragment: View {
 			.navigationTitle("")
 			.navigationBarHidden(true)
 		}
-		.sheet(isPresented: $isShowingSettingsGate, onDismiss: {
-			settingsPassword = ""
-			if settingsUnlocked { settingsUnlocked = false; isShowingManual = true }
-		}) { settingsGate }
 		.navigationViewStyle(StackNavigationViewStyle())
 		.preferredColorScheme(isShowHelpFragment || isShowingManual ? nil : .dark)
 		.onAppear {
@@ -143,55 +135,13 @@ struct LoginFragment: View {
 			NavigationLink(isActive: $isShowingManual) {
 				ThirdPartySipAccountLoginFragment(accountLoginViewModel: AccountLoginViewModel())
 			} label: { EmptyView() }
-			Button {
-				settingsPassword = ""; settingsPasswordError = false; settingsUnlocked = false
-				isShowingSettingsGate = true
-			} label: {
+			Button { isShowingManual = true } label: {
 				Image(systemName: "gearshape").font(.system(size: 21)).frame(width: 44, height: 44)
 			}.accessibilityLabel("Connection settings")
 			Button { withAnimation { isShowHelpFragment = true } } label: {
 				Image(systemName: "questionmark.circle").font(.system(size: 21)).frame(width: 44, height: 44)
 			}.accessibilityLabel("Help")
 		}.foregroundStyle(Color.white.opacity(0.85)).padding(.horizontal, 12).padding(.top, 6)
-	}
-
-	private var settingsGate: some View {
-		NavigationView {
-			Form {
-				Section {
-					Text("Manual SIP setup")
-						.font(.headline)
-					Text("Configure a SIP calling account supplied by your administrator. This optional setup is separate from Mango9 sign-in and does not unlock CRM permissions.")
-						.font(.subheadline).foregroundStyle(.secondary)
-				}
-				SecureField("Settings password", text: $settingsPassword)
-					.textInputAutocapitalization(.never).disableAutocorrection(true)
-					.submitLabel(.go).onSubmit(unlockSettings)
-					.accessibilityIdentifier("settings.unlockPassword")
-				if settingsPasswordError {
-					Text("Incorrect settings password").foregroundStyle(Color.red)
-				}
-			}.navigationTitle("Connection settings").navigationBarTitleDisplayMode(.inline)
-				.toolbar {
-					ToolbarItem(placement: .cancellationAction) {
-						Button("Cancel") { isShowingSettingsGate = false }
-					}
-					ToolbarItem(placement: .confirmationAction) {
-						Button("Unlock", action: unlockSettings).disabled(settingsPassword.isEmpty)
-					}
-				}
-		}.navigationViewStyle(.stack).preferredColorScheme(.light).tint(.mango9Primary)
-	}
-
-	private func unlockSettings() {
-		let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-		guard let version, !version.isEmpty,
-			settingsPassword.trimmingCharacters(in: .whitespacesAndNewlines) == version else {
-			settingsPasswordError = true
-			return
-		}
-		settingsUnlocked = true
-		isShowingSettingsGate = false
 	}
 
 	private var brandCard: some View {
@@ -284,7 +234,8 @@ struct LoginFragment: View {
 
 	private var emailVerificationFields: some View {
 		VStack(spacing: 12) {
-			TextField("6-digit code", text: $verificationCode)
+			TextField("6-digit code", text: $verificationCode,
+					  prompt: Text("6-digit code").foregroundColor(.white.opacity(0.85)))
 				.textContentType(.oneTimeCode)
 				.keyboardType(.numberPad)
 				.multilineTextAlignment(.center)
@@ -302,8 +253,7 @@ struct LoginFragment: View {
 				Button("Change email") {
 					showEmailLogin()
 				}
-				.default_text_style_600(styleSize: 13)
-				.foregroundStyle(Color.white)
+				.default_text_style_white_600(styleSize: 13)
 				.buttonStyle(.plain)
 				.disabled(isSigningIn)
 
@@ -313,8 +263,7 @@ struct LoginFragment: View {
 					requestEmailCode()
 				} label: {
 					Text(resendCountdown > 0 ? "Resend in \(resendCountdown)s" : "Resend code")
-						.default_text_style_600(styleSize: 13)
-						.foregroundStyle(resendCountdown > 0 ? Color.grayMain2c500 : Color.mango9Primary)
+						.default_text_style_white_600(styleSize: 13)
 				}
 				.buttonStyle(.plain)
 				.disabled(resendCountdown > 0 || isSigningIn)

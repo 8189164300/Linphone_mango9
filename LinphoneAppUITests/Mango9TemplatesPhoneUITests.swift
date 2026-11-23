@@ -143,7 +143,7 @@ final class Mango9ChatDesignPhoneUITests: XCTestCase {
         }
     }
 
-    func testConnectionSettingsPasswordAndBack() throws {
+    func testConnectionSettingsOpensDirectlyAndBack() throws {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(); app.terminate(); app.launch()
@@ -153,24 +153,18 @@ final class Mango9ChatDesignPhoneUITests: XCTestCase {
         }
         let gear = app.buttons["Connection settings"]
         XCTAssertTrue(gear.waitForExistence(timeout: 10)); gear.tap()
-        let password = app.secureTextFields["settings.unlockPassword"]
-        XCTAssertTrue(password.waitForExistence(timeout: 5)); password.tap(); password.typeText("wrong")
-        app.buttons["Unlock"].tap()
-        XCTAssertTrue(app.staticTexts["Incorrect settings password"].exists)
-        app.buttons["Cancel"].tap()
-        XCTAssertTrue(gear.waitForExistence(timeout: 5)); gear.tap()
-        XCTAssertTrue(password.waitForExistence(timeout: 5)); password.tap(); password.typeText("6.2.19")
-        app.buttons["Unlock"].tap()
         let domain = app.textFields["Server domain"].firstMatch
         XCTAssertTrue(domain.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.secureTextFields["settings.unlockPassword"].exists)
         XCTAssertTrue((domain.value as? String).map { $0.isEmpty || $0 == "Server domain" } ?? true)
         XCTAssertFalse(app.staticTexts["proxy.mango9.com"].exists)
-        capture(app, "Connection settings without a prefilled server")
+        capture(app, "Manual SIP settings open without a password gate")
         let back = app.buttons["connectionSettings.back"].firstMatch
         XCTAssertTrue(back.exists); back.tap()
         XCTAssertTrue(gear.waitForExistence(timeout: 5)); gear.tap()
-        XCTAssertTrue(password.waitForExistence(timeout: 5), "The gate must lock again after leaving settings")
-        app.buttons["Cancel"].tap()
+        XCTAssertTrue(domain.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.secureTextFields["settings.unlockPassword"].exists)
+        back.tap()
     }
 
     private func capture(_ app: XCUIApplication, _ name: String) {
