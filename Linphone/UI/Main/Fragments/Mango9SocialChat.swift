@@ -315,6 +315,30 @@ enum Mango9SocialReadError {
 	}
 }
 
+/// Versioned capabilities from the authenticated account/thread response.
+struct Mango9SocialInboxCapabilities: Decodable, Equatable {
+ let version: Int
+ let label: String?
+ let dms: Bool?
+ let connected: Bool?
+ let canSend: Bool?
+ let maxTextLength: Int?
+ let attachments: Attachments?
+ struct Attachments: Decodable, Equatable { let canSend: Bool? }
+ static func supports(_ platform: String, _ caps: Self?) -> Bool {
+  guard platform.range(of: "^[a-z][a-z0-9_]{0,39}$", options: .regularExpression) != nil else { return false }
+  return caps?.version == 1 ? caps?.dms == true : Mango9SocialPlatform.all.contains(platform)
+ }
+ static func textLimit(_ platform: String, _ caps: Self?) -> Int {
+  if caps?.version == 1, let limit = caps?.maxTextLength, (1...10000).contains(limit) { return limit }
+  return platform == "telegram" ? 4096 : platform == "tiktok" ? 6000 : 10000
+ }
+ static func label(_ platform: String, _ caps: Self?) -> String {
+  if caps?.version == 1, let label = caps?.label, !label.isEmpty, label.count <= 80 { return label }
+  return Mango9SocialPlatform.title(platform)
+ }
+}
+
 struct Mango9SocialThread: Decodable, Identifiable, Equatable {
 	let id: String
 	let version: Int
@@ -337,12 +361,15 @@ struct Mango9SocialThread: Decodable, Identifiable, Equatable {
 	var source: Source? = nil
 	struct Source: Decodable, Equatable { let accountName: String?; let summary: String?; var providerStatus: String? = nil }
 	struct OpenSend: Decodable, Equatable { let sendId: String; let state: String }
-	var permitsSending: Bool { connectionCurrent && canReply == true && deleted != true && ["facebook", "instagram", "tiktok"].contains(platform) }
+	var inboxCapabilities: Mango9SocialInboxCapabilities? = nil
+ var permitsSending: Bool { connectionCurrent && canReply == true && deleted != true && inboxCapabilities?.canSend != false && Mango9SocialInboxCapabilities.supports(platform, inboxCapabilities) }
+ var permitsUploads: Bool { ["facebook", "instagram", "tiktok"].contains(platform) && (inboxCapabilities?.version != 1 || inboxCapabilities?.attachments?.canSend == true) }
+ var textLimit: Int { Mango9SocialInboxCapabilities.textLimit(platform, inboxCapabilities) }
 	var replyUnavailableReason: String? {
 		guard !permitsSending else { return nil }
 		if deleted == true { return "This conversation has been deleted. Replies are unavailable." }
 		if !connectionCurrent { return "Reconnect this social account in Mango9’s web inbox to reply." }
-		if !Mango9SocialPlatform.all.contains(platform) { return "Replies to this platform aren’t supported in the app." }
+		if !Mango9SocialInboxCapabilities.supports(platform, inboxCapabilities) { return "Replies to this platform aren’t supported in the app." }
 		if source?.providerStatus == "archived" { return "This conversation is archived and replies are disabled. Open an active conversation to reply." }
 		return "Replies aren’t currently enabled for this conversation. Check its status in Mango9’s web inbox, then retry."
 	}
@@ -362,12 +389,16 @@ struct Mango9SocialAccount: Decodable, Identifiable, Equatable {
 	let platform: String
 	let name: String?
 	let username: String?
+ var reason: String? = nil
+ var inboxCapabilities: Mango9SocialInboxCapabilities? = nil
+ var connectedDM: Bool { Mango9SocialInboxCapabilities.supports(platform, inboxCapabilities) && inboxCapabilities?.connected != false && !["disconnection_pending", "reconnection_required", "inactive"].contains(reason ?? "") }
+ var platformLabel: String { Mango9SocialInboxCapabilities.label(platform, inboxCapabilities) }
 	var title: String { [name, username].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first(where: { !$0.isEmpty }) ?? Mango9SocialPlatform.title(platform) }
 }
 
 enum Mango9SocialPlatform {
-	static let all = ["facebook", "instagram", "tiktok"]
-	static func title(_ value: String) -> String { ["facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok"][value] ?? "Social" }
+	static let all = ["facebook", "instagram", "tiktok", "reddit", "telegram"]
+	static func title(_ value: String) -> String { ["facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok", "reddit": "Reddit", "telegram": "Telegram"][value] ?? value.capitalized }
 }
 
 /// A public username is not a display name, conversation URL, PSID or open_id.
@@ -388,14 +419,18 @@ enum Mango9SocialProfileLink {
 			reserved = ["about", "ads", "business", "checkpoint", "dialog", "events", "friends", "gaming", "groups", "help", "home", "login", "logout", "marketplace", "messages", "notifications", "pages", "people", "plugins", "policies", "privacy", "profile.php", "recover", "reel", "reels", "search", "settings", "share", "sharer", "sharer.php", "watch"]
 			// Numeric Facebook messaging IDs are not public profile identifiers.
 			guard username.contains(where: { $0.isASCII && $0.isLetter }) else { return nil }
-		case "tiktok":
+		case "telegram":
+   host = "t.me"; pattern = "^[A-Za-z][A-Za-z0-9_]{4,31}$"; reserved = ["share", "proxy", "socks", "joinchat", "addstickers", "iv"]
+  case "reddit":
+   host = "www.reddit.com"; pattern = "^[A-Za-z0-9_-]{3,20}$"; reserved = []
+  case "tiktok":
 			host = "www.tiktok.com"; pattern = "^[A-Za-z0-9_.]{1,24}$"; reserved = []
 		default: return nil
 		}
 		guard username.range(of: pattern, options: .regularExpression) != nil,
 			!username.hasPrefix("."), !username.hasSuffix("."), !username.contains(".."), !reserved.contains(username.lowercased()) else { return nil }
 		var components = URLComponents(); components.scheme = "https"; components.host = host
-		components.path = "/" + (platform == "tiktok" ? "@" : "") + username + (platform == "tiktok" ? "" : "/")
+		components.path = (platform == "reddit" ? "/user/" : "/") + (platform == "tiktok" ? "@" : "") + username + (platform == "tiktok" ? "" : "/")
 		return components.url
 	}
 	static func url(thread: Mango9SocialThread, direction: String? = nil) -> URL? {
@@ -416,11 +451,14 @@ enum Mango9SocialProfileLink {
 		case "www.instagram.com": platform = "instagram"
 		case "www.facebook.com": platform = "facebook"
 		case "www.tiktok.com": platform = "tiktok"
+  case "t.me": platform = "telegram"
+  case "www.reddit.com": platform = "reddit"
 		default: return false
 		}
 		let parts = components.path.split(separator: "/")
-		guard parts.count == 1 else { return false }
-		let handle = platform == "tiktok" ? String(parts[0]) : "@" + parts[0]
+		guard platform == "reddit" ? (parts.count == 2 && parts[0] == "user") : parts.count == 1 else { return false }
+  let name = parts.last!
+  let handle = platform == "tiktok" ? String(name) : "@" + name
 		return self.url(platform: platform, handle: handle)?.absoluteString == url.absoluteString
 	}
 	/// Apple universal links let the platform app handle its HTTPS URL. If no app
@@ -459,7 +497,7 @@ struct Mango9SocialPlatformLogo: View {
 	var size: CGFloat = 32
 	var body: some View {
 		Group {
-			if Mango9SocialPlatform.all.contains(platform) {
+			if ["facebook", "instagram", "tiktok"].contains(platform) {
 				Image("social-" + platform).renderingMode(.template).resizable().scaledToFit()
 			} else {
 				Image(systemName: "bubble.left.and.bubble.right").resizable().scaledToFit()
@@ -662,7 +700,7 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 	var canSend: Bool {
 		thread?.permitsSending == true && !sending && !unresolvedSend && thread?.openSend == nil &&
 		(!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !selectedMedia.isEmpty) &&
-		outgoingText.unicodeScalars.count <= (thread?.platform == "tiktok" ? 6000 : 10000)
+		outgoingText.unicodeScalars.count <= (thread?.textLimit ?? 10000) && (selectedMedia.isEmpty || thread?.permitsUploads == true)
 	}
 	func clearPrivateState() {
 		threadLoadTask?.cancel(); threadLoadTask = nil; pendingThreadLoad = nil; providerAttempt = nil
@@ -679,9 +717,11 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 		.init(search: search.trimmingCharacters(in: .whitespacesAndNewlines), platform: selectedPlatform, account: selectedAccount)
 	}
 	func hasLoadedInbox(search: String) -> Bool { loadedQuery == inboxQuery(search: search) }
-	var filteredAccounts: [Mango9SocialAccount] { accounts.filter { selectedPlatform.isEmpty || $0.platform == selectedPlatform } }
+	var platforms: [String] { Array(Set(accounts.map(\.platform))).sorted() }
+ func platformTitle(_ value: String) -> String { accounts.first(where: { $0.platform == value })?.platformLabel ?? Mango9SocialPlatform.title(value) }
+ var filteredAccounts: [Mango9SocialAccount] { accounts.filter { selectedPlatform.isEmpty || $0.platform == selectedPlatform } }
 	func selectPlatform(_ value: String) {
-		guard value.isEmpty || Mango9SocialPlatform.all.contains(value), value != selectedPlatform else { return }
+		guard value.isEmpty || platforms.contains(value), value != selectedPlatform else { return }
 		selectedPlatform = value
 		if !filteredAccounts.contains(where: { $0.id == selectedAccount }) { selectedAccount = "" }
 		invalidateInbox()
@@ -701,10 +741,13 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 			struct Inventory: Decodable { let items: [Mango9SocialAccount] }
 			let result = try await api.request(Inventory.self, session: session, social: true, path: ["accounts"])
 			guard life == lifetime else { return }
-			accounts = result.items.filter { Mango9SocialPlatform.all.contains($0.platform) }
+			accounts = result.items.filter { $0.connectedDM }
 				.sorted { ($0.platform, $0.title) < ($1.platform, $1.title) }
 			accountsLoadedAt = Date(); accountError = nil
-			if !selectedAccount.isEmpty && !filteredAccounts.contains(where: { $0.id == selectedAccount }) { selectedAccount = ""; invalidateInbox() }
+			let oldPlatform = selectedPlatform, oldAccount = selectedAccount
+   if !selectedPlatform.isEmpty && !platforms.contains(selectedPlatform) { selectedPlatform = "" }
+   if !selectedAccount.isEmpty && !filteredAccounts.contains(where: { $0.id == selectedAccount }) { selectedAccount = "" }
+   if oldPlatform != selectedPlatform || oldAccount != selectedAccount { invalidateInbox() }
 		} catch {
 			if Task.isCancelled || life != lifetime { return }
 			accountError = "Account filters unavailable. Pull to refresh to try again."
@@ -919,6 +962,7 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
             do {
                 var mediaID: String?
                 if let attachment {
+                    guard current.permitsUploads else { throw Mango9MessagingError.rejected(400, "inbox_media_unsupported") }
                     let id = mediaIDs[attachment.id] ?? UUID().uuidString.lowercased(); mediaIDs[attachment.id] = id
                     mediaID = try await api.uploadSocial(attachment, session: session, platform: current.platform, id: id)
                 }
@@ -1081,15 +1125,15 @@ struct Mango9SocialInboxFilters: View {
 	var body: some View {
 		HStack(spacing: 8) {
 			Menu {
-				ForEach([""] + Mango9SocialPlatform.all, id: \.self) { platform in
+				ForEach([""] + store.platforms, id: \.self) { platform in
 					Button { store.selectPlatform(platform) } label: {
 						HStack {
-							Text(platform.isEmpty ? "All platforms" : Mango9SocialPlatform.title(platform))
+							Text(platform.isEmpty ? "All platforms" : store.platformTitle(platform))
 							if store.selectedPlatform == platform { Image(systemName: "checkmark") }
 						}
 					}.accessibilityIdentifier("social.platform." + (platform.isEmpty ? "all" : platform))
 				}
-			} label: { filterLabel(store.selectedPlatform.isEmpty ? "All platforms" : Mango9SocialPlatform.title(store.selectedPlatform), icon: "line.3.horizontal.decrease") }
+			} label: { filterLabel(store.selectedPlatform.isEmpty ? "All platforms" : store.platformTitle(store.selectedPlatform), icon: "line.3.horizontal.decrease") }
 			.accessibilityIdentifier("social.filter.platform")
 			Menu {
 				Button { store.selectAccount("") } label: {
@@ -1098,7 +1142,7 @@ struct Mango9SocialInboxFilters: View {
 				ForEach(store.filteredAccounts) { account in
 					Button { store.selectAccount(account.id) } label: {
 						HStack {
-							Text(account.title + " · " + Mango9SocialPlatform.title(account.platform))
+							Text(account.title + " · " + account.platformLabel)
 							if store.selectedAccount == account.id { Image(systemName: "checkmark") }
 						}
 					}.accessibilityIdentifier("social.account." + account.id)
@@ -1454,7 +1498,7 @@ struct Mango9SocialConversation: View {
 		if !store.selectedMedia.isEmpty { Mango9PendingAttachmentStrip(attachments: $store.selectedMedia).disabled(store.sending || store.unresolvedSend) }
         if store.selectedMedia.count > 1 { Text("Files send as separate messages, in order.").font(.caption).foregroundStyle(.secondary) }
 		if let notice = store.sendNotice { Text(notice).font(.footnote).foregroundStyle(.secondary).padding(.horizontal) }
-		if store.draft.unicodeScalars.count > 10000 { Text("Messages can contain up to 10,000 characters.").font(.footnote).foregroundStyle(.red).padding(.horizontal) }
+		if store.outgoingText.unicodeScalars.count > (store.thread?.textLimit ?? 10000) { Text("Message exceeds this platform’s character limit.").font(.footnote).foregroundStyle(.red).padding(.horizontal) }
 		if store.unresolvedSend || store.thread?.openSend != nil {
 			Button("Check delivery") { Task { await store.checkSend() } }.disabled(store.sending).padding(8)
 		} else if let reason = store.thread?.replyUnavailableReason {
@@ -1464,7 +1508,7 @@ struct Mango9SocialConversation: View {
 		Mango9MessageComposer(templateSession: store.session, text: $store.draft, focus: $composerFocused, placeholder: "Message",
 			enabled: store.thread?.permitsSending == true && !store.unresolvedSend && store.thread?.openSend == nil,
 			sending: store.sending, sendEnabled: store.canSend, hasAttachments: !store.selectedMedia.isEmpty,
-			attach: { attachmentRequest = $0 }, send: { Task { await store.send() } })
+			attach: store.thread?.permitsUploads == true ? { attachmentRequest = $0 } : nil, send: { Task { await store.send() } })
 		}
 	}
 	private func openMedia(_ message: Mango9SocialMessage, media: Mango9SocialMessage.Media) async {

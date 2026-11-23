@@ -253,7 +253,7 @@ final class Mango9ReactionTests: XCTestCase {
 		var json = Self.socialThreadJSON; json["activityAt"] = "2026-10-17T12:34:00Z"
 		let thread = try JSONDecoder().decode(Mango9SocialThread.self, from: JSONSerialization.data(withJSONObject: json))
 		XCTAssertEqual(thread.activityAt, "2026-10-17T12:34:00Z")
-		for platform in Mango9SocialPlatform.all { XCTAssertNotNil(UIImage(named: "social-" + platform), platform) }
+		for platform in ["facebook", "instagram", "tiktok"] { XCTAssertNotNil(UIImage(named: "social-" + platform), platform) }
 	}
 
 	@MainActor func testPersonalDeletionSyncsAcrossDevicesWithoutProviderDeleteOrSend() async throws {
@@ -1227,4 +1227,30 @@ final class Mango9SocialCardTests: XCTestCase {
             XCTAssertNil(Mango9SocialCardLink.url(value), value)
         }
     }
+}
+
+
+final class Mango9SocialCapabilityTests: XCTestCase {
+ func testConnectedInventoryAndTextOnlyChannels() throws {
+  func account(_ platform: String, _ caps: [String: Any]? = nil, reason: String? = nil) throws -> Mango9SocialAccount {
+   var raw: [String: Any] = ["id": "account", "platform": platform]
+   if let caps { raw["inboxCapabilities"] = caps }; if let reason { raw["reason"] = reason }
+   return try JSONDecoder().decode(Mango9SocialAccount.self, from: JSONSerialization.data(withJSONObject: raw))
+  }
+  for platform in ["facebook", "instagram", "tiktok", "reddit", "telegram"] { XCTAssertTrue(try account(platform).connectedDM) }
+  for platform in ["twitter", "youtube", "pinterest", "unknown", "../bad"] { XCTAssertFalse(try account(platform).connectedDM) }
+  let valid: [String: Any] = ["version": 1, "label": "Future channel", "dms": true, "connected": true, "canSend": true, "maxTextLength": 1024]
+  let future = try account("future_chat", valid)
+  XCTAssertTrue(future.connectedDM); XCTAssertEqual(future.platformLabel, "Future channel")
+  XCTAssertEqual(Mango9SocialInboxCapabilities.textLimit(future.platform, future.inboxCapabilities), 1024)
+  XCTAssertFalse(try account("../bad", valid).connectedDM)
+  for reason in ["inactive", "reconnection_required", "disconnection_pending"] { XCTAssertFalse(try account("telegram", valid, reason: reason).connectedDM) }
+  var caps = valid; caps["dms"] = false; XCTAssertFalse(try account("instagram", caps).connectedDM)
+  caps = valid; caps["connected"] = false; XCTAssertFalse(try account("telegram", caps).connectedDM)
+  caps = valid; caps["version"] = 2; XCTAssertFalse(try account("future_chat", caps).connectedDM)
+  XCTAssertEqual(Mango9SocialInboxCapabilities.textLimit("telegram", nil), 4096)
+  XCTAssertEqual(Mango9SocialInboxCapabilities.textLimit("tiktok", nil), 6000)
+  caps = valid; caps["maxTextLength"] = 100000
+  XCTAssertEqual(Mango9SocialInboxCapabilities.textLimit("telegram", try account("telegram", caps).inboxCapabilities), 4096)
+ }
 }
