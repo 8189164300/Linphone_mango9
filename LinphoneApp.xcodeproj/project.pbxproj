@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C02311260000000000000202 /* Mango9PasswordRecoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02311260000000000000102; };
+		C02311260000000000000201 /* Mango9PasswordRecoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02311260000000000000101; };
 		0C0A00012FCA000100000001 /* Mango9Opportunities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C0A00022FCA000100000001; };
 		0C0A00112FCA000100000001 /* Mango9OpportunityWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C0A00122FCA000100000001; };
 		AB1411260000000000000081 /* Mango9CRMUnread.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC1411260000000000000081 /* Mango9CRMUnread.swift */; };
@@ -305,6 +307,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C02311260000000000000102 /* Mango9PasswordRecoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9PasswordRecoveryView.swift; sourceTree = "<group>"; };
+		C02311260000000000000101 /* Mango9PasswordRecoveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9PasswordRecoveryService.swift; sourceTree = "<group>"; };
 		0C0A00022FCA000100000001 /* Mango9Opportunities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9Opportunities.swift; sourceTree = "<group>"; };
 		0C0A00122FCA000100000001 /* Mango9OpportunityWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9OpportunityWorkspace.swift; sourceTree = "<group>"; };
 		AC1411260000000000000081 /* Mango9CRMUnread.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mango9CRMUnread.swift; sourceTree = "<group>"; };
@@ -1279,6 +1283,8 @@
 			isa = PBXGroup;
 			children = (
 				D76D3BD12FFCED2400D2CDC8 /* RecoverAccountFragment.swift */,
+				C02311260000000000000101 /* Mango9PasswordRecoveryService.swift */,
+				C02311260000000000000102 /* Mango9PasswordRecoveryView.swift */,
 				D7DA67612ACCB2FA00E95002 /* LoginFragment.swift */,
 				D7EAACCE2AD6ED8000AA6A8A /* PermissionsFragment.swift */,
 				D7DA67632ACCB31700E95002 /* ProfileModeFragment.swift */,
@@ -1914,6 +1920,8 @@
 				D7C365082AEFAB7F00FE6142 /* ContactListBottomSheet.swift in Sources */,
 				D74C9CFA2ACACF2D0021626A /* WelcomePage2Fragment.swift in Sources */,
 				D74C9CFF2ACAEC5E0021626A /* PopupView.swift in Sources */,
+				C02311260000000000000201 /* Mango9PasswordRecoveryService.swift in Sources */,
+				C02311260000000000000202 /* Mango9PasswordRecoveryView.swift in Sources */,
 				D7DA67622ACCB2FA00E95002 /* LoginFragment.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

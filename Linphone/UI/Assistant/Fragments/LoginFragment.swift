@@ -42,6 +42,7 @@ struct LoginFragment: View {
 
 	@State private var isShowHelpFragment = false
 	@State private var isShowingManual = false
+	@State private var isShowingRecovery = false
 	@State private var username = ""
 	@State private var password = ""
 	@State private var loginMode: LoginMode = .password
@@ -90,7 +91,7 @@ struct LoginFragment: View {
 			.navigationBarHidden(true)
 		}
 		.navigationViewStyle(StackNavigationViewStyle())
-		.preferredColorScheme(isShowHelpFragment || isShowingManual ? nil : .dark)
+		.preferredColorScheme(isShowingManual ? .light : (isShowHelpFragment ? nil : .dark))
 		.onAppear {
 			if rememberLogin,
 			   username.isEmpty,
@@ -183,6 +184,14 @@ struct LoginFragment: View {
 					.frame(maxWidth: .infinity, minHeight: 52)
 					.overlay(Capsule().stroke(Color.white.opacity(0.8), lineWidth: 1))
 			}.buttonStyle(.plain).disabled(isSigningIn)
+			NavigationLink(isActive: $isShowingRecovery) {
+				Mango9PasswordRecoveryView(email: loginMode == .password ? username : email)
+			} label: { EmptyView() }
+			Button { focusedField = nil; isShowingRecovery = true } label: {
+				Text("Forgot password?").font(.subheadline.weight(.medium))
+					.foregroundStyle(Color.white).frame(minHeight: 44)
+			}.buttonStyle(.plain).disabled(isSigningIn)
+				.accessibilityIdentifier("login.forgotPassword")
 		}.frame(maxWidth: 520).padding(.horizontal, 25)
 	}
 

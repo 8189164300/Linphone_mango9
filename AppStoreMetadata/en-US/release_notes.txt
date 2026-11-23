@@ -3,3 +3,5 @@
 • Improved unread badge updates and selection stability while chat lists refresh.
 • Open manual SIP settings directly without a separate settings password.
 • Improved email-code sign-in text readability.
+• Request a password reset email directly in the app.
+• Clearer, blue-and-white manual SIP setup.

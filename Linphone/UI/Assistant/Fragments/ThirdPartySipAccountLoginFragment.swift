@@ -44,6 +44,7 @@ struct ThirdPartySipAccountLoginFragment: View {
 		GeometryReader { geometry in
 			ScrollViewReader { proxy in
 				ZStack {
+					Color.white.ignoresSafeArea()
 					if #available(iOS 16.4, *) {
 						ScrollView(.vertical) {
 							innerScrollView(geometry: geometry)
@@ -105,12 +106,19 @@ struct ThirdPartySipAccountLoginFragment: View {
 				}
 			}
 		}
+		.background(Color.white.ignoresSafeArea())
+		.preferredColorScheme(.light)
+		.tint(.mango9Primary)
 		.navigationTitle("")
 		.navigationBarHidden(true)
 		.edgesIgnoringSafeArea(.bottom)
 		.edgesIgnoringSafeArea(.horizontal)
 	}
 	
+	private var canSignIn: Bool {
+		!accountLoginViewModel.username.isEmpty && !accountLoginViewModel.passwd.isEmpty && !accountLoginViewModel.domain.isEmpty
+	}
+
 	func innerScrollView(geometry: GeometryProxy) -> some View {
 		VStack {
 			ZStack {
@@ -155,7 +163,7 @@ struct ThirdPartySipAccountLoginFragment: View {
 					.overlay(
 						RoundedRectangle(cornerRadius: 60)
 							.inset(by: 0.5)
-							.stroke(isNameFocused ? Color.orangeMain500 : Color.gray200, lineWidth: 1)
+							.stroke(isNameFocused ? Color.mango9Primary : Color.gray200, lineWidth: 1)
 					)
 					.padding(.bottom)
 					.focused($isNameFocused)
@@ -196,7 +204,7 @@ struct ThirdPartySipAccountLoginFragment: View {
 				.overlay(
 					RoundedRectangle(cornerRadius: 60)
 						.inset(by: 0.5)
-						.stroke(isPasswordFocused ? Color.orangeMain500 : Color.gray200, lineWidth: 1)
+						.stroke(isPasswordFocused ? Color.mango9Primary : Color.gray200, lineWidth: 1)
 				)
 				.padding(.bottom)
 				
@@ -215,7 +223,7 @@ struct ThirdPartySipAccountLoginFragment: View {
 					.overlay(
 						RoundedRectangle(cornerRadius: 60)
 							.inset(by: 0.5)
-							.stroke(isDomainFocused ? Color.orangeMain500 : Color.gray200, lineWidth: 1)
+							.stroke(isDomainFocused ? Color.mango9Primary : Color.gray200, lineWidth: 1)
 					)
 					.padding(.bottom)
 					.focused($isDomainFocused)
@@ -235,7 +243,7 @@ struct ThirdPartySipAccountLoginFragment: View {
 					.overlay(
 						RoundedRectangle(cornerRadius: 60)
 							.inset(by: 0.5)
-							.stroke(isDisplayNameFocused ? Color.orangeMain500 : Color.gray200, lineWidth: 1)
+							.stroke(isDisplayNameFocused ? Color.mango9Primary : Color.gray200, lineWidth: 1)
 					)
 					.padding(.bottom)
 					.focused($isDisplayNameFocused)
@@ -309,7 +317,7 @@ struct ThirdPartySipAccountLoginFragment: View {
                             .overlay(
                                 RoundedRectangle(cornerRadius: 60)
                                     .inset(by: 0.5)
-                                    .stroke(isAuthIdFocused ? Color.orangeMain500 : Color.gray200, lineWidth: 1)
+                                    .stroke(isAuthIdFocused ? Color.mango9Primary : Color.gray200, lineWidth: 1)
                             )
                             .focused($isAuthIdFocused)
                     }
@@ -331,7 +339,7 @@ struct ThirdPartySipAccountLoginFragment: View {
                             .overlay(
                                 RoundedRectangle(cornerRadius: 60)
                                     .inset(by: 0.5)
-                                    .stroke(isSipProxyUrlFocused ? Color.orangeMain500 : Color.gray200, lineWidth: 1)
+                                    .stroke(isSipProxyUrlFocused ? Color.mango9Primary : Color.gray200, lineWidth: 1)
                             )
                             .focused($isSipProxyUrlFocused)
                     }
@@ -368,7 +376,7 @@ struct ThirdPartySipAccountLoginFragment: View {
 							.overlay(
 								RoundedRectangle(cornerRadius: 60)
 									.inset(by: 0.5)
-									.stroke(isOutboundProxyFocused ? Color.orangeMain500 : Color.gray200, lineWidth: 1)
+									.stroke(isOutboundProxyFocused ? Color.mango9Primary : Color.gray200, lineWidth: 1)
 							)
 							.focused($isOutboundProxyFocused)
 					}
@@ -384,18 +392,18 @@ struct ThirdPartySipAccountLoginFragment: View {
 				self.accountLoginViewModel.login()
 			}, label: {
 				Text("assistant_account_login")
-					.default_text_style_white_600(styleSize: 20)
+					.font(.system(size: 20, weight: .semibold))
+					.foregroundStyle(canSignIn ? Color.white : Color.mango9Primary)
 					.frame(height: 35)
 					.frame(maxWidth: .infinity)
 			})
 			.padding(.horizontal, 20)
 			.padding(.vertical, 10)
 			.background(
-				(accountLoginViewModel.username.isEmpty || accountLoginViewModel.passwd.isEmpty || accountLoginViewModel.domain.isEmpty)
-				? Color.orangeMain100
-				: Color.orangeMain500)
+				canSignIn ? Color.mango9Primary : Color.mango9Surface)
 			.cornerRadius(60)
-			.disabled(accountLoginViewModel.username.isEmpty || accountLoginViewModel.passwd.isEmpty || accountLoginViewModel.domain.isEmpty)
+			.disabled(!canSignIn)
+			.accessibilityIdentifier("connectionSettings.signIn")
 			.frame(maxWidth: SharedMainViewModel.shared.maxWidth)
 			.padding(.horizontal)
 			.padding(.bottom)
@@ -403,6 +411,8 @@ struct ThirdPartySipAccountLoginFragment: View {
 			Image("mountain2")
 				.resizable()
 				.scaledToFill()
+				.saturation(0)
+				.colorMultiply(.mango9Primary)
 				.frame(width: geometry.size.width, height: 60)
 				.clipped()
 		}

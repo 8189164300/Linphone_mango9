@@ -1,7 +1,8 @@
 # App Store metadata for Mango9 6.2.27
 
-These files are the app-only metadata for replacement build 80. Paste the contents
-into the English (U.S.) localization in App Store Connect. Server implementation
+These files are draft app-only metadata for replacement build 80. Submission is
+on hold until explicitly authorized. Paste the contents into the English (U.S.)
+localization in App Store Connect. Server implementation
 details are intentionally excluded because they are not part of the iOS release.
 
 Before submission, add the permanent review account and contact details directly

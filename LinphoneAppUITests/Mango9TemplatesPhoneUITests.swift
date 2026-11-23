@@ -143,6 +143,46 @@ final class Mango9ChatDesignPhoneUITests: XCTestCase {
         }
     }
 
+    func testNativePasswordRecoveryNavigationAndValidation() throws {
+        continueAfterFailure = false
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication(); app.terminate(); app.launch()
+        XCUIDevice.shared.orientation = .portrait
+        if app.buttons["main.menu"].waitForExistence(timeout: 5) {
+            app.buttons["main.menu"].tap()
+            app.staticTexts["Add account"].firstMatch.tap()
+        }
+        let forgot = app.buttons["login.forgotPassword"]
+        XCTAssertTrue(forgot.waitForExistence(timeout: 10))
+        if !forgot.isHittable { app.swipeUp() }
+        forgot.tap()
+        let field = app.textFields["passwordRecovery.email"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        let send = app.buttons["passwordRecovery.send"]
+        XCTAssertTrue(send.exists); XCTAssertFalse(send.isEnabled)
+        XCTAssertEqual(app.webViews.count, 0)
+        capture(app, "Native password recovery email form")
+        field.tap(); field.typeText("not-an-email")
+        XCTAssertFalse(send.isEnabled)
+        field.typeText("@example.test")
+        XCTAssertTrue(send.isEnabled)
+        // No request is sent: account owners retain control of their reset emails.
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        capture(app, "Native password recovery landscape")
+        app.buttons["passwordRecovery.back"].tap()
+        XCTAssertTrue(forgot.waitForExistence(timeout: 5))
+        XCUIDevice.shared.orientation = .portrait
+        app.buttons["Use an email code"].tap()
+        if !forgot.isHittable { app.swipeUp() }
+        forgot.tap()
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertFalse(send.isEnabled)
+        app.buttons["passwordRecovery.back"].tap()
+        XCTAssertTrue(app.textFields["Email address"].waitForExistence(timeout: 5))
+        app.buttons["Use password instead"].tap()
+    }
+
     func testConnectionSettingsOpensDirectlyAndBack() throws {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait

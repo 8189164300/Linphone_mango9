@@ -15,7 +15,7 @@ Use your existing Mango9 account to:
 • Manage CRM appointments with calendar and list views, status updates, sharing and assignment
 • Customize in-app appointment reminders and messaging notification preferences
 
-Sign in with your Mango9 password or request a secure code by email. Your organization’s assigned services and calling line are provisioned automatically after authentication.
+Sign in with your Mango9 password or request a secure code by email. Your organization’s assigned services and calling line are provisioned automatically after authentication. If you forget your Mango9 password, request a reset email directly in the app.
 
 Mango9 is a companion app for existing Mango9 business customers. Accounts and telecommunications services are created and managed outside the app under organizational service agreements. Features depend on your organization’s services, account role and connected providers. If automatic calling-line setup is unavailable, use Connection settings on the sign-in screen to connect with the SIP credentials supplied by your administrator.
 
