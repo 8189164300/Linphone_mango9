@@ -1,25 +1,25 @@
-Mango9 6.2.27 (80): business communications and CRM companion, iOS 15+. Replacement for rejected build 79.
+Mango9 6.2.27 (80) replaces rejected build 79. It is a business communications and CRM companion for existing Mango9 customers.
 
-Clarification of our earlier reply: the final build retains manual SIP and removes only its extra settings-password gate.
+CLARIFICATION OF OUR EARLIER REPLY
+The final build retains manual SIP registration and removes only its additional settings-password gate. Our earlier reply saying the entire manual SIP feature would be removed does not describe this submitted build.
 
-Manual SIP is a fallback for connecting the phone app when the CRM is unavailable or Mango9 email sign-in cannot automatically provision the assigned calling line. Users open the gear on the sign-in screen and enter the Extension (SIP username), SIP password and server details supplied by their Mango9 administrator or service provider. Tap Register to connect the calling line. A full SIP username may include the account suffix supplied by the service provider; the proxy address is used for the server connection. Display name and the optional phone number identify the line in the account menu. CRM access still requires normal Mango9 account sign-in.
+The former settings code was the app's own version number, not the user's CRM password. For example, version 6.2.25 used 6.2.25. This can be verified in an older build that contains the gate using that build's version number. Its purpose was to reserve configuration for existing Mango9 users. It did not enable AI Assistant or bypass CRM account permissions. We recognize that a separate, insufficiently clear access code could make review confusing. Build 80 removes the settings-password prompt and version check entirely.
 
-Previously, this setup had a separate version-based settings password. Its only purpose was to reserve manual SIP configuration for Mango9 users, instead of presenting it as public general-purpose SIP setup. It was not intended to conceal functionality from App Review; the location and settings code were disclosed in the previous notes. To eliminate this restriction and address the possible review concern, build 80 removes that settings password and version check. Manual SIP remains fully available, opens directly from the gear, and still requires the user's actual SIP credentials. No extra settings code is needed.
+MANUAL SIP AND REVIEW ACCESS
+Open the gear on the sign-in screen to access Connection settings directly. Enter the supplied Extension (SIP username), SIP password and Server / Domain, then tap Register. The attached private review guide provides the tested calling-line credentials and proxy server, proxy.mango9.com. No separate settings code is required.
 
-Build 80 includes the latest build 79 fixes, white email-code labels, and white-and-blue manual SIP setup. Forgot password? opens a native email form that requests a reset link from Central; it does not open a browser or reset SIP credentials. Existing password/email-code sign-in and calling accounts are retained.
+Manual SIP is a phone-only fallback when CRM/email sign-in or automatic calling-line provisioning is unavailable. It requires actual SIP credentials issued by the customer's administrator. It does not sign into CRM or populate CRM chats. To review CRM and messaging, use the normal email/password credentials in App Review's Sign-In Information. Users can sign out of the manual line and sign in with their CRM email and password.
 
-This build retains the compact chat-list selection controls introduced in build 79 for SMS, Team Chat, Social and Live Chat. Open Chat, choose a channel and tap the checkmark to select chats. The toolbar offers Select all, Mark read, Mark unread and Delete. Delete removes saved chat history only for the signed-in user; other participants keep their messages, and a new message can bring the chat back. Mark unread is a personal reminder, not a change to another participant's read receipt. New arrivals are not automatically selected. Failed actions remain selected for retry.
+TODAY'S FIXES
+- Manual SIP sign-out no longer requires a CRM session when no CRM push-cleanup lease exists.
+- A failed sign-out no longer clears the selected CRM session, and sign-out errors show their actual explanation.
+- Social filters load connected platform types and accounts for the signed-in account, including after login and refresh.
+- Forgot password? opens a native, blue email form and requests a reset email through Central. It does not open a browser or change the SIP password.
+- Email-code labels and manual SIP controls have improved contrast.
 
-This build retains the Social Chat attachment, shared-card and profile-link improvements approved in version 6.2.26.
+FEATURES TO REVIEW
+Chat includes SMS, Team Chat, connected Social inboxes and website Live Chat. Each channel has checkmark selection with Select all, Mark read, Mark unread and Delete for me. These affect only the signed-in user's history/reminders. Social supports provider-permitted attachments, shared cards and profile links.
 
-As in approved version 6.2.25, the app includes native CRM Opportunities, including values, stages, details, activity links, account-scoped filters and new-item alerts. Open CRM > Opportunities, or open a Lead or Client and use its Opportunity actions. Lead conversion and all record visibility follow the account's server permissions. Follow-ups are saved through the Opportunity API and synchronized to the responsible user's Calendar when the opportunity is open and has a next action, due time and Calendar access. Activity content loads when opened.
+CRM includes Leads, Clients, Opportunities, Calendar and Tasks according to account permissions. Leads can be converted to Clients. Opportunities include stages, amounts, activity links, saved filters and follow-ups synchronized with Calendar through the mobile API. Contacts, Calls, Chat and CRM are available in the main footer. Calls opens the keypad; call history, missed-call and voicemail badges are available, and the voicemail number is configured under Settings > Calls.
 
-Calls opens the phone keypad directly. Call history is available at the top; missed-call and voicemail badges are shown on their controls. Voicemail number settings are under Settings > Calls. Keypress sounds, navigation performance and incoming-call push handling have been improved.
-
-The AI assistant remains discontinued, as in approved version 6.2.24. This build does not restore AI chat, voice sessions, the assistant button or assistant notification routing.
-
-Use the existing review credentials in App Store Connect. Sign-in provisions the assigned calling line and CRM. There is no native consumer signup or purchase flow.
-
-Chat contains SMS, Team Chat, Social and Live Chat. Settings > Conversations controls visible tabs; account permissions still apply. Social requires a connected provider and an open reply window. Live Chat requires a connected website. Chats retain templates, supported attachments and message actions.
-
-Contacts, Calls, Chat and CRM use the main footer. CRM includes Leads, Clients, Opportunities, Calendar and Tasks, subject to account permissions.
+AI Assistant remains removed, as in the approved 6.2.24 release. This build does not restore AI chat, voice sessions, an Assistant button or Assistant notification routing. There is no native consumer signup or purchase flow. Features depend on the organization's assigned services and connected providers.

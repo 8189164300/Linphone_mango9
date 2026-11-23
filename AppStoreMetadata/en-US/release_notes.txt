@@ -1,7 +1,6 @@
-• Select individual chats or all chats in SMS, Team Chat, Social and Live Chat.
-• Mark selected chats as read or unread, or delete their history for your account.
-• Improved unread badge updates and selection stability while chat lists refresh.
+• Select chats in SMS, Team Chat, Social and Live Chat to mark them read or unread, or delete history for your account.
+• Social filters now show the platforms and accounts connected to your account.
 • Open manual SIP settings directly without a separate settings password.
-• Improved email-code sign-in text readability.
 • Request a password reset email directly in the app.
-• Clearer, blue-and-white manual SIP setup.
+• Improved sign-out reliability and clearer error messages.
+• Improved sign-in text and manual SIP control readability.
