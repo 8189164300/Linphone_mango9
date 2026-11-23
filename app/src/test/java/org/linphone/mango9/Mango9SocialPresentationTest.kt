@@ -115,4 +115,28 @@ class Mango9SocialPresentationTest {
         assertEquals(900, error.retryAfterSeconds)
     }
 
+    @Test fun providersFollowConnectedCapabilitiesAndKeepTextUploadsSeparate() {
+        for (p in listOf("facebook", "instagram", "tiktok", "reddit", "telegram")) {
+            val t = thread(1).copy(platform = p)
+            assertTrue(t.canSend)
+            assertEquals(p in listOf("facebook", "instagram", "tiktok"), t.canUpload)
+            assertFalse(t.copy(connected = false).canSend)
+        }
+        assertEquals(4096, thread(1).copy(platform = "telegram").textLimit)
+        assertEquals(6000, thread(1).copy(platform = "tiktok").textLimit)
+        val cap = Mango9SocialInboxCapabilities(1, true, true, true, 1500)
+        val future = thread(1).copy(platform = "future", inboxCapabilities = cap)
+        assertTrue(future.canSend); assertFalse(future.canUpload); assertEquals(1500, future.textLimit)
+        assertFalse(future.copy(inboxCapabilities = cap.copy(canSend = false)).canSend)
+        for (reason in listOf("inactive", "disconnection_pending", "reconnection_required")) {
+            assertFalse(Mango9SocialProviders.connected(JSONObject().put("platform", "telegram").put("reason", reason)))
+        }
+        assertFalse(Mango9SocialProviders.connected(JSONObject().put("platform", "youtube")))
+        assertFalse(Mango9SocialProviders.connected(JSONObject().put("platform", "unknown")))
+        assertEquals("https://t.me/example_name/", Mango9SocialProfileLink.url("telegram", "@example_name"))
+        assertEquals("https://www.reddit.com/user/example_name/", Mango9SocialProfileLink.url("reddit", "@example_name"))
+        assertNull(Mango9SocialProfileLink.url("telegram", "@share"))
+        assertNull(Mango9SocialProfileLink.url("reddit", "Display name"))
+    }
+
 }

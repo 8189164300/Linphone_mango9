@@ -211,19 +211,28 @@ internal class Mango9SocialViewModel(
                     warning = "Account filters unavailable. Tap to retry."
                 }
             }
+            val platform = previous.platform.takeIf { p -> p.isEmpty() || accounts.any { it.platform == p } }.orEmpty()
             val account = previous.account.takeIf { selected ->
                 selected.isEmpty() || accounts.any {
-                    it.id == selected && (previous.platform.isEmpty() || it.platform == previous.platform)
+                    it.id == selected && (platform.isEmpty() || it.platform == platform)
                 }
             }.orEmpty()
-            val page = repository.inbox(owner, previous.platform, account, if (more) previous.nextThread else null, previous.search)
-            val merged = Mango9SocialPages.inbox(previous.threads, page, more)
+            val filterChanged = platform != previous.platform || account != previous.account
+            // Connected filters do not wait for chat history or visibility reads.
+            state.value = current().copy(
+                accounts = accounts, platform = platform, account = account, accountWarning = warning,
+                threads = if (filterChanged) emptyList() else current().threads,
+                nextThread = if (filterChanged) null else current().nextThread
+            )
+            val append = more && !filterChanged
+            val page = repository.inbox(owner, platform, account, if (append) previous.nextThread else null, previous.search)
+            val merged = Mango9SocialPages.inbox(if (filterChanged) emptyList() else previous.threads, page, append)
             val ids = merged.map { it.id }
             val hidden = if (ids.isEmpty()) emptySet() else commands.visibility(owner, Mango9MessageChannel.social, null, ids, false, true)
             if (!valid(owner, request)) return
-            if (more) previous.nextThread?.let { consumedCursors.add(it) } else consumedCursors.clear()
+            if (append) previous.nextThread?.let { consumedCursors.add(it) } else consumedCursors.clear()
             state.value = current().copy(
-                accounts = accounts, account = account, accountWarning = warning,
+                accounts = accounts, platform = platform, account = account, accountWarning = warning,
                 threads = Mango9SocialRecency.overlay(
                     owner,
                     merged.filterNot {

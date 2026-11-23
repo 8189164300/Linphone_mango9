@@ -24,10 +24,14 @@ internal object Mango9SocialProfileLink {
                 if (name.none { it in 'a'..'z' || it in 'A'..'Z' }) return null
             }
             "tiktok" -> { host = "www.tiktok.com"; pattern = "[A-Za-z0-9_.]{1,24}"; reserved = emptySet() }
+            "telegram" -> {
+                host = "t.me"; pattern = "[A-Za-z][A-Za-z0-9_]{4,31}"; reserved = setOf("share", "proxy", "socks", "joinchat", "addstickers", "iv")
+            }
+            "reddit" -> { host = "www.reddit.com"; pattern = "[A-Za-z0-9_-]{3,20}"; reserved = emptySet() }
             else -> return null
         }
         if (!name.matches(Regex(pattern)) || name.startsWith('.') || name.endsWith('.') || name.contains("..") || name.lowercase(java.util.Locale.ROOT) in reserved) return null
-        return "https://$host/" + if (platform == "tiktok") "@$name" else "$name/"
+        return "https://$host/" + if (platform == "tiktok") "@$name" else if (platform == "reddit") "user/$name/" else "$name/"
     }
 
     fun url(thread: Mango9SocialThread?, outgoing: Boolean = false): String? = thread?.takeUnless { it.deleted }?.let {

@@ -13,7 +13,34 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONObject
 
-internal data class Mango9SocialAccount(val id: String, val platform: String, val name: String)
+internal data class Mango9SocialAccount(val id: String, val platform: String, val name: String, val platformLabel: String = platform)
+
+data class Mango9SocialInboxCapabilities(val version: Int, val dms: Boolean, val canSend: Boolean?, val canUpload: Boolean, val maxTextLength: Int?) {
+    companion object {
+        fun parse(c: JSONObject?): Mango9SocialInboxCapabilities? = c?.let {
+            Mango9SocialInboxCapabilities(
+                it.optInt("version"), it.opt("dms") == true, it.opt("canSend") as? Boolean,
+                it.optJSONObject("attachments")?.opt("canSend") == true, it.optInt("maxTextLength").takeIf { n -> n in 1..10000 }
+            )
+        }
+    }
+}
+
+internal object Mango9SocialProviders {
+    private val legacy = setOf("facebook", "instagram", "tiktok", "reddit", "telegram")
+
+    fun supports(platform: String, caps: JSONObject?): Boolean = platform.matches(Regex("[a-z][a-z0-9_]{0,39}")) &&
+        (if (caps?.optInt("version") == 1) caps.opt("dms") == true else platform in legacy)
+
+    fun connected(row: JSONObject): Boolean = supports(row.optString("platform"), row.optJSONObject("inboxCapabilities")) &&
+        row.optJSONObject("inboxCapabilities")?.opt("connected") != false &&
+        row.optString("reason") !in setOf("disconnection_pending", "reconnection_required", "inactive")
+
+    fun label(platform: String, caps: JSONObject? = null): String = caps?.takeIf {
+        it.optInt("version") == 1
+    }?.optString("label")?.takeIf { it.length in 1..80 }
+        ?: when (platform) { "facebook" -> "Facebook"; "instagram" -> "Instagram"; "tiktok" -> "TikTok"; "reddit" -> "Reddit"; "telegram" -> "Telegram"; else -> platform }
+}
 
 data class Mango9SocialThread(
     val id: String, val version: Int, val sourceId: String, val platform: String, val title: String,
@@ -21,11 +48,16 @@ data class Mango9SocialThread(
     val unread: Boolean, val connected: Boolean, val canReply: Boolean, val deleted: Boolean,
     val capabilities: Mango9ReactionCapabilities?, val readThrough: Int?, val openSend: Boolean,
     val participantHandle: String? = null, val accountHandle: String? = null, val markedUnread: Boolean = false,
+    val inboxCapabilities: Mango9SocialInboxCapabilities? = null,
 ) {
     // Preparing a local draft does not authorize a provider send. Keep those gates separate,
     // like SMS/Team, so an unavailable reply window does not make the attachment button inert.
-    val canDraft get() = !deleted && platform in setOf("facebook", "instagram", "tiktok")
-    val canSend get() = canDraft && connected && canReply
+    val canDraft get() = !deleted && platform.matches(Regex("[a-z][a-z0-9_]{0,39}")) && (if (inboxCapabilities?.version == 1) inboxCapabilities.dms else Mango9SocialProviders.supports(platform, null))
+    val canSend get() = canDraft && connected && canReply && inboxCapabilities?.canSend != false
+    val canUpload get() = platform in setOf("facebook", "instagram", "tiktok") &&
+        (inboxCapabilities?.version != 1 || inboxCapabilities.canUpload)
+    val textLimit get() = inboxCapabilities?.takeIf { it.version == 1 }?.maxTextLength
+        ?: if (platform == "telegram") 4096 else if (platform == "tiktok") 6000 else 10000
 
     fun canReact(message: Mango9SocialMessage, remove: Boolean): Boolean = connected && !deleted &&
         platform in setOf("facebook", "instagram") && !message.deleted && !message.unavailable &&
@@ -41,7 +73,7 @@ data class Mango9SocialThread(
             j.stringOrNull("activityAt").orEmpty(), j.opt("unread") == true, j.opt("connectionCurrent") == true,
             j.opt("canReply") == true, j.opt("deleted") == true, Mango9ReactionCapabilities.parse(j.optJSONObject("reactionCapabilities")),
             if (j.isNull("readThrough")) null else j.getInt("readThrough"), j.optJSONObject("openSend") != null,
-            j.stringOrNull("participantHandle"), j.stringOrNull("accountHandle"), j.optBoolean("markedUnread")
+            j.stringOrNull("participantHandle"), j.stringOrNull("accountHandle"), j.optBoolean("markedUnread"), Mango9SocialInboxCapabilities.parse(j.optJSONObject("inboxCapabilities"))
         )
     }
 }
@@ -175,10 +207,10 @@ internal class Mango9SocialRepository(context: Context, private val api: Mango9M
     fun isCurrent(lease: Mango9SessionLease) = sessions.currentSession(lease) != null
 
     suspend fun accounts(lease: Mango9SessionLease): List<Mango9SocialAccount> = api.request(lease, channel, listOf("accounts"))
-        .getJSONArray("items").objects().map {
-            Mango9SocialAccount(it.getString("id"), it.getString("platform"), it.stringOrNull("name") ?: it.stringOrNull("username") ?: it.getString("platform"))
+        .getJSONArray("items").objects().filter(Mango9SocialProviders::connected).map {
+            Mango9SocialAccount(it.getString("id"), it.getString("platform"), it.stringOrNull("name") ?: it.stringOrNull("username") ?: it.getString("platform"), Mango9SocialProviders.label(it.getString("platform"), it.optJSONObject("inboxCapabilities")))
         }
-        .filter { it.platform in setOf("facebook", "instagram", "tiktok") }
+        .distinctBy { it.id }.sortedWith(compareBy({ it.platformLabel }, { it.name }, { it.id }))
 
     suspend fun inbox(lease: Mango9SessionLease, platform: String = "", account: String = "", before: String? = null, search: String = ""): Mango9SocialPage<Mango9SocialThread> {
         val query = mutableMapOf("kind" to "dms", "limit" to "50")
@@ -259,6 +291,8 @@ internal class Mango9SocialRepository(context: Context, private val api: Mango9M
         require(isCurrent(lease))
         require(currentThread.canSend && !currentThread.openSend) { "Replies are unavailable for this conversation." }
         require(attachments.size <= 1) { "Social supports one attachment per message." }
+        require(attachments.isEmpty() || currentThread.canUpload) { "This platform supports text replies only." }
+        require(text.codePointCount(0, text.length) <= currentThread.textLimit) { "Message exceeds this platform’s character limit." }
         if (hasPending(lease, thread.id)) throw Mango9MessagingFailure(0, "pending")
         require(text.isNotBlank() || attachments.isNotEmpty())
         val mediaId = attachments.firstOrNull()?.let { upload(lease, currentThread, it, text) }

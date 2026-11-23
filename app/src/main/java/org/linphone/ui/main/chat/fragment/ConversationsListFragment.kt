@@ -107,6 +107,8 @@ class ConversationsListFragment : AbstractMainFragment() {
     private lateinit var social: Mango9SocialViewModel
     private var socialAccountIds = emptyList<String>()
     private var socialAccountLabels = emptyList<String>()
+    private var socialPlatformKeys = listOf("")
+    private var socialPlatformLabels = emptyList<String>()
     private var changingSocialFilters = false
     private lateinit var chatSelection: Mango9ChatListSelection
 
@@ -389,9 +391,6 @@ class ConversationsListFragment : AbstractMainFragment() {
                 }
             },
         )
-        val platforms = listOf("", "facebook", "instagram", "tiktok")
-        binding.socialPlatform.adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_dropdown_item, listOf(getString(R.string.mango9_all_platforms), "Facebook", "Instagram", "TikTok"))
-        binding.socialPlatform.setSelection(platforms.indexOf(social.current().platform).coerceAtLeast(0))
 
         fun selected(block: (Int) -> Unit) = object : AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
@@ -401,7 +400,12 @@ class ConversationsListFragment : AbstractMainFragment() {
             }
         }
         binding.socialPlatform.onItemSelectedListener = selected {
-            if (social.current().platform != platforms[it]) social.filters(platforms[it], "")
+            if (social.current().platform != socialPlatformKeys.getOrElse(it) {
+                ""
+            }
+            ) {
+                social.filters(socialPlatformKeys.getOrElse(it) { "" }, "")
+            }
         }
         binding.socialAccount.onItemSelectedListener = selected { position ->
             val id = socialAccountIds.getOrNull(position).orEmpty()
@@ -847,7 +851,7 @@ class ConversationsListFragment : AbstractMainFragment() {
         binding.mango9MessagesEmpty.visibility = if (!value.loading && value.threads.isEmpty() && value.error == null) View.VISIBLE else View.GONE
         val accounts = value.accounts.filter { value.platform.isBlank() || it.platform == value.platform }
         val ids = listOf("") + accounts.map { it.id }
-        val labels = listOf(getString(R.string.mango9_all_accounts)) + accounts.map { it.name }
+        val labels = listOf(getString(R.string.mango9_all_accounts)) + accounts.map { "${it.name} · ${it.platformLabel}" }
         if (ids != socialAccountIds || labels != socialAccountLabels || binding.socialAccount.adapter == null) {
             changingSocialFilters = true
             socialAccountIds = ids
@@ -859,10 +863,19 @@ class ConversationsListFragment : AbstractMainFragment() {
             binding.socialAccount.setSelection(ids.indexOf(value.account).coerceAtLeast(0))
             changingSocialFilters = false
         }
-        val platformPosition = listOf("", "facebook", "instagram", "tiktok").indexOf(value.platform).coerceAtLeast(0)
+        val providers = value.accounts.distinctBy { it.platform }.sortedBy { it.platformLabel }
+        val keys = listOf("") + providers.map { it.platform }
+        val platformNames = listOf(getString(R.string.mango9_all_platforms)) + providers.map { it.platformLabel }
+        changingSocialFilters = true
+        if (keys != socialPlatformKeys || platformNames != socialPlatformLabels || binding.socialPlatform.adapter == null) {
+            socialPlatformKeys = keys; socialPlatformLabels = platformNames
+            binding.socialPlatform.adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_dropdown_item, platformNames)
+        }
+        val platformPosition = keys.indexOf(value.platform).coerceAtLeast(0)
         if (binding.socialPlatform.selectedItemPosition != platformPosition) binding.socialPlatform.setSelection(platformPosition)
         val accountPosition = ids.indexOf(value.account).coerceAtLeast(0)
         if (binding.socialAccount.selectedItemPosition != accountPosition) binding.socialAccount.setSelection(accountPosition)
+        changingSocialFilters = false
     }
 
     private fun selectedChatAdapter() = when (mango9Tab) {

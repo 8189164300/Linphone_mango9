@@ -52,6 +52,8 @@ class Mango9MessagingListFragment : GenericMainFragment() {
     private var settingFilters = false
     private var accountIds = emptyList<String>()
     private var accountLabels = emptyList<String>()
+    private var socialPlatformKeys = listOf("")
+    private var socialPlatformLabels = emptyList<String>()
     private var mode = Mango9MessagingTab.Sms
     private lateinit var selection: Mango9ChatListSelection
     private lateinit var liveInbox: Mango9LiveInbox
@@ -132,9 +134,6 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         binding.tabs.check(when (mode) { Mango9MessagingTab.Sms -> R.id.sms_tab; Mango9MessagingTab.Team -> R.id.team_tab; Mango9MessagingTab.Social -> R.id.social_tab; Mango9MessagingTab.Live -> R.id.live_tab })
         viewModel.state.observe(viewLifecycleOwner, ::render)
         social.state.observe(viewLifecycleOwner) { renderSocial() }
-        val platforms = listOf("", "facebook", "instagram", "tiktok")
-        binding.platformFilter.adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_dropdown_item, listOf(getString(R.string.mango9_all_platforms), "Facebook", "Instagram", "TikTok"))
-        binding.platformFilter.setSelection(platforms.indexOf(social.current().platform).coerceAtLeast(0))
 
         fun selected(callback: (Int) -> Unit) = object : AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
@@ -144,7 +143,12 @@ class Mango9MessagingListFragment : GenericMainFragment() {
             }
         }
         binding.platformFilter.onItemSelectedListener = selected { position ->
-            if (social.current().platform != platforms[position]) social.filters(platforms[position], "")
+            if (social.current().platform != socialPlatformKeys.getOrElse(position) {
+                ""
+            }
+            ) {
+                social.filters(socialPlatformKeys.getOrElse(position) { "" }, "")
+            }
         }
         binding.accountFilter.onItemSelectedListener = selected { position ->
             val account = accountIds.getOrNull(position).orEmpty()
@@ -261,7 +265,7 @@ class Mango9MessagingListFragment : GenericMainFragment() {
         binding.connectionStatus.setText(R.string.mango9_social)
         val accounts = value.accounts.filter { value.platform.isBlank() || it.platform == value.platform }
         val ids = listOf("") + accounts.map { it.id }
-        val labels = listOf(getString(R.string.mango9_all_accounts)) + accounts.map { it.name }
+        val labels = listOf(getString(R.string.mango9_all_accounts)) + accounts.map { "${it.name} · ${it.platformLabel}" }
         if (ids != accountIds || labels != accountLabels || binding.accountFilter.adapter == null) {
             settingFilters = true; accountIds = ids; accountLabels = labels
             binding.accountFilter.adapter = ArrayAdapter(
@@ -270,10 +274,19 @@ class Mango9MessagingListFragment : GenericMainFragment() {
             )
             binding.accountFilter.setSelection(ids.indexOf(value.account).coerceAtLeast(0)); settingFilters = false
         }
-        val platformPosition = listOf("", "facebook", "instagram", "tiktok").indexOf(value.platform).coerceAtLeast(0)
+        val providers = value.accounts.distinctBy { it.platform }.sortedBy { it.platformLabel }
+        val keys = listOf("") + providers.map { it.platform }
+        val platformNames = listOf(getString(R.string.mango9_all_platforms)) + providers.map { it.platformLabel }
+        settingFilters = true
+        if (keys != socialPlatformKeys || platformNames != socialPlatformLabels || binding.platformFilter.adapter == null) {
+            socialPlatformKeys = keys; socialPlatformLabels = platformNames
+            binding.platformFilter.adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_dropdown_item, platformNames)
+        }
+        val platformPosition = keys.indexOf(value.platform).coerceAtLeast(0)
         if (binding.platformFilter.selectedItemPosition != platformPosition) binding.platformFilter.setSelection(platformPosition)
         val accountPosition = ids.indexOf(value.account).coerceAtLeast(0)
         if (binding.accountFilter.selectedItemPosition != accountPosition) binding.accountFilter.setSelection(accountPosition)
+        settingFilters = false
     }
 
     private fun submitRows(adapter: Mango9MessagingListAdapter, rows: List<Mango9MessagingListItem>) {

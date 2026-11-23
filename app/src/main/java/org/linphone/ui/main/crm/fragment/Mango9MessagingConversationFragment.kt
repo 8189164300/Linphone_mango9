@@ -685,7 +685,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
         if (isSocial) {
             val canDraft = social.current().thread?.canDraft == true
             binding.message.isEnabled = current && canDraft && !draft.sending
-            binding.attach.isEnabled = current && !draft.sending && draft.preparing == 0
+            binding.attach.isEnabled = current && social.current().thread?.canUpload == true && !draft.sending && draft.preparing == 0
         }
         binding.attach.alpha = if (binding.attach.isEnabled) 1f else 0.35f
         binding.send.alpha = if (binding.send.isEnabled) 1f else 0.35f
@@ -1338,7 +1338,7 @@ class Mango9MessagingConversationFragment : GenericMainFragment() {
 
     private fun showAttachmentMenu() {
         if (!viewModel.isCurrentConversation()) return
-        val atLimit = attachments.size >= (if (isSocial || isSms) 10 else MAX_ATTACHMENTS) || (isSocial && social.current().thread?.canDraft != true)
+        val atLimit = attachments.size >= (if (isSocial || isSms) 10 else MAX_ATTACHMENTS) || (isSocial && social.current().thread?.canUpload != true)
         val options = arrayOf(
             getString(R.string.mango9_chat_take_photo),
             getString(R.string.mango9_chat_photo_library),
