@@ -150,7 +150,8 @@ final class Mango9ChatDesignPhoneUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         if app.buttons["main.menu"].waitForExistence(timeout: 5) {
             app.buttons["main.menu"].tap()
-            app.staticTexts["Add account"].firstMatch.tap()
+            let add = app.staticTexts["Add account"].firstMatch
+            if add.exists { add.tap() } else { app.staticTexts["Add an account"].firstMatch.tap() }
         }
         let forgot = app.buttons["login.forgotPassword"]
         XCTAssertTrue(forgot.waitForExistence(timeout: 10))
@@ -189,7 +190,8 @@ final class Mango9ChatDesignPhoneUITests: XCTestCase {
         let app = XCUIApplication(); app.terminate(); app.launch()
         if app.buttons["main.menu"].waitForExistence(timeout: 5) {
             app.buttons["main.menu"].tap()
-            app.staticTexts["Add account"].firstMatch.tap()
+            let add = app.staticTexts["Add account"].firstMatch
+            if add.exists { add.tap() } else { app.staticTexts["Add an account"].firstMatch.tap() }
         }
         let gear = app.buttons["Connection settings"]
         XCTAssertTrue(gear.waitForExistence(timeout: 10)); gear.tap()
@@ -205,6 +207,88 @@ final class Mango9ChatDesignPhoneUITests: XCTestCase {
         XCTAssertTrue(domain.waitForExistence(timeout: 5))
         XCTAssertFalse(app.secureTextFields["settings.unlockPassword"].exists)
         back.tap()
+    }
+
+    /// Opt-in device check. Inject credentials at runtime; never store them in source.
+    func testManualSIPRegistrationWithProvidedCredentials() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let extensionNumber = environment["SIP_TEST_EXTENSION"], !extensionNumber.isEmpty,
+              let password = environment["SIP_TEST_PASSWORD"], !password.isEmpty,
+              let domainName = environment["SIP_TEST_DOMAIN"], !domainName.isEmpty else {
+            throw XCTSkip("Provide dedicated SIP test credentials to run the live registration check")
+        }
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication(); app.terminate(); app.launch()
+        if app.buttons["main.menu"].waitForExistence(timeout: 5) {
+            let add = app.staticTexts["Add account"].firstMatch
+            let addAccount = add.exists ? add : app.staticTexts["Add an account"].firstMatch
+            if !addAccount.isHittable { app.buttons["main.menu"].tap() }
+            XCTAssertTrue(addAccount.waitForExistence(timeout: 5))
+            addAccount.tap()
+        }
+        let gear = app.buttons["Connection settings"]
+        XCTAssertTrue(gear.waitForExistence(timeout: 10)); gear.tap()
+        let extensionField = app.textFields["Extension"].firstMatch
+        XCTAssertTrue(extensionField.waitForExistence(timeout: 10))
+        extensionField.tap(); extensionField.typeText(extensionNumber)
+        let passwordField = app.secureTextFields["Password"].firstMatch
+        passwordField.tap(); passwordField.typeText(password)
+        let domain = app.textFields["Server domain"].firstMatch
+        domain.tap(); domain.typeText(domainName)
+        XCTAssertEqual(domain.value as? String, domainName, "The domain must remain in the form")
+        if let displayName = environment["SIP_TEST_DISPLAY_NAME"], !displayName.isEmpty {
+            let name = app.textFields["Display name"].firstMatch
+            name.tap(); name.typeText(displayName)
+        }
+        if let phoneNumber = environment["SIP_TEST_PHONE_NUMBER"], !phoneNumber.isEmpty {
+            let phone = app.textFields["Phone number (optional)"].firstMatch
+            if !phone.isHittable { app.swipeUp() }
+            phone.tap(); phone.typeText(phoneNumber)
+        }
+        app.swipeUp()
+        let register = app.buttons["connectionSettings.signIn"]
+        XCTAssertTrue(register.isEnabled)
+        if !register.isHittable { app.swipeUp() }
+        register.tap()
+        if environment["SIP_TEST_EXPECT_REJECTION"] == "1" {
+            XCTAssertTrue(app.staticTexts["connectionSettings.error"].waitForExistence(timeout: 20))
+            capture(app, "Manual SIP invalid account domain feedback")
+            app.terminate(); app.launch()
+            XCTAssertTrue(app.buttons["main.menu"].waitForExistence(timeout: 20))
+            app.buttons["main.menu"].tap()
+            let preserved = app.buttons.matching(NSPredicate(
+                format: "label BEGINSWITH 'Account ' AND value == 'Selected, Connected'"
+            )).firstMatch
+            XCTAssertTrue(preserved.waitForExistence(timeout: 20), "The existing line must survive a rejected account setup")
+            capture(app, "Existing line preserved after rejected registration")
+            return
+        }
+        let menu = app.buttons["main.menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 45), "Registration should enter the phone workspace")
+        menu.tap()
+        let connected = app.buttons.matching(NSPredicate(
+            format: "label BEGINSWITH 'Account ' AND value == 'Selected, Connected'"
+        )).firstMatch
+        XCTAssertTrue(connected.waitForExistence(timeout: 20), "The selected SIP account must be registered")
+        if let displayName = environment["SIP_TEST_DISPLAY_NAME"] {
+            XCTAssertTrue(connected.label.contains(displayName))
+        }
+        if let suffix = environment["SIP_TEST_PHONE_SUFFIX"] {
+            XCTAssertTrue(connected.label.contains(suffix))
+        }
+        capture(app, "Manual SIP registration connected")
+        app.terminate(); app.launch()
+        XCTAssertTrue(menu.waitForExistence(timeout: 30))
+        menu.tap()
+        XCTAssertTrue(connected.waitForExistence(timeout: 20), "Manual SIP registration must survive restart")
+        if let displayName = environment["SIP_TEST_DISPLAY_NAME"] {
+            XCTAssertTrue(connected.label.contains(displayName))
+        }
+        if let suffix = environment["SIP_TEST_PHONE_SUFFIX"] {
+            XCTAssertTrue(connected.label.contains(suffix))
+        }
+        capture(app, "Manual SIP registration after restart")
     }
 
     private func capture(_ app: XCUIApplication, _ name: String) {

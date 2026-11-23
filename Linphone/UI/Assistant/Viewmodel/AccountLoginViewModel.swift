@@ -28,6 +28,8 @@ class AccountLoginViewModel: ObservableObject {
 	@Published var passwd: String = ""
 	@Published var domain: String = ""
 	@Published var displayName: String = ""
+	@Published var phoneNumber: String = ""
+	@Published var registrationError: String?
 	@Published var transportType: String = "TLS"
 	@Published var authId: String = ""
 	@Published var sipProxyUrl: String = ""
@@ -36,8 +38,32 @@ class AccountLoginViewModel: ObservableObject {
 	private var mCoreDelegate: CoreDelegate!
 	
 	init() {}
+
+	deinit {
+		if let delegate = mCoreDelegate {
+			coreContext.doOnCoreQueue { $0.removeDelegate(delegate: delegate) }
+		}
+	}
 	
 	func login() {
+		// Snapshot the form before entering the core queue. A qualified SIP
+		// username supplies the account domain even when the server is a proxy.
+		let enteredUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+		let parts = enteredUsername.split(separator: "@", maxSplits: 1)
+		let sipUsername = parts.count == 2 ? String(parts[0]) : enteredUsername
+		let sipDomain = parts.count == 2
+			? String(parts[1])
+			: domain.trimmingCharacters(in: .whitespacesAndNewlines)
+		let sipPassword = passwd
+		let authenticationID = authId.trimmingCharacters(in: .whitespacesAndNewlines)
+		let selectedTransport = transportType
+		let enteredDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+		let enteredPhoneNumber = phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+		registrationError = nil
+		guard sipDomain.lowercased() != "proxy.mango9.com" else {
+			registrationError = "Enter the full SIP username supplied by your administrator, including its account suffix."
+			return
+		}
 		coreContext.doOnCoreQueue { core in
 			guard self.coreContext.networkStatusIsConnected else {
 				DispatchQueue.main.async {
@@ -47,16 +73,14 @@ class AccountLoginViewModel: ObservableObject {
 				return
 			}
 			do {
-				let usernameWithDomain = self.username.split(separator: "@")
-				
-				if usernameWithDomain.count > 1 {
-					DispatchQueue.main.async {
-						self.domain = String(usernameWithDomain.last ?? "")
-						self.username = String(usernameWithDomain.first ?? "")
-					}
+				let identity = try Factory.Instance.createAddress(addr: "sip:" + sipUsername + "@" + sipDomain)
+				let sipIdentity = identity.asStringUriOnly()
+				let existingAccount = core.accountList.first {
+					Mango9SessionStore.normalizedIdentity($0.params?.identityAddress?.asStringUriOnly()) ==
+						Mango9SessionStore.normalizedIdentity(sipIdentity)
 				}
-				
-				if let assistantLinphone = Bundle.main.path(forResource: "assistant_linphone_default_values", ofType: nil) {
+				if existingAccount == nil,
+				   let assistantLinphone = Bundle.main.path(forResource: "assistant_linphone_default_values", ofType: nil) {
 					core.loadConfigFromXml(xmlUri: assistantLinphone)
 				}
 				
@@ -64,9 +88,9 @@ class AccountLoginViewModel: ObservableObject {
 				// TLS is strongly recommended
 				// Only use UDP if you don't have the choice
 				var transport: TransportType
-				if self.transportType == "TLS" {
+				if selectedTransport == "TLS" {
 					transport = TransportType.Tls
-				} else if self.transportType == "TCP" {
+				} else if selectedTransport == "TCP" {
 					transport = TransportType.Tcp
 				} else { transport = TransportType.Udp }
 				
@@ -78,21 +102,27 @@ class AccountLoginViewModel: ObservableObject {
 				// ha1 is set to null as we are using the clear text password. Upon first register, the hash will be computed automatically.
 				// The realm will be determined automatically from the first register, as well as the algorithm
 				let authInfo = try Factory.Instance.createAuthInfo(
-					username: self.username,
-					userid: self.authId,
-					passwd: self.passwd,
+					username: sipUsername,
+					userid: authenticationID,
+					passwd: sipPassword,
 					ha1: "",
 					realm: "",
-					domain: self.domain
+					domain: sipDomain
 				)
 				
 				// Account object replaces deprecated ProxyConfig object
 				// Account object is configured through an AccountParams object that we can obtain from the Core
 				
-				let accountParams = try core.createAccountParams()
+				let accountParams = try existingAccount?.params?.clone() ?? core.createAccountParams()
 				
 				// A SIP account is identified by an identity address that we can construct from the username and domain
-				let identity = try Factory.Instance.createAddress(addr: String("sip:" + self.username + "@" + self.domain))
+				let previousParams = existingAccount?.params?.clone()
+				let savedAuth = existingAccount?.findAuthInfo()
+				let previousAuth = savedAuth?.clone()
+				let previousDefault = core.defaultAccount
+				let savedName = existingAccount?.params?.identityAddress?.displayName ?? ""
+				let resolvedName = enteredDisplayName.isEmpty ? savedName : enteredDisplayName
+				if !resolvedName.isEmpty { try identity.setDisplayname(newValue: resolvedName) }
 				try accountParams.setIdentityaddress(newValue: identity)
 				
 				// We also need to configure where the proxy server is located
@@ -111,45 +141,70 @@ class AccountLoginViewModel: ObservableObject {
 				accountParams.registerEnabled = true
 				Mango9Configuration.configurePush(on: accountParams)
 				
-				self.mCoreDelegate = CoreDelegateStub(onAccountRegistrationStateChanged: { (core: Core, account: Account, state: RegistrationState, message: String) in
-					
-					Log.info("New registration state is \(state) for user id " +
-							 "\( String(describing: account.params?.identityAddress?.asString())) = \(message)\n")
-					
-					switch state {
-					case .Failed:  // If registration failed, remove account from core
-						if let authInfo = account.findAuthInfo() {
+				let targetAccount: Account
+				if let existingAccount { targetAccount = existingAccount }
+				else { targetAccount = try core.createAccount(params: accountParams) }
+				if let delegate = self.mCoreDelegate { core.removeDelegate(delegate: delegate) }
+				self.mCoreDelegate = CoreDelegateStub(onAccountRegistrationStateChanged: { [weak self] core, account, state, message in
+					guard account == targetAccount, state == .Ok || state == .Failed else { return }
+					if let delegate = self?.mCoreDelegate {
+						core.removeDelegate(delegate: delegate)
+						self?.mCoreDelegate = nil
+					}
+					if state == .Ok {
+						core.defaultAccount = targetAccount
+						DispatchQueue.main.async {
+							if !enteredPhoneNumber.isEmpty {
+								Mango9LineIdentityStore.save(
+									Mango9LineIdentity(extensionNumber: sipUsername, activeNumber: enteredPhoneNumber),
+									sipIdentity: sipIdentity)
+							}
+							self?.registrationError = nil
+						}
+					} else {
+						// A failed attempt must never delete another saved calling line.
+						if let savedAuth, let previousAuth {
+							savedAuth.password = previousAuth.password
+							savedAuth.ha1 = previousAuth.ha1
+							savedAuth.userid = previousAuth.userid
+							savedAuth.algorithm = previousAuth.algorithm
+						} else {
 							core.removeAuthInfo(info: authInfo)
 						}
-						
-						Log.warn("Registration failed for account \(account.displayName()), deleting it from core")
-						core.removeAccountWithData(account: account)
-					default:
-						break
+						if let previousParams {
+							targetAccount.params = previousParams
+							targetAccount.refreshRegister()
+						} else { core.removeAccount(account: targetAccount) }
+						if let previousDefault,
+						   !(core.defaultAccount.map { $0 == previousDefault } ?? false) {
+							core.defaultAccount = previousDefault
+						}
+						DispatchQueue.main.async {
+							self?.registrationError = "Could not register this line. Check the extension, SIP password and domain."
+						}
 					}
 				})
-				
-				self.coreContext.mCore.addDelegate(delegate: self.mCoreDelegate)
-				
-				// Now that our AccountParams is configured, we can create the Account object
-				let account = try core.createAccount(params: accountParams)
-				
-				// Now let's add our objects to the Core
-				core.addAuthInfo(info: authInfo)
-				try core.addAccount(account: account)
-				
-				// Also set the newly added account as default
-				core.defaultAccount = account
-				
-				DispatchQueue.main.async {
-					self.domain = ""
-					self.transportType = "TLS"
-					self.authId = ""
-					self.sipProxyUrl = ""
-					self.outboundProxy = ""
+				core.addDelegate(delegate: self.mCoreDelegate)
+				if let savedAuth {
+					// Update this line's existing authentication object and start a fresh
+					// registration. Re-adding it retries all pending SDK authentications,
+					// including operations that have not received a challenge yet.
+					savedAuth.password = sipPassword
+					savedAuth.ha1 = nil
+					savedAuth.userid = authenticationID.isEmpty ? nil : authenticationID
+					// Let the next challenge select the algorithm and persist the new hash.
+					savedAuth.algorithm = nil
+				} else {
+					core.addAuthInfo(info: authInfo)
 				}
-				
-			} catch { NSLog(error.localizedDescription) }
+				if existingAccount != nil { targetAccount.params = accountParams }
+				else { try core.addAccount(account: targetAccount) }
+				targetAccount.refreshRegister()
+			} catch {
+				DispatchQueue.main.async {
+					self.registrationError = "Could not set up this line. Check the extension and server domain."
+				}
+			}
 		}
 	}
 	

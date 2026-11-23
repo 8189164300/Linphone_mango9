@@ -49,7 +49,7 @@ struct SideMenuAccountRow: View {
 					.padding(.leading, 6)
 
 					VStack(alignment: .leading, spacing: 3) {
-						Text(accountLineLabel)
+						Text(accountDisplayName)
 							.default_text_style_grey_400(styleSize: 14)
 							.lineLimit(1)
 							.minimumScaleFactor(0.72)
@@ -71,7 +71,7 @@ struct SideMenuAccountRow: View {
 									: ""
 							)
 
-							Text(pbxCompanyName)
+							Text(accountLineLabel)
 								.default_text_style_uncolored(styleSize: 11)
 								.foregroundStyle(Color.grayMain2c500)
 								.lineLimit(1)
@@ -100,7 +100,7 @@ struct SideMenuAccountRow: View {
 			.frame(maxWidth: .infinity)
 			.buttonStyle(.plain)
 			.accessibilityLabel(
-				"Account \(accountNumber), \(pbxCompanyName), \(accountLineLabel)"
+				"Account \(accountNumber), \(accountDisplayName), \(pbxCompanyName), \(accountLineLabel)"
 			)
 			.accessibilityValue(
 				model.isDefaultAccount
@@ -230,6 +230,16 @@ struct SideMenuAccountRow: View {
 			return activeNumber
 		}
 		return fallback
+	}
+
+	private var accountDisplayName: String {
+		let identity = model.account.params?.identityAddress
+		let sipIdentity = identity?.asStringUriOnly() ?? ""
+		let name = identity?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		if !name.isEmpty, name != identity?.username { return name }
+		let sessionName = Mango9SessionStore.load(for: sipIdentity)?.displayName?
+			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		return sessionName.isEmpty ? pbxCompanyName : sessionName
 	}
 
 	private var pbxCompanyName: String {

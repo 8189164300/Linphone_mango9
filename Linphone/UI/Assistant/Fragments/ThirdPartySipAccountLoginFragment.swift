@@ -22,7 +22,8 @@ import SwiftUI
 struct ThirdPartySipAccountLoginFragment: View {
 	
 	@ObservedObject private var coreContext = CoreContext.shared
-	@ObservedObject var accountLoginViewModel: AccountLoginViewModel
+	// Keep entered credentials when registration or call state redraws the parent.
+	@StateObject var accountLoginViewModel: AccountLoginViewModel
 	
 	@StateObject private var keyboard = KeyboardResponder()
 	
@@ -36,6 +37,7 @@ struct ThirdPartySipAccountLoginFragment: View {
 	@FocusState var isPasswordFocused: Bool
 	@FocusState var isDomainFocused: Bool
 	@FocusState var isDisplayNameFocused: Bool
+	@FocusState var isPhoneNumberFocused: Bool
 	@FocusState var isAuthIdFocused: Bool
     @FocusState var isSipProxyUrlFocused: Bool
 	@FocusState var isOutboundProxyFocused: Bool
@@ -247,6 +249,23 @@ struct ThirdPartySipAccountLoginFragment: View {
 					)
 					.padding(.bottom)
 					.focused($isDisplayNameFocused)
+
+				Text("Phone number")
+					.default_text_style_700(styleSize: 15)
+					.padding(.bottom, -5)
+				TextField("Phone number (optional)", text: $accountLoginViewModel.phoneNumber)
+					.default_text_style(styleSize: 15)
+					.keyboardType(.phonePad)
+					.frame(height: 25)
+					.padding(.horizontal, 20)
+					.padding(.vertical, 15)
+					.overlay(
+						RoundedRectangle(cornerRadius: 60)
+							.inset(by: 0.5)
+							.stroke(isPhoneNumberFocused ? Color.mango9Primary : Color.gray200, lineWidth: 1)
+					)
+					.padding(.bottom)
+					.focused($isPhoneNumberFocused)
 				
 				Text(String(localized: "assistant_sip_account_transport_protocol"))
 					.default_text_style_700(styleSize: 15)
@@ -387,6 +406,15 @@ struct ThirdPartySipAccountLoginFragment: View {
 			.padding(.horizontal, 20)
 			
 			Spacer()
+
+			if let error = accountLoginViewModel.registrationError {
+				Text(error)
+					.font(.system(size: 14))
+					.foregroundStyle(Color.redDanger500)
+					.multilineTextAlignment(.center)
+					.padding(.horizontal, 20)
+					.accessibilityIdentifier("connectionSettings.error")
+			}
 			
 			Button(action: {
 				self.accountLoginViewModel.login()
