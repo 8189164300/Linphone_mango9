@@ -148,11 +148,11 @@ struct ThirdPartySipAccountLoginFragment: View {
 			.padding(.bottom, 20)
 			
 			VStack(alignment: .leading) {
-				Text(String(localized: "username")+"*")
+				Text("Extension*")
 					.default_text_style_700(styleSize: 15)
 					.padding(.bottom, -5)
 				
-				TextField("username", text: $accountLoginViewModel.username)
+				TextField("Extension", text: $accountLoginViewModel.username)
 					.default_text_style(styleSize: 15)
 					.disableAutocorrection(true)
 					.autocapitalization(.none)
@@ -391,7 +391,7 @@ struct ThirdPartySipAccountLoginFragment: View {
 			Button(action: {
 				self.accountLoginViewModel.login()
 			}, label: {
-				Text("assistant_account_login")
+				Text("Register")
 					.font(.system(size: 20, weight: .semibold))
 					.foregroundStyle(canSignIn ? Color.white : Color.mango9Primary)
 					.frame(height: 35)
