@@ -218,7 +218,7 @@ class AccountModel: ObservableObject {
 		return imagePath
 	}
 	
-	func logout() {
+	func logout(onPrepared: (@MainActor (Bool) -> Void)? = nil) {
 		CoreContext.shared.doOnCoreQueue { core in
 			guard !self.logoutCleanupPending, !self.logoutPreparationPending,
 				  let identity = self.account.params?.identityAddress?.asStringUriOnly() else { return }
@@ -233,10 +233,13 @@ class AccountModel: ObservableObject {
 					}
 					try Mango9SessionStore.remove(for: identity)
 				} catch {
+					Log.error("[Logout] Local sign-out preparation failed (\(String(reflecting: type(of: error)))): \(error.localizedDescription)")
 					CoreContext.shared.doOnCoreQueue { _ in self.logoutPreparationPending = false }
-					ToastViewModel.shared.show(error.localizedDescription, duration: 6)
+					ToastViewModel.shared.showMessage(error.localizedDescription, duration: 6)
+					onPrepared?(false)
 					return
 				}
+				onPrepared?(true)
 				Mango9ChatStore.shared.disconnectIfConnected(to: identity)
 				if let session, session.logoutToken == nil {
 					Task { @MainActor in
@@ -280,10 +283,11 @@ class AccountModel: ObservableObject {
 				&& !core.accountList.contains(where: { $0.findAuthInfo() === authInfo }) {
 				core.removeAuthInfo(info: authInfo)
 			}
+			Mango9SessionStore.activate(sipIdentity: core.defaultAccount?.params?.identityAddress?.asStringUriOnly())
 			Task { @MainActor in
 				await Mango9LogoutCoordinator.shared.retryPending()
 				if let identity, Mango9LogoutCoordinator.shared.hasPendingLogout(identity: identity) {
-					ToastViewModel.shared.show("Signed out on this iPhone. Call notification cleanup will finish when the connection is restored.", duration: 6)
+					ToastViewModel.shared.showMessage("Signed out on this iPhone. Call notification cleanup will finish when the connection is restored.", duration: 6)
 				}
 			}
 		}

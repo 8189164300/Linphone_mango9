@@ -550,11 +550,15 @@ class CoreContext: ObservableObject {
 	private func startAfterLogoutRecovery(_ core: Core) {
 		do {
 			try Mango9LogoutCoordinator.recoverLocalRemovals(core: core)
+			guard core.globalState == .Ready || core.globalState == .Off else {
+				logoutRecoveryAttempts = 0
+				return
+			}
 			if let config = core.config { CorePreferences.configureIncomingCallKitRinging(config) }
 			try core.start()
 			logoutRecoveryAttempts = 0
 		} catch {
-			Log.warn("[CoreContext] Voice startup waits for saved logout cleanup")
+			Log.warn("[CoreContext] Voice startup failed (\(String(reflecting: type(of: error)))): \(error.localizedDescription)")
 			guard !logoutRecoveryScheduled, logoutRecoveryAttempts < 6 else { return }
 			logoutRecoveryAttempts += 1
 			logoutRecoveryScheduled = true

@@ -469,7 +469,7 @@ struct ToastView: View {
 							.padding(8)
 					
 					default:
-						Text("Error")
+						Text(verbatim: toast.plainText ? toast.message : String(localized: "Error"))
 							.multilineTextAlignment(.center)
 							.foregroundStyle(Color.redDanger500)
 							.default_text_style(styleSize: 15)

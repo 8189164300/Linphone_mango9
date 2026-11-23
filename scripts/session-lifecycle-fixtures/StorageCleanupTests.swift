@@ -96,6 +96,29 @@ extension SwiftPatchTests {
 
  @MainActor static func cleanupChecks() async throws {
   try Mango9LogoutKeychain.save([])
+  let manualIdentity="sip:manual@fixture.example.invalid"
+  var manualRequests=0
+  var manualAccountPresent=true
+  let manual=Mango9LogoutCoordinator(send:{ _ in manualRequests += 1;throw URLError(.notConnectedToInternet) },accountExists:{ _ in manualAccountPresent })
+  try await manual.prepareLogout(identity:manualIdentity,token:nil,session:nil)
+  var manualRecords=try Mango9LogoutKeychain.load()
+  try check("manual_sip_logout_is_local_and_durable",manualRequests==0 && manualRecords.count==1 && manualRecords[0].localOnly==true && manualRecords[0].pendingLogout)
+  try check("manual_sip_intent_prevents_restart_registration",Mango9LogoutCoordinator.needsLocalRemoval(identity:manualIdentity,records:manualRecords))
+  try await manual.prepareLogout(identity:manualIdentity,token:nil,session:nil)
+  try check("manual_sip_logout_retry_is_idempotent",(try Mango9LogoutKeychain.load()).count==1 && manualRequests==0)
+  await manual.retryPending()
+  try check("manual_sip_intent_waits_for_local_removal",(try Mango9LogoutKeychain.load()).count==1 && manualRequests==0)
+  manualAccountPresent=false
+  manualRecords=try Mango9LogoutKeychain.load();manualRecords[0].retryAfter = .distantPast
+  try Mango9LogoutKeychain.save(manualRecords)
+  await manual.retryPending()
+  try check("manual_sip_cleanup_finishes_without_server",(try Mango9LogoutKeychain.load()).isEmpty && manualRequests==0)
+  let incomplete=Mango9LogoutRecord(identity:manualIdentity,voipToken:"fixture",provider:"fixture",topic:"fixture")
+  try Mango9LogoutKeychain.save([incomplete])
+  var incorrectlyRemoved=false
+  do {try await manual.prepareLogout(identity:manualIdentity,token:nil,session:nil);incorrectlyRemoved=true} catch {}
+  try check("incomplete_remote_lease_is_not_treated_as_manual_sip",!incorrectlyRemoved && (try Mango9LogoutKeychain.load())==[incomplete])
+  try Mango9LogoutKeychain.save([])
   let token=String(repeating:"a",count:64)
   let session=try altered(fresh(),["logoutToken":"crm-old"])
   let identity=session.sipIdentity!

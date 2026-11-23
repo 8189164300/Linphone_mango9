@@ -520,17 +520,9 @@ struct AccountProfileFragment: View {
 								let accountToRemove = CoreContext.shared.accounts[
 									accountProfileViewModel.accountModelIndex!
 								]
-								let nextAccount = CoreContext.shared.accounts.first {
-									$0 !== accountToRemove
-								}?.account
-								accountToRemove.logout()
-								isShowAccountProfileFragment = false
-								if let nextAccount {
-									CoreContext.shared.doOnCoreQueue { core in
-										core.defaultAccount = nextAccount
-									}
-								} else {
-									Mango9SessionStore.activate(sipIdentity: nil)
+								isShowLogoutPopup = false
+								accountToRemove.logout { prepared in
+									if prepared { isShowAccountProfileFragment = false }
 								}
 							}
 						},

@@ -124,13 +124,28 @@ final class Mango9LogoutTests: XCTestCase {
 		XCTAssertTrue(memory.records[0].pendingLogout)
 	}
 
-	func testUnknownLeaseFailsClosedUntilOnlineBootstrap() async {
+	func testManualSIPLogoutDoesNotRequireCRMOrNetwork() async throws {
 		let memory = Memory()
+		memory.fails = true
+		let coordinator = coordinator(memory)
+		try await coordinator.prepareLogout(identity: identity, token: token, session: nil)
+		XCTAssertTrue(memory.records.first?.localOnly == true)
+		XCTAssertTrue(Mango9LogoutCoordinator.needsLocalRemoval(identity: identity, records: memory.records))
+		XCTAssertTrue(memory.requests.isEmpty)
+		await coordinator.retryPending()
+		XCTAssertTrue(memory.records.isEmpty)
+		XCTAssertTrue(memory.requests.isEmpty)
+	}
+
+	func testIncompleteRemoteLeaseCannotBeDiscardedAsManualSIP() async {
+		let memory = Memory()
+		var incomplete = record(); incomplete.cleanupToken = nil
+		memory.records = [incomplete]
 		do {
 			try await coordinator(memory).prepareLogout(identity: identity, token: token, session: nil)
-			XCTFail("No device-scoped cleanup authority")
+			XCTFail("An existing remote lease must retain its cleanup work")
 		} catch {}
-		XCTAssertTrue(memory.records.isEmpty)
+		XCTAssertEqual(memory.records, [incomplete])
 	}
 
 	func testLeaseCreationIsIdempotentAndNeverSendsSIPCredentials() async throws {

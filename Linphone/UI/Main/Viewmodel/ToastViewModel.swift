@@ -31,9 +31,18 @@ final class ToastViewModel: ObservableObject {
 	private init() {}
 	
 	func show(_ message: String, duration: TimeInterval = 2.0) {
+		present(message, duration: duration, plainText: false)
+	}
+
+	/// Already localized, user-facing text rather than a legacy toast key.
+	func showMessage(_ message: String, duration: TimeInterval = 2.0) {
+		present(message, duration: duration, plainText: true)
+	}
+
+	private func present(_ message: String, duration: TimeInterval, plainText: Bool) {
 		hideWorkItem?.cancel()
 		
-		toast = ToastData(message: message)
+		toast = ToastData(message: message, plainText: plainText)
 		
 		let workItem = DispatchWorkItem { [weak self] in
 			self?.toast = nil
@@ -54,4 +63,5 @@ final class ToastViewModel: ObservableObject {
 struct ToastData: Identifiable, Equatable {
 	let id = UUID()
 	let message: String
+	var plainText = false
 }

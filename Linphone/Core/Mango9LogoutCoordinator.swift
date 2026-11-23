@@ -21,6 +21,9 @@ struct Mango9LogoutRecord: Codable, Equatable, Identifiable {
 	var crmApiBaseURL: String?
 	var retryAfter: Date?
 	var retryAttempts: Int?
+	// A manual SIP login has no CRM-issued push lease. Its durable intent only
+	// fences local account removal; normal SIP unregister removes its contact.
+	var localOnly: Bool?
 
 	static func blocksLogin(_ identity: String, records: [Mango9LogoutRecord]) -> Bool {
 		records.contains { $0.identity == identity && $0.pendingLogout }
@@ -59,11 +62,15 @@ enum Mango9LogoutKeychain {
 		var result: CFTypeRef?
 		let status = SecItemCopyMatching(query as CFDictionary, &result)
 		if status == errSecItemNotFound { return [] }
-		guard status == errSecSuccess, let data = result as? Data,
-			  let records = try? JSONDecoder().decode([Mango9LogoutRecord].self, from: data) else {
+		guard status == errSecSuccess, let data = result as? Data else {
+			Log.error("[Logout] Secure cleanup journal read failed (status \(status))")
 			throw Mango9LogoutError.secureStorage
 		}
-		return records
+		do { return try JSONDecoder().decode([Mango9LogoutRecord].self, from: data) }
+		catch {
+			Log.error("[Logout] Secure cleanup journal could not be decoded")
+			throw Mango9LogoutError.secureStorage
+		}
 	}
 	static func blocksLogin(_ identity: String) throws -> Bool {
 		Mango9LogoutRecord.blocksLogin(identity, records: try load())
@@ -217,13 +224,22 @@ final class Mango9LogoutCoordinator {
 	func prepareLogout(identity: String, token: String?, session: Mango9Session?) async throws {
 		await acquire()
 		defer { release() }
+		let existing = try read()
+		if session == nil, !existing.contains(where: { $0.identity == identity }) {
+			var local = Mango9LogoutRecord(identity: identity, voipToken: "",
+				provider: Mango9Configuration.applePushProvider, topic: Mango9Configuration.applePushParam)
+			local.pendingLogout = true
+			local.localOnly = true
+			try write(existing + [local])
+			return
+		}
 		if let token = Self.normalizedVoIPToken(token), let session {
 			try await ensureLease(identity: identity, token: token, session: session)
 		}
 		// A token may rotate after an interrupted activation. Finish those
 		// older exact scopes too; otherwise a missing capability could leave
 		// the account permanently unable to complete a safe logout.
-		for record in try read() where record.identity == identity && record.cleanupToken == nil {
+		for record in try read() where record.identity == identity && record.cleanupToken == nil && record.localOnly != true {
 			guard let session else { throw Mango9LogoutError.missingDeviceScope }
 			let capability = try await authorizeLease(record, session: session)
 			var updated = try read()
@@ -234,7 +250,7 @@ final class Mango9LogoutCoordinator {
 		}
 		var records = try read()
 		let targets = records.indices.filter { records[$0].identity == identity }
-		guard !targets.isEmpty, targets.allSatisfy({ records[$0].cleanupToken != nil }) else {
+		guard !targets.isEmpty, targets.allSatisfy({ records[$0].cleanupToken != nil || records[$0].localOnly == true }) else {
 			throw Mango9LogoutError.missingDeviceScope
 		}
 		for index in targets {
@@ -285,6 +301,10 @@ final class Mango9LogoutCoordinator {
 			let superseded = try read().contains { $0.identity == record.identity && !$0.pendingLogout && $0.id != record.id }
 			guard !(await accountExists(record.identity)) || superseded else { throw Mango9LogoutError.unavailable }
 			if !superseded { try Mango9SessionStore.remove(for: record.identity) }
+			if record.localOnly == true {
+				try write(try read().filter { $0.id != record.id })
+				continue
+			}
 			guard let capability = record.cleanupToken else { throw Mango9LogoutError.missingDeviceScope }
 			var failure: Error?
 			if let cleanup = record.crmCleanupToken, let base = record.crmApiBaseURL {
