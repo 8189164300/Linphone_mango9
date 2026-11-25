@@ -244,27 +244,47 @@ internal class Mango9SocialViewModel(
         } catch (e: Exception) { failure(owner, request, e) }
     }
 
-    suspend fun allForSelection(): List<String> {
+    private var selectionBatch: Pair<Mango9SessionLease, Mango9SocialBulkRead>? = null
+
+    private fun batch(owner: Mango9SessionLease): Mango9SocialBulkRead {
+        if (selectionBatch?.first != owner) selectionBatch = owner to repository.bulkRead(owner)
+        return requireNotNull(selectionBatch).second
+    }
+
+    private fun selectionQuery(): Map<String, String> = buildMap {
+        val filters = current()
+        if (filters.platform.isNotBlank()) put("platform", filters.platform)
+        if (filters.account.isNotBlank()) put("accountId", filters.account)
+        Mango9SocialSearch.normalize(filters.search).takeIf { it.isNotEmpty() }?.let { put("search", it) }
+    }
+
+    suspend fun allForSelection(): List<String> = selectByState("all")
+
+    suspend fun selectByState(mode: String): List<String> {
         val owner = activeLease() ?: throw Mango9ApiException.Unauthorized
-        val filters = current(); val scope = Triple(filters.platform, filters.account, filters.search)
-        val rows = linkedMapOf<String, Mango9SocialThread>(); val seen = mutableSetOf<String>(); var cursor: String? = null
-        repeat(200) {
-            val page = repository.inbox(owner, filters.platform, filters.account, cursor, filters.search)
-            check(activeLease() == owner && Triple(current().platform, current().account, current().search) == scope)
-            page.items.forEach{rows[it.id] = it}
-            cursor = page.next
-            if (cursor == null) {
-                val hidden = rows.keys.toList().chunked(100).flatMap{
-                    commands.visibility(owner, Mango9MessageChannel.social, null, it, false, true)
-                }.toSet()
-                check(activeLease() == owner && Triple(current().platform, current().account, current().search) == scope)
-                val visible = rows.values.filterNot{it.id in hidden}
-                state.value = current().copy(threads = visible, nextThread = null)
-                return visible.map{it.id}
+        val query = selectionQuery()
+        val rows = batch(owner).select(mode, query)
+        check(activeLease() == owner && selectionQuery() == query)
+        return rows.map { it.id }
+    }
+
+    suspend fun changeSelectedRead(ids: List<String>, action: String) {
+        val owner = activeLease() ?: throw Mango9ApiException.Unauthorized
+        val query = selectionQuery()
+        val receipts = batch(owner).apply(ids, action, query)
+        check(activeLease() == owner && selectionQuery() == query)
+        val byId = receipts.associateBy { it.id }
+        state.value = current().copy(
+            threads = current().threads.map { row ->
+            val receipt = byId[row.id]
+            if (receipt != null && (row.readThrough ?: 0) <= receipt.readThrough) {
+                row.copy(unread = receipt.unread, readThrough = receipt.readThrough, markedUnread = receipt.markedUnread)
+            } else {
+                row
             }
-            check(seen.add(requireNotNull(cursor))){"Repeated page. Please retry."}
         }
-        error("Too many chats. Narrow the filters.")
+        )
+        Mango9InboxUnread.socialReceipts(receipts, owner)
     }
 
     suspend fun changeListRead(id: String, unread: Boolean) {

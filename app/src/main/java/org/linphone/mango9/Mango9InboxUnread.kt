@@ -93,6 +93,20 @@ internal object Mango9InboxUnread {
     private fun sameAccount(owner: Mango9SessionLease) = account?.loginGeneration == owner.loginGeneration &&
         account?.selectionGeneration == owner.selectionGeneration && account?.session?.let(Mango9MessagingApi::account) == Mango9MessagingApi.account(owner.session)
 
+    internal fun socialReceipts(rows: List<Mango9SocialReadState>, owner: Mango9SessionLease) {
+        if (sessions.currentSession(owner) == null) return
+        bind()
+        val updated = ids["social"].orEmpty().toMutableSet()
+        for (row in rows) {
+            if (row.unread) {
+                updated.add(row.id)
+            } else {
+                reads.read(row.id, "social", row.readThrough.toLong()); updated.remove(row.id)
+            }
+        }
+        revision++; readChanges.value++; ids["social"] = updated; publish()
+    }
+
     fun socialReceipt(row: Mango9SocialThread, owner: Mango9SessionLease) {
         if (sessions.currentSession(owner) == null) return
         bind()
@@ -143,7 +157,7 @@ internal object Mango9InboxUnread {
         do {
             kotlinx.coroutines.currentCoroutineContext().ensureActive(); require(++pages <= 100)
             if (channel == "social") {
-                val page = Mango9SocialRepository(context).inbox(owner, before = before)
+                val page = Mango9SocialRepository(context).inbox(owner, before = before, unreadOnly = true)
                 require(page.items.size <= 50 && (page.next == null || page.items.isNotEmpty() && page.next == page.items.last().id))
                 found.addAll(page.items.map { socialRow(it, owner) }.filter { it.unread }.map { it.id }); before = page.next
             } else {

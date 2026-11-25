@@ -22,6 +22,9 @@ internal class Mango9ChatListSelection(
     private val work: suspend (String, String) -> Unit,
     private val refresh: () -> Unit,
     private val changed: () -> Unit,
+    private val supportsState: () -> Boolean = { false },
+    private val selectState: (suspend (String) -> List<String>)? = null,
+    private val batchWork: (suspend (List<String>, String) -> Unit)? = null,
 ) {
     private val ui = Mango9LiveViews(fragment.requireContext())
     val view = ui.row()
@@ -57,22 +60,42 @@ internal class Mango9ChatListSelection(
         view.addView(progress, LinearLayout.LayoutParams(ui.dp(24), ui.dp(24)))
         view.addView(read); view.addView(unread); view.addView(delete)
         every.setOnClickListener {
-            if (allPagesSelected && selected.isNotEmpty() && rows.isNotEmpty() && selected.containsAll(rows)) {
-                selected.clear(); failed = false; preserveSnapshot = false; allPagesSelected = false; render(); changed()
+            if (busy) return@setOnClickListener
+            if (supportsState() && selectState != null) {
+                render()
+                MaterialAlertDialogBuilder(ui.context).setTitle("Select chats")
+                    .setItems(arrayOf("Select unread", "Select read", "Select all", "Deselect all")) { _, choice ->
+                        if (choice == 3) clearSelection() else select(listOf("unread", "read", "all")[choice])
+                    }.show()
+            } else if (allPagesSelected && selected.isNotEmpty() && rows.isNotEmpty() && selected.containsAll(rows)) {
+                clearSelection()
             } else {
-                val ticket = epoch; busy = true; render(); changed()
-                fragment.viewLifecycleOwner.lifecycleScope.launch {
-                    try {
-                        val ids = all(); if (valid(ticket)) {
-                            selected.clear(); selected.addAll(ids); failed = false; allPagesSelected = true; preserveSnapshot = true
-                        }
-                    } catch (e: Exception) {
-                        if (e is CancellationException)throw e; if (valid(ticket))error("Could not select every chat. Please retry.")
-                    } finally {if (valid(ticket)){busy = false; render(); changed()}}
-                }
+                select("all")
             }
         }
         render()
+    }
+
+    private fun clearSelection() {
+        if (busy) return
+        selected.clear(); failed = false; preserveSnapshot = false; allPagesSelected = false; render(); changed()
+    }
+
+    private fun select(mode: String) {
+        if (busy) return
+        val ticket = epoch; busy = true; render(); changed()
+        fragment.viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                if (!valid(ticket)) return@launch
+                val ids = if (supportsState() && selectState != null) selectState.invoke(mode) else all()
+                if (valid(ticket)) {
+                    selected.clear(); selected.addAll(ids); failed = false; allPagesSelected = true; preserveSnapshot = true
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (valid(ticket)) error("Could not select chats. Please retry.")
+            } finally { if (valid(ticket)) { busy = false; render(); changed() } }
+        }
     }
 
     private fun valid(ticket: Int) = ticket == epoch && scope() == owner && current()
@@ -98,6 +121,7 @@ internal class Mango9ChatListSelection(
     private fun render() {
         toggle.setImageResource(if (selecting) R.drawable.x else R.drawable.check_square_offset)
         toggle.isEnabled = !busy && (selecting || rows.isNotEmpty()); toggle.contentDescription = if (selecting)"Cancel selection" else "Select chats"
+        every.contentDescription = if (supportsState()) "Choose chats to select" else "Select all chats in this list"
         every.visibility = if (selecting)View.VISIBLE else View.GONE; every.isEnabled = !busy
         every.isChecked = allPagesSelected && rows.isNotEmpty() && selected.containsAll(rows)
         count.text = if (selecting)"${selected.size} selected" else ""
@@ -117,7 +141,17 @@ internal class Mango9ChatListSelection(
         fragment.viewLifecycleOwner.lifecycleScope.launch {
             var cursor = 0; var failures = 0
             try {
-                coroutineScope {
+                if (!valid(ticket)) return@launch
+                if (supportsState() && action != "delete" && batchWork != null) {
+                    try {
+                        batchWork.invoke(targets, action)
+                        if (valid(ticket)) selected.removeAll(targets.toSet())
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        failures = targets.size
+                    }
+                } else {
+                    coroutineScope {
                     repeat(minOf(4, targets.size)){
                         launch {
                     while (valid(ticket) && cursor < targets.size){
@@ -128,6 +162,7 @@ internal class Mango9ChatListSelection(
                     }
                 }
                     }
+                }
                 }
                 if (valid(ticket)){
                     failed = failures > 0; if (selected.isEmpty())selecting = false; refresh(); if (failed)error("Some chats could not be updated. They remain selected so you can retry.")

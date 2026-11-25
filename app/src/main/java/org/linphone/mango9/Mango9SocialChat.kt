@@ -212,8 +212,9 @@ internal class Mango9SocialRepository(context: Context, private val api: Mango9M
         }
         .distinctBy { it.id }.sortedWith(compareBy({ it.platformLabel }, { it.name }, { it.id }))
 
-    suspend fun inbox(lease: Mango9SessionLease, platform: String = "", account: String = "", before: String? = null, search: String = ""): Mango9SocialPage<Mango9SocialThread> {
+    suspend fun inbox(lease: Mango9SessionLease, platform: String = "", account: String = "", before: String? = null, search: String = "", unreadOnly: Boolean = false): Mango9SocialPage<Mango9SocialThread> {
         val query = mutableMapOf("kind" to "dms", "limit" to "50")
+        if (unreadOnly) query["view"] = "unread"
         if (platform.isNotBlank()) query["platform"] = platform
         if (account.isNotBlank()) query["accountId"] = account
         Mango9SocialSearch.normalize(search).takeIf { it.isNotEmpty() }?.let { query["search"] = it }
@@ -226,6 +227,11 @@ internal class Mango9SocialRepository(context: Context, private val api: Mango9M
             page.stringOrNull("next")
         )
     }
+
+    fun bulkRead(lease: Mango9SessionLease) = Mango9SocialBulkRead(
+        { path, body -> api.request(lease, channel, listOf(path), body = body) },
+        { isCurrent(lease) }
+    )
 
     suspend fun thread(lease: Mango9SessionLease, id: String): Mango9SocialThread = Mango9SocialThread.parse(
         api.request(lease, channel, listOf("inbox-detail"), mapOf("id" to id))
@@ -292,7 +298,9 @@ internal class Mango9SocialRepository(context: Context, private val api: Mango9M
         require(currentThread.canSend && !currentThread.openSend) { "Replies are unavailable for this conversation." }
         require(attachments.size <= 1) { "Social supports one attachment per message." }
         require(attachments.isEmpty() || currentThread.canUpload) { "This platform supports text replies only." }
-        require(text.codePointCount(0, text.length) <= currentThread.textLimit) { "Message exceeds this platform’s character limit." }
+        require(text.codePointCount(0, text.length) <= currentThread.textLimit) {
+            "Message exceeds this platform’s character limit."
+        }
         if (hasPending(lease, thread.id)) throw Mango9MessagingFailure(0, "pending")
         require(text.isNotBlank() || attachments.isNotEmpty())
         val mediaId = attachments.firstOrNull()?.let { upload(lease, currentThread, it, text) }

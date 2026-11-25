@@ -110,7 +110,10 @@ class Mango9MessagingListFragment : GenericMainFragment() {
                 }
             },
             {if (mode == Mango9MessagingTab.Social)social.inbox() else viewModel.refresh(); Mango9InboxUnread.refreshSoon()},
-            ::selectionChanged
+            ::selectionChanged,
+            supportsState = { mode == Mango9MessagingTab.Social },
+            selectState = { social.selectByState(it) },
+            batchWork = { ids, action -> social.changeSelectedRead(ids, action) }
         )
         binding.chatSelectionHost.addView(selection.view)
         binding.list.layoutManager = LinearLayoutManager(requireContext())

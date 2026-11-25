@@ -361,7 +361,10 @@ class ConversationsListFragment : AbstractMainFragment() {
                     viewLifecycleOwner.lifecycleScope.launch { mango9ChatStore.refreshDirectory(); mango9ChatStore.refreshSmsDirectory() }
                 }
                 Mango9InboxUnread.refreshSoon()
-            }, ::chatSelectionChanged
+            }, ::chatSelectionChanged,
+            supportsState = { mango9Tab == Mango9MessagingTab.Social },
+            selectState = { social.selectByState(it) },
+            batchWork = { ids, action -> social.changeSelectedRead(ids, action) }
         )
         binding.chatSelectionHost.addView(chatSelection.view)
         rebuildMango9Tabs()
