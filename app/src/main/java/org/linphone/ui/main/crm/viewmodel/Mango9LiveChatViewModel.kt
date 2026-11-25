@@ -195,21 +195,25 @@ internal class Mango9LiveChatViewModel : ViewModel() {
         owner()?.loginGeneration, owner()?.selectionGeneration, query.toSortedMap()
     ).joinToString("|")
 
-    suspend fun allForSelection(): List<String> {
-        val owner = owner() ?: throw Mango9ApiException.Unauthorized
-        val scope = listScope(); var next: String? = null; var nextID: String? = null
-        val rows = linkedMapOf<String, Mango9LiveConversation>(); val seen = mutableSetOf<String>()
-        repeat(200){
-            val data = api.request(owner, "list", query + mapOf("limit" to "100") + if (next != null)mapOf("before" to next!!, "beforeId" to nextID!!)else emptyMap())
-            check(listScope() == scope)
-            data.getJSONArray("conversations").liveObjects().map(Mango9LiveConversation::parse).forEach{rows[it.id] = it}
-            next = data.liveText("next").takeIf{it.isNotBlank()}; nextID = data.liveText("nextId").takeIf{it.isNotBlank()}
-            if (next == null){
-                state.value = current().copy(conversations = rows.values.toList(), hasMore = false); return rows.keys.toList()
-            }
-            check(nextID != null && seen.add("$next/$nextID")){"Repeated page. Please retry."}
-        }
-        error("Too many chats. Narrow the filters.")
+    private var selectionBatch: Pair<Mango9SessionLease, Mango9ChatBulkActions>? = null
+    private fun batch(owner: Mango9SessionLease): Mango9ChatBulkActions {
+        if (selectionBatch?.first != owner) selectionBatch = owner to Mango9ChatBulkActions("live", { operation, body ->
+            api.request(owner, if (operation == "select") "bulk-selection" else "bulk-action", body = body)
+        }, { this.owner() == owner })
+        return requireNotNull(selectionBatch).second
+    }
+    suspend fun allForSelection(): List<String> = selectByState("all")
+    suspend fun selectByState(mode: String): List<String> {
+        val owner = owner() ?: throw Mango9ApiException.Unauthorized; val scope = listScope()
+        val rows = batch(owner).select(mode, query)
+        check(listScope() == scope); return rows.map { it.id }
+    }
+    suspend fun changeSelectedChats(ids: List<String>, action: String) {
+        val owner = owner() ?: throw Mango9ApiException.Unauthorized; val scope = listScope()
+        val result = batch(owner).apply(ids, action, query)
+        check(listScope() == scope)
+        revision++
+        state.value = current().copy(conversations = current().conversations.filterNot { it.id in result.hiddenIds })
     }
 
     suspend fun listAction(id: String, action: String) {

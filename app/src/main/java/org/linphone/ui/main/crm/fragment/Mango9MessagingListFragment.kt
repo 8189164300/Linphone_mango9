@@ -111,9 +111,15 @@ class Mango9MessagingListFragment : GenericMainFragment() {
             },
             {if (mode == Mango9MessagingTab.Social)social.inbox() else viewModel.refresh(); Mango9InboxUnread.refreshSoon()},
             ::selectionChanged,
-            supportsState = { mode == Mango9MessagingTab.Social },
-            selectState = { social.selectByState(it) },
-            batchWork = { ids, action -> social.changeSelectedRead(ids, action) }
+            supportsState = { true },
+            selectState = { stateMode ->
+                if (mode == Mango9MessagingTab.Social) social.selectByState(stateMode)
+                else Mango9ChatStore.get(requireContext()).selectChats(Mango9SessionStore(requireContext()).captureSession() ?: throw Mango9ApiException.Unauthorized, if (mode == Mango9MessagingTab.Sms) "sms" else "team", stateMode)
+            },
+            batchWork = { ids, action ->
+                if (mode == Mango9MessagingTab.Social) social.changeSelectedRead(ids, action)
+                else Mango9ChatStore.get(requireContext()).changeSelectedChats(Mango9SessionStore(requireContext()).captureSession() ?: throw Mango9ApiException.Unauthorized, if (mode == Mango9MessagingTab.Sms) "sms" else "team", ids, action)
+            }
         )
         binding.chatSelectionHost.addView(selection.view)
         binding.list.layoutManager = LinearLayoutManager(requireContext())

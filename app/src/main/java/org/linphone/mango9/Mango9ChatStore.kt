@@ -865,6 +865,24 @@ class Mango9ChatStore private constructor(context: Context) {
         }
     }
 
+    private val chatBatches = mutableMapOf<String, Pair<Mango9SessionLease, Mango9ChatBulkActions>>()
+    private suspend fun chatBatch(lease: Mango9SessionLease, channel: String): Mango9ChatBulkActions {
+        require(channel in listOf("sms", "team")); connect(expectedSession = lease)
+        check(sessions.currentSession(lease) != null && currentConnectionSession() == lease)
+        if (chatBatches[channel]?.first != lease) chatBatches[channel] = lease to Mango9ChatBulkActions(channel, { operation, body ->
+            rpc(if (operation == "select") "selectConversationsV4" else "changeConversationsV4", JSONArray().put(channel).put(body)) as? JSONObject ?: throw Mango9ChatException(INVALID_RESPONSE)
+        }, { sessions.currentSession(lease) != null && currentConnectionSession() == lease })
+        return requireNotNull(chatBatches[channel]).second
+    }
+    suspend fun selectChats(lease: Mango9SessionLease, channel: String, mode: String): List<String> = chatBatch(lease, channel).select(mode).map { it.id }
+    suspend fun changeSelectedChats(lease: Mango9SessionLease, channel: String, ids: List<String>, action: String) {
+        chatBatch(lease, channel).apply(ids, action)
+        if (action == "delete") {
+            smsCache.clear()
+            mutableState.update { it.copy(messages = emptyList(), smsMessages = emptyList()) }
+        }
+    }
+
     suspend fun changeConversationRead(lease: Mango9SessionLease, channel: String, target: String, unread: Boolean) {
         require(channel == "sms" || channel == "team")
 

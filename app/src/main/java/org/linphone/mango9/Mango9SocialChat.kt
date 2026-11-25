@@ -228,6 +228,13 @@ internal class Mango9SocialRepository(context: Context, private val api: Mango9M
         )
     }
 
+    fun bulkActions(lease: Mango9SessionLease) = Mango9ChatBulkActions("social", { operation, input ->
+        val body = JSONObject(input.toString())
+        val path = if (operation == "select") "inbox-bulk-selection" else if (body.optString("action") == "delete") "inbox-bulk-delete" else "inbox-bulk-read"
+        if (path == "inbox-bulk-delete") body.remove("action")
+        api.request(lease, channel, listOf(path), body = body)
+    }, { isCurrent(lease) })
+
     fun bulkRead(lease: Mango9SessionLease) = Mango9SocialBulkRead(
         { path, body -> api.request(lease, channel, listOf(path), body = body) },
         { isCurrent(lease) }

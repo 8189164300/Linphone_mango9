@@ -362,9 +362,15 @@ class ConversationsListFragment : AbstractMainFragment() {
                 }
                 Mango9InboxUnread.refreshSoon()
             }, ::chatSelectionChanged,
-            supportsState = { mango9Tab == Mango9MessagingTab.Social },
-            selectState = { social.selectByState(it) },
-            batchWork = { ids, action -> social.changeSelectedRead(ids, action) }
+            supportsState = { true },
+            selectState = { stateMode ->
+                if (mango9Tab == Mango9MessagingTab.Social) social.selectByState(stateMode)
+                else mango9ChatStore.selectChats(mango9Sessions.captureSession() ?: throw Mango9ApiException.Unauthorized, if (mango9Tab == Mango9MessagingTab.Sms) "sms" else "team", stateMode)
+            },
+            batchWork = { ids, action ->
+                if (mango9Tab == Mango9MessagingTab.Social) social.changeSelectedRead(ids, action)
+                else mango9ChatStore.changeSelectedChats(mango9Sessions.captureSession() ?: throw Mango9ApiException.Unauthorized, if (mango9Tab == Mango9MessagingTab.Sms) "sms" else "team", ids, action)
+            }
         )
         binding.chatSelectionHost.addView(chatSelection.view)
         rebuildMango9Tabs()

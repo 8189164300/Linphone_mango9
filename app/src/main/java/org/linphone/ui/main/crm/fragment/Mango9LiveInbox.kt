@@ -84,7 +84,8 @@ internal class Mango9LiveInbox(
         view.addView(search, LinearLayout.LayoutParams(-1, ui.dp(44)).apply { setMargins(ui.dp(12), 0, ui.dp(12), 0) })
         selection = Mango9ChatListSelection(
             fragment, model::listScope, {model.owner() != null}, model::allForSelection, model::listAction,
-            {model.refresh(force = true); Mango9InboxUnread.refreshSoon()}, {adapter.notifyDataSetChanged()}
+            {model.refresh(force = true); Mango9InboxUnread.refreshSoon()}, {adapter.notifyDataSetChanged()},
+            supportsState = { true }, selectState = model::selectByState, batchWork = model::changeSelectedChats
         )
         view.addView(selection.view)
         view.addView(progress, LinearLayout.LayoutParams(-1, ui.dp(2)))

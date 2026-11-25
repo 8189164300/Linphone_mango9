@@ -142,7 +142,7 @@ internal class Mango9ChatListSelection(
             var cursor = 0; var failures = 0
             try {
                 if (!valid(ticket)) return@launch
-                if (supportsState() && action != "delete" && batchWork != null) {
+                if (supportsState() && batchWork != null) {
                     try {
                         batchWork.invoke(targets, action)
                         if (valid(ticket)) selected.removeAll(targets.toSet())

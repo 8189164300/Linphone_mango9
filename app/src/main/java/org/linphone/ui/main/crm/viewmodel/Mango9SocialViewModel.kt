@@ -244,10 +244,10 @@ internal class Mango9SocialViewModel(
         } catch (e: Exception) { failure(owner, request, e) }
     }
 
-    private var selectionBatch: Pair<Mango9SessionLease, Mango9SocialBulkRead>? = null
+    private var selectionBatch: Pair<Mango9SessionLease, Mango9ChatBulkActions>? = null
 
-    private fun batch(owner: Mango9SessionLease): Mango9SocialBulkRead {
-        if (selectionBatch?.first != owner) selectionBatch = owner to repository.bulkRead(owner)
+    private fun batch(owner: Mango9SessionLease): Mango9ChatBulkActions {
+        if (selectionBatch?.first != owner) selectionBatch = owner to repository.bulkActions(owner)
         return requireNotNull(selectionBatch).second
     }
 
@@ -271,11 +271,13 @@ internal class Mango9SocialViewModel(
     suspend fun changeSelectedRead(ids: List<String>, action: String) {
         val owner = activeLease() ?: throw Mango9ApiException.Unauthorized
         val query = selectionQuery()
-        val receipts = batch(owner).apply(ids, action, query)
+        val result = batch(owner).apply(ids, action, query)
+        val receipts = result.items
         check(activeLease() == owner && selectionQuery() == query)
+        if (action == "delete") ids.forEach { id -> cacheKey(id)?.let { cached.remove(it) } }
         val byId = receipts.associateBy { it.id }
         state.value = current().copy(
-            threads = current().threads.map { row ->
+            threads = current().threads.filterNot { it.id in result.hiddenIds }.map { row ->
             val receipt = byId[row.id]
             if (receipt != null && (row.readThrough ?: 0) <= receipt.readThrough) {
                 row.copy(unread = receipt.unread, readThrough = receipt.readThrough, markedUnread = receipt.markedUnread)
