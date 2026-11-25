@@ -1,6 +1,37 @@
 import XCTest
 
 final class MessageReactionUITests: XCTestCase {
+    func testAllChannelBulkMenusWithoutMutatingChats() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Requires a signed-in device.")
+        #endif
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launch()
+        if !app.buttons["conversations.tab.social"].waitForExistence(timeout: 5) { tapWhenEnabled(app.buttons["Chat"]) }
+        for channel in ["sms", "team", "social", "live"] {
+            tapWhenEnabled(app.buttons["conversations.tab." + channel])
+            let select = app.buttons["Select chats"]
+            XCTAssertTrue(select.waitForExistence(timeout: 20))
+            if !select.isEnabled {
+                let empty = XCTAttachment(screenshot: app.screenshot()); empty.name = channel + " empty list"; empty.lifetime = .keepAlways; add(empty)
+                continue
+            }
+            tapWhenEnabled(select)
+            let menu = app.buttons["Choose chats to select"]
+            tapWhenEnabled(menu)
+            for title in ["Select unread", "Select read", "Select all"] { XCTAssertTrue(app.buttons[title].exists) }
+            let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = channel + " batch menu"; shot.lifetime = .keepAlways; add(shot)
+            tapWhenEnabled(app.buttons["Select unread"]); tapWhenEnabled(menu)
+            tapWhenEnabled(app.buttons["Select all"])
+            tapWhenEnabled(app.buttons["Delete selected chats"])
+            XCTAssertTrue(app.alerts["Delete selected chats?"].waitForExistence(timeout: 5))
+            tapWhenEnabled(app.alerts.buttons["Cancel"])
+            tapWhenEnabled(menu); tapWhenEnabled(app.buttons["Deselect all"])
+            XCTAssertTrue(app.staticTexts["0 selected"].waitForExistence(timeout: 5))
+            tapWhenEnabled(app.buttons["Cancel selection"])
+        }
+    }
+
     func testSocialBulkMenuOnSignedInDevice() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("Requires the installed signed-in device session.")

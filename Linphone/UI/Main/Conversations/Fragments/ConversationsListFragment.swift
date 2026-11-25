@@ -145,7 +145,9 @@ struct ConversationsListFragment: View {
         VStack(spacing: 0) {
             Mango9ChatListToolbar(selection: smsSelection,
                 scope: (Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey) ?? "") + ":sms:" + conversationsListViewModel.currentFilter,
-                ids: visibleSMSParties.map(\.phone), work: { id, action in
+                ids: visibleSMSParties.map(\.phone),
+                loadByState: { try await mango9ChatStore.selectChats(sms: true, mode: $0, ids: conversationsListViewModel.currentFilter.isEmpty ? nil : visibleSMSParties.map(\.phone), search: conversationsListViewModel.currentFilter) },
+                batchWork: { try await mango9ChatStore.changeSelectedChats($0, sms: true, action: $1, filteredIDs: conversationsListViewModel.currentFilter.isEmpty ? nil : visibleSMSParties.map(\.phone), search: conversationsListViewModel.currentFilter) }, work: { id, action in
                     guard let session = Mango9SessionStore.load() else { throw Mango9MessagingError.scopeChanged }
                     if action == .delete { try await conversationVisibility.delete(session: session, channel: .sms, id: id) }
                     else { try await mango9ChatStore.changeConversationRead(id: id, sms: true, unread: action == .unread) }

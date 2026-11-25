@@ -427,6 +427,7 @@ final class Mango9ChatStore: ObservableObject {
 			onlineUserIds = []
 			typingUserIds = []
 			smsMessageCache = [:]
+            chatBatches.removeAll()
 			pendingSMSStatuses = [:]
 			teamSnapshots.removeAll()
 		}
@@ -1181,6 +1182,30 @@ final class Mango9ChatStore: ObservableObject {
 		}
 	}
 
+    private var chatBatches: [String: (account: String, batch: Mango9ChatBulkActions)] = [:]
+    private func chatBatch(sms: Bool) async throws -> Mango9ChatBulkActions {
+        await connectIfNeeded()
+        guard isConnected, let session = Mango9SessionStore.load() else { throw Mango9ChatError.disconnected }
+        let channel = sms ? "sms" : "team", account = Mango9ReactionTarget.accountKey(session)
+        if let saved = chatBatches[channel], saved.account == account { return saved.batch }
+        let batch = Mango9ChatBulkActions(channel: channel, post: { [weak self] operation, body in
+            guard let self else { throw CancellationError() }
+            let raw = try await self.rpcCall(operation == "select" ? "selectConversationsV4" : "changeConversationsV4", params: [channel, body])
+            return try Mango9ChatBulkResponse.decode(raw)
+        }, current: { guard Mango9SessionStore.isActive(session) else { throw CancellationError() } })
+        chatBatches[channel] = (account, batch); return batch
+    }
+    func selectChats(sms: Bool, mode: String, ids: [String]? = nil, search: String = "") async throws -> [String] {
+        if ids?.isEmpty == true { return [] }
+        return try await chatBatch(sms: sms).select(mode, query: ids.map { ["ids": $0, "localSearch": search] } ?? [:])
+    }
+    func changeSelectedChats(_ ids: [String], sms: Bool, action: Mango9ChatListSelection.Action, filteredIDs: [String]? = nil, search: String = "") async throws {
+        _ = try await chatBatch(sms: sms).apply(ids, action: action, query: filteredIDs.map { ["ids": $0, "localSearch": search] } ?? [:])
+        if action == .delete {
+            smsMessageCache.removeAll(); teamSnapshots.removeAll()
+            if sms { smsMessages = [] } else { messages = [] }
+        }
+    }
 	func changeConversationRead(id: String, sms: Bool, unread: Bool) async throws {
         await connectIfNeeded()
         guard isConnected, let session = Mango9SessionStore.load() else { throw Mango9ChatError.invalidResponse }
@@ -1962,6 +1987,8 @@ struct Mango9TeamChatListFragment: View {
                     Mango9ChatListToolbar(selection: selection,
                         scope: (Mango9SessionStore.load().map(Mango9ReactionTarget.accountKey) ?? "") + ":team:" + searchText,
                         ids: groupRooms.map(\.id) + visibleUsers.compactMap { store.roomPreview(for: $0.id)?.id },
+                        loadByState: { try await store.selectChats(sms: false, mode: $0, ids: searchText.isEmpty ? nil : groupRooms.map(\.id) + visibleUsers.compactMap { store.roomPreview(for: $0.id)?.id }, search: searchText) },
+                        batchWork: { try await store.changeSelectedChats($0, sms: false, action: $1, filteredIDs: searchText.isEmpty ? nil : groupRooms.map(\.id) + visibleUsers.compactMap { store.roomPreview(for: $0.id)?.id }, search: searchText) },
                         work: { id, action in
                             guard let session = Mango9SessionStore.load() else { throw Mango9MessagingError.scopeChanged }
                             if action == .delete { try await conversationVisibility.delete(session: session, channel: .team, id: id) }

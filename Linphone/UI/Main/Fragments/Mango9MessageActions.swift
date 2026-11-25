@@ -1108,7 +1108,7 @@ struct Mango9ChatListToolbar: View {
     }
     private func perform(_ action: Mango9ChatListSelection.Action) {
         Task {
-            if action != .delete, let batchWork { await selection.runBatch(action, work: batchWork) }
+            if let batchWork { await selection.runBatch(action, work: batchWork) }
             else { await selection.run(action, work: work) }
             await refresh(); await Mango9InboxUnread.shared.refresh()
         }
@@ -1131,5 +1131,88 @@ struct Mango9SelectableChatRow<Row: View, Destination: View>: View {
             }.buttonStyle(.plain).disabled(id == nil || selection.busy)
                 .accessibilityAddTraits(id.map { selection.selected.contains($0) } == true ? .isSelected : [])
         } else { NavigationLink(destination: destination, label: row) }
+    }
+}
+
+/// Captures a lightweight server snapshot, then applies one atomic command.
+/// A lost response retains the same request identifier for a safe retry.
+struct Mango9ChatBulkResponse: Decodable {
+    let type: String
+    let channel: String?
+    let selectionId: String?
+    let requestId: String?
+    let action: String?
+    let items: [Mango9SocialReadState]
+    let hiddenIds: [String]?
+    let skippedIds: [String]?
+    static func decode(_ raw: Any) throws -> Self {
+        try JSONDecoder().decode(Self.self, from: JSONSerialization.data(withJSONObject: raw))
+    }
+}
+@MainActor final class Mango9ChatBulkActions {
+    typealias Post = @MainActor (String, [String: Any]) async throws -> Mango9ChatBulkResponse
+    let channel: String
+    private let post: Post
+    private let current: @MainActor () throws -> Void
+    private var snapshot: (id: String, query: Data, ids: Set<String>)?
+    private var pending: (key: String, body: [String: Any])?
+    private var generation = 0
+    init(channel: String, post: @escaping Post, current: @escaping @MainActor () throws -> Void) {
+        precondition(["sms", "team", "social", "live"].contains(channel))
+        self.channel = channel; self.post = post; self.current = current
+    }
+    private func valid(_ id: String) -> Bool {
+        switch channel {
+        case "sms": return id.range(of: "^[0-9]{3,20}$", options: .regularExpression) != nil
+        case "team": return id.range(of: "^[1-9][0-9]*$", options: .regularExpression) != nil
+        default: return UUID(uuidString: id) != nil
+        }
+    }
+    private func checkRows(_ rows: [Mango9SocialReadState]) throws {
+        guard rows.count <= 5000, Set(rows.map(\.id)).count == rows.count,
+              rows.allSatisfy({ valid($0.id) && $0.readThrough >= 0 }) else { throw Mango9MessagingError.invalidResponse }
+    }
+    private func queryKey(_ query: [String: Any]) throws -> Data {
+        var identity = query; identity.removeValue(forKey: "ids")
+        return try JSONSerialization.data(withJSONObject: identity, options: .sortedKeys)
+    }
+    func select(_ mode: String, query: [String: Any] = [:], ids: [String]? = nil) async throws -> [String] {
+        try current()
+        guard ["all", "read", "unread"].contains(mode), ids == nil || (!ids!.isEmpty && ids!.count <= 5000 && ids!.allSatisfy(valid)) else { throw Mango9MessagingError.invalidResponse }
+        let requested = ids ?? (query["ids"] as? [String])
+        let key = try queryKey(query)
+        generation += 1; let epoch = generation, id = UUID().uuidString.lowercased()
+        var body = query; body.removeValue(forKey: "localSearch"); body["mode"] = mode; body["requestId"] = id
+        if let ids { body["ids"] = ids }
+        let result = try await post("select", body)
+        try current(); guard epoch == generation else { throw CancellationError() }
+        try checkRows(result.items)
+        guard result.type == (channel == "social" ? "inbox-selection" : "chat-selection"), result.selectionId == id,
+              channel == "social" || result.channel == channel,
+              result.items.allSatisfy({ (requested == nil || requested!.contains($0.id)) && (mode == "all" || $0.unread == (mode == "unread")) }) else { throw Mango9MessagingError.invalidResponse }
+        let found = result.items.map(\.id)
+        snapshot = (id, key, Set(found)); pending = nil; return found
+    }
+    func apply(_ ids: [String], action: Mango9ChatListSelection.Action, query: [String: Any] = [:]) async throws -> Mango9ChatBulkResponse? {
+        try current()
+        guard !ids.isEmpty, ids.count <= 5000, Set(ids).count == ids.count, ids.allSatisfy(valid) else { throw Mango9MessagingError.invalidResponse }
+        let queryKey = try queryKey(query)
+        if snapshot?.query != queryKey || !Set(ids).isSubset(of: snapshot?.ids ?? []) { _ = try await select("all", query: query, ids: ids) }
+        guard let captured = snapshot else { throw Mango9MessagingError.invalidResponse }
+        let targets = ids.filter { captured.ids.contains($0) }.sorted()
+        if targets.isEmpty { return nil }
+        let key = captured.id + ":" + action.rawValue + ":" + targets.joined(separator: ",")
+        if pending?.key != key { pending = (key, ["selectionId": captured.id, "ids": targets, "action": action.rawValue, "requestId": UUID().uuidString.lowercased()]) }
+        let command = pending!
+        let result = try await post("apply", command.body)
+        try current(); guard snapshot?.id == captured.id else { throw CancellationError() }
+        try checkRows(result.items)
+        let legacy = channel == "social" && action != .delete
+        let covered = result.items.map(\.id) + (result.hiddenIds ?? []) + (result.skippedIds ?? [])
+        guard result.type == (legacy ? "inbox-bulk-read" : "chat-bulk-result"), legacy || result.channel == channel,
+              result.requestId == command.body["requestId"] as? String, result.action == action.rawValue,
+              result.skippedIds != nil, action == .delete || (result.hiddenIds ?? []).isEmpty,
+              covered.count == targets.count, Set(covered) == Set(targets) else { throw Mango9MessagingError.invalidResponse }
+        pending = nil; snapshot = nil; return result
     }
 }

@@ -53,6 +53,25 @@ import QuickLook
 			expanded = more; loadedFilter = requested; error = nil
 		} catch { if current == generation { fail(error) } }
 	}
+    private lazy var batch = Mango9ChatBulkActions(channel: "live", post: { [weak self] operation, body in
+        guard let session = self?.session else { throw Mango9MessagingError.scopeChanged }
+        return try await Mango9ChatBulkResponse.decode(Mango9LiveChatAPI.shared.request(operation == "select" ? "bulk-selection" : "bulk-action", session: session, body: body))
+    }, current: { [weak self] in guard let session = self?.session, Mango9SessionStore.isActive(session) else { throw CancellationError() } })
+    private func bulkQuery(_ search: String) -> [String: Any] {
+        var query: [String: Any] = [:]
+        for (key, value) in [("siteId", site), ("status", status), ("search", search)] where !value.isEmpty { query[key] = value }
+        if assigned { query["assignedToMe"] = true }; if unread { query["unread"] = true }
+        return query
+    }
+    func selectChats(_ mode: String, search: String) async throws -> [String] {
+        let query = filter(search), result = try await batch.select(mode, query: bulkQuery(search))
+        guard query == filter(search) else { throw CancellationError() }; return result
+    }
+    func changeSelectedChats(_ ids: [String], action: Mango9ChatListSelection.Action, search: String) async throws {
+        let query = filter(search)
+        _ = try await batch.apply(ids, action: action, query: bulkQuery(search))
+        guard query == filter(search) else { throw CancellationError() }
+    }
     func listAction(id: String, action: Mango9ChatListSelection.Action) async throws {
         guard let session, Mango9SessionStore.isActive(session) else { throw Mango9MessagingError.scopeChanged }
         let api = Mango9LiveChatAPI.shared
@@ -148,16 +167,9 @@ struct Mango9LiveChatList: View {
 
             Mango9ChatListToolbar(selection: selection,
                 scope: (store.session.map(Mango9ReactionTarget.accountKey) ?? "") + ":live:" + store.filter(searchText),
-                ids: store.conversations.map(\.id), loadAll: {
-                    var cursors = Set<String>()
-                    while let cursor = store.next {
-                        let key = cursor + ":" + (store.nextID ?? "")
-                        guard !store.busy, cursors.insert(key).inserted, cursors.count <= 200 else { throw Mango9MessagingError.invalidResponse }
-                        await store.load(searchText, more: true)
-                        if store.error != nil { throw Mango9MessagingError.invalidResponse }
-                    }
-                    return store.conversations.map(\.id)
-                }, work: { id, action in try await store.listAction(id: id, action: action) },
+                ids: store.conversations.map(\.id),
+                loadByState: { try await store.selectChats($0, search: searchText) },
+                batchWork: { try await store.changeSelectedChats($0, action: $1, search: searchText) }, work: { id, action in try await store.listAction(id: id, action: action) },
                 refresh: { await store.load(searchText) })
 			Divider()
 			List {

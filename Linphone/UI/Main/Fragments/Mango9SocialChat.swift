@@ -664,6 +664,11 @@ struct Mango9SocialBulkReceipt: Decodable {
 		if order.count > 24 { stores.removeValue(forKey: order.removeFirst()) }
 		return value
 	}
+    func invalidate(session: Mango9Session, threads: [String]) {
+        guard account == Mango9ReactionTarget.accountKey(session), loginGeneration == session.loginGeneration else { return }
+        for id in threads { stores.removeValue(forKey: id)?.clearPrivateState() }
+        order.removeAll { threads.contains($0) }
+    }
 	func clear() {
 		for store in stores.values { store.clearPrivateState() }
 		stores.removeAll(); order.removeAll(); account = nil; loginGeneration = nil
@@ -739,51 +744,42 @@ struct Mango9SocialBulkReceipt: Decodable {
 	func inboxQuery(search: String) -> Mango9SocialInboxQuery {
 		.init(search: search.trimmingCharacters(in: .whitespacesAndNewlines), platform: selectedPlatform, account: selectedAccount)
 	}
+    private lazy var chatBatch = Mango9ChatBulkActions(channel: "social", post: { [weak self] operation, input in
+        guard let self else { throw CancellationError() }
+        var body = input
+        let path = operation == "select" ? "inbox-bulk-selection" : (input["action"] as? String == "delete" ? "inbox-bulk-delete" : "inbox-bulk-read")
+        if path == "inbox-bulk-delete" { body.removeValue(forKey: "action") }
+        return try await self.api.request(Mango9ChatBulkResponse.self, session: self.session, social: true, path: [path], body: body)
+    }, current: { [weak self] in guard let self, Mango9SessionStore.isActive(self.session) else { throw CancellationError() } })
+    private func bulkQuery(_ search: String) -> [String: Any] {
+        var fields: [String: Any] = [:]
+        for (key, value) in inboxQuery(search: search).fields where key != "kind" && key != "limit" { fields[key] = value }
+        return fields
+    }
     func selectChats(mode: String, search: String, ids: [String]? = nil) async throws -> [String] {
         let query = inboxQuery(search: search), life = lifetime
-        var body: [String: Any] = ["mode": mode, "requestId": UUID().uuidString.lowercased()]
-        for (key, value) in query.fields where key != "kind" && key != "limit" { body[key] = value }
-        if let ids { body["ids"] = ids }
-        let result = try await api.request(Mango9SocialBulkSelection.self, session: session, social: true, path: ["inbox-bulk-selection"], body: body)
-        guard life == lifetime, query == inboxQuery(search: search), Mango9SessionStore.isActive(session) else { throw CancellationError() }
-        let found = result.items.map(\.id)
-        guard result.type == "inbox-selection", result.selectionId == body["requestId"] as? String,
-              found.count <= 5000, Set(found).count == found.count,
-              ids == nil || Set(found).isSubset(of: Set(ids!)),
-              result.items.allSatisfy({ $0.readThrough >= 0 && (mode == "all" || $0.unread == (mode == "unread")) }) else { throw Mango9MessagingError.invalidResponse }
-        bulkSelection = (query, result); bulkRequest = nil
-        return found
+        let result = try await chatBatch.select(mode, query: bulkQuery(search), ids: ids)
+        guard life == lifetime, query == inboxQuery(search: search) else { throw CancellationError() }
+        return result
     }
     func updateSelectedChats(_ ids: [String], action: Mango9ChatListSelection.Action, search: String) async throws {
-        guard action != .delete, !ids.isEmpty else { throw Mango9MessagingError.invalidResponse }
         let query = inboxQuery(search: search), life = lifetime
-        if bulkSelection?.query != query || !Set(ids).isSubset(of: Set(bulkSelection?.result.items.map(\.id) ?? [])) {
-            _ = try await selectChats(mode: "all", search: search, ids: ids)
+        let receipt = try await chatBatch.apply(ids, action: action, query: bulkQuery(search))
+        guard life == lifetime, query == inboxQuery(search: search) else { throw CancellationError() }
+        if action == .delete { Mango9SocialChatCache.shared.invalidate(session: session, threads: ids) }
+        if let receipt {
+            let hidden = Set(receipt.hiddenIds ?? [])
+            let states = Dictionary(uniqueKeysWithValues: receipt.items.map { ($0.id, $0) })
+            threads = threads.filter { !hidden.contains($0.id) }.map { row in
+                guard let state = states[row.id], (row.readThrough ?? 0) <= state.readThrough else { return row }
+                var updated = row
+                updated.unread = state.unread; updated.readThrough = state.readThrough; updated.markedUnread = state.markedUnread
+                return updated
+            }
+            Mango9InboxUnread.shared.socialReceipts(receipt.items, session: session)
         }
-        guard life == lifetime, query == inboxQuery(search: search), let snapshot = bulkSelection else { throw CancellationError() }
-        // Missing/deleted rows cannot become selected again. The snapshot is fixed until explicit reselection.
-        let snapshotIDs = Set(snapshot.result.items.map(\.id))
-        let selected = ids.filter { snapshotIDs.contains($0) }.sorted()
-        guard !selected.isEmpty else { return }
-        let key = snapshot.result.selectionId + ":" + action.rawValue + ":" + selected.joined(separator: ",")
-        if bulkRequest?.key != key { bulkRequest = (key, UUID().uuidString.lowercased()) }
-        let requestId = bulkRequest!.id
-        let receipt = try await api.request(Mango9SocialBulkReceipt.self, session: session, social: true, path: ["inbox-bulk-read"],
-            body: ["selectionId": snapshot.result.selectionId, "ids": selected, "action": action.rawValue, "requestId": requestId])
-        guard life == lifetime, query == inboxQuery(search: search), Mango9SessionStore.isActive(session) else { throw CancellationError() }
-        let returned = receipt.items.map(\.id) + receipt.skippedIds
-        guard receipt.type == "inbox-bulk-read", receipt.requestId == requestId, receipt.action == action.rawValue,
-              Set(returned) == Set(selected), returned.count == Set(returned).count,
-              receipt.items.allSatisfy({ $0.readThrough >= 0 }) else { throw Mango9MessagingError.invalidResponse }
-        let states = Dictionary(uniqueKeysWithValues: receipt.items.map { ($0.id, $0) })
-        threads = threads.map { row in
-            guard let state = states[row.id], (row.readThrough ?? 0) <= state.readThrough else { return row }
-            var updated = row; updated.unread = state.unread; updated.readThrough = state.readThrough; updated.markedUnread = state.markedUnread
-            return updated
-        }
-        Mango9InboxUnread.shared.socialReceipts(receipt.items, session: session)
-        bulkSelection = nil; bulkRequest = nil
     }
+
 	func hasLoadedInbox(search: String) -> Bool { loadedQuery == inboxQuery(search: search) }
 	var platforms: [String] { Array(Set(accounts.map(\.platform))).sorted() }
  func platformTitle(_ value: String) -> String { accounts.first(where: { $0.platform == value })?.platformLabel ?? Mango9SocialPlatform.title(value) }
