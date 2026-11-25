@@ -3,7 +3,7 @@ Mango9 6.2.27 (80) replaces rejected build 79. It is a business communications a
 CLARIFICATION OF OUR EARLIER REPLY
 The final build retains manual SIP registration and removes only its additional settings-password gate. Our earlier reply saying the entire manual SIP feature would be removed does not describe this submitted build.
 
-The former settings code was the app's own version number, not the user's CRM password. For example, version 6.2.25 used 6.2.25. This can be verified in an older build that contains the gate using that build's version number. Its purpose was to reserve configuration for existing Mango9 users. It did not enable AI Assistant or bypass CRM account permissions. We recognize that a separate, insufficiently clear access code could make review confusing. Build 80 removes the settings-password prompt and version check entirely.
+The former settings code was the app's own version number, not the user's CRM password. For example, version 6.2.25 used 6.2.25. This can be verified in an older build that contains the gate using that build's version number. Its purpose was to reserve configuration for existing Mango9 users. It did not bypass CRM account permissions. We recognize that a separate, insufficiently clear access code could make review confusing. Build 80 removes the settings-password prompt and version check entirely.
 
 MANUAL SIP AND REVIEW ACCESS
 Open the gear on the sign-in screen to access Connection settings directly. Enter the supplied Extension (SIP username), SIP password and Server / Domain, then tap Register. The attached private review guide provides the tested calling-line credentials and proxy server, proxy.mango9.com. No separate settings code is required.
@@ -22,4 +22,4 @@ Chat includes SMS, Team Chat, connected Social inboxes and website Live Chat. Ea
 
 CRM includes Leads, Clients, Opportunities, Calendar and Tasks according to account permissions. Leads can be converted to Clients. Opportunities include stages, amounts, activity links, saved filters and follow-ups synchronized with Calendar through the mobile API. Contacts, Calls, Chat and CRM are available in the main footer. Calls opens the keypad; call history, missed-call and voicemail badges are available, and the voicemail number is configured under Settings > Calls.
 
-AI Assistant remains removed, as in the approved 6.2.24 release. This build does not restore AI chat, voice sessions, an Assistant button or Assistant notification routing. There is no native consumer signup or purchase flow. Features depend on the organization's assigned services and connected providers.
+There is no native consumer signup or purchase flow. Features depend on the organization's assigned services and connected providers.
