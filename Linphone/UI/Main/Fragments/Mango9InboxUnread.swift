@@ -44,6 +44,16 @@ struct Mango9InboxReadLedger {
         if row.unread { revision += 1; channels["social", default: []].insert(row.id); syncBadge() }
         else { didRead(row.id, channel: "social", session: session, version: row.readThrough.map(Double.init)) }
     }
+    func socialReceipts(_ rows: [Mango9SocialReadState], session: Mango9Session) {
+        guard Mango9SessionStore.isActive(session) else { return }; bind(session)
+        var ledger = reads, ids = channels["social", default: []]
+        for row in rows {
+            if row.unread { ids.insert(row.id) }
+            else { ledger.read(row.id, channel: "social", version: Double(row.readThrough)); ids.remove(row.id) }
+        }
+        revision += 1; reads = ledger; channels["social"] = ids; syncBadge()
+        // The toolbar performs one authoritative refresh after the entire action.
+    }
     func didRead(_ id: String, channel: String, session: Mango9Session, version: Double? = nil) {
         guard Mango9SessionStore.isActive(session) else { return }; bind(session)
         reads.read(id, channel: channel, version: version)
@@ -91,7 +101,7 @@ struct Mango9InboxReadLedger {
         repeat {
             try Task.checkCancellation(); pages += 1; guard pages <= 100 else { throw Mango9MessagingError.invalidResponse }
             if channel == "social" {
-                var query = [URLQueryItem(name: "kind", value: "dms"), URLQueryItem(name: "limit", value: "50")]
+                var query = [URLQueryItem(name: "kind", value: "dms"), URLQueryItem(name: "view", value: "unread"), URLQueryItem(name: "limit", value: "50")]
                 if let before { query.append(.init(name: "before", value: before)) }
                 let page = try await Mango9MessagingAPI.shared.request(Mango9SocialPage<Mango9SocialThread,String>.self, session: session, social: true, path: ["inbox"], query: query)
                 guard page.items.count <= 50, page.next == nil || (page.next == page.items.last?.id && !page.items.isEmpty) else { throw Mango9MessagingError.invalidResponse }

@@ -685,6 +685,15 @@ private final class ReactionUIProtocol: URLProtocol {
 	private static var hiddenSocial: Set<Int> = []
 	private static var mutedSocial: [String: Bool] = [:]
 	private static var hiddenConversations: Set<String> = []
+    private static var bulkUnread = Set<String>()
+    private static var bulkRows: [[String: Any]] {
+        (0..<500).map { index in
+            let id = String(format: "00000000-0000-4000-8000-%012d", index)
+            var row = threadData; row["id"] = id; row["name"] = "Customer \(index + 1)"; row["readThrough"] = index + 1
+            row["unread"] = bulkUnread.contains(id); row["markedUnread"] = bulkUnread.contains(id)
+            return row
+        }
+    }
 	private static var conversationReceipts: [String: [String: Any]] = [:]
 	private static let socialCapabilities: [String: Any] = ["supported": true, "scope": "provider", "recipientVisible": true,
 		"textFallback": false, "canAdd": true, "canRemove": true]
@@ -696,7 +705,7 @@ private final class ReactionUIProtocol: URLProtocol {
 	static var socialThread: Mango9SocialThread {
 		try! JSONDecoder().decode(Mango9SocialThread.self, from: JSONSerialization.data(withJSONObject: threadData))
 	}
-	static func reset() { lock.lock(); defer { lock.unlock() }; reactions = [:]; socialReaction = [:]; hiddenSocial = []; mutedSocial = [:]; hiddenConversations = []; conversationReceipts = [:]; version = 0 }
+	static func reset() { lock.lock(); defer { lock.unlock() }; reactions = [:]; socialReaction = [:]; hiddenSocial = []; mutedSocial = [:]; hiddenConversations = []; conversationReceipts = [:]; version = 0; bulkUnread = Set((0..<250).map { String(format: "00000000-0000-4000-8000-%012d", $0) }) }
 	override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "reactions-ui.example.invalid" }
 	override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 	override func startLoading() {
@@ -716,8 +725,27 @@ private final class ReactionUIProtocol: URLProtocol {
 			if request.url?.path.contains("social-posting") == true {
 				switch request.url!.lastPathComponent {
 				case "accounts": payload = ["items": [["id": String(repeating: "a", count: 24), "platform": "instagram", "name": "Studio"], ["id": String(repeating: "b", count: 24), "platform": "facebook", "name": "Company Page"]]]
+                case "inbox-bulk-selection":
+                    let body = try Self.body(request), mode = body["mode"] as? String ?? "all"
+                    let ids = body["ids"] as? [String]
+                    let rows = Self.bulkRows.filter { row in
+                        (ids == nil || ids!.contains(row["id"] as! String)) && (mode == "all" || (row["unread"] as? Bool == (mode == "unread")))
+                    }
+                    payload = ["type": "inbox-selection", "selectionId": body["requestId"]!, "items": rows]
+                case "inbox-bulk-read":
+                    let body = try Self.body(request), ids = body["ids"] as! [String], action = body["action"] as! String
+                    if action == "read" { Self.bulkUnread.subtract(ids) } else { Self.bulkUnread.formUnion(ids) }
+                    payload = ["type": "inbox-bulk-read", "requestId": body["requestId"]!, "action": action,
+                        "items": Self.bulkRows.filter { ids.contains($0["id"] as! String) }, "skippedIds": []]
 				case "inbox":
 					let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                    if ProcessInfo.processInfo.environment["UITEST_SOCIAL_BULK"] == "1" {
+                        let before = query.first { $0.name == "before" }?.value
+                        let rows = Self.bulkRows.filter { before == nil || ($0["id"] as! String) > before! }
+                        let page = Array(rows.prefix(50))
+                        payload = ["items": page, "next": rows.count > 50 ? page.last!["id"]! : NSNull()]
+                        break
+                    }
 					let platform = query.first { $0.name == "platform" }?.value
 					var fb = Self.threadData; fb["id"] = "facebook-thread"; fb["name"] = "Facebook customer"; fb["platform"] = "facebook"; fb["accountHandle"] = "Company Page"
 					var tt = Self.threadData; tt["id"] = "tiktok-thread"; tt["name"] = "TikTok customer"; tt["platform"] = "tiktok"; tt["accountHandle"] = "Video Studio"

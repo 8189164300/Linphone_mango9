@@ -1018,6 +1018,19 @@ private struct Mango9CameraPhotoPicker: UIViewControllerRepresentable {
         catch { if turn == revision { self.error = "Could not load every chat. Retry Select all." } }
     }
     func deselectAll() { guard !busy else { return }; selected = []; preserveSnapshot = false; allPagesSelected = false }
+    func runBatch(_ action: Action, work: @escaping @MainActor ([String], Action) async throws -> Void) async {
+        guard !busy, !selected.isEmpty, let session = Mango9SessionStore.load() else { return }
+        let turn = revision, ids = Array(selected).sorted(); busy = true; error = nil
+        do {
+            try await work(ids, action)
+            guard revision == turn, Mango9SessionStore.isActive(session) else { return }
+            selected = []; selecting = false; allPagesSelected = false; preserveSnapshot = false
+        } catch {
+            guard revision == turn, Mango9SessionStore.isActive(session) else { return }
+            self.error = "Could not update the selected chats. Retry, or select them again."
+        }
+        if revision == turn { busy = false }
+    }
     func run(_ action: Action, work: @escaping @MainActor (String, Action) async throws -> Void) async {
         guard !busy, !selected.isEmpty, let session = Mango9SessionStore.load() else { return }
         let turn = revision, ids = Array(selected).sorted(); busy = true; error = nil
@@ -1042,6 +1055,8 @@ struct Mango9ChatListToolbar: View {
     @ObservedObject var selection: Mango9ChatListSelection
     let scope: String, ids: [String]
     var loadAll: (@MainActor () async throws -> [String])?
+    var loadByState: (@MainActor (String) async throws -> [String])?
+    var batchWork: (@MainActor ([String], Mango9ChatListSelection.Action) async throws -> Void)?
     let work: @MainActor (String, Mango9ChatListSelection.Action) async throws -> Void
     let refresh: @MainActor () async -> Void
     @State private var confirmDelete = false
@@ -1053,9 +1068,20 @@ struct Mango9ChatListToolbar: View {
                 }.disabled(!selection.selecting && ids.isEmpty)
                 if selection.selecting {
                     let all = selection.allPagesSelected && !ids.isEmpty && Set(ids).isSubset(of: selection.selected)
+                    if let loadByState {
+                        Menu {
+                            Button { Task { await selection.all { try await loadByState("unread") } } } label: { Label("Select unread", systemImage: "envelope.badge") }
+                            Button { Task { await selection.all { try await loadByState("read") } } } label: { Label("Select read", systemImage: "envelope.open") }
+                            Button { Task { await selection.all { try await loadByState("all") } } } label: { Label("Select all", systemImage: "checkmark.square") }
+                            if !selection.selected.isEmpty { Button("Deselect all") { selection.deselectAll() } }
+                        } label: {
+                            Image(systemName: all ? "checkmark.square.fill" : "square").font(.system(size: 20)).frame(width: 44, height: 44)
+                        }.accessibilityLabel("Choose chats to select")
+                    } else {
                     control(all ? "checkmark.square.fill" : "square", all ? "Deselect all" : "Select all chats in this list") {
                         if all { selection.deselectAll() }
                         else { Task { await selection.all(loadAll ?? { ids }) } }
+                    }
                     }
                     Text("\(selection.selected.count) selected").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                     Spacer(minLength: 0)
@@ -1081,7 +1107,11 @@ struct Mango9ChatListToolbar: View {
             .buttonStyle(.plain).accessibilityLabel(title)
     }
     private func perform(_ action: Mango9ChatListSelection.Action) {
-        Task { await selection.run(action, work: work); await refresh(); await Mango9InboxUnread.shared.refresh() }
+        Task {
+            if action != .delete, let batchWork { await selection.runBatch(action, work: batchWork) }
+            else { await selection.run(action, work: work) }
+            await refresh(); await Mango9InboxUnread.shared.refresh()
+        }
     }
 }
 

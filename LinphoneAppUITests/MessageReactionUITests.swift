@@ -1,6 +1,64 @@
 import XCTest
 
 final class MessageReactionUITests: XCTestCase {
+    func testSocialBulkMenuOnSignedInDevice() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Requires the installed signed-in device session.")
+        #endif
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launch()
+        let social = app.buttons["conversations.tab.social"]
+        if !social.waitForExistence(timeout: 10) {
+            let chats = app.buttons["Chat"]
+            if chats.exists { chats.tap() }
+        }
+        XCTAssertTrue(social.waitForExistence(timeout: 15)); social.tap()
+        tapWhenEnabled(app.buttons["Select chats"])
+        tapWhenEnabled(app.buttons["Choose chats to select"])
+        XCTAssertTrue(app.buttons["Select unread"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Select read"].exists); XCTAssertTrue(app.buttons["Select all"].exists)
+        let menu = XCTAttachment(screenshot: app.screenshot()); menu.name = "Social selection menu on iPhone"; menu.lifetime = .keepAlways; add(menu)
+        tapWhenEnabled(app.buttons["Select unread"])
+        let selected = app.staticTexts.matching(NSPredicate(format: "label ENDSWITH ' selected'")).firstMatch
+        XCTAssertTrue(selected.waitForExistence(timeout: 15))
+        tapWhenEnabled(app.buttons["Choose chats to select"])
+        tapWhenEnabled(app.buttons["Select all"])
+        tapWhenEnabled(app.buttons["Choose chats to select"])
+        tapWhenEnabled(app.buttons["Deselect all"])
+        XCTAssertTrue(app.staticTexts["0 selected"].waitForExistence(timeout: 5))
+        tapWhenEnabled(app.buttons["Cancel selection"])
+    }
+
+    func testSocialBulkSelectionOffersUnreadReadAndAllWithoutLoadingEveryRow() throws {
+        #if !targetEnvironment(simulator)
+        throw XCTSkip("Offline fixture is restricted to the simulator.")
+        #endif
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launchEnvironment["UITEST_REACTIONS"] = "social-list"
+        app.launchEnvironment["UITEST_SOCIAL_BULK"] = "1"; app.launch()
+        XCTAssertTrue(app.staticTexts["Customer 1"].waitForExistence(timeout: 20))
+        tapWhenEnabled(app.buttons["Select chats"])
+        tapWhenEnabled(app.buttons["Choose chats to select"])
+        XCTAssertTrue(app.buttons["Select unread"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Select read"].exists); XCTAssertTrue(app.buttons["Select all"].exists)
+        let menu = XCTAttachment(screenshot: app.screenshot()); menu.name = "Social read-state selection menu"; menu.lifetime = .keepAlways; add(menu)
+        tapWhenEnabled(app.buttons["Select unread"])
+        XCTAssertTrue(app.staticTexts["250 selected"].waitForExistence(timeout: 10))
+        tapWhenEnabled(app.buttons["Mark selected chats read"])
+        XCTAssertTrue(app.buttons["Select chats"].waitForExistence(timeout: 10))
+        tapWhenEnabled(app.buttons["Select chats"]); tapWhenEnabled(app.buttons["Choose chats to select"])
+        tapWhenEnabled(app.buttons["Select unread"])
+        XCTAssertTrue(app.staticTexts["0 selected"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Mark selected chats read"].isEnabled)
+        tapWhenEnabled(app.buttons["Choose chats to select"]); tapWhenEnabled(app.buttons["Select read"])
+        XCTAssertTrue(app.staticTexts["500 selected"].waitForExistence(timeout: 10))
+        let selected = XCTAttachment(screenshot: app.screenshot()); selected.name = "Five hundred chats selected compact toolbar"; selected.lifetime = .keepAlways; add(selected)
+        tapWhenEnabled(app.buttons["Mark selected chats unread"])
+        XCTAssertTrue(app.buttons["Select chats"].waitForExistence(timeout: 10))
+        tapWhenEnabled(app.buttons["Select chats"]); tapWhenEnabled(app.buttons["Choose chats to select"])
+        tapWhenEnabled(app.buttons["Select unread"])
+        XCTAssertTrue(app.staticTexts["500 selected"].waitForExistence(timeout: 10))
+    }
 	func testConversationDeleteConfirmsOnPressedRowAndPreservesOtherChats() {
 		continueAfterFailure = false
 		let app = XCUIApplication(); app.launchEnvironment["UITEST_REACTIONS"] = "social-list"; app.launch()

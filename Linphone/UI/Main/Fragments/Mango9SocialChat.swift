@@ -348,7 +348,7 @@ struct Mango9SocialThread: Decodable, Identifiable, Equatable {
 	let summary: String?
 	let participantHandle: String?
 	let accountHandle: String?
-	let unread: Bool
+	var unread: Bool
 	let connectionCurrent: Bool
 	let canReply: Bool?
 	let deleted: Bool?
@@ -597,6 +597,26 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 	var statusLabel: String { confirmedSent ? "Sent" : terminal ? "Not sent" : "Delivery unconfirmed" }
 }
 
+/// Minimal read receipts for selection and one batched update.
+struct Mango9SocialReadState: Decodable, Equatable {
+    let id: String
+    let readThrough: Int
+    let unread: Bool
+    let markedUnread: Bool
+}
+struct Mango9SocialBulkSelection: Decodable {
+    let type: String
+    let selectionId: String
+    let items: [Mango9SocialReadState]
+}
+struct Mango9SocialBulkReceipt: Decodable {
+    let type: String
+    let requestId: String
+    let action: String
+    let items: [Mango9SocialReadState]
+    let skippedIds: [String]
+}
+
 /// Durable intent metadata only. Unknown sends are reconciled, never blindly resent.
 @MainActor final class Mango9SocialSendJournal {
 	struct Pending: Codable, Equatable { let account: String; let thread: String; let requestId: String; var attachmentID: String?; var draftHash: String? }
@@ -681,6 +701,8 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 	private var loadingAccounts = false
 	private var consumedCursors = Set<String>()
 	var hasOlderInboxPages: Bool { !consumedCursors.isEmpty }
+    private var bulkSelection: (query: Mango9SocialInboxQuery, result: Mango9SocialBulkSelection)?
+    private var bulkRequest: (key: String, id: String)?
 	private var lifetime = UUID()
 	private var threadGeneration = 0
 	private var providerRefreshWarning: String?
@@ -703,6 +725,7 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 		outgoingText.unicodeScalars.count <= (thread?.textLimit ?? 10000) && (selectedMedia.isEmpty || thread?.permitsUploads == true)
 	}
 	func clearPrivateState() {
+        bulkSelection = nil; bulkRequest = nil
 		threadLoadTask?.cancel(); threadLoadTask = nil; pendingThreadLoad = nil; providerAttempt = nil
 		providerRefreshWarning = nil
 		lifetime = UUID()
@@ -716,6 +739,51 @@ struct Mango9SocialSendReceipt: Decodable, Equatable {
 	func inboxQuery(search: String) -> Mango9SocialInboxQuery {
 		.init(search: search.trimmingCharacters(in: .whitespacesAndNewlines), platform: selectedPlatform, account: selectedAccount)
 	}
+    func selectChats(mode: String, search: String, ids: [String]? = nil) async throws -> [String] {
+        let query = inboxQuery(search: search), life = lifetime
+        var body: [String: Any] = ["mode": mode, "requestId": UUID().uuidString.lowercased()]
+        for (key, value) in query.fields where key != "kind" && key != "limit" { body[key] = value }
+        if let ids { body["ids"] = ids }
+        let result = try await api.request(Mango9SocialBulkSelection.self, session: session, social: true, path: ["inbox-bulk-selection"], body: body)
+        guard life == lifetime, query == inboxQuery(search: search), Mango9SessionStore.isActive(session) else { throw CancellationError() }
+        let found = result.items.map(\.id)
+        guard result.type == "inbox-selection", result.selectionId == body["requestId"] as? String,
+              found.count <= 5000, Set(found).count == found.count,
+              ids == nil || Set(found).isSubset(of: Set(ids!)),
+              result.items.allSatisfy({ $0.readThrough >= 0 && (mode == "all" || $0.unread == (mode == "unread")) }) else { throw Mango9MessagingError.invalidResponse }
+        bulkSelection = (query, result); bulkRequest = nil
+        return found
+    }
+    func updateSelectedChats(_ ids: [String], action: Mango9ChatListSelection.Action, search: String) async throws {
+        guard action != .delete, !ids.isEmpty else { throw Mango9MessagingError.invalidResponse }
+        let query = inboxQuery(search: search), life = lifetime
+        if bulkSelection?.query != query || !Set(ids).isSubset(of: Set(bulkSelection?.result.items.map(\.id) ?? [])) {
+            _ = try await selectChats(mode: "all", search: search, ids: ids)
+        }
+        guard life == lifetime, query == inboxQuery(search: search), let snapshot = bulkSelection else { throw CancellationError() }
+        // Missing/deleted rows cannot become selected again. The snapshot is fixed until explicit reselection.
+        let snapshotIDs = Set(snapshot.result.items.map(\.id))
+        let selected = ids.filter { snapshotIDs.contains($0) }.sorted()
+        guard !selected.isEmpty else { return }
+        let key = snapshot.result.selectionId + ":" + action.rawValue + ":" + selected.joined(separator: ",")
+        if bulkRequest?.key != key { bulkRequest = (key, UUID().uuidString.lowercased()) }
+        let requestId = bulkRequest!.id
+        let receipt = try await api.request(Mango9SocialBulkReceipt.self, session: session, social: true, path: ["inbox-bulk-read"],
+            body: ["selectionId": snapshot.result.selectionId, "ids": selected, "action": action.rawValue, "requestId": requestId])
+        guard life == lifetime, query == inboxQuery(search: search), Mango9SessionStore.isActive(session) else { throw CancellationError() }
+        let returned = receipt.items.map(\.id) + receipt.skippedIds
+        guard receipt.type == "inbox-bulk-read", receipt.requestId == requestId, receipt.action == action.rawValue,
+              Set(returned) == Set(selected), returned.count == Set(returned).count,
+              receipt.items.allSatisfy({ $0.readThrough >= 0 }) else { throw Mango9MessagingError.invalidResponse }
+        let states = Dictionary(uniqueKeysWithValues: receipt.items.map { ($0.id, $0) })
+        threads = threads.map { row in
+            guard let state = states[row.id], (row.readThrough ?? 0) <= state.readThrough else { return row }
+            var updated = row; updated.unread = state.unread; updated.readThrough = state.readThrough; updated.markedUnread = state.markedUnread
+            return updated
+        }
+        Mango9InboxUnread.shared.socialReceipts(receipt.items, session: session)
+        bulkSelection = nil; bulkRequest = nil
+    }
 	func hasLoadedInbox(search: String) -> Bool { loadedQuery == inboxQuery(search: search) }
 	var platforms: [String] { Array(Set(accounts.map(\.platform))).sorted() }
  func platformTitle(_ value: String) -> String { accounts.first(where: { $0.platform == value })?.platformLabel ?? Mango9SocialPlatform.title(value) }
@@ -1058,25 +1126,11 @@ struct SocialInboxListContent: View {
 			Mango9SocialInboxFilters(store: store)
             Mango9ChatListToolbar(selection: selection,
                 scope: Mango9ReactionTarget.accountKey(store.session) + ":social:" + store.selectedPlatform + ":" + store.selectedAccount + ":" + search,
-                ids: visibleThreads.map(\.id), loadAll: {
-                    var cursors = Set<String>()
-                    while let cursor = store.nextThread {
-                        guard !store.busy, cursors.insert(cursor).inserted, cursors.count <= 200 else { throw Mango9MessagingError.invalidResponse }
-                        await store.loadInbox(search: search, more: true)
-                        if store.error != nil { throw Mango9MessagingError.invalidResponse }
-                    }
-                    try await conversationVisibility.refresh(session: store.session, channel: .social, ids: store.threads.map(\.id))
-                    return visibleThreads.map(\.id)
-                }, work: { id, action in
+                ids: visibleThreads.map(\.id),
+                loadByState: { try await store.selectChats(mode: $0, search: search) },
+                batchWork: { try await store.updateSelectedChats($0, action: $1, search: search) }, work: { id, action in
                     if action == .delete { try await conversationVisibility.delete(session: store.session, channel: .social, id: id); return }
-                    var body: [String: Any] = ["id": id, "requestId": UUID().uuidString.lowercased()]
-                    if action == .read {
-                        let detail = try await store.api.request(Mango9SocialThread.self, session: store.session, social: true, path: ["inbox-detail"], query: [.init(name: "id", value: id)])
-                        guard let sequence = detail.readThrough else { throw Mango9MessagingError.invalidResponse }; body["readThrough"] = sequence
-                    }
-                    let result = try await store.api.request(Mango9SocialThread.self, session: store.session, social: true, path: [action == .read ? "inbox-read" : "inbox-unread"], body: body)
-                    guard result.id == id, action != .unread || result.unread else { throw Mango9MessagingError.invalidResponse }
-                    Mango9InboxUnread.shared.socialReceipt(result, session: store.session)
+                    throw Mango9MessagingError.invalidResponse
                 }, refresh: { await store.loadInbox(search: search) })
 			Divider()
 		List {
