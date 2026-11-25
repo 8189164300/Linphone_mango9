@@ -1,25 +1,19 @@
-Mango9 6.2.27 (80) replaces rejected build 79. It is a business communications and CRM companion for existing Mango9 customers.
+Mango9 6.2.28 (81) is an update to the approved 6.2.27 release. Mango9 is a business communications and CRM companion for existing Mango9 customers.
 
-CLARIFICATION OF OUR EARLIER REPLY
-The final build retains manual SIP registration and removes only its additional settings-password gate. Our earlier reply saying the entire manual SIP feature would be removed does not describe this submitted build.
+CHANGES IN THIS UPDATE
+SMS, Team Chat, connected Social inboxes and website Live Chat now support fast batch actions. Users can select only unread chats, only read chats, or all chats, then mark the selection read, mark it unread or delete it for themselves. The app no longer processes the selection one chat at a time.
 
-The former settings code was the app's own version number, not the user's CRM password. For example, version 6.2.25 used 6.2.25. This can be verified in an older build that contains the gate using that build's version number. Its purpose was to reserve configuration for existing Mango9 users. It did not bypass CRM account permissions. We recognize that a separate, insufficiently clear access code could make review confusing. Build 80 removes the settings-password prompt and version check entirely.
+The update improves unread indicators, protects messages arriving after a selection is made, and makes retries safe after a connection interruption. Delete for me affects only the signed-in user's history; it does not delete messages for other participants or unsend them on connected social platforms.
 
-MANUAL SIP AND REVIEW ACCESS
-Open the gear on the sign-in screen to access Connection settings directly. Enter the supplied Extension (SIP username), SIP password and Server / Domain, then tap Register. The attached private review guide provides the tested calling-line credentials and proxy server, proxy.mango9.com. No separate settings code is required.
+HOW TO REVIEW
+1. Sign in with the existing email/password credentials in App Review's Sign-In Information.
+2. Open Chat and choose SMS, Team Chat, Social or Live Chat.
+3. Tap the selection checkmark, then open the selection menu for Select unread, Select read or Select all.
+4. Use the read, unread or delete icons. Deletion requires confirmation. Available chats depend on the review account's connected services.
 
-Manual SIP is a phone-only fallback when CRM/email sign-in or automatic calling-line provisioning is unavailable. It requires actual SIP credentials issued by the customer's administrator. It does not sign into CRM or populate CRM chats. To review CRM and messaging, use the normal email/password credentials in App Review's Sign-In Information. Users can sign out of the manual line and sign in with their CRM email and password.
+MANUAL SIP ACCESS
+Connection settings remain directly available from the gear on the sign-in screen, with no additional settings password. Enter the supplied Extension, SIP password and Server / Domain, then tap Register. The existing private review guide supplies the test calling-line credentials and proxy.mango9.com server.
 
-TODAY'S FIXES
-- Manual SIP sign-out no longer requires a CRM session when no CRM push-cleanup lease exists.
-- A failed sign-out no longer clears the selected CRM session, and sign-out errors show their actual explanation.
-- Social filters load connected platform types and accounts for the signed-in account, including after login and refresh.
-- Forgot password? opens a native, blue email form and requests a reset email through Central. It does not open a browser or change the SIP password.
-- Email-code labels and manual SIP controls have improved contrast.
+Manual SIP is a phone-only fallback when CRM/email sign-in or automatic calling-line provisioning is unavailable. It requires SIP credentials supplied by the customer's administrator. Use the normal CRM email/password sign-in to review CRM and messaging.
 
-FEATURES TO REVIEW
-Chat includes SMS, Team Chat, connected Social inboxes and website Live Chat. Each channel has checkmark selection with Select all, Mark read, Mark unread and Delete for me. These affect only the signed-in user's history/reminders. Social supports provider-permitted attachments, shared cards and profile links.
-
-CRM includes Leads, Clients, Opportunities, Calendar and Tasks according to account permissions. Leads can be converted to Clients. Opportunities include stages, amounts, activity links, saved filters and follow-ups synchronized with Calendar through the mobile API. Contacts, Calls, Chat and CRM are available in the main footer. Calls opens the keypad; call history, missed-call and voicemail badges are available, and the voicemail number is configured under Settings > Calls.
-
-There is no native consumer signup or purchase flow. Features depend on the organization's assigned services and connected providers.
+CRM access, connected providers and calling services follow the signed-in account's assigned permissions. There is no native consumer signup or purchase flow.
