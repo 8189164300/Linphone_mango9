@@ -21,16 +21,16 @@ private final class LeadStatusURLProtocol: URLProtocol {
 }
 
 @MainActor final class Mango9LeadStatusTests: XCTestCase {
-	private func session(_ user: String = "status-fixture") -> Mango9Session {
+	private func session(_ user: String = "status-fixture", role: String = "client") -> Mango9Session {
 		.init(crmId: "fixture", crmBaseUrl: "https://crm.example.invalid", crmApiBaseUrl: "https://crm.example.invalid/api/v2",
-			userId: user, parentClientId: "fixture", role: "client", loginId: "fixture@example.invalid", displayName: "Fixture",
+			userId: user, parentClientId: "fixture", role: role, loginId: "fixture@example.invalid", displayName: "Fixture",
 			accessToken: "fixture-token", refreshToken: "fixture-refresh", smsChatApi: "", connectWebsocket: "",
 			enrollmentExpiresAt: .distantFuture, sipIdentity: "sip:\(user)@crm.example.invalid")
 	}
 
-	private func withSession(_ body: (Mango9Session, URLSession) async throws -> Void) async throws {
+	private func withSession(role: String = "client", _ body: (Mango9Session, URLSession) async throws -> Void) async throws {
 		let previous = Mango9SessionStore.activeIdentity
-		let current = session()
+		let current = session(role: role)
 		try Mango9SessionStore.save(current, persist: false, makeActive: true)
 		let configuration = URLSessionConfiguration.ephemeral
 		configuration.protocolClasses = [LeadStatusURLProtocol.self]
@@ -222,13 +222,15 @@ private final class LeadStatusURLProtocol: URLProtocol {
 
 extension Mango9LeadStatusTests {
     func testNotesSchemaRefreshesForReadOnlyLeadsAndClients() async throws {
-        try await withSession { _, transport in
+        try await withSession(role: "agent") { current, transport in
+            XCTAssertEqual(current.role, "agent")
             for kind in [Mango9CRMRecordKind.lead, .client] {
                 let model = model(transport, kind: kind)
                 var raw = try XCTUnwrap(JSONSerialization.jsonObject(with: response(kind: kind)) as? [String: Any])
                 var detail = try XCTUnwrap(raw["data"] as? [String: Any])
                 let key = kind == .lead ? "lead" : "client"
                 var row = try XCTUnwrap(detail[key] as? [String: Any]); row["permissions"] = ["can_update": false, "can_delete": false]
+                row["sharing"] = ["shared_with_me": true, "shared_by_me": false, "entries": []]
                 detail[key] = row; detail["schema_version"] = "notes-v2"
                 detail["values"] = ["note": "Draft stays separate", "note_history": "Other author\nPrevious note"]
                 raw["data"] = detail
@@ -257,7 +259,8 @@ extension Mango9LeadStatusTests {
     }
 
     func testPreviousNotesPageAndPermissionsRefresh() async throws {
-        try await withSession { current, transport in
+        try await withSession(role: "agent") { current, transport in
+            XCTAssertEqual(current.role, "agent")
             let model = Mango9CRMNotesModel()
             let stored = try XCTUnwrap(Mango9SessionStore.load())
             func row(_ id: Any) -> [String: Any] {
