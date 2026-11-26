@@ -4568,12 +4568,12 @@ extension Mango9CRMAPI {
 		return payload
 	}
 
-	static func clientSchema(session: Mango9Session) async throws -> Mango9LeadSchema {
+	static func clientSchema(session: Mango9Session, transport: URLSession = .shared) async throws -> Mango9LeadSchema {
 		let request = try authorizedRequest(
 			session: session,
 			path: ["mobile", "schema", "clients"]
 		)
-		let envelope: Envelope<Mango9LeadSchema> = try await send(request)
+		let envelope: Envelope<Mango9LeadSchema> = try await send(request, transport: transport)
 		guard envelope.success, let schema = envelope.data else {
 			throw Mango9CRMAPIError.server
 		}
@@ -4594,13 +4594,14 @@ extension Mango9CRMAPI {
 
 	static func client(
 		session: Mango9Session,
-		id: Int
+		id: Int,
+		transport: URLSession = .shared
 	) async throws -> Mango9LeadDetailPayload {
 		let request = try authorizedRequest(
 			session: session,
 			path: ["mobile", "clients", String(id)]
 		)
-		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request)
+		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request, transport: transport)
 		guard envelope.success, let payload = envelope.data else {
 			throw Mango9CRMAPIError.server
 		}
@@ -4679,12 +4680,12 @@ extension Mango9CRMAPI {
 		}
 	}
 
-	static func leadSchema(session: Mango9Session) async throws -> Mango9LeadSchema {
+	static func leadSchema(session: Mango9Session, transport: URLSession = .shared) async throws -> Mango9LeadSchema {
 		let request = try authorizedRequest(
 			session: session,
 			path: ["mobile", "schema", "leads"]
 		)
-		let envelope: Envelope<Mango9LeadSchema> = try await send(request)
+		let envelope: Envelope<Mango9LeadSchema> = try await send(request, transport: transport)
 		guard envelope.success, let schema = envelope.data else {
 			throw Mango9CRMAPIError.server
 		}
@@ -4743,13 +4744,14 @@ extension Mango9CRMAPI {
 
 	static func lead(
 		session: Mango9Session,
-		id: Int
+		id: Int,
+		transport: URLSession = .shared
 	) async throws -> Mango9LeadDetailPayload {
 		let request = try authorizedRequest(
 			session: session,
 			path: ["mobile", "leads", String(id)]
 		)
-		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request)
+		let envelope: Envelope<Mango9LeadDetailPayload> = try await send(request, transport: transport)
 		guard envelope.success, let payload = envelope.data else {
 			throw Mango9CRMAPIError.server
 		}
@@ -4848,7 +4850,7 @@ extension Mango9CRMAPI {
 		guard let url = components.url else {
 			throw Mango9CRMAPIError.invalidConfiguration
 		}
-		var request = URLRequest(url: url)
+		var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
 		request.httpMethod = "GET"
 		request.setValue("application/json", forHTTPHeaderField: "Accept")
 		request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
@@ -6473,6 +6475,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 	let leadId: Int
 	let recordKind: Mango9CRMRecordKind
 
+	@Published private(set) var notesRevision = 0
 	@Published private(set) var schema: Mango9LeadSchema?
 	@Published private(set) var lead: Mango9Lead?
 	@Published var values: [String: String] = [:]
@@ -6513,6 +6516,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 	func load() async {
 		guard !isLoading, !isSavingStatus else { return }
 		guard var session = Mango9SessionStore.load() else {
+            clearLoadedRecord()
 			errorMessage = "Connect your Mango9 account to open this \(recordKind.singular.lowercased())."
 			return
 		}
@@ -6530,16 +6534,23 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 				try await load(session: session)
 			}
 		} catch Mango9CRMAPIError.unauthorized {
+            clearLoadedRecord()
 			errorMessage = "Your CRM session expired. Sign in again."
 		} catch is CancellationError {
 			// Normal when a navigation transition supersedes a view-bound task.
 		} catch let error as URLError where error.code == .cancelled {
 			// Normal when URLSession is superseded during a navigation transition.
 		} catch {
+            clearLoadedRecord()
 			Log.error("[Mango9 CRM] Unable to load \(recordKind.singular.lowercased()) \(leadId): \(String(reflecting: error))")
 			errorMessage = "This \(recordKind.singular.lowercased()) could not be loaded."
 		}
 	}
+
+    private func clearLoadedRecord() {
+        lead = nil; schema = nil; values = [:]; originalValues = [:]; isEditing = false
+        notesRevision += 1
+    }
 
 	func cancelEditing() {
 		values = originalValues
@@ -6561,7 +6572,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 	func save() async {
         guard canUpdate else { return }
 		guard !isSaving, !isDeleting, !isSavingStatus, let schema else { return }
-		for field in schema.fields where field.required && field.editable && field.isVisible {
+		for field in schema.fields where field.required && field.editable && field.isVisible && field.key != "note_history" {
 			if (values[field.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
 				errorMessage = "\(field.label) is required."
 				return
@@ -6569,7 +6580,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 		}
 
 		var changes: [String: String] = [:]
-		for field in schema.fields where field.editable {
+		for field in schema.fields where field.editable && field.key != "note_history" {
 			let value = values[field.key] ?? ""
 			if value != (originalValues[field.key] ?? "") {
 				changes[field.key] = value
@@ -6608,6 +6619,7 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 			values = payload.values
 			originalValues = payload.values
 			isEditing = false
+			notesRevision += 1
 			savedMessage = "\(recordKind.singular) saved"
 			NotificationCenter.default.post(name: recordKind.changeNotification, object: nil)
 		} catch Mango9CRMAPIError.unauthorized {
@@ -6738,24 +6750,32 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 	}
 
 	private func load(session: Mango9Session) async throws {
-		let payload: Mango9LeadDetailPayload
-		if recordKind == .client {
-			payload = try await Mango9CRMAPI.client(session: session, id: leadId)
-		} else {
-			payload = try await Mango9CRMAPI.lead(session: session, id: leadId)
-		}
-		lead = payload.lead
-		values = payload.values
-		originalValues = payload.values
+        guard Self.context(session) == recordContext else { throw Mango9OpportunityFailure.accountChanged }
+        let payload: Mango9LeadDetailPayload
+        if recordKind == .client {
+            payload = try await Mango9CRMAPI.client(session: session, id: leadId, transport: statusTransport)
+        } else {
+            payload = try await Mango9CRMAPI.lead(session: session, id: leadId, transport: statusTransport)
+        }
+        guard payload.lead.id == leadId else { throw Mango9CRMAPIError.server }
+        var freshSchema = schema
+        if freshSchema == nil || freshSchema?.version != payload.schemaVersion {
+            if recordKind == .client {
+                freshSchema = try await Mango9CRMAPI.clientSchema(session: session, transport: statusTransport)
+            } else {
+                freshSchema = try await Mango9CRMAPI.leadSchema(session: session, transport: statusTransport)
+            }
+        }
+        try Task.checkCancellation()
+        guard Mango9SessionStore.isActive(session), Mango9SessionStore.load().map(Self.context) == recordContext else {
+            throw Mango9OpportunityFailure.accountChanged
+        }
+        schema = freshSchema
+        lead = payload.lead
+        values = payload.values
+        originalValues = payload.values
+        notesRevision += 1
         Mango9CRMUnread.shared.read(payload.lead.id, kind: recordKind, session: session)
-
-		if schema == nil {
-			if recordKind == .client {
-				schema = try await Mango9CRMAPI.clientSchema(session: session)
-			} else {
-				schema = try await Mango9CRMAPI.leadSchema(session: session)
-			}
-		}
 	}
 
 	private func update(
@@ -6766,13 +6786,15 @@ final class Mango9LeadDetailViewModel: ObservableObject {
 			return try await Mango9CRMAPI.updateClient(
 				session: session,
 				id: leadId,
-				values: values
+				values: values,
+				transport: statusTransport
 			)
 		}
 		return try await Mango9CRMAPI.updateLead(
 			session: session,
 			id: leadId,
-			values: values
+			values: values,
+				transport: statusTransport
 		)
 	}
 
@@ -6901,6 +6923,112 @@ struct Mango9LeadSectionCard<Content: View>: View {
 	}
 }
 
+struct Mango9CRMNote: Identifiable, Equatable {
+    let id: Int
+    let text: String
+    let author: String
+    let created: String
+
+    static func page(_ data: [String: Any], contactID: Int, page: Int) throws -> (notes: [Self], more: Bool) {
+        guard Mango9OpportunityAPI.integer(data["page"]) == page,
+              let rows = data["notes"] as? [[String: Any]], let more = data["has_more"] as? Bool,
+              !more || !rows.isEmpty else { throw Mango9OpportunityFailure.invalid }
+        return (try rows.map { row in
+            guard let id = Mango9OpportunityAPI.integer(row["note_id"]), id > 0,
+                  Mango9OpportunityAPI.integer(row["contact_id"]) == contactID,
+                  let text = row["note"] as? String else { throw Mango9OpportunityFailure.invalid }
+            let author = [row["creator_name"], row["creator"]].compactMap { $0 as? String }
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? "Unknown author"
+            return Self(id: id, text: text, author: author, created: row["create_date"] as? String ?? "")
+        }, more)
+    }
+
+    var dateLabel: String {
+        let input = DateFormatter(); input.locale = Locale(identifier: "en_US_POSIX")
+        input.timeZone = TimeZone(secondsFromGMT: 0); input.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        guard let date = input.date(from: created) else { return created }
+        // Preserve the CRM's wall time, rather than treating a zone-less date as UTC.
+        input.dateFormat = "MMM d, yyyy · h:mm a"
+        return input.string(from: date)
+    }
+}
+
+@MainActor final class Mango9CRMNotesModel: ObservableObject {
+    @Published private(set) var notes: [Mango9CRMNote] = []
+    @Published private(set) var busy = false
+    @Published private(set) var loaded = false
+    @Published private(set) var more = false
+    @Published private(set) var error: String?
+    private var page = 0
+    private var generation = 0
+
+    func invalidate() {
+        generation += 1; notes = []; page = 0; busy = false; loaded = false; more = false; error = nil
+    }
+
+    func load(session: Mango9Session, contactID: Int, reset: Bool = false, transport: URLSession = Mango9AuthTransport.session) async {
+        guard reset || !busy else { return }
+        if reset { invalidate() }
+        generation += 1; let seq = generation; let requestedPage = page + 1
+        busy = true; error = nil
+        defer { if generation == seq { busy = false } }
+        do {
+            let data = try await Mango9OpportunityAPI.send(session, query: [
+                URLQueryItem(name: "page", value: String(requestedPage)), URLQueryItem(name: "limit", value: "50")
+            ], transport: transport, mobilePath: "contacts/\(contactID)/notes")
+            guard seq == generation, !Task.isCancelled else { return }
+            let next = try Mango9CRMNote.page(data, contactID: contactID, page: requestedPage)
+            var combined = notes
+            for note in next.notes {
+                if let index = combined.firstIndex(where: { $0.id == note.id }) { combined[index] = note }
+                else { combined.append(note) }
+            }
+            guard !next.more || combined.count > notes.count else { throw Mango9OpportunityFailure.invalid }
+            notes = combined; more = next.more; page = requestedPage; loaded = true
+        } catch {
+            guard seq == generation, !Task.isCancelled else { return }
+            notes = []; more = false; page = 0; loaded = false
+            self.error = (error as? LocalizedError)?.errorDescription ?? "Notes could not be loaded. Please retry."
+        }
+    }
+}
+
+private struct Mango9CRMPreviousNotes: View {
+    let contactID: Int
+    let session: Mango9Session
+    let revision: Int
+    @StateObject private var model = Mango9CRMNotesModel()
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Previous notes").font(Mango9CRMText.fieldLabel).foregroundStyle(Color.grayMain2c500)
+            ForEach(model.notes) { note in
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(note.author).font(Mango9CRMText.emphasizedValue).textSelection(.enabled)
+                    if !note.created.isEmpty { Text(note.dateLabel).font(Mango9CRMText.metadata).foregroundStyle(Color.grayMain2c500) }
+                    Text(note.text).font(Mango9CRMText.fieldValue).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                }
+                Divider()
+            }
+            if model.busy { ProgressView().accessibilityLabel("Loading notes") }
+            if let error = model.error {
+                Text(error).font(Mango9CRMText.fieldValue).foregroundStyle(Color.redDanger500)
+                Button("Retry") { Task { await model.load(session: session, contactID: contactID, reset: true) } }
+                    .frame(minHeight: 44).accessibilityLabel("Retry notes")
+            } else if model.loaded && !model.busy && model.notes.isEmpty {
+                Text("No previous notes.").font(Mango9CRMText.fieldValue).foregroundStyle(Color.grayMain2c500)
+            }
+            if model.more && !model.busy {
+                Button("Load earlier notes") { Task { await model.load(session: session, contactID: contactID) } }.frame(minHeight: 44)
+            }
+        }
+        .tint(Color.orangeMain500)
+        .task(id: revision) { await model.load(session: session, contactID: contactID, reset: true) }
+        .onDisappear { model.invalidate() }
+        .accessibilityIdentifier("crm.notes.history")
+    }
+}
+
 struct Mango9LeadDetailFragment: View {
 	@Environment(\.presentationMode) private var presentationMode
 	@StateObject private var opportunities = Mango9OpportunityCards()
@@ -6962,12 +7090,12 @@ struct Mango9LeadDetailFragment: View {
 								}
 
 								if let schema = viewModel.schema {
-									ForEach(schema.sections) { section in
+									ForEach(detailSections(schema)) { section in
 										let fields = visibleFields(
 											for: section,
 											schemaFields: schema.fields
 										)
-										if !fields.isEmpty {
+										if !fields.isEmpty || section.id == "notes" {
 											fieldSection(section: section, fields: fields, width: geometry.size.width - 64)
 										}
 									}
@@ -6991,6 +7119,7 @@ struct Mango9LeadDetailFragment: View {
 			await viewModel.load()
             await opportunities.refresh(ids: [viewModel.leadId])
 		}
+        .onReceive(NotificationCenter.default.publisher(for: .mango9AccountContextChanged)) { _ in presentationMode.wrappedValue.dismiss() }
         .onReceive(NotificationCenter.default.publisher(for: .mango9LeadDidChange)) { note in
             if viewModel.recordKind == .lead, note.userInfo?["convertedId"] as? Int == viewModel.leadId { presentationMode.wrappedValue.dismiss() }
         }
@@ -7057,6 +7186,8 @@ struct Mango9LeadDetailFragment: View {
 					.frame(width: 25, height: 25)
 					.padding(10)
 			}
+            .accessibilityLabel(viewModel.isEditing ? "Cancel editing" : "Back")
+            .accessibilityIdentifier("crm.record.back")
 
 			VStack(alignment: .leading, spacing: 1) {
 				Text(viewModel.isEditing ? "Edit \(viewModel.recordKind.singular)" : viewModel.recordKind.singular)
@@ -7214,13 +7345,18 @@ struct Mango9LeadDetailFragment: View {
 	) -> some View {
 		Mango9LeadSectionCard(section: section) {
 			Mango9LeadFieldRows(fields: fields, values: viewModel.layoutValues, width: width) { field in
-				if viewModel.isEditing && field.editable {
+				if viewModel.isEditing && field.editable && field.key != "note_history" {
 					editor(field)
 				} else {
 					valueRow(field)
 				}
 			}
 
+            if section.id == "notes", viewModel.lead != nil, let session = Mango9SessionStore.load() {
+                Mango9CRMPreviousNotes(contactID: viewModel.leadId, session: session, revision: viewModel.notesRevision)
+                    .id(Mango9OpportunityAPI.key(session) + "/" + String(viewModel.leadId))
+                    .padding(14)
+            }
 			if section.id == "location" {
 				Divider().padding(.leading, 14)
 				ZStack(alignment: .bottomTrailing) {
@@ -7251,6 +7387,11 @@ struct Mango9LeadDetailFragment: View {
 		}
 	}
 
+    private func detailSections(_ schema: Mango9LeadSchema) -> [Mango9LeadSchema.Section] {
+        schema.sections.contains(where: { $0.id == "notes" }) ? schema.sections
+            : schema.sections + [.init(id: "notes", label: "Notes")]
+    }
+
 	private func visibleFields(
 		for section: Mango9LeadSchema.Section,
 		schemaFields: [Mango9LeadSchema.Field]
@@ -7258,7 +7399,7 @@ struct Mango9LeadDetailFragment: View {
 		let hiddenMobileFields: Set<String> = [
 			"utm_source",
 			"utm_medium",
-			"utm_campaign"
+			"utm_campaign", "note_history"
 		]
 		var fields = schemaFields.filter {
 			$0.section == section.id

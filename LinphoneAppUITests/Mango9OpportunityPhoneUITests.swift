@@ -2,6 +2,33 @@ import XCTest
 
 /// Exercises actual server-backed lists and validation without modifying an existing customer.
 final class Mango9OpportunityPhoneUITests: XCTestCase {
+    /// Reads existing records only; does not save, delete, or change sharing.
+    func testPreviousNotesInExistingLeadAndClient() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.activate()
+        XCUIDevice.shared.orientation = .portrait
+        for kind in ["lead", "client"] {
+            let crm = app.buttons["CRM"].firstMatch
+            XCTAssertTrue(crm.waitForExistence(timeout: 30)); crm.tap()
+            let link = app.buttons[kind == "lead" ? "crm.leads" : "crm.clients"].firstMatch
+            XCTAssertTrue(link.waitForExistence(timeout: 20)); link.tap()
+            let row = app.buttons["crm.record." + kind].firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 30), "An existing record is required for this read-only check")
+            row.tap()
+            let heading = app.staticTexts["Previous notes"].firstMatch
+            for _ in 0..<12 {
+                if heading.exists && heading.isHittable { break }
+                app.swipeUp()
+            }
+            XCTAssertTrue(heading.waitForExistence(timeout: 20))
+            XCTAssertFalse(app.buttons["Retry notes"].exists, "History must load successfully, not show an empty success after an API failure")
+            XCTAssertFalse(app.textViews["note_history"].exists, "Previous notes are not an editable field")
+            capture("Inline previous notes " + kind)
+            app.buttons["crm.record.back"].tap()
+            if kind == "lead" { app.buttons["crm.leads.back"].firstMatch.tap() }
+        }
+    }
+
     /// Explicitly creates two labelled QA Opportunities, verifies their linked record, then archives only those records.
     func testCreateOpportunityFromLeadAndWorkspace() throws {
         continueAfterFailure = false

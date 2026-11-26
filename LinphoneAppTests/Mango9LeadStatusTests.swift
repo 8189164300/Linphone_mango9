@@ -218,3 +218,87 @@ private final class LeadStatusURLProtocol: URLProtocol {
 		}
 	}
 }
+
+
+extension Mango9LeadStatusTests {
+    func testNotesSchemaRefreshesForReadOnlyLeadsAndClients() async throws {
+        try await withSession { _, transport in
+            for kind in [Mango9CRMRecordKind.lead, .client] {
+                let model = model(transport, kind: kind)
+                var raw = try XCTUnwrap(JSONSerialization.jsonObject(with: response(kind: kind)) as? [String: Any])
+                var detail = try XCTUnwrap(raw["data"] as? [String: Any])
+                let key = kind == .lead ? "lead" : "client"
+                var row = try XCTUnwrap(detail[key] as? [String: Any]); row["permissions"] = ["can_update": false, "can_delete": false]
+                detail[key] = row; detail["schema_version"] = "notes-v2"
+                detail["values"] = ["note": "Draft stays separate", "note_history": "Other author\nPrevious note"]
+                raw["data"] = detail
+                let data = try JSONSerialization.data(withJSONObject: raw)
+                var schemas = 0
+                LeadStatusURLProtocol.handler = { request in
+                    XCTAssertEqual(request.cachePolicy, .reloadIgnoringLocalCacheData)
+                    if request.url!.path.contains("/schema/") {
+                        schemas += 1
+                        return (200, try JSONSerialization.data(withJSONObject: ["success": true, "message": "Success", "data": [
+                            "entity": key, "version": "notes-v2", "sections": [["id": "notes", "label": "Notes"]],
+                            "fields": [["key": "note_history", "label": "Note history", "type": "textarea", "section": "notes", "editable": false, "required": false, "custom": false]], "statuses": []]]), 0)
+                    }
+                    return (200, data, 0)
+                }
+                await model.load()
+                XCTAssertEqual(schemas, 1); XCTAssertEqual(model.schema?.version, "notes-v2")
+                XCTAssertEqual(model.values["note_history"], "Other author\nPrevious note")
+                XCTAssertEqual(model.values["note"], "Draft stays separate")
+                XCTAssertFalse(model.canUpdate); XCTAssertFalse(model.canDelete)
+                await model.load(); XCTAssertEqual(schemas, 1)
+                LeadStatusURLProtocol.handler = { _ in (403, Data("{}".utf8), 0) }
+                await model.load(); XCTAssertNil(model.lead); XCTAssertTrue(model.values.isEmpty)
+            }
+        }
+    }
+
+    func testPreviousNotesPageAndPermissionsRefresh() async throws {
+        try await withSession { current, transport in
+            let model = Mango9CRMNotesModel()
+            let stored = try XCTUnwrap(Mango9SessionStore.load())
+            func row(_ id: Any) -> [String: Any] {
+                ["note_id": id, "contact_id": "101", "note": "Plain <b>note</b>\nSecond line", "creator": "Another author", "create_date": "2026-11-26 10:03:00", "modifier": NSNull()]
+            }
+            var pages: [Int] = []
+            LeadStatusURLProtocol.handler = { request in
+                XCTAssertEqual(request.httpMethod, "GET")
+                XCTAssertEqual(request.url?.path, "/api/v2/mobile/contacts/101/notes")
+                let page = Int(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "page" }!.value!)!
+                pages.append(page)
+                return (200, try JSONSerialization.data(withJSONObject: ["success": true, "message": "Success", "data": ["notes": page == 1 ? [row("1"), row(2)] : [row(2), row(3)], "page": page, "has_more": page == 1]]), 0)
+            }
+            await model.load(session: stored, contactID: 101, reset: true, transport: transport)
+            XCTAssertNil(model.error); XCTAssertEqual(model.notes.map(\.id), [1, 2]); XCTAssertTrue(model.more)
+            XCTAssertEqual(model.notes.first?.author, "Another author")
+            XCTAssertEqual(model.notes.first?.dateLabel, "Nov 26, 2026 · 10:03 AM")
+            await model.load(session: stored, contactID: 101, transport: transport)
+            XCTAssertEqual(model.notes.map(\.id), [1, 2, 3]); XCTAssertEqual(pages, [1, 2]); XCTAssertFalse(model.more)
+            LeadStatusURLProtocol.handler = { _ in (403, Data("{}".utf8), 0) }
+            await model.load(session: stored, contactID: 101, reset: true, transport: transport)
+            XCTAssertTrue(model.notes.isEmpty); XCTAssertNotNil(model.error); XCTAssertFalse(model.loaded)
+            XCTAssertThrowsError(try Mango9CRMNote.page(["notes": [row(1)], "page": 1, "has_more": false], contactID: 102, page: 1))
+        }
+    }
+
+    func testRecordSaveNeverResubmitsNoteHistoryEvenWithMalformedSchema() async throws {
+        try await withSession { _, transport in
+            let fields = ["note", "note_history"].map { Mango9LeadSchema.Field(key: $0, fieldId: nil, name: nil, label: $0,
+                type: "textarea", section: "notes", required: false, editable: true, visible: true, custom: false, options: nil) }
+            let model = Mango9LeadDetailViewModel(leadId: 101,
+                initialSchema: .init(entity: "lead", version: "fixture", sections: [.init(id: "notes", label: "Notes")], fields: fields, statuses: []),
+                initialValues: ["note": "", "note_history": "Previous"], statusTransport: transport)
+            model.values["note"] = "New note"; model.values["note_history"] = "Never write this history"
+            var writes = 0
+            LeadStatusURLProtocol.handler = { request in
+                writes += 1
+                XCTAssertEqual(try self.body(request)["values"] as? [String: String], ["note": "New note"])
+                return (200, try self.response(), 0)
+            }
+            await model.save(); XCTAssertEqual(writes, 1); XCTAssertNil(model.errorMessage)
+        }
+    }
+}

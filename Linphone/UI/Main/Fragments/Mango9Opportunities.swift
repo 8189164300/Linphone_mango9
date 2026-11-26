@@ -45,7 +45,7 @@ enum Mango9OpportunityAPI {
         url.path = contact ? "/" + base + "/mobile/contacts/" + path
             : "/" + String(base.dropLast("v2".count)) + "opportunities" + (path.isEmpty ? "" : "/" + path)
         if let mobilePath {
-            guard body == nil, mobilePath.range(of: #"^(contacts/[1-9][0-9]*/activity(/item)?|documents/(quotes|invoices)/[1-9][0-9]*|sms/conversations/[a-f0-9]{64}(/messages)?)$"#, options: .regularExpression) != nil else { throw Mango9CRMAPIError.invalidConfiguration }
+            guard body == nil, mobilePath.range(of: #"^(contacts/[1-9][0-9]*/(activity(/item)?|notes)|documents/(quotes|invoices)/[1-9][0-9]*|sms/conversations/[a-f0-9]{64}(/messages)?)$"#, options: .regularExpression) != nil else { throw Mango9CRMAPIError.invalidConfiguration }
             url.path = "/" + base + "/mobile/" + mobilePath
         }
         url.queryItems = query.isEmpty ? nil : query
