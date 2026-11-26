@@ -113,7 +113,7 @@ internal class Mango9Opportunities(context: Context) {
             val prefix = base.encodedPath.trimEnd('/'); require(prefix.endsWith("/api/v2"))
             val builder = base.newBuilder().encodedPath(if (contact) "$prefix/mobile/contacts" else prefix.removeSuffix("/v2") + "/opportunities")
             if (mobilePath != null) {
-                require(body == null && mobilePath.matches(Regex("^(contacts/[1-9][0-9]*/activity(/item)?|documents/(quotes|invoices)/[1-9][0-9]*)$")))
+                require(body == null && mobilePath.matches(Regex("^(contacts/[1-9][0-9]*/(activity(/item)?|notes)|documents/(quotes|invoices)/[1-9][0-9]*)$")))
                 builder.encodedPath("$prefix/mobile/$mobilePath")
             }
             path.forEach(builder::addPathSegment); query.forEach { (k, v) -> builder.addQueryParameter(k, v) }

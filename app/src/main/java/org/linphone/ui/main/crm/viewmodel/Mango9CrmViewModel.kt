@@ -190,6 +190,8 @@ class Mango9CrmViewModel internal constructor(
             errorMessage.value = null
             try {
                 val detail = repository.record(lease, kind, id)
+                val freshSchema = schema.value?.takeIf { it.version == detail.schemaVersion }
+                    ?: repository.schema(lease, kind)
                 if (
                     detailRequests.isLatest(request) &&
                     requestedContext == contextRequests.current &&
@@ -197,6 +199,7 @@ class Mango9CrmViewModel internal constructor(
                     selectedKind == kind && repository.isCurrent(lease)
                 ) {
                     if (detail.record.id != id) throw Mango9ApiException.InvalidResponse
+                    schema.value = freshSchema
                     detailSession = lease
                     detailId = id
                     detailLoadedEvent.value = Event(kind to detail)

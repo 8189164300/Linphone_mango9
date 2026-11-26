@@ -639,18 +639,18 @@ class Mango9CrmFragment : GenericMainFragment() {
 
         val readers = linkedMapOf<String, () -> String>()
         val visibleFields = schema?.fields.orEmpty().filter { field ->
-            field.visible && field.key !in HIDDEN_MOBILE_FIELDS &&
+            field.visible && field.key != "note_history" && field.key !in HIDDEN_MOBILE_FIELDS &&
                 (editing || !detail.record.canUpdate || status.options.isEmpty() || field.key != Mango9CrmStatusPolicy.editableField(schema)?.key) &&
                 !(field.key == "contact_name" && schema?.fields.orEmpty().any { it.key == "first_name" })
         }
         val fieldsBySection = visibleFields.groupBy(Mango9CrmSchema.Field::section)
         // Unknown/custom sections must not disappear merely because section metadata is incomplete.
-        val sections = schema?.sections.orEmpty() + fieldsBySection.keys
+        val sections = schema?.sections.orEmpty() + listOf(Mango9CrmSchema.Section("notes", "Notes")) + fieldsBySection.keys
             .filter { id -> schema?.sections.orEmpty().none { it.id == id } }
             .map { Mango9CrmSchema.Section(it, it.humanized()) }
         sections.distinctBy { it.id }.forEach { section ->
             val fields = fieldsBySection[section.id].orEmpty()
-            if (fields.isEmpty()) return@forEach
+            if (fields.isEmpty() && section.id != "notes") return@forEach
             val cardContent = addSectionCard(container, section)
             Mango9CrmFieldLayout.rows(fields, detail.values).forEach { fieldsInRow ->
                 val row = Mango9CrmFieldRow(requireContext()).apply { setPadding(0, dp(8), 0, dp(8)) }
@@ -667,6 +667,14 @@ class Mango9CrmFragment : GenericMainFragment() {
                     row.addView(cell)
                 }
                 cardContent.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+            if (section.id == "notes") {
+                cardContent.addView(
+                    Mango9CrmNotesView(
+                        requireContext(), viewLifecycleOwner,
+                    owner.lease, detail.record.id
+                    ) { viewModel.isEditorCurrent(owner) }
+                )
             }
             if (section.id == "location" && !editing) {
                 // Only geocode address fields visible to this account's CRM schema.

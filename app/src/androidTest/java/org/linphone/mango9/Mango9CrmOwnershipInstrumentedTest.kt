@@ -35,6 +35,7 @@ class Mango9CrmOwnershipInstrumentedTest {
         var holdDetail: CompletableDeferred<Unit>? = null
         var holdWrite: CompletableDeferred<Unit>? = null
         var wrongDetail = false
+        var readOnlyShared = false
         var failWrite = false
         var pagedRecords = false
         var failRecords = false
@@ -46,7 +47,19 @@ class Mango9CrmOwnershipInstrumentedTest {
 
         fun row(id: Int = 7, name: String = "Synthetic record") = Mango9CrmRecord(id, 42, "", name, "15550102020", "", "New", "", "2030-01-01")
 
-        fun detail(id: Int = 7) = Mango9CrmRecordDetail(row(id), "v1", mapOf("lead_status" to "New", "first_name" to "Synthetic"))
+        fun detail(id: Int = 7) = Mango9CrmRecordDetail(
+            if (readOnlyShared) {
+                row(id).copy(
+                    ownerUserId = 9, ownerName = "Client owner",
+                canUpdate = false, canDelete = false, sharing = Mango9ContactSharing(incoming = true)
+                )
+            } else {
+                row(id)
+            },
+            "v1",
+                mapOf("lead_status" to "New", "first_name" to "Synthetic") +
+                if (readOnlyShared) mapOf("note_history" to "Other Agent\nShared note") else emptyMap()
+        )
 
         fun replaceLogin() { generations.loginChanged(session!!.sipIdentity!!); changes.value++ }
 
@@ -108,6 +121,26 @@ class Mango9CrmOwnershipInstrumentedTest {
 
         override suspend fun deleteRecord(lease: Mango9SessionLease, kind: Mango9RecordKind, id: Int) {
             calls += "delete:${kind.path}:$id"; holdWrite?.await()
+        }
+    }
+
+    @Test fun regularAgentCanReadSharedLeadAndClientWithoutEditPermission() = fixture { model, repository ->
+        ui {
+            assertEquals("agent", repository.session!!.role)
+            repository.readOnlyShared = true
+            for (kind in listOf(Mango9RecordKind.Lead, Mango9RecordKind.Client)) {
+                if (kind == Mango9RecordKind.Lead) model.selectLeads() else model.selectClients()
+                model.openRecord(model.records.value!!.single())
+                var result: Mango9CrmRecordDetail? = null
+                model.detailLoadedEvent.value!!.consume { result = it.second }
+                val detail = result!!
+                assertTrue(detail.record.sharing.incoming)
+                assertFalse(detail.record.canUpdate); assertFalse(detail.record.canDelete)
+                assertEquals("Other Agent\nShared note", detail.values["note_history"])
+                val owner = model.editorOwner(kind, detail.record.id)!!
+                assertTrue("The Notes read lease must not require edit permission", model.isEditorCurrent(owner))
+                assertTrue(repository.writes.isEmpty())
+            }
         }
     }
 
