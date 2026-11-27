@@ -1,4 +1,6 @@
-• Select only unread chats, only read chats, or all chats in SMS, Team Chat, Social and Live Chat.
-• Mark chats read or unread, or delete them for your account, in one fast batch.
-• Improved unread indicators and protection for newly arriving messages.
-• More reliable retries after connection interruptions and smoother chat-list updates.
+• View Opportunity totals, Won value and follow-ups from the CRM workspace.
+• Clearer colored status badges and an Opportunity status selector.
+• Find Leads or Clients when adding an Opportunity, or create a linked record without leaving the flow.
+• Open scheduled follow-ups directly in Calendar and return to the same Opportunity.
+• Smoother navigation, improved Back controls, protection for unsaved edits and corrected footer badges.
+• Fixed a startup crash and brief blue flashes when opening CRM pages.

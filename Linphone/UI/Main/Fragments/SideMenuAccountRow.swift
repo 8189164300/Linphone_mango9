@@ -29,6 +29,7 @@ struct SideMenuAccountRow: View {
 	@Binding var isShowAccountProfileFragment: Bool
 	@State private var mango9Extension = ""
 	@State private var mango9ActiveNumber = ""
+	@State private var sessionDisplayName = ""
 	
 	private let avatarSize = 45.0
 	
@@ -186,6 +187,7 @@ struct SideMenuAccountRow: View {
 		.onAppear {
 			refreshLineIdentity()
 		}
+        .onChange(of: model.identitySnapshot) { _ in refreshLineIdentity() }
 		.onReceive(
 			NotificationCenter.default.publisher(for: .mango9LineIdentityChanged)
 		) { _ in
@@ -233,40 +235,29 @@ struct SideMenuAccountRow: View {
 	}
 
 	private var accountDisplayName: String {
-		let identity = model.account.params?.identityAddress
-		let sipIdentity = identity?.asStringUriOnly() ?? ""
-		let name = identity?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		if !name.isEmpty, name != identity?.username { return name }
-		let sessionName = Mango9SessionStore.load(for: sipIdentity)?.displayName?
-			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		return sessionName.isEmpty ? pbxCompanyName : sessionName
-	}
+        Self.accountDisplayName(identity: model.identitySnapshot, sessionName: sessionDisplayName, company: pbxCompanyName)
+    }
+
+    static func accountDisplayName(identity: Mango9AccountIdentitySnapshot, sessionName: String, company: String) -> String {
+        let name = identity.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty, name != identity.username { return name }
+        let savedName = sessionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return savedName.isEmpty ? company : savedName
+    }
 
 	private var pbxCompanyName: String {
-		let identity = model.account.params?.identityAddress
-		let sipIdentity = identity?.asStringUriOnly() ?? ""
-		let sessionName = Mango9SessionStore.load(for: sipIdentity)?
-			.displayName?
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-		let domain = identity?.domain?
-			.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-		let tenant = domain.split(separator: ".").first.map(String.init) ?? ""
-
-		if !tenant.isEmpty,
-		   let firstNamePart = sessionName?.split(separator: " ").first.map(String.init),
-		   normalizedCompanyToken(firstNamePart) == normalizedCompanyToken(tenant) {
-			return firstNamePart
-		}
-
-		let formattedTenant = tenant
-			.replacingOccurrences(of: "-", with: " ")
-			.replacingOccurrences(of: "_", with: " ")
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-		if !formattedTenant.isEmpty {
-			return formattedTenant.capitalized
-		}
-		return domain.isEmpty ? "Mango9 PBX" : domain
-	}
+        let domain = model.identitySnapshot.domain.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tenant = domain.split(separator: ".").first.map(String.init) ?? ""
+        if !tenant.isEmpty,
+           let firstNamePart = sessionDisplayName.split(separator: " ").first.map(String.init),
+           normalizedCompanyToken(firstNamePart) == normalizedCompanyToken(tenant) {
+            return firstNamePart
+        }
+        let formattedTenant = tenant.replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !formattedTenant.isEmpty { return formattedTenant.capitalized }
+        return domain.isEmpty ? "Mango9 PBX" : domain
+    }
 
 	private func normalizedCompanyToken(_ value: String) -> String {
 		value
@@ -292,8 +283,8 @@ struct SideMenuAccountRow: View {
 	}
 
 	private func refreshLineIdentity() {
-		let sipIdentity =
-			model.account.params?.identityAddress?.asStringUriOnly() ?? ""
+		let sipIdentity = model.identitySnapshot.uri
+        sessionDisplayName = sipIdentity.isEmpty ? "" : (Mango9SessionStore.load(for: sipIdentity)?.displayName ?? "")
 		if let identity = Mango9LineIdentityStore.load(
 			sipIdentity: sipIdentity
 		) {
@@ -301,7 +292,7 @@ struct SideMenuAccountRow: View {
 			mango9ActiveNumber = identity.activeNumber ?? ""
 		} else {
 			mango9Extension =
-				model.account.params?.identityAddress?.username ?? ""
+				model.identitySnapshot.username
 			mango9ActiveNumber = ""
 		}
 	}

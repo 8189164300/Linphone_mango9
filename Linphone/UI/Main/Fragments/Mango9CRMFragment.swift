@@ -58,7 +58,6 @@ struct Mango9CRMFragment: View {
 
 					ScrollView {
 						VStack(spacing: 16) {
-							accountCard
 
 							if viewModel.session != nil {
 								workspace
@@ -94,6 +93,7 @@ struct Mango9CRMFragment: View {
 			}
 		}
         .navigationViewStyle(StackNavigationViewStyle())
+        .background(Color.gray100)
         .clipped()
         }
         // Reserve real layout space for the native header. A top safe-area
@@ -226,6 +226,8 @@ struct Mango9CRMFragment: View {
 			Text("CRM workspace")
 				.default_text_style_800(styleSize: 17)
 				.frame(maxWidth: .infinity, alignment: .leading)
+
+            if opportunityAccess.metadata?.permissions["access"] == true { Mango9OpportunityDashboard(cards: opportunityAccess) }
 
 			NavigationLink(destination: Mango9LeadsFragment()) {
 				workspaceRow(

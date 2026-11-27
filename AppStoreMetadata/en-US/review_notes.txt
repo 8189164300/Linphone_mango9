@@ -1,19 +1,17 @@
-Mango9 6.2.28 (81) is an update to the approved 6.2.27 release. Mango9 is a business communications and CRM companion for existing Mango9 customers.
+Mango9 6.2.30 (83) updates the approved 6.2.29 release. Mango9 is a business communications and CRM companion for existing Mango9 customers.
 
 CHANGES IN THIS UPDATE
-SMS, Team Chat, connected Social inboxes and website Live Chat now support fast batch actions. Users can select only unread chats, only read chats, or all chats, then mark the selection read, mark it unread or delete it for themselves. The app no longer processes the selection one chat at a time.
-
-The update improves unread indicators, protects messages arriving after a selection is made, and makes retries safe after a connection interruption. Delete for me affects only the signed-in user's history; it does not delete messages for other participants or unsend them on connected social platforms.
+The CRM workspace now shows Opportunity totals, Won value and follow-ups using the signed-in account's existing CRM permissions. Leads, Clients and Opportunities have clearer colored status badges. Opportunity detail supports status changes and styled editing. Opportunity creation includes Lead/Client search, record-type filters and creation of a linked Lead or Client within the app's navigation. Scheduled follow-ups open their Calendar appointment. The update also fixes a startup crash, navigation flashes, footer badge layout and Back controls, and confirms before discarding unsaved CRM edits.
 
 HOW TO REVIEW
-1. Sign in with the existing email/password credentials in App Review's Sign-In Information.
-2. Open Chat and choose SMS, Team Chat, Social or Live Chat.
-3. Tap the selection checkmark, then open the selection menu for Select unread, Select read or Select all.
-4. Use the read, unread or delete icons. Deletion requires confirmation. Available chats depend on the review account's connected services.
+1. Sign in using the existing credentials in App Review Sign-In Information.
+2. Open CRM to see the Opportunity dashboard, then open Opportunities for its searchable list.
+3. Tap + to choose a Lead or Client. Use All/Leads/Clients to filter, or Add new to create a linked record.
+4. Open an existing Opportunity to see its status selector, details, edit actions and follow-up. An owned scheduled follow-up includes Open in Calendar.
+5. Open a Lead or Client to see its status and previous notes with author and date. Begin an edit and tap Back to see the unsaved-change confirmation.
+
+Available records and editing actions depend on the account's assigned CRM permissions. No account setup or new purchase is required for this update.
 
 MANUAL SIP ACCESS
-Connection settings remain directly available from the gear on the sign-in screen, with no additional settings password. Enter the supplied Extension, SIP password and Server / Domain, then tap Register. The existing private review guide supplies the test calling-line credentials and proxy.mango9.com server.
-
-Manual SIP is a phone-only fallback when CRM/email sign-in or automatic calling-line provisioning is unavailable. It requires SIP credentials supplied by the customer's administrator. Use the normal CRM email/password sign-in to review CRM and messaging.
-
-CRM access, connected providers and calling services follow the signed-in account's assigned permissions. There is no native consumer signup or purchase flow.
+Connection settings remain directly available from the gear on the sign-in screen, with no additional settings password. Enter the supplied Extension, SIP password and Server / Domain, then tap Register. The attached private review guide supplies the test calling-line credentials and proxy.mango9.com server.
+Manual SIP is a phone-only fallback when CRM/email sign-in or automatic calling-line provisioning is unavailable. Use the normal CRM email/password sign-in to review CRM and messaging.

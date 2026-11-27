@@ -247,6 +247,9 @@ struct Mango9AppointmentsFragment: View {
 	@State private var calendarMode = false
 	@State private var visibleCalendarDate = Date()
 	@State private var selected: Mango9Appointment?
+    private var initialEventID: Int? = nil
+    @State private var openedInitialEvent = false
+    @State private var linkedEventError: String?
 	@State private var creation: Mango9AppointmentCreation?
 	@State private var showingHours = false
 	@State private var closedHoursMessage: String?
@@ -259,7 +262,8 @@ struct Mango9AppointmentsFragment: View {
 	private var usesLegacyCalendar = false
 
 	init(contact: Mango9AppointmentContact? = nil, date: Date = Date(), presentation: Mango9ActivityPresentation = .combined,
-		initialKind: Mango9ActivityKind = .appointments) {
+		initialKind: Mango9ActivityKind = .appointments, initialEventID: Int? = nil) {
+        self.initialEventID = initialEventID
 		self.presentation = presentation
 		_store = StateObject(wrappedValue: Mango9AppointmentsStore(contact: contact))
 		_date = State(initialValue: date)
@@ -278,6 +282,19 @@ struct Mango9AppointmentsFragment: View {
 		_calendarMode = State(initialValue: presentation == .calendar || (presentation == .combined && calendarMode))
 		_creation = State(initialValue: creating ? store.creation(on: date) : nil)
 	}
+
+    private func openInitialEvent() async {
+        guard !openedInitialEvent, let id = initialEventID, id > 0, let session = store.session, store.metadata != nil else { return }
+        openedInitialEvent = true
+        do {
+            let event = try await Mango9CalendarAPI.send(Mango9Appointment.self, session: session, path: "events/\(id)", transport: store.transport)
+            guard !Task.isCancelled, Mango9SessionStore.isActive(session) else { return }
+            selected = event
+        } catch {
+            guard !Task.isCancelled, Mango9SessionStore.isActive(session) else { return }
+            linkedEventError = "This linked appointment could not be opened. You can still browse its date in Calendar."
+        }
+    }
 
 	private var filtered: [Mango9Appointment] {
 		store.events.filter {
@@ -367,7 +384,8 @@ struct Mango9AppointmentsFragment: View {
 		.background(Color(.systemGroupedBackground).ignoresSafeArea())
 		.tint(.mango9Primary)
 		.navigationBarHidden(true)
-		.task(id: "\(Calendar.current.dateComponents([.year, .month], from: date))|\(refreshID)") { await store.load(month: date) }
+		.task(id: "\(Calendar.current.dateComponents([.year, .month], from: date))|\(refreshID)") { await store.load(month: date); await openInitialEvent() }
+        .alert("Calendar", isPresented: Binding(get: { linkedEventError != nil }, set: { if !$0 { linkedEventError = nil } })) { Button("OK", role: .cancel) { linkedEventError = nil } } message: { Text(linkedEventError ?? "") }
 		.task {
 			if let session = Mango9SessionStore.load() {
 				await preferencesStore.refresh(session: session)
@@ -439,7 +457,7 @@ struct Mango9AppointmentsFragment: View {
 		HStack(spacing: 4) {
 			Button { presentationMode.wrappedValue.dismiss() } label: {
 				Image(systemName: "chevron.left").font(.title3).frame(width: 44, height: 44)
-			}.accessibilityLabel("Back")
+			}.accessibilityLabel("Back").accessibilityIdentifier("appointments.back")
 			VStack(alignment: .leading, spacing: 2) {
 				Text(presentation == .calendar ? "Calendar" : presentation == .activities ? "Events & Tasks" : "Events")
 					.font(.title2.bold()).foregroundColor(.primary).lineLimit(1).minimumScaleFactor(0.7)

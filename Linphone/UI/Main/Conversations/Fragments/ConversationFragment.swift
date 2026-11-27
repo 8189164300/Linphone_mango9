@@ -423,6 +423,8 @@ struct ConversationFragment: View {
 				}.background(Color(uiColor: .systemBackground).ignoresSafeArea(.container, edges: .bottom))
 			}
 			.blur(radius: conversationViewModel.selectedMessage != nil ? 8 : 0)
+            .allowsHitTesting(!isShowMediaFilesFragment && !isShowDocumentsFilesFragment)
+            .accessibilityHidden(isShowMediaFilesFragment || isShowDocumentsFilesFragment)
 
 			selectedMessageOverlay(geometry: geometry)
 
@@ -522,22 +524,17 @@ struct ConversationFragment: View {
 			if !isSearchVisible {
 				HStack {
 					if hasActiveConversation {
-						Image("caret-left")
-							.renderingMode(.template)
-							.resizable()
-							.foregroundStyle(Color.orangeMain500)
-							.frame(width: 25, height: 25, alignment: .leading)
-							.padding(.all, 10)
-							.padding(.top, 4)
-							.padding(.leading, -10)
-							.onTapGesture {
+						Button {
 								withAnimation {
 									if isShowConversationFragment {
 										isShowConversationFragment = false
 									}
 									conversationViewModel.closeActiveConversation()
 								}
-							}
+							 } label: {
+                            Image("caret-left").renderingMode(.template).resizable().scaledToFit()
+                                .foregroundStyle(Color.orangeMain500).frame(width: 25, height: 25).frame(width: 44, height: 44).contentShape(Rectangle())
+                        }.buttonStyle(.plain).accessibilityLabel("Back").accessibilityIdentifier("chat.back")
 					}
 
 					Avatar(contactAvatarModel: activeConversationAvatar, avatarSize: 50)
@@ -650,7 +647,7 @@ struct ConversationFragment: View {
 									Text(Mango9CallerIdentity.formattedPhoneNumber(sender.senderID))
 										.tag(sender.senderID)
 								}
-							}
+							}.pickerStyle(.menu)
 						}
 
 						if !activeConversationIsReadOnly {
@@ -705,7 +702,7 @@ struct ConversationFragment: View {
 									.frame(width: 25, height: 25, alignment: .leading)
 									.padding(.all, 10)
 							}
-						}
+						}.accessibilityIdentifier("chat.menu.media")
 
 						Button {
 							isMenuOpen = false
@@ -723,7 +720,7 @@ struct ConversationFragment: View {
 									.frame(width: 25, height: 25, alignment: .leading)
 									.padding(.all, 10)
 							}
-						}
+						}.accessibilityIdentifier("chat.menu.documents")
 					} label: {
 						Image("dots-three-vertical")
 							.renderingMode(.template)
@@ -737,6 +734,7 @@ struct ConversationFragment: View {
 								isMuted = conversationViewModel.conversationIsMuted
 							}
 					}
+					.accessibilityLabel("Chat actions").accessibilityIdentifier("chat.actions")
 					.onTapGesture {
 						isMenuOpen = true
 					}

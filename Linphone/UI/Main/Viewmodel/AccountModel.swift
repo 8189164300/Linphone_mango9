@@ -22,6 +22,21 @@ import linphonesw
 import SwiftUI
 import Combine
 
+/// Value-only identity for UI rendering. Capture on the core queue; never pass
+/// transient Linphone AccountParams/Address wrappers to the main queue.
+struct Mango9AccountIdentitySnapshot: Equatable {
+    var uri = ""
+    var name = ""
+    var username = ""
+    var domain = ""
+
+    static func capture(_ account: Account) -> Self {
+        guard let identity = account.params?.identityAddress else { return Self() }
+        return Self(uri: identity.asStringUriOnly(), name: identity.displayName ?? "",
+                    username: identity.username ?? "", domain: identity.domain ?? "")
+    }
+}
+
 class AccountModel: ObservableObject {
 	static let TAG = "[AccountModel]"
 	
@@ -36,6 +51,7 @@ class AccountModel: ObservableObject {
 	@Published var voicemailCount: Int = 0
 	@Published var isDefaultAccount: Bool = false
 	@Published var displayName: String = ""
+	@Published private(set) var identitySnapshot = Mango9AccountIdentitySnapshot()
 	@Published var address: String = ""
 	@Published var avatarModel: ContactAvatarModel?
 	@Published var photoAvatarModel: String?
@@ -56,6 +72,7 @@ class AccountModel: ObservableObject {
 	
 	init(account: Account, core: Core) {
 		self.account = account
+		self.identitySnapshot = Mango9AccountIdentitySnapshot.capture(account)
         // Keep the last confirmed server indication visible until a fresh NOTIFY arrives.
         if let owner = account.params?.identityAddress?.asStringUriOnly(),
            let saved = Mango9VoicemailReceipts.read(owner: owner) {
@@ -129,8 +146,9 @@ class AccountModel: ObservableObject {
 		let state = account.state
 		var isDefault: Bool = false
 		if let defaultAccount = account.core?.defaultAccount {
-			isDefault = (defaultAccount == account)
+			isDefault = (defaultAccount === account)
 		}
+		let identitySnapshot = Mango9AccountIdentitySnapshot.capture(account)
 		let displayName = account.displayName()
 		let address = account.params?.identityAddress?.asString()
 		
@@ -182,6 +200,7 @@ class AccountModel: ObservableObject {
 				isRegistrered = state == .Ok
 				isDefaultAccount = isDefault
 				self.displayName = displayName
+				self.identitySnapshot = identitySnapshot
 				address.map {self.address = $0}
 				
 				photoAvatarModel = photoAvatarModelTmp

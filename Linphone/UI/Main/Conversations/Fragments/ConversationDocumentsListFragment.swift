@@ -27,8 +27,7 @@ struct ConversationDocumentsListFragment: View {
 	@Binding var isShowDocumentsFilesFragment: Bool
 	
 	var body: some View {
-		NavigationView {
-			GeometryReader { geometry in
+		GeometryReader { geometry in
 				ZStack {
 					VStack(spacing: 1) {
 						
@@ -38,19 +37,11 @@ struct ConversationDocumentsListFragment: View {
 							.frame(height: 0)
 						
 						HStack {
-							Image("caret-left")
-								.renderingMode(.template)
-								.resizable()
-								.foregroundStyle(Color.orangeMain500)
-								.frame(width: 25, height: 25, alignment: .leading)
-								.padding(.all, 10)
-								.padding(.top, 2)
-								.padding(.leading, -10)
-								.onTapGesture {
-									withAnimation {
-										isShowDocumentsFilesFragment = false
-									}
-								}
+							Button { withAnimation { isShowDocumentsFilesFragment = false } } label: {
+                                Image("caret-left").renderingMode(.template).resizable().scaledToFit()
+                                    .foregroundStyle(Color.orangeMain500).frame(width: 25, height: 25)
+                                    .frame(width: 44, height: 44).contentShape(Rectangle())
+                            }.buttonStyle(.plain).accessibilityLabel("Back").accessibilityIdentifier("chat.documents.back")
 							
 							Text("conversation_document_list_title")
 								.multilineTextAlignment(.leading)
@@ -119,9 +110,7 @@ struct ConversationDocumentsListFragment: View {
 						isShowDocumentsFilesFragment = false
 					}
 				}
-			}
 		}
-		.navigationViewStyle(StackNavigationViewStyle())
 	}
 }
 

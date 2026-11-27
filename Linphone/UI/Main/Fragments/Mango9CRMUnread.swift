@@ -117,6 +117,7 @@ struct Mango9CRMNewBadge: View {
     var body: some View {
         if count > 0 {
             Text(count > 99 ? "99+" : String(count)).font(.system(size: 10, weight: .bold)).foregroundColor(.white)
+                .lineLimit(1).fixedSize(horizontal: true, vertical: true)
                 .padding(.horizontal, 5).frame(minWidth: 18, minHeight: 18).background(color).clipShape(Capsule())
                 .accessibilityLabel("\(count) \(itemLabel)")
         }

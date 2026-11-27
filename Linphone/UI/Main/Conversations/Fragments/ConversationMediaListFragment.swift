@@ -26,8 +26,7 @@ struct ConversationMediaListFragment: View {
 	@Binding var isShowMediaFilesFragment: Bool
 	
 	var body: some View {
-		NavigationView {
-			GeometryReader { geometry in
+		GeometryReader { geometry in
 				ZStack {
 					VStack(spacing: 1) {
 						
@@ -37,19 +36,11 @@ struct ConversationMediaListFragment: View {
 							.frame(height: 0)
 						
 						HStack {
-							Image("caret-left")
-								.renderingMode(.template)
-								.resizable()
-								.foregroundStyle(Color.orangeMain500)
-								.frame(width: 25, height: 25, alignment: .leading)
-								.padding(.all, 10)
-								.padding(.top, 2)
-								.padding(.leading, -10)
-								.onTapGesture {
-									withAnimation {
-										isShowMediaFilesFragment = false
-									}
-								}
+							Button { withAnimation { isShowMediaFilesFragment = false } } label: {
+                                Image("caret-left").renderingMode(.template).resizable().scaledToFit()
+                                    .foregroundStyle(Color.orangeMain500).frame(width: 25, height: 25)
+                                    .frame(width: 44, height: 44).contentShape(Rectangle())
+                            }.buttonStyle(.plain).accessibilityLabel("Back").accessibilityIdentifier("chat.media.back")
 							
 							Text("conversation_media_list_title")
 								.multilineTextAlignment(.leading)
@@ -84,9 +75,7 @@ struct ConversationMediaListFragment: View {
 						isShowMediaFilesFragment = false
 					}
 				}
-			}
 		}
-		.navigationViewStyle(StackNavigationViewStyle())
 	}
 }
 

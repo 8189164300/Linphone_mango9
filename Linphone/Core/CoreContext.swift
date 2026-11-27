@@ -495,7 +495,7 @@ class CoreContext: ObservableObject {
 					)
 					DispatchQueue.main.async {
 						for accountModel in self.accounts {
-							accountModel.isDefaultAccount = accountModel.account == account
+							accountModel.isDefaultAccount = accountModel.account === account
 						}
 						
 						NotificationCenter.default.post(name: NSNotification.Name("DefaultAccountChanged"), object: nil)

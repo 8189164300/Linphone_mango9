@@ -2,10 +2,340 @@ import XCTest
 
 /// Exercises actual server-backed lists and validation without modifying an existing customer.
 final class Mango9OpportunityPhoneUITests: XCTestCase {
+    func testLiveLeadClientPickerFiltersAndTransitions() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["CRM"].firstMatch.waitForExistence(timeout: 30)); app.buttons["CRM"].firstMatch.tap()
+        let workspace = app.buttons["crm.opportunities"].firstMatch
+        XCTAssertTrue(workspace.waitForExistence(timeout: 20))
+        for pass in 0..<3 {
+            workspace.tap()
+            capture("Opportunity list transition \(pass + 1)")
+            XCTAssertTrue(app.buttons["crm.opportunity.add"].waitForExistence(timeout: 20)); app.buttons["crm.opportunity.add"].tap()
+            capture("Lead or Client transition \(pass + 1)")
+            XCTAssertTrue(app.textFields["crm.opportunity.recordSearch"].waitForExistence(timeout: 10))
+            if pass == 0 {
+                for (filter, expected) in [("Clients", "Client"), ("Leads", "Lead"), ("All", "")] {
+                    app.buttons["crm.opportunity.recordType"].tap(); app.buttons[filter].firstMatch.tap()
+                    let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "crm.opportunity.record."))
+                    let empty = app.staticTexts["No matching leads or clients. Use Add new to create one."]
+                    let ready = NSPredicate { _, _ in rows.firstMatch.exists || empty.exists }
+                    XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 25), .completed)
+                    XCTAssertFalse(app.buttons["Retry"].exists)
+                    if !expected.isEmpty {
+                        for row in rows.allElementsBoundByIndex where row.isHittable {
+                            XCTAssertTrue(row.staticTexts[expected].exists || row.label.components(separatedBy: ", ").contains(expected), "Wrong kind under \(filter): \(row.label)")
+                        }
+                    }
+                    capture("Live picker filtered to \(filter)")
+                }
+            }
+            app.buttons["crm.opportunity.back"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["crm.opportunity.add"].waitForExistence(timeout: 10))
+            app.buttons["crm.opportunity.back"].firstMatch.tap()
+            XCTAssertTrue(workspace.waitForExistence(timeout: 10))
+        }
+    }
+
+    func testRepeatedColdLaunchAndAccountMenuReadOnly() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for index in 0..<12 {
+            app.terminate(); app.launch()
+            XCTAssertTrue(app.buttons["CRM"].firstMatch.waitForExistence(timeout: 30), "Cold launch \(index + 1) failed")
+            let menu = app.buttons["main.menu"].firstMatch
+            XCTAssertTrue(menu.waitForExistence(timeout: 10)); menu.tap()
+            let account = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Account ")).firstMatch
+            XCTAssertTrue(account.waitForExistence(timeout: 10), "Account rendering failed on launch \(index + 1)")
+            XCTAssertEqual(app.state, .runningForeground)
+            if index == 11 { capture("Account menu after twelve cold launches") }
+        }
+    }
+
+    /// Find an owned scheduled follow-up without editing any customer record.
+    func testExistingOpportunityCalendarLinkReadOnly() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["CRM"].firstMatch.waitForExistence(timeout: 30)); app.buttons["CRM"].firstMatch.tap()
+        let workspace = app.buttons["crm.opportunities"].firstMatch
+        XCTAssertTrue(workspace.waitForExistence(timeout: 20)); workspace.tap()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "crm.opportunity.row."))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 30))
+        var visited = Set<String>()
+        for _ in 0..<8 {
+            let ids = rows.allElementsBoundByIndex.filter { $0.isHittable && !visited.contains($0.identifier) }.map(\.identifier)
+            for id in ids {
+                visited.insert(id)
+                let row = app.buttons[id]
+                guard row.isHittable else { continue }
+                row.tap()
+                let followup = app.buttons["Follow-up"].firstMatch
+                XCTAssertTrue(followup.waitForExistence(timeout: 20)); followup.tap()
+                let link = app.buttons["crm.followup.calendar"].firstMatch
+                if link.waitForExistence(timeout: 2) {
+                    capture("Owned Opportunity follow-up before Calendar")
+                    link.tap()
+                    let starts = app.otherElements["appointment.startSummary"].firstMatch
+                    let startText = app.staticTexts["appointment.startSummary"].firstMatch
+                    let loaded = NSPredicate { _, _ in starts.exists || startText.exists }
+                    XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: loaded, object: nil)], timeout: 30), .completed, app.debugDescription)
+                    XCTAssertFalse(app.staticTexts["This linked appointment could not be opened. You can still browse its date in Calendar."].exists)
+                    capture("Calendar opens the linked appointment")
+                    app.buttons["Done"].firstMatch.tap()
+                    XCTAssertTrue(app.buttons["appointments.back"].waitForExistence(timeout: 10))
+                    capture("Calendar selected follow-up date")
+                    app.buttons["appointments.back"].tap()
+                    XCTAssertTrue(link.waitForExistence(timeout: 10))
+                    app.buttons["crm.opportunity.back"].firstMatch.tap()
+                    XCTAssertTrue(app.buttons[id].waitForExistence(timeout: 10))
+                    return
+                }
+                app.buttons["crm.opportunity.back"].firstMatch.tap()
+                XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 10))
+            }
+            app.swipeUp()
+        }
+        throw XCTSkip("No owned scheduled follow-up is available; run the dedicated QA round-trip instead")
+    }
+
+    /// Creates a disposable Opportunity on an existing dedicated QA lead, checks
+    /// its server-managed Calendar event, removes the follow-up, then archives it.
+    func testTemporaryQAFollowupCalendarRoundTrip() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["CRM"].firstMatch.waitForExistence(timeout: 30)); app.buttons["CRM"].firstMatch.tap()
+        let workspace = app.buttons["crm.opportunities"].firstMatch
+        XCTAssertTrue(workspace.waitForExistence(timeout: 20)); workspace.tap()
+        XCTAssertTrue(app.buttons["crm.opportunity.add"].waitForExistence(timeout: 20)); app.buttons["crm.opportunity.add"].tap()
+        let search = app.textFields["crm.opportunity.recordSearch"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10)); search.tap(); search.typeText("QA Opportunity Modal")
+        let record = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "crm.opportunity.record.")).firstMatch
+        XCTAssertTrue(record.waitForExistence(timeout: 20), "Requires an existing dedicated QA lead")
+        XCTAssertTrue(record.label.contains("QA Opportunity Modal"), "Never attach the test to a customer")
+        record.tap()
+        let title = "QA Calendar navigation " + String(Int(Date().timeIntervalSince1970))
+        let field = app.textFields["crm.opportunity.title"]
+        XCTAssertTrue(field.waitForExistence(timeout: 20)); field.tap(); field.typeText(title)
+        app.buttons["crm.opportunity.save"].tap()
+        XCTAssertTrue(app.buttons["crm.opportunity.add"].waitForExistence(timeout: 30))
+        let listSearch = app.textFields["crm.opportunity.search"]
+        listSearch.tap()
+        if let value = listSearch.value as? String, !value.hasPrefix("Search") { listSearch.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: value.count)) }
+        listSearch.typeText(title + "\n")
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "crm.opportunity.row.")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 20)); XCTAssertTrue(row.label.contains(title)); row.tap()
+        XCTAssertTrue(app.buttons["crm.opportunity.actions"].waitForExistence(timeout: 20)); app.buttons["crm.opportunity.actions"].tap()
+        app.buttons["Schedule"].firstMatch.tap()
+        let action = app.textFields["crm.followup.title"]
+        XCTAssertTrue(action.waitForExistence(timeout: 20)); action.tap(); action.typeText("QA navigation check\n")
+        capture("QA follow-up due time before saving")
+        app.buttons["crm.followup.save"].tap()
+        XCTAssertTrue(app.buttons["crm.opportunity.actions"].waitForExistence(timeout: 30))
+        app.buttons["Follow-up"].firstMatch.tap()
+        let link = app.buttons["crm.followup.calendar"].firstMatch
+        XCTAssertTrue(link.waitForExistence(timeout: 20), app.debugDescription)
+        capture("QA scheduled Opportunity links to Calendar"); link.tap()
+        let start = app.descendants(matching: .any).matching(identifier: "appointment.startSummary").firstMatch
+        XCTAssertTrue(start.waitForExistence(timeout: 30), app.debugDescription)
+        let editEvent = app.buttons["appointment.edit"]
+        if editEvent.exists {
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: editEvent)], timeout: 20), .completed)
+        }
+        XCTAssertFalse(app.buttons["Refresh appointment"].exists)
+        capture("QA linked Calendar appointment title and time")
+        app.buttons["Done"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["appointments.back"].waitForExistence(timeout: 10))
+        capture("QA Calendar selected date after closing appointment")
+        app.buttons["appointments.back"].tap()
+        XCTAssertTrue(link.waitForExistence(timeout: 10)); XCTAssertTrue(app.staticTexts[title].exists)
+        capture("Calendar Back returns to the same QA Opportunity")
+        app.buttons["crm.opportunity.actions"].tap(); app.buttons["Schedule"].firstMatch.tap()
+        XCTAssertTrue(action.waitForExistence(timeout: 20))
+        app.switches["Schedule in Calendar"].firstMatch.tap()
+        app.buttons["crm.followup.save"].tap()
+        XCTAssertTrue(app.buttons["crm.opportunity.actions"].waitForExistence(timeout: 30))
+        XCTAssertTrue(link.waitForNonExistence(timeout: 15)); XCTAssertTrue(app.staticTexts["Not on Calendar"].firstMatch.exists)
+        capture("QA follow-up removed from Calendar")
+        app.buttons["crm.opportunity.actions"].tap(); app.buttons["Archive"].firstMatch.tap()
+        XCTAssertTrue(app.alerts["Archive Opportunity?"].waitForExistence(timeout: 5)); app.alerts.buttons["Archive"].tap()
+        XCTAssertTrue(app.staticTexts["Archived"].waitForExistence(timeout: 20))
+        capture("QA Opportunity archived after Calendar cleanup")
+        // Archiving removes the selected row and may already return to the list.
+        if !listSearch.waitForExistence(timeout: 3) { app.buttons["crm.opportunity.back"].firstMatch.tap() }
+        XCTAssertTrue(listSearch.waitForExistence(timeout: 10)); listSearch.tap()
+        listSearch.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: title.count) + "\n")
+        app.buttons["crm.opportunity.back"].firstMatch.tap()
+    }
+
+    func testDashboardAndStatusMenuReadOnly() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.terminate(); app.launch(); XCUIDevice.shared.orientation = .portrait
+        let crm = app.buttons["CRM"].firstMatch
+        XCTAssertTrue(crm.waitForExistence(timeout: 30)); crm.tap()
+        let metric = app.buttons["crm.opportunity.dashboard.Open opportunities"].firstMatch
+        XCTAssertTrue(metric.waitForExistence(timeout: 30), app.debugDescription)
+        capture("CRM Opportunity dashboard and footer")
+        metric.tap()
+        XCTAssertTrue(app.buttons["crm.opportunity.dashboard.clear"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["crm.opportunity.add"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["crm.opportunity.search"].exists)
+        XCTAssertFalse(app.staticTexts["Weighted value"].exists)
+        XCTAssertFalse(app.staticTexts["Won / Lost"].exists)
+        XCTAssertFalse(app.staticTexts["Open value"].exists)
+        capture("Search filters and Opportunities list without duplicate dashboard")
+        app.buttons["crm.opportunity.add"].tap()
+        XCTAssertTrue(app.textFields["crm.opportunity.recordSearch"].waitForExistence(timeout: 10), "Adding an Opportunity starts with Lead or Client selection")
+        capture("Add Opportunity linked Lead or Client selection")
+        XCTAssertTrue(app.buttons["CRM"].firstMatch.isHittable, "The existing footer remains usable")
+        app.buttons["crm.opportunity.recordType"].tap()
+        XCTAssertTrue(app.buttons["Leads"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Clients"].firstMatch.exists)
+        app.buttons["All"].firstMatch.tap()
+        for kind in ["Lead", "Client"] {
+            app.buttons["crm.opportunity.newRecord"].tap()
+            app.buttons["Add " + kind].firstMatch.tap()
+            XCTAssertTrue(app.textFields["First name"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["CRM"].firstMatch.isHittable, "Creation remains within the app footer")
+            XCTAssertFalse(app.buttons["Cancel"].exists, "Creation uses an inner page with Back")
+            capture("Add " + kind + " inside header and footer")
+            let name = app.textFields["First name"]
+            name.tap(); XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5)); name.typeText("Unsaved navigation check")
+            capture("Draft text entered before Back")
+            XCTAssertEqual(name.value as? String, "Unsaved navigation check", "Typing must reach the visible form before testing discard")
+            app.buttons["crm.opportunity.back"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["Keep editing"].waitForExistence(timeout: 5)); app.buttons["Keep editing"].tap()
+            XCTAssertEqual(name.value as? String, "Unsaved navigation check")
+            name.typeText("\n") // Dismiss the keyboard before using the footer.
+            XCTAssertTrue(app.buttons["crm.footer.crm"].isHittable)
+            app.buttons["crm.footer.crm"].tap()
+            XCTAssertTrue(app.buttons["Keep editing"].waitForExistence(timeout: 5)); app.buttons["Keep editing"].tap()
+            XCTAssertTrue(name.exists, "Footer navigation must not silently lose the draft")
+            app.buttons["crm.opportunity.back"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["Discard changes"].waitForExistence(timeout: 5)); app.buttons["Discard changes"].tap()
+            XCTAssertTrue(app.textFields["crm.opportunity.recordSearch"].waitForExistence(timeout: 10))
+        }
+        let retainedSearch = app.textFields["crm.opportunity.recordSearch"]
+        retainedSearch.tap(); retainedSearch.typeText("a")
+        app.buttons["crm.opportunity.recordType"].tap(); app.buttons["Leads"].firstMatch.tap()
+        let linkedRecord = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "crm.opportunity.record.")).firstMatch
+        XCTAssertTrue(linkedRecord.waitForExistence(timeout: 20)); linkedRecord.tap()
+        XCTAssertTrue(app.textFields["crm.opportunity.title"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["CRM"].firstMatch.isHittable)
+        capture("Add Opportunity inner page with linked record")
+        let newTitle = app.textFields["crm.opportunity.title"]
+        newTitle.tap(); XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5)); newTitle.typeText("Navigation draft")
+        app.buttons["crm.opportunity.back"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Discard changes"].waitForExistence(timeout: 5)); app.buttons["Discard changes"].tap()
+        XCTAssertTrue(app.textFields["crm.opportunity.recordSearch"].waitForExistence(timeout: 10))
+        XCTAssertEqual(retainedSearch.value as? String, "a")
+        XCTAssertTrue(app.buttons["crm.opportunity.recordType"].label.contains("Leads"))
+        capture("Picker retains search and selected record type")
+        app.buttons["crm.opportunity.back"].tap()
+        XCTAssertTrue(app.buttons["crm.opportunity.add"].waitForExistence(timeout: 10))
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "crm.opportunity.row."))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 20))
+        let row = try XCTUnwrap(rows.allElementsBoundByIndex.first { $0.isHittable && $0.frame.minY > 180 && $0.frame.maxY < app.frame.height - 120 }, "Choose a card fully above the footer")
+        row.tap()
+        let status = app.buttons["crm.opportunity.status"].firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 30)); XCTAssertTrue(status.isEnabled)
+        capture("Opportunity top status badge")
+        status.tap(); capture("Opportunity configured status menu")
+        if app.buttons["Won"].firstMatch.exists {
+            app.buttons["Won"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["Save"].waitForExistence(timeout: 10))
+            capture("Compact closing details")
+            app.buttons["Cancel"].firstMatch.tap()
+        }
+        app.buttons["crm.opportunity.actions"].tap()
+        let edit = app.buttons["crm.opportunity.menu.edit"].firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 10)); edit.tap()
+        XCTAssertTrue(app.staticTexts["Opportunity details"].waitForExistence(timeout: 10))
+        capture("Styled Opportunity edit cards")
+        let editTitle = app.textFields["Opportunity title"]
+        XCTAssertTrue(editTitle.waitForExistence(timeout: 5)); editTitle.tap(); editTitle.typeText(" unsaved")
+        let draftTitle = editTitle.value as? String
+        app.buttons["crm.opportunity.back"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Keep editing"].waitForExistence(timeout: 5)); app.buttons["Keep editing"].tap()
+        XCTAssertEqual(editTitle.value as? String, draftTitle)
+        app.buttons["crm.opportunity.back"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Discard changes"].waitForExistence(timeout: 5)); app.buttons["Discard changes"].tap()
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.94)).tap() // Outside the menu; never select a status.
+    }
+
+    func testCRMToSMSReturnsToSameLeadReadOnly() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.terminate(); app.launch()
+        let crm = app.buttons["CRM"].firstMatch
+        XCTAssertTrue(crm.waitForExistence(timeout: 30)); crm.tap()
+        let leads = app.buttons["crm.leads"].firstMatch
+        XCTAssertTrue(leads.waitForExistence(timeout: 20)); leads.tap()
+        let record = app.buttons["crm.record.lead"].firstMatch
+        XCTAssertTrue(record.waitForExistence(timeout: 30)); record.tap()
+        let name = app.staticTexts["crm.record.name"].firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 20)); let original = name.label
+        let phone = app.buttons["crm.record.phone"].firstMatch
+        guard phone.exists else { throw XCTSkip("The first available Lead has no phone; no records were changed") }
+        phone.tap(); app.buttons["SMS with Mango9"].firstMatch.tap()
+        let back = app.buttons["chat.back"].firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 20)); capture("SMS opened from CRM without sending")
+        for kind in ["media", "documents"] {
+            app.buttons["chat.actions"].tap()
+            let fileMenu = app.buttons[kind == "media" ? "Media" : "Documents"].firstMatch
+            XCTAssertTrue(fileMenu.waitForExistence(timeout: 5)); fileMenu.tap()
+            let fileBack = app.buttons["chat." + kind + ".back"]
+            XCTAssertTrue(fileBack.waitForExistence(timeout: 10))
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: fileBack)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed, app.debugDescription)
+            XCTAssertGreaterThanOrEqual(fileBack.frame.width, 44)
+            capture("Native " + kind + " Back control")
+            fileBack.tap(); XCTAssertTrue(back.waitForExistence(timeout: 10))
+        }
+        back.tap()
+        XCTAssertTrue(name.waitForExistence(timeout: 15)); XCTAssertEqual(name.label, original)
+        XCTAssertTrue(app.buttons["crm.record.back"].exists)
+        capture("SMS Back restores the same Lead detail")
+        app.buttons["crm.record.back"].tap()
+        XCTAssertTrue(record.waitForExistence(timeout: 15))
+    }
+
+    func testRecordingsBackReadOnly() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.terminate(); app.launch()
+        let menu = app.buttons["main.menu"].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 30)); menu.tap()
+        let recordings = app.staticTexts["Recordings"].firstMatch
+        guard recordings.waitForExistence(timeout: 5) else { throw XCTSkip("Recordings disabled by account settings") }
+        recordings.tap()
+        let back = app.buttons["recordings.back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10)); XCTAssertTrue(back.isHittable)
+        XCTAssertGreaterThanOrEqual(back.frame.width, 44)
+        capture("Native Recordings Back control"); back.tap()
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+    }
+
+    func testLeadAndClientStatusLayoutReadOnly() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.terminate(); app.launch()
+        XCUIDevice.shared.orientation = .portrait
+        let crm = app.buttons["CRM"].firstMatch
+        XCTAssertTrue(crm.waitForExistence(timeout: 30)); crm.tap()
+        let leads = app.buttons["crm.leads"].firstMatch
+        XCTAssertTrue(leads.waitForExistence(timeout: 20)); leads.tap()
+        XCTAssertTrue(app.buttons["crm.record.lead"].firstMatch.waitForExistence(timeout: 30))
+        capture("Larger colored Lead filters and aligned badges")
+        app.buttons["crm.leads.back"].firstMatch.tap()
+        let clients = app.buttons["crm.clients"].firstMatch
+        if !clients.isHittable { app.swipeUp() }
+        XCTAssertTrue(clients.waitForExistence(timeout: 10)); clients.tap()
+        XCTAssertTrue(app.buttons["crm.record.client"].firstMatch.waitForExistence(timeout: 30))
+        capture("Larger colored Client filters and aligned badges")
+    }
+
     /// Reads existing records only; does not save, delete, or change sharing.
     func testPreviousNotesInExistingLeadAndClient() throws {
         continueAfterFailure = false
-        let app = XCUIApplication(); app.activate()
+        let app = XCUIApplication(); app.terminate(); app.launch()
         XCUIDevice.shared.orientation = .portrait
         for kind in ["lead", "client"] {
             let crm = app.buttons["CRM"].firstMatch
@@ -33,7 +363,7 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
     func testCreateOpportunityFromLeadAndWorkspace() throws {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
-        let app = XCUIApplication(); app.activate()
+        let app = XCUIApplication(); app.terminate(); app.launch()
         let crm = app.buttons["CRM"].firstMatch
         XCTAssertTrue(crm.waitForExistence(timeout: 30)); crm.tap()
         let leads = app.buttons["crm.leads"].firstMatch
@@ -50,10 +380,11 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
         let linkedName = app.staticTexts["crm.opportunity.linkedRecord"].label
         XCTAssertFalse(linkedName.isEmpty)
         save.tap()
-        XCTAssertTrue(app.staticTexts["Enter a title and choose a valid stage, currency and probability."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Enter a title and choose a valid status, currency and probability."].waitForExistence(timeout: 5))
         title.tap(); title.typeText("QA cancelled draft")
         capture("Create modal validation and linked Lead")
-        app.buttons["crm.opportunity.cancel"].tap()
+        app.buttons["crm.opportunity.back"].tap()
+        XCTAssertTrue(app.buttons["Discard changes"].waitForExistence(timeout: 5)); app.buttons["Discard changes"].tap()
         XCTAssertTrue(actions.waitForExistence(timeout: 10)); actions.tap(); app.buttons["Add Opportunity"].tap()
         XCTAssertTrue(title.waitForExistence(timeout: 20)); XCTAssertNotEqual(title.value as? String, "QA cancelled draft")
         let stamp = String(Int(Date().timeIntervalSince1970))
@@ -97,7 +428,7 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
 
     func testSavedOpportunityFiltersAfterExternalRestart() throws {
         continueAfterFailure = false
-        let app = XCUIApplication(); app.activate()
+        let app = XCUIApplication(); app.terminate(); app.launch()
         let crm=app.buttons["CRM"].firstMatch; XCTAssertTrue(crm.waitForExistence(timeout:30));crm.tap()
         let link=app.buttons["crm.opportunities"].firstMatch
         XCTAssertTrue(link.waitForExistence(timeout:30));link.tap()
@@ -116,7 +447,7 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
     func testOpportunityConfigurationFilters() throws {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
-        let app = XCUIApplication(); app.activate()
+        let app = XCUIApplication(); app.terminate(); app.launch()
         let crm=app.buttons["CRM"].firstMatch; XCTAssertTrue(crm.waitForExistence(timeout:30)); crm.tap()
         let link=app.buttons["crm.opportunities"].firstMatch; XCTAssertTrue(link.waitForExistence(timeout:20)); link.tap()
         let filters=app.buttons["crm.opportunity.filter.more"]
@@ -146,7 +477,7 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
     func testNativeActivityLinksAndCompactSharing() throws {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
-        let app = XCUIApplication(); app.activate()
+        let app = XCUIApplication(); app.terminate(); app.launch()
         let crm = app.buttons["CRM"].firstMatch
         XCTAssertTrue(crm.waitForExistence(timeout: 30)); crm.tap()
         let workspace = app.buttons["crm.opportunities"].firstMatch
@@ -175,7 +506,7 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
     func testOpportunityCounterAndRepeatedListNavigation() throws {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
-        let app = XCUIApplication(); app.activate()
+        let app = XCUIApplication(); app.terminate(); app.launch()
         let crm = app.buttons["CRM"].firstMatch
         XCTAssertTrue(crm.waitForExistence(timeout: 30)); crm.tap()
         let workspace = app.buttons["crm.opportunities"].firstMatch
@@ -212,7 +543,7 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
-        let app = XCUIApplication(); app.activate()
+        let app = XCUIApplication(); app.terminate(); app.launch()
         let crm = app.buttons["CRM"].firstMatch
         XCTAssertTrue(crm.waitForExistence(timeout: 30)); crm.tap()
         let workspace = app.buttons["crm.opportunities"].firstMatch
@@ -247,7 +578,7 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
         app.buttons["crm.opportunity.actions"].tap()
         let edit = app.buttons["crm.opportunity.menu.edit"].firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 10)); edit.tap()
-        for name in ["Stage", "Currency"] {
+        for name in ["Status", "Currency"] {
             let label = app.staticTexts["crm.opportunity.label." + name]
             let choice = app.buttons["crm.opportunity.choice." + name].firstMatch
             XCTAssertTrue(label.waitForExistence(timeout: 10)); XCTAssertTrue(choice.exists)
@@ -256,7 +587,7 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
         }
         capture("Opportunity dropdowns beside labels")
         app.buttons["crm.opportunity.back"].firstMatch.tap()
-        if !app.buttons["crm.opportunity.actions"].waitForExistence(timeout: 3), app.staticTexts["crm.opportunity.label.Stage"].exists {
+        if !app.buttons["crm.opportunity.actions"].waitForExistence(timeout: 3), app.staticTexts["crm.opportunity.label.Status"].exists {
             app.buttons["crm.opportunity.back"].firstMatch.tap()
         }
         XCTAssertTrue(app.buttons["crm.opportunity.actions"].waitForExistence(timeout: 10))
@@ -270,7 +601,14 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
         XCTAssertEqual(app.buttons["CRM"].firstMatch.frame.minY,footerBefore.minY,accuracy: 2)
         XCTAssertFalse(app.datePickers["crm.followup.ends"].exists)
         capture("Follow-up uses server-managed Calendar due time")
+        let nextAction = app.textFields["crm.followup.title"]
+        nextAction.tap(); XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5)); nextAction.typeText(" unsaved navigation check")
+        let nextActionDraft = nextAction.value as? String
         app.buttons["crm.opportunity.back"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Keep editing"].waitForExistence(timeout: 5)); app.buttons["Keep editing"].tap()
+        XCTAssertEqual(nextAction.value as? String, nextActionDraft)
+        app.buttons["crm.opportunity.back"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Discard changes"].waitForExistence(timeout: 5)); app.buttons["Discard changes"].tap()
         let notes = app.buttons["crm.opportunity.tab.Notes"]
         if !notes.isHittable { app.swipeUp() }
         XCTAssertTrue(notes.waitForExistence(timeout: 10)); notes.tap()
@@ -300,7 +638,7 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
-        let app = XCUIApplication(); app.activate()
+        let app = XCUIApplication(); app.terminate(); app.launch()
         let crm = app.buttons["CRM"].firstMatch
         XCTAssertTrue(crm.waitForExistence(timeout: 30), "Sign in to the test account first")
         crm.tap()
@@ -334,7 +672,7 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
         let save = app.buttons["crm.opportunity.save"]
         capture("New Opportunity before validation")
         XCTAssertTrue(save.isHittable); save.tap()
-        XCTAssertTrue(app.staticTexts["Enter a title and choose a valid stage, currency and probability."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Enter a title and choose a valid status, currency and probability."].waitForExistence(timeout: 5))
         capture("New Opportunity after validation")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in title.isHittable }, object: nil)], timeout: 5), .completed)
         title.tap(); title.typeText("Draft UI check — do not save")
@@ -342,7 +680,8 @@ final class Mango9OpportunityPhoneUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width > app.frame.height && save.isHittable }, object: nil)], timeout: 10), .completed)
         capture("Opportunity form landscape")
-        app.buttons["crm.opportunity.cancel"].firstMatch.tap()
+        app.buttons["crm.opportunity.back"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Discard changes"].waitForExistence(timeout: 5)); app.buttons["Discard changes"].tap()
         XCUIDevice.shared.orientation = .portrait
         if app.navigationBars["Opportunities"].exists { app.buttons["Back"].firstMatch.tap() }
         XCTAssertTrue(actions.waitForExistence(timeout: 10)); actions.tap()

@@ -109,6 +109,7 @@ struct Mango9OpportunityMetadata {
         let id: String, name: String, classification: String
         let probability: Int
         let isDefault: Bool
+        var colorHex: String = "#64748B"
     }
     struct Owner: Identifiable { let id: Int; let name: String }
     let userID: Int
@@ -138,7 +139,7 @@ struct Mango9OpportunityMetadata {
                   let classification = $0["classification"] as? String,
                   let probability = Mango9OpportunityAPI.integer($0["probability"]), (0...100).contains(probability),
                   ["open", "won", "lost"].contains(classification) else { throw Mango9OpportunityFailure.invalid }
-            return Stage(id: id, name: name, classification: classification, probability: probability, isDefault: $0["default"] as? Bool == true)
+            return Stage(id: id, name: name, classification: classification, probability: probability, isDefault: $0["default"] as? Bool == true, colorHex: Mango9CRMStatusStyle.hex($0["color"] as? String, fallback: name))
         }
         stages = displayStages.filter { stage in specs.first { $0["id"] as? String == stage.id }?["retired"] as? Bool != true }
         owners = (data["users"] as? [[String: Any]] ?? []).compactMap {
@@ -240,18 +241,28 @@ struct Mango9OpportunityOverview {
     @Published var metadata: Mango9OpportunityMetadata?
     @Published var counts: [Int: Int] = [:]
     @Published private(set) var overview: Mango9OpportunityOverview?
+    @Published private(set) var dashboard: Mango9OpportunityDashboardData?
+    @Published private(set) var dashboardError: String?
     private var generation = UUID()
     private var account = ""
     func refresh(ids: [Int], includeOverview: Bool = false) async {
         let generation = UUID(); self.generation = generation
-        guard let session = Mango9SessionStore.load() else { metadata = nil; counts = [:]; overview = nil; return }
-        if account != Mango9OpportunityAPI.key(session) { metadata = nil; counts = [:]; overview = nil; account = Mango9OpportunityAPI.key(session) }
+        guard let session = Mango9SessionStore.load() else { metadata = nil; counts = [:]; overview = nil; dashboard = nil; dashboardError = nil; return }
+        if account != Mango9OpportunityAPI.key(session) { metadata = nil; counts = [:]; overview = nil; dashboard = nil; dashboardError = nil; account = Mango9OpportunityAPI.key(session) }
         do {
             let metadata = try Mango9OpportunityMetadata(await Mango9OpportunityAPI.send(session, path: "metadata"))
             guard generation == self.generation, !Task.isCancelled else { return }
             self.metadata = metadata
-            guard metadata.permissions["access"] == true else { counts = [:]; overview = nil; return }
+            guard metadata.permissions["access"] == true else { counts = [:]; overview = nil; dashboard = nil; dashboardError = nil; return }
             if includeOverview {
+                do {
+                    let data = try await Mango9OpportunityAPI.send(session, path: "dashboard")
+                    guard generation == self.generation, !Task.isCancelled else { return }
+                    dashboard = try Mango9OpportunityDashboardData(data); dashboardError = nil
+                } catch {
+                    guard generation == self.generation, !Task.isCancelled else { return }
+                    dashboard = nil; dashboardError = "Couldn’t load Opportunity totals. Tap to retry."
+                }
                 let data = try await Mango9OpportunityAPI.send(session, query: [
                     .init(name: "sort", value: "updated_at"), .init(name: "direction", value: "desc"),
                     .init(name: "page", value: "1"), .init(name: "limit", value: "25")])
@@ -275,8 +286,8 @@ struct Mango9OpportunityOverview {
         } catch {
             guard generation == self.generation, !Task.isCancelled else { return }
             counts = [:] // Unknown is not displayed as zero.
-            if let failure = error as? Mango9OpportunityFailure, [401, 403].contains(failure.status) { metadata = nil; overview = nil }
-            if let failure = error as? Mango9CRMAPIError, failure.isSignInRequired { metadata = nil; overview = nil }
+            if let failure = error as? Mango9OpportunityFailure, [401, 403].contains(failure.status) { metadata = nil; overview = nil; dashboard = nil; dashboardError = nil }
+            if let failure = error as? Mango9CRMAPIError, failure.isSignInRequired { metadata = nil; overview = nil; dashboard = nil; dashboardError = nil }
         }
     }
 }
@@ -287,7 +298,6 @@ struct Mango9CRMCardActions: View {
     @ObservedObject var opportunities: Mango9OpportunityCards
     private enum Destination: String, Identifiable { case opportunities, create, convert; var id: String { rawValue } }
     @State private var destination: Destination?
-    @State private var showCreate = false
     var body: some View {
         VStack(spacing: 0) {
           HStack(spacing: 2) {
@@ -302,7 +312,7 @@ struct Mango9CRMCardActions: View {
             if (kind == .lead && record.permissions?.canUpdate != false) || opportunities.metadata?.permissions["create"] == true {
                 Menu {
                     if opportunities.metadata?.permissions["create"] == true {
-                        Button { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil); showCreate = true } label: { Label("Add Opportunity", systemImage: "plus.circle") }
+                        Button { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil); destination = .create } label: { Label("Add Opportunity", systemImage: "plus.circle") }
                     }
                     if kind == .lead && record.permissions?.canUpdate != false { Button { destination = .convert } label: { Label("Convert to Client", systemImage: "person.crop.circle.badge.checkmark") } }
                 } label: {
@@ -315,31 +325,49 @@ struct Mango9CRMCardActions: View {
         .background {
             // A contact can have multiple Opportunities; always open its list.
             NavigationLink(tag: Destination.opportunities, selection: $destination) { Mango9OpportunityWorkspace(contact: record) } label: { EmptyView() }.hidden()
+            NavigationLink(tag: Destination.create, selection: $destination) { Mango9OpportunityCreationPage(record: record, close: { destination = nil }) } label: { EmptyView() }.hidden()
             NavigationLink(tag: Destination.convert, selection: $destination) { Mango9ConvertLead(record: record) } label: { EmptyView() }.hidden()
         }
-        .sheet(isPresented: $showCreate, onDismiss: { Task { await opportunities.refresh(ids: Array(opportunities.counts.keys) + [record.id]) } }) { Mango9OpportunityCreateModal(record: record) }
         .onChange(of: destination) { value in
             if value == nil { Task { await opportunities.refresh(ids: Array(opportunities.counts.keys) + [record.id]) } }
         }
     }
 }
 
-/// Both entry points share one sheet and one idempotent save flow.
-struct Mango9OpportunityCreateModal: View {
-    var record: Mango9Lead? = nil
-    @Environment(\.dismiss) private var dismiss
+/// Both entry points share an inner-page flow and the existing save requests.
+struct Mango9OpportunityCreationPage: View {
+    let record: Mango9Lead?
+    let close: () -> Void
+    @State private var selected: Mango9Lead?
+    @State private var creating: Mango9CRMRecordKind?
     var body: some View {
-        NavigationView {
-            if let record { Mango9NewContactOpportunity(record: record, close: { dismiss() }) }
-            else { Mango9OpportunityContactPicker(close: { dismiss() }) }
-        }.navigationViewStyle(.stack).tint(.mango9Primary)
+        ZStack {
+            if record == nil {
+                Mango9OpportunityContactPicker(close: close, select: { selected = $0 }, create: { creating = $0 })
+                    .opacity(selected == nil && creating == nil ? 1 : 0)
+                    .allowsHitTesting(selected == nil && creating == nil)
+                    .accessibilityHidden(selected != nil || creating != nil)
+            }
+            if let creating {
+                Mango9CreateLeadFragment(groupId: "", groupName: "All", recordKind: creating, embedded: true, onBack: { self.creating = nil }) { payload in
+                    selected = payload.lead
+                    NotificationCenter.default.post(name: creating.changeNotification, object: nil)
+                    self.creating = nil
+                }
+            } else if let chosen = record ?? selected {
+                Mango9NewContactOpportunity(record: chosen, close: { if record != nil { close() } else { selected = nil } }, saved: close)
+            }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Mango9OpportunityStyle.background)
+            .navigationBarHidden(true)
     }
 }
 
-/// Present creation directly, avoiding a second sheet during the first sheet's animation.
+/// Load and present Opportunity creation within the CRM navigation container.
 struct Mango9NewContactOpportunity: View {
     let record: Mango9Lead
     let close: () -> Void
+    let saved: () -> Void
     @State private var session: Mango9Session?
     @State private var metadata: Mango9OpportunityMetadata?
     @State private var error: String?
@@ -347,14 +375,13 @@ struct Mango9NewContactOpportunity: View {
     var body: some View {
         Group {
             if let session, let metadata, metadata.permissions["create"] == true {
-                Mango9OpportunityForm(record: record, session: session, metadata: metadata, close: close, saved: close)
+                Mango9OpportunityForm(record: record, session: session, metadata: metadata, close: close, saved: saved)
             } else {
-                VStack(spacing: 16) {
+                Mango9OpportunityPage(title: "Add Opportunity", backAction: close, actions: { EmptyView() }) { VStack(spacing: 16) {
                     if busy { ProgressView("Loading Opportunity fields…") }
                     if let error { Text(error); Button("Retry") { Task { await load() } } }
                 }.padding().frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .navigationTitle("Add Opportunity").navigationBarTitleDisplayMode(.inline)
-                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: close) } }
+                }
             }
         }.tint(.mango9Primary).task { await load() }
     }
@@ -442,7 +469,7 @@ struct Mango9ContactOpportunities: View {
     var body: some View { Mango9OpportunityWorkspace(contact: record) }
 }
 
-struct Mango9OpportunityDraft {
+struct Mango9OpportunityDraft: Equatable {
     var title = "", stage = "", value = "", currency = "USD", ownerID = 0, probability = 0, manualProbability = false
     var hasCloseDate = false, closeDate = Date(), source = "", description = "", nextAction = "", hasNextDue = false, nextDue = Date()
     var actualValue = "", actualClose = Date(), lossReason = ""
@@ -453,7 +480,7 @@ struct Mango9OpportunityDraft {
     func values(metadata: Mango9OpportunityMetadata, existingStage: String? = nil) throws -> [String: Any] {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, title.count <= 250, let stage = metadata.displayStages.first(where: { $0.id == stage && ($0.id == existingStage || metadata.stages.contains { $0.id == stage }) }),
-              Self.currencies.contains(currency), (0...100).contains(probability) else { throw Mango9OpportunityFailure(status: 422, message: "Enter a title and choose a valid stage, currency and probability.") }
+              Self.currencies.contains(currency), (0...100).contains(probability) else { throw Mango9OpportunityFailure(status: 422, message: "Enter a title and choose a valid status, currency and probability.") }
         func amount(_ value: String) throws -> Any {
             let value = value.trimmingCharacters(in: .whitespaces)
             if value.isEmpty { return NSNull() }
@@ -484,9 +511,15 @@ struct Mango9OpportunityForm: View {
     @State private var busy = false
     @State private var loaded = false
     @State private var error: String?
+    @State private var baseline: Mango9OpportunityDraft?
     @State private var pending: [String: Any]?
     private var stage: Mango9OpportunityMetadata.Stage? { metadata.stages.first { $0.id == draft.stage } }
     var body: some View {
+        Mango9OpportunityPage(title: "Add Opportunity", backAction: close, backDisabled: busy, actions: {
+            Button(busy ? "Saving…" : pending == nil ? "Save" : "Retry") { Task { await save() } }
+                .font(.system(size: 15, weight: .semibold)).disabled(busy || !loaded)
+                .accessibilityIdentifier("crm.opportunity.save")
+        }) {
         Form {
                 if let error { Section { Text(error).foregroundColor(.red) } }
                 if let pending {
@@ -501,26 +534,18 @@ struct Mango9OpportunityForm: View {
                     guard !loaded else { return }
                     draft.ownerID = metadata.userID
                     draft.stage = metadata.stages.first(where: \.isDefault)?.id ?? metadata.stages.first?.id ?? ""
-                    do { pending = try Mango9OpportunityCommands.load(session, contact: record.id, operation: "create"); loaded = true }
+                    do { pending = try Mango9OpportunityCommands.load(session, contact: record.id, operation: "create"); baseline = draft; loaded = true }
                     catch { self.error = error.localizedDescription }
                 }
-        .navigationTitle("Add Opportunity").navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(busy)
-        .interactiveDismissDisabled(busy)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: close).disabled(busy).accessibilityIdentifier("crm.opportunity.cancel") }
-            ToolbarItem(placement: .confirmationAction) {
-                Button(busy ? "Saving…" : pending == nil ? "Save" : "Retry save") { Task { await save() } }
-                    .disabled(busy || !loaded).accessibilityIdentifier("crm.opportunity.save")
-            }
         }.tint(.mango9Primary)
+        .mango9CRMFormProtection(busy: busy, dirty: loaded && pending == nil && baseline != draft)
     }
     private var fields: some View {
         Group {
             Section("Lead or Client") { VStack(alignment: .leading, spacing: 4) { Text(record.name).accessibilityIdentifier("crm.opportunity.linkedRecord"); Text([record.email, record.phone].filter { !$0.isEmpty }.joined(separator: " · ")).font(.footnote).foregroundColor(.secondary) } }
             Section("Opportunity") {
                 TextField("Title (required)", text: $draft.title).accessibilityIdentifier("crm.opportunity.title")
-                Picker("Stage", selection: $draft.stage) { ForEach(metadata.stages) { Text($0.name).tag($0.id) } }
+                Picker("Status", selection: $draft.stage) { ForEach(metadata.stages) { Text($0.name).tag($0.id) } }
                 TextField("Value (optional)", text: $draft.value).keyboardType(.decimalPad)
                 Picker("Currency", selection: $draft.currency) { ForEach(Mango9OpportunityDraft.currencies, id: \.self) { Text($0).tag($0) } }
                 Toggle("Expected close date", isOn: $draft.hasCloseDate)
@@ -543,7 +568,7 @@ struct Mango9OpportunityForm: View {
                     }
                     Toggle("Set probability manually", isOn: $draft.manualProbability)
                     if draft.manualProbability { Stepper("Probability: \(draft.probability)%", value: $draft.probability, in: 0...100) }
-                    else { Mango9OpportunityLabel("Probability", value: "\(stage?.probability ?? 0)% · From stage") }
+                    else { Mango9OpportunityLabel("Probability", value: "\(stage?.probability ?? 0)% · From status") }
                     TextField("Source", text: $draft.source)
                     if !metadata.sources.isEmpty { Menu("Choose existing source") { ForEach(metadata.sources, id: \.self) { source in Button(source) { draft.source = source } } } }
                     VStack(alignment: .leading, spacing: 6) { Text("Description").font(.subheadline); TextEditor(text: $draft.description).frame(minHeight: 80).accessibilityLabel("Description") }
@@ -700,5 +725,39 @@ struct Mango9OpportunityPreference: Codable, Equatable {
     func save(_ session: Mango9Session, contact: Int?, defaults: UserDefaults = .standard) {
         guard (try? filters.query()) != nil, let data = try? JSONEncoder().encode(self) else { return }
         defaults.set(data, forKey: Self.key(session, contact: contact))
+    }
+}
+
+/// Totals are calculated by the CRM with the same account scope and month boundaries as its dashboard.
+struct Mango9OpportunityDashboardData {
+    struct Amount { let currency: String; let value: String? }
+    let open: Int, won: Int, due: Int, overdue: Int, today: Int
+    let unknownOpen: Int, unknownWon: Int, estimatedWon: Int
+    let openAmounts: [Amount], wonAmounts: [Amount]
+    init(_ data: [String: Any]) throws {
+        func count(_ key: String) throws -> Int {
+            guard let value = Mango9OpportunityAPI.integer(data[key]), value >= 0 else { throw Mango9OpportunityFailure.invalid }
+            return value
+        }
+        func amounts(_ key: String) throws -> [Amount] {
+            guard let rows = data[key] as? [[String: Any]] else { throw Mango9OpportunityFailure.invalid }
+            var currencies = Set<String>()
+            return try rows.map { row in
+                guard let currency = row["currency"] as? String, currency.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil,
+                      currencies.insert(currency).inserted else { throw Mango9OpportunityFailure.invalid }
+                guard let value = row["value"] as? String else {
+                    guard row["value"] is NSNull else { throw Mango9OpportunityFailure.invalid }
+                    return Amount(currency: currency, value: nil)
+                }
+                guard let decimal = Decimal(string: value, locale: Locale(identifier: "en_US_POSIX")), decimal >= 0,
+                      value.range(of: "^[0-9]+(\\.[0-9]+)?$", options: .regularExpression) != nil else { throw Mango9OpportunityFailure.invalid }
+                return Amount(currency: currency, value: value)
+            }
+        }
+        open = try count("open"); won = try count("won"); due = try count("due")
+        overdue = try count("overdue"); today = try count("today")
+        unknownOpen = try count("unknownOpen"); unknownWon = try count("unknownWon"); estimatedWon = try count("estimatedWon")
+        openAmounts = try amounts("openCurrencies"); wonAmounts = try amounts("currencies")
+        guard due == overdue + today, unknownOpen <= open, unknownWon + estimatedWon <= won else { throw Mango9OpportunityFailure.invalid }
     }
 }

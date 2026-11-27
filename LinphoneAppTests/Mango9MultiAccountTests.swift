@@ -10,9 +10,44 @@
  */
 
 import XCTest
+import linphonesw
 @testable import LinphoneApp
 
 final class Mango9MultiAccountTests: XCTestCase {
+    func testAccountIdentitySnapshotSurvivesSDKWrapperReplacement() throws {
+        // Isolated, never-started core: no registration or live account changes.
+        let core = try Factory.Instance.createCore(configPath: nil, factoryConfigPath: nil, systemContext: nil)
+        let params = try core.createAccountParams()
+        params.registerEnabled = false
+        try params.setIdentityaddress(newValue: Factory.Instance.createAddress(addr: "sip:100@sample.example.test"))
+        let account = try core.createAccount(params: params)
+        let first = Mango9AccountIdentitySnapshot.capture(account)
+        XCTAssertEqual(first.uri, "sip:100@sample.example.test")
+        XCTAssertEqual(first.username, "100")
+        XCTAssertEqual(first.domain, "sample.example.test")
+        for index in 0..<500 {
+            let changed = try XCTUnwrap(account.params?.clone())
+            let address = try Factory.Instance.createAddress(addr: "sip:200@other.example.test")
+            try address.setDisplayname(newValue: "Name \(index)")
+            try changed.setIdentityaddress(newValue: address)
+            account.params = changed
+            let current = Mango9AccountIdentitySnapshot.capture(account)
+            XCTAssertEqual(current.name, "Name \(index)")
+            XCTAssertEqual(current.username, "200")
+            XCTAssertEqual(first.username, "100", "The UI value must not retain a mutable SDK Address")
+        }
+    }
+
+    func testAccountMenuNameFallbacksUseOnlyCopiedIdentityValues() {
+        var identity = Mango9AccountIdentitySnapshot(uri: "sip:100@sample.example.test", name: " Person ", username: "100", domain: "sample.example.test")
+        XCTAssertEqual(SideMenuAccountRow.accountDisplayName(identity: identity, sessionName: "CRM User", company: "Company"), "Person")
+        identity.name = "100"
+        XCTAssertEqual(SideMenuAccountRow.accountDisplayName(identity: identity, sessionName: " CRM User ", company: "Company"), "CRM User")
+        XCTAssertEqual(SideMenuAccountRow.accountDisplayName(identity: identity, sessionName: "", company: "Company"), "Company")
+        identity.name = ""
+        XCTAssertEqual(SideMenuAccountRow.accountDisplayName(identity: identity, sessionName: "", company: "Company"), "Company")
+    }
+
 	func testSMSMutePreferencePersistsAndSeparatesAccounts() {
 		let phone = "8185550199"
 		let firstIdentity = "sip:700@tenant-a.example.com"

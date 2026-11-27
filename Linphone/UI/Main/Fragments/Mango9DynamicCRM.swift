@@ -5534,74 +5534,37 @@ struct Mango9LeadsFragment: View {
 				}
 			}
 		} label: {
-			Text(label)
-				.font(.system(size: 11, weight: .semibold))
-				.foregroundStyle(selected ? Color.white : Color.grayMain2c500)
-				.padding(.horizontal, 12)
-				.padding(.vertical, 8)
-				.background(selected ? Color.orangeMain500 : Color.white)
-				.cornerRadius(20)
-				.overlay {
-					Capsule()
-						.stroke(selected ? Color.orangeMain500 : Color.gray200, lineWidth: 1)
-				}
+            Mango9CRMStatusBadge(title: label, colorHex: value.isEmpty ? "#4253C7" : nil, selected: selected)
+                .fixedSize(horizontal: true, vertical: false).frame(minHeight: 44)
+                .accessibilityAddTraits(selected ? .isSelected : [])
 		}
 	}
 
-	private func leadRow(_ lead: Mango9Lead) -> some View {
-		HStack(spacing: 13) {
-			ZStack {
-				Circle().fill(Color.orangeMain100)
-				Text(initials(for: lead.name))
-					.font(.system(size: 14, weight: .bold))
-					.foregroundStyle(Color.orangeMain500)
-			}
-			.frame(width: 46, height: 46)
-
-			VStack(alignment: .leading, spacing: 4) {
-				HStack(spacing: 5) {
-                    if newRecords.isNew(lead.id, kind: .lead) { Circle().fill(Color.mango9Primary).frame(width: 6, height: 6).accessibilityLabel("New lead") }
-                    Text(lead.name.isEmpty ? "Unnamed lead" : lead.name)
+    private func leadRow(_ lead: Mango9Lead) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle().fill(Color.orangeMain100)
+                Text(initials(for: lead.name)).font(.system(size: 14, weight: .bold)).foregroundStyle(Color.orangeMain500)
+            }.frame(width: 46, height: 46)
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .top, spacing: 8) {
+                    HStack(spacing: 5) {
+                        if newRecords.isNew(lead.id, kind: .lead) { Circle().fill(Color.mango9Primary).frame(width: 6, height: 6).accessibilityLabel("New lead") }
+                        Text(lead.name.isEmpty ? "Unnamed lead" : lead.name).font(.system(size: 14, weight: .bold)).lineLimit(2)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    Mango9CRMStatusBadge(title: lead.status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "No status" : lead.status)
+                        .frame(maxWidth: 140, alignment: .trailing).layoutPriority(1)
                 }
-					.default_text_style_700(styleSize: 14)
-					.lineLimit(1)
-
-				Text(lead.phone.isEmpty ? (lead.email.isEmpty ? "No contact information" : lead.email) : lead.phone)
-					.default_text_style(styleSize: 12)
-					.foregroundStyle(Color.grayMain2c500)
-					.lineLimit(1)
-
-				if !lead.source.isEmpty {
-					Text(lead.source)
-						.default_text_style(styleSize: 10)
-						.foregroundStyle(Color.grayMain2c500)
-						.lineLimit(1)
-				}
-			}
-
-			Spacer()
-
-			VStack(alignment: .trailing, spacing: 7) {
-				if !lead.status.isEmpty {
-					Text(lead.status)
-						.font(.system(size: 9, weight: .bold))
-						.foregroundStyle(Color.orangeMain500)
-						.padding(.horizontal, 8)
-						.padding(.vertical, 5)
-						.background(Color.orangeMain100)
-						.cornerRadius(20)
-						.lineLimit(1)
-				}
-
-				Image("caret-right")
-					.renderingMode(.template)
-					.resizable()
-					.foregroundStyle(Color.grayMain2c500)
-					.frame(width: 18, height: 18)
-			}
-		}
-		.padding(14)
-	}
+                Text(lead.phone.isEmpty ? (lead.email.isEmpty ? "No contact information" : lead.email) : lead.phone)
+                    .default_text_style(styleSize: 12).foregroundStyle(Color.grayMain2c500).lineLimit(1)
+                HStack {
+                    if !lead.source.isEmpty { Text(lead.source).font(.system(size: 11)).foregroundStyle(Color.grayMain2c500).lineLimit(1) }
+                    Spacer()
+                    Image("caret-right").renderingMode(.template).resizable().foregroundStyle(Color.grayMain2c500).frame(width: 16, height: 16)
+                }
+            }
+        }.padding(14)
+    }
 
 	private func initials(for name: String) -> String {
 		let parts = name.split(separator: " ").prefix(2)
@@ -5752,8 +5715,11 @@ final class Mango9CreateLeadViewModel: ObservableObject {
 
 struct Mango9CreateLeadFragment: View {
 	@Environment(\.dismiss) private var dismiss
+    @Environment(\.mango9CRMNavigationGuard) private var navigation
 	@StateObject private var viewModel: Mango9CreateLeadViewModel
 
+	let embedded: Bool
+    let onBack: (() -> Void)?
 	let groupName: String
 	let onCreated: (Mango9LeadDetailPayload) -> Void
 
@@ -5761,8 +5727,11 @@ struct Mango9CreateLeadFragment: View {
 		groupId: String,
 		groupName: String,
 		recordKind: Mango9CRMRecordKind = .lead,
+        embedded: Bool = false,
+        onBack: (() -> Void)? = nil,
 		onCreated: @escaping (Mango9LeadDetailPayload) -> Void
 	) {
+		self.embedded = embedded; self.onBack = onBack
 		self.groupName = groupName
 		self.onCreated = onCreated
 		_viewModel = StateObject(
@@ -5773,8 +5742,31 @@ struct Mango9CreateLeadFragment: View {
 		)
 	}
 
-	var body: some View {
-		NavigationView {
+    var body: some View {
+        Group {
+            if embedded {
+                Mango9OpportunityPage(title: "Add \(viewModel.recordKind.singular)", backAction: onBack, backDisabled: viewModel.isCreating, actions: { createButton }) { formContent }
+            } else {
+                NavigationView {
+                    formContent.navigationTitle("Add \(viewModel.recordKind.singular)").navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { if let navigation { navigation.request { dismiss() } } else { dismiss() } }.disabled(viewModel.isCreating) }
+                            ToolbarItem(placement: .confirmationAction) { createButton }
+                        }
+                }.navigationViewStyle(.stack)
+            }
+        }.mango9CRMFormProtection(busy: viewModel.isCreating,
+            dirty: [viewModel.firstName, viewModel.lastName, viewModel.phone, viewModel.email].contains { !$0.isEmpty })
+    }
+    private var createButton: some View {
+        Button {
+            Task { if let payload = await viewModel.create() { onCreated(payload) } }
+        } label: {
+            if viewModel.isCreating { ProgressView() }
+            else { Text("Save").font(.system(size: 15, weight: .semibold)) }
+        }.disabled(viewModel.isCreating).accessibilityLabel("Create \(viewModel.recordKind.singular.lowercased())")
+    }
+    private var formContent: some View {
 			ZStack {
 				Color.gray100.ignoresSafeArea()
 
@@ -5854,36 +5846,7 @@ struct Mango9CreateLeadFragment: View {
 					.padding(16)
 				}
 			}
-			.navigationTitle("Add \(viewModel.recordKind.singular)")
-			.navigationBarTitleDisplayMode(.inline)
-			.toolbar {
-				ToolbarItem(placement: .cancellationAction) {
-					Button("Cancel") { dismiss() }
-						.disabled(viewModel.isCreating)
-				}
-				ToolbarItem(placement: .confirmationAction) {
-					Button {
-						Task {
-							if let payload = await viewModel.create() {
-								onCreated(payload)
-							}
-						}
-					} label: {
-						if viewModel.isCreating {
-							ProgressView().tint(Color.blueInfo500)
-						} else {
-							Image("check")
-								.renderingMode(.template)
-								.foregroundStyle(Color.blueInfo500)
-						}
-					}
-					.disabled(viewModel.isCreating)
-					.accessibilityLabel("Create \(viewModel.recordKind.singular.lowercased())")
-				}
-			}
-		}
-		.navigationViewStyle(.stack)
-	}
+    }
 
 	private func leadField(
 		title: String,
@@ -6350,76 +6313,37 @@ struct Mango9ClientsFragment: View {
 				}
 			}
 		} label: {
-			Text(label)
-				.font(.system(size: 11, weight: .semibold))
-				.foregroundStyle(selected ? Color.white : Color.grayMain2c500)
-				.padding(.horizontal, 12)
-				.padding(.vertical, 8)
-				.background(selected ? Color.orangeMain500 : Color.white)
-				.cornerRadius(20)
-				.overlay {
-					Capsule()
-						.stroke(selected ? Color.orangeMain500 : Color.gray200, lineWidth: 1)
-				}
+            Mango9CRMStatusBadge(title: label, colorHex: value.isEmpty ? "#4253C7" : nil, selected: selected)
+                .fixedSize(horizontal: true, vertical: false).frame(minHeight: 44)
+                .accessibilityAddTraits(selected ? .isSelected : [])
 		}
 	}
 
-	private func clientRow(_ client: Mango9Client) -> some View {
-		HStack(spacing: 13) {
-			ZStack {
-				Circle().fill(Color.orangeMain100)
-				Text(initials(for: client.name))
-					.font(.system(size: 14, weight: .bold))
-					.foregroundStyle(Color.orangeMain500)
-			}
-			.frame(width: 46, height: 46)
-
-			VStack(alignment: .leading, spacing: 4) {
-				HStack(spacing: 5) {
-                    if newRecords.isNew(client.id, kind: .client) { Circle().fill(Color.mango9Primary).frame(width: 6, height: 6).accessibilityLabel("New client") }
-                    Text(client.name.isEmpty ? "Unnamed client" : client.name)
+    private func clientRow(_ client: Mango9Client) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle().fill(Color.orangeMain100)
+                Text(initials(for: client.name)).font(.system(size: 14, weight: .bold)).foregroundStyle(Color.orangeMain500)
+            }.frame(width: 46, height: 46)
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .top, spacing: 8) {
+                    HStack(spacing: 5) {
+                        if newRecords.isNew(client.id, kind: .client) { Circle().fill(Color.mango9Primary).frame(width: 6, height: 6).accessibilityLabel("New client") }
+                        Text(client.name.isEmpty ? "Unnamed client" : client.name).font(.system(size: 14, weight: .bold)).lineLimit(2)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    Mango9CRMStatusBadge(title: client.status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "No status" : client.status)
+                        .frame(maxWidth: 140, alignment: .trailing).layoutPriority(1)
                 }
-					.default_text_style_700(styleSize: 14)
-					.lineLimit(1)
-
-				Text(
-					client.phone.isEmpty
-					? (client.email.isEmpty ? "No contact information" : client.email)
-					: client.phone
-				)
-				.default_text_style(styleSize: 12)
-				.foregroundStyle(Color.grayMain2c500)
-				.lineLimit(1)
-
-				if !client.ownerName.isEmpty {
-					Text("Owner: \(client.ownerName)")
-						.default_text_style(styleSize: 10)
-						.foregroundStyle(Color.grayMain2c500)
-						.lineLimit(1)
-				}
-			}
-
-			Spacer()
-
-			VStack(alignment: .trailing, spacing: 7) {
-				Text(client.status.isEmpty ? "CLIENT" : client.status)
-					.font(.system(size: 9, weight: .bold))
-					.foregroundStyle(Color.orangeMain500)
-					.padding(.horizontal, 8)
-					.padding(.vertical, 5)
-					.background(Color.orangeMain100)
-					.cornerRadius(20)
-					.lineLimit(1)
-
-				Image("caret-right")
-					.renderingMode(.template)
-					.resizable()
-					.foregroundStyle(Color.grayMain2c500)
-					.frame(width: 18, height: 18)
-			}
-		}
-		.padding(14)
-	}
+                Text(client.phone.isEmpty ? (client.email.isEmpty ? "No contact information" : client.email) : client.phone)
+                    .default_text_style(styleSize: 12).foregroundStyle(Color.grayMain2c500).lineLimit(1)
+                HStack {
+                    if !client.ownerName.isEmpty { Text("Owner: " + client.ownerName).font(.system(size: 11)).foregroundStyle(Color.grayMain2c500).lineLimit(1) }
+                    Spacer()
+                    Image("caret-right").renderingMode(.template).resizable().foregroundStyle(Color.grayMain2c500).frame(width: 16, height: 16)
+                }
+            }
+        }.padding(14)
+    }
 
 	private func communicationTarget(for client: Mango9Client) -> Mango9CommunicationTarget {
 		Mango9CommunicationTarget(
@@ -6551,6 +6475,8 @@ final class Mango9LeadDetailViewModel: ObservableObject {
         lead = nil; schema = nil; values = [:]; originalValues = [:]; isEditing = false
         notesRevision += 1
     }
+
+    var hasUnsavedChanges: Bool { isEditing && values != originalValues }
 
 	func cancelEditing() {
 		values = originalValues
@@ -7031,6 +6957,7 @@ private struct Mango9CRMPreviousNotes: View {
 
 struct Mango9LeadDetailFragment: View {
 	@Environment(\.presentationMode) private var presentationMode
+    @Environment(\.mango9CRMNavigationGuard) private var navigation
 	@StateObject private var opportunities = Mango9OpportunityCards()
 	@StateObject private var viewModel: Mango9LeadDetailViewModel
 	@State private var communicationTarget: Mango9CommunicationTarget?
@@ -7115,6 +7042,7 @@ struct Mango9LeadDetailFragment: View {
 		}
 		.navigationTitle("")
 		.navigationBarHidden(true)
+        .mango9CRMFormProtection(busy: viewModel.isSaving || viewModel.isDeleting || viewModel.isSavingStatus, dirty: viewModel.hasUnsavedChanges)
 		.task {
 			await viewModel.load()
             await opportunities.refresh(ids: [viewModel.leadId])
@@ -7173,11 +7101,8 @@ struct Mango9LeadDetailFragment: View {
 	private var header: some View {
 		HStack(spacing: 8) {
 			Button {
-				if viewModel.isEditing {
-					viewModel.cancelEditing()
-				} else {
-					presentationMode.wrappedValue.dismiss()
-				}
+                let leave = { if viewModel.isEditing { viewModel.cancelEditing() } else { presentationMode.wrappedValue.dismiss() } }
+                if let navigation { navigation.request(leave) } else { leave() }
 			} label: {
 				Image("caret-left")
 					.renderingMode(.template)
@@ -7188,6 +7113,7 @@ struct Mango9LeadDetailFragment: View {
 			}
             .accessibilityLabel(viewModel.isEditing ? "Cancel editing" : "Back")
             .accessibilityIdentifier("crm.record.back")
+            .disabled(viewModel.isSaving || viewModel.isDeleting || viewModel.isSavingStatus)
 
 			VStack(alignment: .leading, spacing: 1) {
 				Text(viewModel.isEditing ? "Edit \(viewModel.recordKind.singular)" : viewModel.recordKind.singular)
@@ -7282,12 +7208,12 @@ struct Mango9LeadDetailFragment: View {
 			VStack(alignment: .leading, spacing: 4) {
 				Text(lead.name.isEmpty ? viewModel.recordKind.emptyName : lead.name)
 					.font(Mango9CRMText.recordTitle)
-					.fixedSize(horizontal: false, vertical: true)
+					.fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("crm.record.name")
 				if !viewModel.isEditing && !viewModel.statusOptions.isEmpty {
 					statusMenu
-				} else if !lead.status.isEmpty {
-					Text(lead.status).font(.subheadline.weight(.semibold)).foregroundStyle(Color.orangeMain500)
-				}
+                } else {
+                    Mango9CRMStatusBadge(title: lead.status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "No status" : lead.status)
+                }
 				if !lead.phone.isEmpty {
 					Button {
 						presentCommunicationActions(
@@ -7303,7 +7229,7 @@ struct Mango9LeadDetailFragment: View {
 						}
 						.foregroundStyle(Color.orangeMain500)
 					}
-					.buttonStyle(.plain)
+					.buttonStyle(.plain).accessibilityIdentifier("crm.record.phone")
 				}
 				if !lead.email.isEmpty {
 					Button {
@@ -7453,19 +7379,12 @@ struct Mango9LeadDetailFragment: View {
 					} else { Text(status) }
 				}
 			}
-		} label: {
-			HStack(spacing: 6) {
-				Text(statusTitle)
-					.fixedSize(horizontal: false, vertical: true)
-				if viewModel.isSavingStatus { ProgressView().tint(Color.orangeMain500) }
-				else { Image(systemName: "chevron.down").font(.caption.weight(.semibold)) }
-			}
-			.font(.subheadline.weight(.semibold))
-			.foregroundStyle(Color.orangeMain500)
-			.padding(.horizontal, 9).padding(.vertical, 6)
-			.frame(minHeight: 44, alignment: .leading)
-			.background(Color.orangeMain100).cornerRadius(8)
-		}
+        } label: {
+            HStack(spacing: 6) {
+                Mango9CRMStatusBadge(title: statusTitle, dropdown: !viewModel.isSavingStatus)
+                if viewModel.isSavingStatus { ProgressView() }
+            }.frame(minHeight: 44)
+        }
 		.disabled(viewModel.isSavingStatus || viewModel.isLoading || viewModel.isSaving || viewModel.isDeleting)
 		.accessibilityLabel("Change \(viewModel.recordKind.singular.lowercased()) status")
 		.accessibilityValue(statusTitle)

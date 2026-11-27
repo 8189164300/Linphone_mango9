@@ -17,6 +17,90 @@ private final class OpportunityURLProtocol: URLProtocol {
 }
 
 @MainActor final class Mango9OpportunityTests: XCTestCase {
+    func testNavigationBlocksSaveAndOffersDiscardOnlyForDirtyForm() {
+        let navigation = Mango9CRMNavigationGuard(), owner = UUID()
+        var left = 0, pending: (() -> Void)?
+        navigation.update(owner: owner, busy: true, dirty: true) { pending = $0 }
+        navigation.request { left += 1 }
+        XCTAssertEqual(left, 0); XCTAssertNil(pending)
+        navigation.update(owner: owner, busy: false, dirty: true) { pending = $0 }
+        navigation.request { left += 1 }
+        XCTAssertEqual(left, 0); XCTAssertNotNil(pending)
+        pending = nil // Keep editing.
+        XCTAssertEqual(left, 0)
+        navigation.request { left += 1 }; pending?(); pending = nil
+        XCTAssertEqual(left, 1)
+        navigation.update(owner: owner, busy: false, dirty: false) { pending = $0 }
+        navigation.request { left += 1 }
+        XCTAssertEqual(left, 2); XCTAssertNil(pending)
+        navigation.remove(owner); navigation.request { left += 1 }
+        XCTAssertEqual(left, 3)
+    }
+
+    func testTemporarySMSNavigationKeepsDraftButCannotInterruptSave() {
+        let navigation = Mango9CRMNavigationGuard(), owner = UUID()
+        var visits = 0, confirmations = 0
+        navigation.update(owner: owner, busy: false, dirty: true) { _ in confirmations += 1 }
+        navigation.request({ visits += 1 }, preservingDraft: true)
+        XCTAssertEqual(visits, 1); XCTAssertEqual(confirmations, 0)
+        navigation.request { visits += 1 }
+        XCTAssertEqual(visits, 1); XCTAssertEqual(confirmations, 1, "The retained draft still needs confirmation for a destructive exit")
+        navigation.update(owner: owner, busy: true, dirty: true) { _ in confirmations += 1 }
+        navigation.request({ visits += 1 }, preservingDraft: true)
+        XCTAssertEqual(visits, 1)
+    }
+
+    func testStaleFormCannotUnlockNewerSavingForm() {
+        let navigation = Mango9CRMNavigationGuard(), older = UUID(), newer = UUID()
+        var left = false
+        navigation.update(owner: older, busy: false, dirty: false) { _ in XCTFail() }
+        navigation.update(owner: newer, busy: true, dirty: false) { _ in XCTFail() }
+        navigation.update(owner: older, busy: false, dirty: false) { _ in XCTFail() }
+        navigation.remove(older); navigation.request { left = true }
+        XCTAssertFalse(left)
+        navigation.remove(newer); navigation.request { left = true }
+        XCTAssertTrue(left)
+    }
+
+    func testCalendarLinkOnlyUsesCurrentUsersValidFollowupEvent() throws {
+        for (mine, id, expected) in [(true, 91, Optional(91)), (false, 91, nil), (true, 0, nil)] {
+            let row = try Mango9Opportunity(["id": 12, "title": "Fixture", "stage": "new", "followUp": ["mine": mine, "eventId": id]])
+            XCTAssertEqual(row.followupEventID, expected)
+        }
+        let row = try Mango9Opportunity(["id": 12, "title": "Fixture", "stage": "new"])
+        XCTAssertNil(row.followupEventID)
+    }
+
+    func testDashboardPreservesCurrencyNullZeroAndRejectsBrokenTotals() throws {
+        var data: [String: Any] = ["open": 3, "won": 3, "due": 2, "overdue": 1, "today": 1,
+            "unknownOpen": 1, "unknownWon": 1, "estimatedWon": 1,
+            "openCurrencies": [["currency": "USD", "value": "1234.50"], ["currency": "EUR", "value": NSNull()]],
+            "currencies": [["currency": "USD", "value": "50.00"], ["currency": "EUR", "value": "0.00"]]]
+        let totals = try Mango9OpportunityDashboardData(data)
+        XCTAssertEqual(totals.open, 3); XCTAssertEqual(totals.won, 3)
+        XCTAssertEqual(totals.openAmounts[0].value, "1234.50"); XCTAssertNil(totals.openAmounts[1].value)
+        XCTAssertEqual(totals.wonAmounts[1].value, "0.00"); XCTAssertEqual(totals.estimatedWon, 1)
+        data["due"] = 99; XCTAssertThrowsError(try Mango9OpportunityDashboardData(data))
+        data["due"] = 2; data["won"] = true; XCTAssertThrowsError(try Mango9OpportunityDashboardData(data))
+        data["won"] = 3; data["currencies"] = [["currency": "USD", "value": "NaN"]]
+        XCTAssertThrowsError(try Mango9OpportunityDashboardData(data))
+        data["currencies"] = [["currency": "USD", "value": "1"], ["currency": "USD", "value": "2"]]
+        XCTAssertThrowsError(try Mango9OpportunityDashboardData(data))
+        let empty: [String: Any] = ["open": 0, "won": 0, "due": 0, "overdue": 0, "today": 0,
+            "unknownOpen": 0, "unknownWon": 0, "estimatedWon": 0, "openCurrencies": [], "currencies": []]
+        XCTAssertEqual(try Mango9OpportunityDashboardData(empty).openAmounts.count, 0)
+    }
+
+    func testStageColorsPreserveConfigurationAndUseSafeFallbacks() throws {
+        let metadata = try Mango9OpportunityMetadata(["userId": 1, "permissions": ["access": true], "statusSpecs": [
+            ["id": "custom", "name": "Custom", "classification": "open", "probability": 10, "color": "#123456"],
+            ["id": "won", "name": "Won", "classification": "won", "probability": 100, "color": "invalid"]]])
+        XCTAssertEqual(metadata.stages[0].colorHex, "#123456")
+        XCTAssertEqual(metadata.stages[1].colorHex, "#15803D")
+        XCTAssertEqual(Mango9CRMStatusStyle.hex(nil, fallback: "New"), "#718096")
+        XCTAssertEqual(Mango9CRMStatusStyle.hex(nil, fallback: "Custom status"), Mango9CRMStatusStyle.hex(nil, fallback: "CUSTOM STATUS"))
+    }
+
     func testConfigurationFilterRangesUseServerKeys() throws {
         var f = Mango9OpportunityFilters(); f.createdBy = "11"; f.owner = "12"; f.minValue = "0"; f.maxValue = "1000.50"; f.closeFrom = "2026-11-20"; f.closeTo = "2026-11-30"; f.currency = "USD"
         let q = try f.query(); XCTAssertEqual(q["createdBy"], "11"); XCTAssertEqual(q["owner"], "12"); XCTAssertEqual(q["minValue"], "0"); XCTAssertEqual(q["closeTo"], "2026-11-30")
@@ -131,6 +215,51 @@ private final class OpportunityURLProtocol: URLProtocol {
         XCTAssertEqual(sends.count, 2); XCTAssertEqual(sends[0]["requestId"] as? String, sends[1]["requestId"] as? String)
         XCTAssertEqual(sends[1]["userIds"] as? [Int], [103], "A timeout retry retains its original body and idempotency key")
         XCTAssertEqual(detail.metadata?.owners.map(\.id), [101, 102])
+    }
+    func testStatusSaveKeepsRevisionAndRetriesOriginalChoiceAfterTimeout() async throws {
+        let previous = Mango9SessionStore.activeIdentity
+        let identity = try Mango9SessionStore.save(session("status-fixture"), persist: false, makeActive: true)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [OpportunityURLProtocol.self]
+        let transport = URLSession(configuration: config)
+        defer {
+            OpportunityURLProtocol.handler = nil; transport.invalidateAndCancel()
+            try? Mango9OpportunityCommands.save(nil, session: identity, contact: 12, operation: "mutate")
+            try? Mango9SessionStore.remove(for: identity.sipIdentity!); Mango9SessionStore.activate(sipIdentity: previous)
+        }
+        var failFirst = true, sends = [[String: Any]]()
+        var row: [String: Any] = ["id": 12, "title": "Fixture", "stage": "new", "revision": "7", "owner_id": 101, "canManage": true]
+        OpportunityURLProtocol.handler = { request in
+            var bytes = request.httpBody ?? Data()
+            if bytes.isEmpty, let stream = request.httpBodyStream {
+                stream.open(); defer { stream.close() }; var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; bytes.append(buffer, count: count) }
+            }
+            let path = request.url!.path
+            var data: [String: Any]
+            if path.hasSuffix("/metadata") {
+                data = ["userId": 101, "permissions": ["access": true, "edit": true], "statusSpecs": []]
+            } else if path.hasSuffix("/stage") {
+                sends.append(try JSONSerialization.jsonObject(with: bytes) as! [String: Any])
+                if failFirst { failFirst = false; throw URLError(.timedOut) }
+                row["stage"] = "qualified"; row["revision"] = "8"
+                data = ["id": 12, "action": "stage", "saved": true]
+            } else { data = row }
+            return (200, try JSONSerialization.data(withJSONObject: ["success": true, "data": data]))
+        }
+        let detail = Mango9OpportunityDetailModel(id: 12, session: identity, metadata: nil, transport: transport)
+        await detail.load()
+        let first = await detail.mutate("stage", values: ["stage": "qualified"])
+        XCTAssertFalse(first); XCTAssertNotNil(detail.pending); XCTAssertFalse(detail.can("update"))
+        let retry = await detail.mutate("stage", values: ["stage": "proposal"])
+        XCTAssertTrue(retry, detail.error ?? "")
+        XCTAssertEqual(sends.count, 2)
+        XCTAssertEqual(sends[0]["revision"] as? String, "7")
+        XCTAssertEqual(sends[0]["requestId"] as? String, sends[1]["requestId"] as? String)
+        XCTAssertEqual(sends[1]["stage"] as? String, "qualified")
+        XCTAssertEqual(detail.row?.stage, "qualified"); XCTAssertEqual(detail.row?.revision, "8"); XCTAssertNil(detail.pending)
+        detail.metadata = try Mango9OpportunityMetadata(["userId": 101, "permissions": ["access": true, "edit": false], "statusSpecs": []])
+        let denied = await detail.mutate("stage", values: ["stage": "proposal"])
+        XCTAssertFalse(denied); XCTAssertEqual(sends.count, 2)
     }
     private func metadata() throws -> Mango9OpportunityMetadata {
         try .init(["userId": "101", "permissions": ["access": true, "create": true, "assign": false],

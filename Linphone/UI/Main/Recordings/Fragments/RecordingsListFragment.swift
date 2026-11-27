@@ -78,19 +78,11 @@ struct RecordingsListFragment: View {
 				.frame(height: 0)
 			
 			HStack {
-				Image("caret-left")
-					.renderingMode(.template)
-					.resizable()
-					.foregroundStyle(Color.orangeMain500)
-					.frame(width: 25, height: 25, alignment: .leading)
-					.padding(.all, 10)
-					.padding(.top, 4)
-					.padding(.leading, -10)
-					.onTapGesture {
-						withAnimation {
-							isShowRecordingsListFragment = false
-						}
-					}
+				Button { withAnimation { isShowRecordingsListFragment = false } } label: {
+                                Image("caret-left").renderingMode(.template).resizable().scaledToFit()
+                                    .foregroundStyle(Color.orangeMain500).frame(width: 25, height: 25)
+                                    .frame(width: 44, height: 44).contentShape(Rectangle())
+                            }.buttonStyle(.plain).accessibilityLabel("Back").accessibilityIdentifier("recordings.back")
 				
 				Text("recordings_title")
 					.default_text_style_orange_800(styleSize: 16)
