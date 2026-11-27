@@ -26,6 +26,7 @@ internal class Mango9OpportunityUI(
     private val context: Context, private val scope: CoroutineScope, private val host: ViewGroup,
     private val capture: () -> Mango9SessionLease?, private val changed: () -> Unit,
     private val openContact: (Mango9SessionLease, Mango9AppointmentContact) -> Unit,
+    private val openCalendar: (Int) -> Unit = {},
     private val beforeChat: () -> Unit = {},
         private val visibilityChanged: () -> Unit = {
         },
@@ -37,6 +38,7 @@ internal class Mango9OpportunityUI(
     private var popup: androidx.appcompat.app.AlertDialog? = null
     private var generation = 0
     private var countJob: Job? = null
+    private var dashboardGeneration = 0
 
     private var snapshotProvider: (() -> Mango9OpportunityScreen?)? = null
     val isShowing: Boolean get() = pages.isNotEmpty()
@@ -69,6 +71,8 @@ internal class Mango9OpportunityUI(
             sharing(it)
         } }
     }
+
+    fun requestLeave(action: () -> Unit) { pages.lastOrNull()?.requestLeave(action) ?: action() }
 
     fun close() {
         snapshotProvider = null; generation++; countJob?.cancel(); pages.toList().asReversed().forEach {
@@ -217,7 +221,80 @@ internal class Mango9OpportunityUI(
         }
     }
 
-    fun workspace(record: Mango9CrmRecord? = null, openId: Int? = null) {
+    fun dashboard(host: LinearLayout) {
+        val lease = capture() ?: return
+        host.removeAllViews()
+        val body = column().apply { setPadding(dp(8), dp(4), dp(8), dp(8)) }; host.addView(body)
+
+        fun load() {
+            val version = ++dashboardGeneration
+            scope.launch {
+            body.removeAllViews(); body.addView(label("Loading Opportunities…"))
+            try {
+                val meta = Mango9OpportunityMetadata(api.request(lease, listOf("metadata")))
+                if (!current(lease) || version != dashboardGeneration)return@launch
+                if (!meta.canAccess){host.removeAllViews(); return@launch}
+                val raw = api.request(lease, listOf("dashboard")); val data = Mango9OpportunityDashboard(raw)
+                if (!current(lease) || version != dashboardGeneration)return@launch
+                body.removeAllViews(); body.addView(button("Opportunities ›"){workspace()})
+                val rows =
+                    listOf(listOf("Open opportunities" to "open", "Open value" to "open"), listOf("Won this month" to "won", "Follow-ups due" to "due"))
+                rows.forEach { cells ->
+                    val line = LinearLayout(context)
+                    cells.forEach { (title, filter) ->
+                        val tile = column().apply {
+                            setPadding(dp(10), dp(10), dp(10), dp(10))
+                            background = android.graphics.drawable.GradientDrawable().apply {
+                                setColor(android.graphics.Color.rgb(246, 247, 251)); cornerRadius = dp(12).toFloat()
+                            }
+                            val accent = android.graphics.Color.parseColor(if (filter == "won") "#15803D" else if (filter == "due") "#B45309" else "#4253C7")
+                            addView(
+                                android.widget.ImageView(context).apply {
+                                setImageResource(when (title) { "Open opportunities" -> R.drawable.mango9_crm_money; "Open value" -> R.drawable.mango9_crm_chart; "Won this month" -> R.drawable.check; else -> R.drawable.calendar_blank })
+                                imageTintList = android.content.res.ColorStateList.valueOf(accent)
+                            },
+                                LinearLayout.LayoutParams(dp(20), dp(20)).apply { bottomMargin = dp(4) }
+                            )
+
+                            fun caption(value: String) {
+                                addView(label(value).apply { textSize = 12f; setTextColor(android.graphics.Color.rgb(96, 112, 135)) })
+                            }
+
+                            fun amount(value: String) {
+                                addView(label(value).apply { setPadding(0, dp(3), 0, dp(2)); textSize = 22f; setTypeface(typeface, Typeface.BOLD) })
+                            }
+                            addView(
+                                label(title).apply {
+                                setPadding(0, dp(2), 0, 0); textSize = 13f; setTextColor(android.graphics.Color.rgb(96, 112, 135))
+                            }
+                            )
+                            when (title) {
+                                "Open opportunities" -> { amount(data.open.toString()); caption("Active opportunities") }
+                                "Open value" -> {
+                                    amount(data.amounts("openCurrencies", data.open)); if (data.unknownOpen > 0)caption("${data.unknownOpen} without a value")
+                                }
+                                "Won this month" -> {
+                                    amount(data.amounts("currencies", data.won)); caption("${data.won} won"); if (data.estimatedWon > 0)caption("${data.estimatedWon} using estimated value"); if (data.unknownWon > 0)caption("${data.unknownWon} without a value")
+                                }
+                                else -> { amount(data.due.toString()); caption("${data.overdue} overdue · ${data.today} today") }
+                            }
+                            isClickable = true; contentDescription = title; setOnClickListener { workspace(dashboard = filter) }
+                        }
+                        line.addView(tile, LinearLayout.LayoutParams(0, -1, 1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
+                    }
+                    body.addView(line, LinearLayout.LayoutParams(-1, -2))
+                }
+            }catch (e: Exception){
+                if (e is CancellationException)throw e; if (current(lease) && version == dashboardGeneration){
+                    body.removeAllViews(); error(body, e){load()}
+                }
+            }
+        }
+        }
+        load()
+    }
+
+    fun workspace(record: Mango9CrmRecord? = null, openId: Int? = null, dashboard: String = "") {
         val lease = capture() ?: return
         snapshotProvider = { Mango9OpportunityScreen(record, lease, "list") }
         lateinit var workspace: Mango9OpportunityWorkspaceUI
@@ -225,6 +302,7 @@ internal class Mango9OpportunityUI(
             context, scope, lease, ::page,
             openContact = { openContact(lease, it) },
             beforeChat = beforeChat,
+            openCalendar = openCalendar,
             create = { create(it, lease, updated = { workspace.refresh() }) },
             edit = { row, meta, refreshed ->
                 val previous = snapshotProvider
@@ -241,7 +319,7 @@ internal class Mango9OpportunityUI(
             }
             }
         )
-        workspace.list(record)
+        workspace.list(record, dashboard)
         if (openId != null) workspace.detail(openId)
     }
 
@@ -293,7 +371,7 @@ internal class Mango9OpportunityUI(
         body.addView(label("Checking record…")); load()
     }
 
-    private class FormHost(val showing: () -> Boolean, val cancelable: (Boolean) -> Unit, val dismissAction: () -> Unit, val addSave: ((Button) -> Unit)? = null) {
+    private class FormHost(val showing: () -> Boolean, val cancelable: (Boolean) -> Unit, val dismissAction: () -> Unit, val addSave: ((Button) -> Unit)? = null, val protect: (((() -> Boolean)) -> Unit)? = null) {
         val isShowing get() = showing()
 
         fun setCancelable(value: Boolean) = cancelable(value)
@@ -309,47 +387,27 @@ internal class Mango9OpportunityUI(
         val previous = snapshotProvider
         snapshotProvider = { Mango9OpportunityScreen(record, lease, "create", restoredDraft) }
         val body = column()
-        val footer = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.END }
-        val content = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-        val scroll = ScrollView(context).apply { isFillViewport = false; addView(body) }
-        content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f)); content.addView(footer)
-        val dialog = MaterialAlertDialogBuilder(context).setBackground(
-            android.graphics.drawable.GradientDrawable().apply {
-            setColor(android.graphics.Color.WHITE); cornerRadius = dp(20).toFloat()
-        }
-        ).setTitle("Add Opportunity").setView(content).create()
-        val cancel = button("Cancel") { dialog.dismiss() }; footer.addView(cancel)
-        popup?.dismiss(); popup = dialog
+        val picker = page(if (record == null) "Lead or Client" else "Add Opportunity", body)
         var searchJob: Job? = null; var sequence = 0
-        dialog.setOnDismissListener {
-            sequence++; searchJob?.cancel(); if (popup === dialog) popup = null; snapshotProvider = previous
-        }
-        dialog.show()
-        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-        dialog.window?.setLayout((context.resources.displayMetrics.widthPixels * 0.94).toInt().coerceAtMost(dp(620)), (context.resources.displayMetrics.heightPixels * 0.88).toInt())
-        val formHost =
-            FormHost({
-                dialog.isShowing
-            }, {
-                dialog.setCancelable(it); cancel.isEnabled = it
-            }, { dialog.dismiss() }, { footer.addView(it, LinearLayout.LayoutParams(0, -2, 1f)) })
+        picker.whenDismissed {sequence++; searchJob?.cancel(); snapshotProvider = previous}
 
         fun selected(linked: Mango9CrmRecord) {
-            sequence++; searchJob?.cancel(); snapshotProvider = { Mango9OpportunityScreen(linked, lease, "create", restoredDraft) }
-            body.removeAllViews(); body.addView(label("Loading Opportunity fields…"))
+            val fields = column(); val editor = if (record != null)picker else page("Add Opportunity", fields)
+            val target = if (record != null)body else fields
+            target.removeAllViews(); target.addView(label("Loading Opportunity fields…"))
 
             fun loadFields() {
-                scope.launch {
+                scope.launch{
                 try {
                     val meta = Mango9OpportunityMetadata(api.request(lease, listOf("metadata")))
-                    require(meta.activeStages.isNotEmpty()) { "No active Opportunity stages are available." }
-                    require(meta.canCreate) { "Creating Opportunities is not available for this account." }
-                    if (!current(lease) || !dialog.isShowing) return@launch
-                    body.removeAllViews(); form(body, formHost, linked, lease, meta, restoredDraft, updated = updated)
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    if (current(lease) && dialog.isShowing) {
-                        body.removeAllViews(); error(body, e); body.addView(button("Retry") { loadFields() })
+                    require(meta.canCreate && meta.activeStages.isNotEmpty()){ "Creating Opportunities is not available for this account." }
+                    if (!current(lease) || !editor.isShowing)return@launch
+                    target.removeAllViews(); form(target, editor, linked, lease, meta, restoredDraft, updated = {
+                        if (picker.isShowing)picker.dismiss(); updated()
+                    })
+                }catch (e: Exception){
+                    if (e is CancellationException)throw e; if (current(lease) && editor.isShowing){
+                        target.removeAllViews(); error(target, e){loadFields()}
                     }
                 }
             }
@@ -357,11 +415,25 @@ internal class Mango9OpportunityUI(
             loadFields()
         }
         if (record != null) { selected(record); return }
-        body.addView(label("Lead or Client"))
         val search = EditText(context).apply {
             hint = "Search name, company, email, or phone"; contentDescription = "Search leads or clients"; setSingleLine(); textSize = 16f; setTextColor(context.getColor(R.color.mango9_calendar_ink))
         }
-        body.addView(search); val rows = column().apply { setPadding(0, 0, 0, 0) }; body.addView(rows)
+        body.addView(search)
+        val filter = Spinner(context).apply{
+            contentDescription = "Record type"; adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, listOf("All", "Leads", "Clients"))
+        }
+        val pickerActions = LinearLayout(context).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
+        pickerActions.addView(filter, LinearLayout.LayoutParams(0, dp(48), 1f))
+        val add = button("Add new") {
+            android.widget.PopupMenu(context, search).apply {
+            menu.add("Add Lead").setOnMenuItemClickListener { createLinkedRecord(Mango9RecordKind.Lead, lease, ::selected); true }
+            menu.add("Add Client").setOnMenuItemClickListener {
+                createLinkedRecord(Mango9RecordKind.Client, lease, ::selected); true
+            }
+            show()
+        }
+        }; pickerActions.addView(add, LinearLayout.LayoutParams(0, dp(48), 1f)); body.addView(pickerActions)
+        val rows = column().apply { setPadding(0, 0, 0, 0) }; body.addView(rows)
         var page = 0; var loading = false
 
         fun load(append: Boolean = false) {
@@ -370,8 +442,8 @@ internal class Mango9OpportunityUI(
             if (!append) { rows.removeAllViews(); rows.addView(label("Searching…")) }
             scope.launch {
                 try {
-                    val data = api.request(lease, listOf("contacts"), mapOf("q" to search.text.toString(), "page" to (if (append) page + 1 else 1).toString()))
-                    if (!current(lease) || !dialog.isShowing || sequence != token) return@launch
+                    val data = api.request(lease, listOf("contacts"), mapOf("q" to search.text.toString(), "type" to listOf("all", "leads", "clients")[filter.selectedItemPosition.coerceAtLeast(0)], "page" to (if (append) page + 1 else 1).toString()))
+                    if (!current(lease) || !picker.isShowing || sequence != token) return@launch
                     if (!append) rows.removeAllViews()
                     rows.findViewWithTag<View>("more")?.let(rows::removeView)
                     val items = data.getJSONArray("items").opportunityObjects()
@@ -400,15 +472,52 @@ internal class Mango9OpportunityUI(
                     }
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
-                    if (current(lease) && dialog.isShowing && sequence == token) {
+                    if (current(lease) && picker.isShowing && sequence == token) {
                         rows.removeAllViews(); error(rows, e); rows.addView(button("Retry search") { load() })
                     }
                 } finally { if (sequence == token) loading = false }
             }
         }
+        filter.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {override fun onNothingSelected(p: AdapterView<*>?) {
+            }
+
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, position: Int, id: Long) {
+                sequence++; searchJob?.cancel(); load()
+            } }
         search.doAfterTextChanged {
             sequence++; searchJob?.cancel(); rows.removeAllViews(); searchJob = scope.launch { delay(250); load() }
         }; load()
+    }
+
+    private fun createLinkedRecord(kind: Mango9RecordKind, lease: Mango9SessionLease, selected: (Mango9CrmRecord) -> Unit) {
+        val body = column(); val p = page("Add ${if (kind == Mango9RecordKind.Lead) "Lead" else "Client"}", body)
+        val inputs = listOf("First name", "Last name", "Phone", "Email").map { title ->
+            body.addView(label(title)); EditText(context).apply{
+            hint = title; contentDescription = title; textSize = 16f; body.addView(this)
+        }
+        }
+        p.protectChanges { inputs.any{it.text.isNotBlank()} }
+        val errors = column(); body.addView(errors); var busy = false; var uncertain = false
+        val save = button("Save ${if (kind == Mango9RecordKind.Lead) "Lead" else "Client"}") {}; body.addView(save)
+        save.setOnClickListener {
+            if (busy || uncertain || !current(lease))return@setOnClickListener
+            val values = inputs.map{it.text.toString().trim()}
+            if (values[0].isBlank() && values[1].isBlank()){
+                errors.removeAllViews(); errors.addView(label("Enter a name.")); return@setOnClickListener
+            }
+            busy = true; p.setCancelable(false); save.isEnabled = false
+            scope.launch {
+                try {
+                val result = Mango9CrmRepository(context).createRecord(lease, kind, values[0], values[1], values[2], values[3], "")
+                if (current(lease) && p.isShowing){p.dismiss(); changed(); selected(result.record)}
+            }catch (e: Exception){
+                if (e is CancellationException)throw e; if (current(lease) && p.isShowing){
+                // Never silently repeat a creation after an unknown network result.
+                uncertain = true; error(errors, e); errors.addView(label("Check the Lead or Client list before trying again."))
+            }
+            }finally {busy = false; p.setCancelable(true); save.isEnabled = !uncertain}
+            }
+        }
     }
 
     private fun form(
@@ -420,7 +529,7 @@ internal class Mango9OpportunityUI(
             body,
             FormHost({
             p.isShowing
-        }, { p.setCancelable(it) }, { p.dismiss() }),
+        }, { p.setCancelable(it) }, { p.dismiss() }, protect = {p.protectChanges(it)}),
             record, lease, meta, restoredDraft, existing, updated
         )
 
@@ -436,7 +545,10 @@ internal class Mango9OpportunityUI(
 
         fun field(parent: LinearLayout, title: String, value: String = "", multiline: Boolean = false): EditText {
             parent.addView(label(title)); val input = EditText(context).apply {
-                setText(value); hint = title; contentDescription = title; setSingleLine(!multiline); if (multiline)minLines = 3; textSize = 16f; setTextColor(context.getColor(R.color.mango9_calendar_ink)); hyphenationFrequency = 0
+                setText(value); hint = title; contentDescription = title; setSingleLine(!multiline); if (multiline)minLines = 3; textSize = Mango9CrmText.value
+                setPadding(dp(12), dp(12), dp(12), dp(12)); background = android.graphics.drawable.GradientDrawable().apply{
+                    setColor(android.graphics.Color.WHITE); setStroke(dp(1), android.graphics.Color.rgb(224, 229, 239)); cornerRadius = dp(12).toFloat()
+                }; setTextColor(context.getColor(R.color.mango9_calendar_ink)); hyphenationFrequency = 0
             }
             parent.addView(input, LinearLayout.LayoutParams(-1, -2)); inputs.add(input); return input
         }
@@ -474,7 +586,7 @@ internal class Mango9OpportunityUI(
         val title = field(body, "Title (required)"); val stages = meta.stages.filter {
             !it.retired || it.id == existing?.optString("stage")
         }
-        val stage = select(body, "Stage", stages.map {it.name}, stages.indexOfFirst {it.default})
+        val stage = select(body, "Status", stages.map {it.name}, stages.indexOfFirst {it.default})
         val amount = field(body, "Value (optional)").apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
@@ -567,6 +679,8 @@ internal class Mango9OpportunityUI(
                     existing?.toString()
             )
         }
+        val baseline = snapshotProvider?.invoke()?.draft
+        p.protect?.invoke { snapshotProvider?.invoke()?.draft != baseline }
         save.setOnClickListener {
             if (busy || !current(lease))return@setOnClickListener; busy = true; save.isEnabled = false; p.setCancelable(false); errors.removeAllViews()
             scope.launch {

@@ -17,7 +17,7 @@ internal object Mango9OpportunityPresentation {
     fun contact(row: JSONObject): JSONObject? = if (row.optBoolean("canOpenContact") && row.optString("contact_state") == "available") row.optJSONObject("contact") else null
 
     fun can(row: JSONObject, meta: Mango9OpportunityMetadata, action: String): Boolean {
-        if (action !in setOf("update", "share", "archive", "restore", "note", "activity")) return false
+        if (action !in setOf("stage", "update", "share", "archive", "restore", "note", "activity")) return false
         val permission = when (action) { "share" -> "share"; "archive", "restore" -> "remove"; else -> "edit" }
         return meta.permissions.optBoolean(permission) && text(row, "revision").matches(Regex("[0-9]{1,18}")) &&
             (text(row, "archived_at").isEmpty() || action == "restore") &&

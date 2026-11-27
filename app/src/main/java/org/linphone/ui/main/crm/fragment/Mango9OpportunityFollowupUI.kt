@@ -77,6 +77,10 @@ internal class Mango9OpportunityFollowupUI(
                 }
                 body.addView(scheduled)
                 val date = Button(context).apply { isAllCaps = false; textSize = Mango9CrmText.value }
+                val originalTitle = title.text.toString(); val originalStart = start; val originalScheduled = scheduled.isChecked
+                p.protectChanges {
+                    title.text.toString() != originalTitle || start != originalStart || scheduled.isChecked != originalScheduled
+                }
                 val format = DateTimeFormatter.ofPattern("MMM d, yyyy · h:mm a", Locale.US)
 
                 fun dates() { date.text = "Due   ${start.atZone(zone).format(format)}" }

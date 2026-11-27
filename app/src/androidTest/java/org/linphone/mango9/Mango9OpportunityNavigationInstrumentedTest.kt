@@ -44,7 +44,7 @@ class Mango9OpportunityNavigationInstrumentedTest {
         throw AssertionError("Missing $description")
     }
 
-    private fun label(value: String) = waitFor(value) { text(it) == value }
+    private fun label(value: String) = waitFor(value) { text(it).equals(value, true) }
 
     private fun actionable(n: AccessibilityNodeInfo): Boolean {
         var target: AccessibilityNodeInfo? = n
@@ -81,13 +81,67 @@ class Mango9OpportunityNavigationInstrumentedTest {
             )
         instrumentation.context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         SystemClock.sleep(900)
+        waitFor("target app $target") { it.packageName?.toString() == target }
+        assertEquals("Checks must target the requested app", target, ui.rootInActiveWindow?.packageName?.toString())
         if (nodes().any { text(it) == "Search Opportunities" }) return
         tap(waitFor("CRM footer") { (text(it) == "CRM" || it.viewIdResourceName == "tab.crm") && actionable(it) })
         tap(
             waitFor("Opportunities link") {
-            (text(it) == "Opportunities" || it.viewIdResourceName == "crm.open.opportunities") && actionable(it)
+            (text(it) in setOf("Opportunities", "Opportunities ›", "View all Opportunities") || it.viewIdResourceName == "crm.open.opportunities") && actionable(it)
         }
         )
+    }
+
+    @Test fun dashboardPickerAndUnsavedLeadNavigation() {
+        openWorkspace()
+        assertFalse(nodes().any{text(it) == "Weighted value"})
+        tap(label("Add Opportunity"))
+        label("Search leads or clients")
+        tap(waitFor("Record type"){text(it) == "Record type" || text(it).startsWith("Record type,")}); tap(label("Leads"))
+        snapshot("crm-picker-type-filter")
+        tap(label("Add new")); tap(label("Add Lead"))
+        val first =
+            waitFor("First name"){it.className?.toString() == "android.widget.EditText" && text(it).equals("First name", true)}
+        assertTrue(
+            first.performAction(
+                AccessibilityNodeInfo.ACTION_SET_TEXT,
+                android.os.Bundle().apply{
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "Unsaved navigation check")
+        }
+            )
+        )
+        tap(label("Back")); label("Discard changes?"); tap(label("Keep editing"))
+        assertTrue(nodes().any{it.text?.toString() == "Unsaved navigation check"})
+        tap(label("Back")); tap(label("Discard changes")); label("Search leads or clients")
+        tap(label("Back")); label("Search Opportunities")
+        snapshot("crm-picker-back-restores-list")
+    }
+
+    @Test fun detailStatusAndEditCancel() {
+        openWorkspace()
+        val card = waitFor("Opportunity card") { text(it).startsWith("Open Opportunity ") }
+        tap(card)
+        label("Expected close")
+        val status =
+            waitFor("Opportunity status") { text(it) == "Opportunity status" || text(it).startsWith("Opportunity status,") }
+        snapshot("opportunity-detail-status")
+        tap(status)
+        snapshot("opportunity-status-menu")
+        ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        SystemClock.sleep(600)
+        tap(
+            waitFor("Opportunity actions"){
+            text(it) == "Opportunity actions" || it.viewIdResourceName == "crm.opportunity.actions"
+        }
+        )
+        tap(waitFor("Edit action"){text(it) in setOf("Edit", "Edit Opportunity")})
+        waitFor("Opportunity title field"){
+            it.className?.toString() == "android.widget.EditText" && text(it) in setOf("Opportunity title", "Title (required)")
+        }
+        snapshot("opportunity-edit-layout")
+        tap(label("Back"))
+        label("Expected close")
+        tap(label("Back")); label("Search Opportunities")
     }
 
     /** Draft-only regression on either installed app. Uses a dedicated QA Lead, never a customer record. */

@@ -20,7 +20,7 @@ internal fun JSONArray.opportunityObjects(): List<JSONObject> = (0 until length(
 
 internal class Mango9OpportunityFailure(val status: Int, message: String) : Exception(message)
 
-internal data class Mango9OpportunityStage(val id: String, val name: String, val classification: String, val probability: Int, val default: Boolean, val retired: Boolean)
+internal data class Mango9OpportunityStage(val id: String, val name: String, val classification: String, val probability: Int, val default: Boolean, val retired: Boolean, val color: String = "")
 
 internal class Mango9OpportunityMetadata(val raw: JSONObject) {
     val userId = raw.getInt("userId")
@@ -28,7 +28,7 @@ internal class Mango9OpportunityMetadata(val raw: JSONObject) {
     val tenantId = raw.optInt("tenantId", userId)
     val permissions = raw.getJSONObject("permissions")
     val stages = raw.getJSONArray("statusSpecs").opportunityObjects().map {
-        Mango9OpportunityStage(it.getString("id"), it.getString("name"), it.getString("classification"), it.getInt("probability"), it.optBoolean("default"), it.optBoolean("retired"))
+        Mango9OpportunityStage(it.getString("id"), it.getString("name"), it.getString("classification"), it.getInt("probability"), it.optBoolean("default"), it.optBoolean("retired"), it.optString("color"))
     }
     val activeStages get() = stages.filterNot { it.retired }
     val owners = raw.getJSONArray("users").opportunityObjects().map { it.getInt("id") to it.getString("name") }

@@ -131,13 +131,24 @@ class Mango9CrmFragment : GenericMainFragment() {
         opportunityTools = Mango9OpportunityUI(
             requireContext(), viewLifecycleOwner.lifecycleScope, binding.content,
             viewModel::currentReadSession,
-            changed = { viewModel.refresh(); org.linphone.mango9.Mango9CrmUnread.refreshSoon() },
+            changed = {
+                viewModel.refresh(); opportunityTools?.dashboard(binding.opportunityDashboard); org.linphone.mango9.Mango9CrmUnread.refreshSoon()
+            },
             openContact = { lease, linked ->
                 preserveOpportunityOnReturn = true
                 findNavController().navigate(
                     R.id.action_global_mango9CrmFragment,
                     recordArguments(linked, lease).apply {
                     putBoolean(ARG_OPPORTUNITY_RETURN, true)
+                }
+                )
+            },
+            openCalendar = { id ->
+                preserveOpportunityOnReturn = true
+                findNavController().navigate(
+                    R.id.action_global_mango9CalendarFragment,
+                    android.os.Bundle().apply {
+                    putInt("mango9_event_id", id)
                 }
                 )
             },
@@ -318,12 +329,17 @@ class Mango9CrmFragment : GenericMainFragment() {
     }
 
     private fun selectAppTab(destination: Int) {
+        opportunityTools?.requestLeave {
         dismissRecordDialogs()
         findNavController().navigate(destination, null, androidx.navigation.NavOptions.Builder().setLaunchSingleTop(true).setPopUpTo(R.id.mango9CrmFragment, true).build())
+        }
     }
 
     private fun renderSession(session: org.linphone.mango9.Mango9Session?) {
         val connected = session != null
+        binding.accountCard.visibility = View.GONE
+        binding.opportunityDashboard.visibility = if (connected)View.VISIBLE else View.GONE
+        if (connected)opportunityTools?.dashboard(binding.opportunityDashboard)
         if (!connected) binding.opportunitiesRow.visibility = View.GONE
         if (connected) {
             opportunityTools?.access { allowed, total ->
@@ -384,6 +400,10 @@ class Mango9CrmFragment : GenericMainFragment() {
             val chip = Chip(requireContext()).apply {
                 id = View.generateViewId()
                 text = value.ifEmpty { getString(R.string.mango9_crm_all) }
+                textSize = 14f; minHeight = dp(44)
+                val statusColor = org.linphone.mango9.Mango9CrmStatusColor.color(text.toString())
+                chipBackgroundColor = android.content.res.ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(statusColor, (statusColor and 0x00ffffff) or 0x1c000000))
+                setTextColor(android.content.res.ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(android.graphics.Color.WHITE, statusColor)))
                 isCheckable = true
                 isChecked = value == viewModel.selectedStatus.value.orEmpty()
                 setOnCheckedChangeListener { _, checked ->
@@ -587,6 +607,7 @@ class Mango9CrmFragment : GenericMainFragment() {
                 setTextColor(resources.getColor(R.color.orange_main_500, requireContext().theme))
                 setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, R.drawable.caret_down, 0)
                 compoundDrawableTintList = ColorStateList.valueOf(resources.getColor(R.color.orange_main_500, requireContext().theme))
+                org.linphone.mango9.Mango9CrmStatusColor.apply(this, text.toString())
                 contentDescription = getString(R.string.mango9_crm_change_status, text)
                 setOnClickListener {
                     if (statusJob?.isActive == true || !viewModel.isEditorCurrent(owner) || recordDialog !== dialog) return@setOnClickListener
@@ -605,6 +626,7 @@ class Mango9CrmFragment : GenericMainFragment() {
                                         currentDetail = status.detail
                                         viewModel.reflectStatus(currentDetail)
                                         statusButtons.forEach {
+                                            org.linphone.mango9.Mango9CrmStatusColor.apply(it, status.status)
                                             it.text = status.status.ifBlank { getString(R.string.mango9_crm_select_status) }
                                             it.contentDescription = getString(R.string.mango9_crm_change_status, it.text)
                                         }

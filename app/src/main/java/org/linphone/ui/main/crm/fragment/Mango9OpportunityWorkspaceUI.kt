@@ -28,6 +28,7 @@ internal class Mango9OpportunityWorkspaceUI(
     private val create: (Mango9CrmRecord?) -> Unit,
     private val edit: (JSONObject, Mango9OpportunityMetadata, () -> Unit) -> Unit,
     private val changed: () -> Unit,
+    private val openCalendar: (Int) -> Unit = {},
     private val beforeChat: () -> Unit = {},
     private val screenChanged: (Int?) -> Unit = {}
 ) {
@@ -109,15 +110,14 @@ internal class Mango9OpportunityWorkspaceUI(
         add(parent, action("Retry", retry))
     }
 
-    private fun stage(row: JSONObject, meta: Mango9OpportunityMetadata) = text(
-        "$ " + (meta.stages.firstOrNull { it.id == row.optString("stage") }?.name ?: row.optString("stage")), 12f, blue, true
-    ).apply {
-        val title = android.text.SpannableString(text)
-        title.setSpan(android.text.style.ForegroundColorSpan(green), 0, 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        text = title; background = bg(Color.rgb(236, 239, 253), 7); setPadding(dp(9), dp(5), dp(9), dp(5))
+    private fun stage(row: JSONObject, meta: Mango9OpportunityMetadata): TextView {
+        val status = meta.stages.firstOrNull{it.id == row.optString("stage")}
+        return text(status?.name ?: row.optString("stage")).apply{
+            Mango9CrmStatusColor.apply(this, status?.name ?: row.optString("stage"), status?.color.orEmpty())
+        }
     }
 
-    fun list(contact: Mango9CrmRecord? = null) {
+    fun list(contact: Mango9CrmRecord? = null, dashboard: String = "") {
         screenChanged(null)
         val body = column(14); val p = page("Opportunities", body)
         val addButton = icon(R.drawable.plus_circle, "Add Opportunity") {
@@ -132,7 +132,7 @@ internal class Mango9OpportunityWorkspaceUI(
         var filterDialog: androidx.appcompat.app.AlertDialog? = null
         p.whenDismissed { filterDialog?.dismiss() }
         if (contact != null) add(body, text(contact.name, 17f, bold = true))
-        add(body, metrics); add(body, search); add(body, filterLine); add(body, status); add(body, rows)
+        add(body, search); add(body, filterLine); add(body, status); add(body, rows)
         val displayedIds = mutableSetOf<Int>()
         val badgeViews = mutableMapOf<Int, TextView>()
         val badgeJob = scope.launch {
@@ -145,6 +145,14 @@ internal class Mango9OpportunityWorkspaceUI(
         val preferences = Mango9OpportunityFilterPreferences(context, lease.session, contact?.id)
         val query = mutableMapOf("sort" to "updated_at", "direction" to "desc", "limit" to "25").apply {
             putAll(preferences.load())
+        }
+        if (dashboard.isNotEmpty()) {
+            query["dashboard"] = dashboard
+            val clear =
+                action("Showing: " + when (dashboard){"won" -> "Won this month"; "due" -> "Follow-ups due"; else -> "Open opportunities"} + " · Show all"){
+                    }
+            body.addView(clear, 0)
+            clear.setOnClickListener{query.remove("dashboard"); clear.visibility = View.GONE; refreshList()}
         }
         if (contact != null) query["contactId"] = contact.id.toString()
 
@@ -172,7 +180,7 @@ internal class Mango9OpportunityWorkspaceUI(
                     if (!current() || !p.isShowing || version != seq) return@launch
                     metadata = meta
                     if (!query["stage"].isNullOrEmpty() && meta.stages.none { it.id == query["stage"] }) query["stage"] = ""
-                    choiceButtons["stage"]?.text = meta.stages.firstOrNull { it.id == query["stage"] }?.name ?: "All stages"
+                    choiceButtons["stage"]?.text = meta.stages.firstOrNull { it.id == query["stage"] }?.name ?: "All statuses"
                     query["owner"] = meta.visibleOwnerFilter(query["owner"].orEmpty())
                     query["createdBy"] = meta.visibleOwnerFilter(query["createdBy"].orEmpty())
                     preferences.save(query)
@@ -187,24 +195,6 @@ internal class Mango9OpportunityWorkspaceUI(
                     status.removeAllViews(); add(status, text("${pagination.getInt("total")} Opportunities · Latest updated", 12f, muted))
                     if (reset) {
                         rows.removeAllViews(); displayedIds.clear(); badgeViews.clear(); metrics.removeAllViews()
-                        val summary = raw.getJSONArray("summary").opportunityObjects()
-
-                        fun count(key: String) = summary.sumOf { it.optInt(key) }
-
-                        fun amounts(key: String) = summary.joinToString("\n") {
-                            P.money(P.text(it, key), it.optString("currency")) + " " + it.optString("currency")
-                        }.ifBlank { "—" }
-                        for (pair in listOf(listOf("Open opportunities" to count("open").toString(), "Open value" to amounts("open_value")), listOf("Weighted value" to amounts("weighted_value"), "Won / Lost" to "${count("won")} / ${count("lost")}"))) {
-                            val row = line(); pair.forEach { (label, value) ->
-                                val c = card(); c.addView(text(label, Mango9CrmText.label, muted)); c.addView(text(value, 18f, bold = true)); row.addView(
-                                    c,
-                                    LinearLayout.LayoutParams(0, -2, 1f).apply {
-                                marginEnd = dp(5)
-                            }
-                                )
-                            }; add(metrics, row, 6)
-                        }
-                        if (count("unknown_value") > 0) add(metrics, text("${count("unknown_value")} without an entered value", 11f, muted), 0)
                     }
                     rows.findViewWithTag<View>("more")?.let(rows::removeView)
                     items.filter { displayedIds.add(it.getInt("id")) }.forEach { item ->
@@ -237,8 +227,8 @@ internal class Mango9OpportunityWorkspaceUI(
             }
         }
         filterLine.addView(
-            choices("All stages", {
-            listOf("" to "All stages") + (
+            choices("All statuses", {
+            listOf("" to "All statuses") + (
                 metadata?.stages?.map{
                 it.id to it.name
             } ?: emptyList()
@@ -610,7 +600,16 @@ internal class Mango9OpportunityWorkspaceUI(
                     Mango9OpportunityFollowupUI(context, scope, lease, page).open(r) { changed(); load() }
                 }
                     )
-                }; add(c, text(Mango9OpportunityFollowup.calendarStatus(r), Mango9CrmText.label, muted)); val activity = r.optJSONObject("activity"); add(c, text("Linked task or appointment", 12f, muted)); add(c, text(if (activity?.optBoolean("restricted") == true)"Restricted activity" else activity?.optString("title") ?: "None linked")); if (P.contact(r) != null && permitted("activity")){
+                }; add(c, text(Mango9OpportunityFollowup.calendarStatus(r), Mango9CrmText.label, muted)); val follow = r.optJSONObject("followUp")
+                if (r.optBoolean("onCalendar") && follow?.optBoolean("mine") == true && follow.optInt("eventId") > 0) {
+                    add(
+                        c,
+                        action("Open in Calendar"){
+                    openCalendar(follow.getInt("eventId"))
+                }
+                    )
+                }
+                val activity = r.optJSONObject("activity"); add(c, text("Linked task or appointment", 12f, muted)); add(c, text(if (activity?.optBoolean("restricted") == true)"Restricted activity" else activity?.optString("title") ?: "None linked")); if (P.contact(r) != null && permitted("activity")){
                     add(
                         c,
                         action("Link an existing activity"){
@@ -675,7 +674,53 @@ internal class Mango9OpportunityWorkspaceUI(
             }
                 )
             }
-            val hero = card(); val top = line(); top.addView(stage(r, meta)); top.addView(
+            val hero = card(); val top = line(); top.addView(
+                stage(r, meta).apply {
+                text = text.toString() + " ▾"; minHeight = dp(44); contentDescription = "Opportunity status"; isClickable = permitted("stage")
+                setOnClickListener {
+                    if (permitted("stage")){
+                        val options = meta.activeStages
+                    MaterialAlertDialogBuilder(context).setTitle("Opportunity status").setItems(
+                        options.map{
+                        it.name
+                    }.toTypedArray()
+                    ){_, index ->
+                        val target = options[index]; if (target.id == r.optString("stage"))return@setItems
+                        if (target.classification == "open"){
+                            mutate("stage", JSONObject().put("stage", target.id))
+                        } else {
+                            val content = column(); val draft = P.draft(r).apply{
+                                stage = target.id; actualClose = java.time.LocalDate.now().toString()
+                            }
+                            val date = action("Actual close date · ${draft.actualClose}"){}
+                            date.setOnClickListener{
+                                val now = java.time.LocalDate.parse(draft.actualClose); android.app.DatePickerDialog(context, {_, y, m, d -> draft.actualClose = java.time.LocalDate.of(y, m + 1, d).toString(); date.text = "Actual close date · ${draft.actualClose}"}, now.year, now.monthValue - 1, now.dayOfMonth).show()
+                            }
+                            content.addView(date); content.addView(text("Actual value (optional)", 14f, muted))
+                            val amount = EditText(context).apply{
+                                contentDescription = "Actual value"; setText(draft.actualValue); inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+                            }; content.addView(amount)
+                            val reason = EditText(context).apply{
+                                contentDescription = "Loss reason"; hint = "Loss reason (required)"; setText(draft.lossReason)
+                            }
+                            if (target.classification == "lost")content.addView(reason)
+                            val errors = text("", 14f, Color.RED); content.addView(errors)
+                            val dialog = quick(target.name, content)
+                            content.addView(
+                                action("Save status"){
+                                try {
+                                    draft.actualValue = amount.text.toString(); draft.lossReason = reason.text.toString()
+                                    val values = draft.values(meta, r.getString("stage"))
+                                    dialog.dismiss(); mutate("update", JSONObject().put("values", values))
+                                }catch (e: Exception){errors.text = e.message}
+                            }
+                            )
+                        }
+                    }.show()
+                }
+                }
+            }
+            ); top.addView(
                 text(if (P.text(r, "archived_at").isNotBlank())"Archived" else "${r.optInt("stage_age_days")} days in stage", 11f, muted).apply{
                 gravity = Gravity.END
             },

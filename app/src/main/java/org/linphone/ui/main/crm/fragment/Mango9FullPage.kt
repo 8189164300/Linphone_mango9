@@ -51,6 +51,19 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
 
     private var cancelled: ((DialogInterface) -> Unit)? = null
     private var cancelable = true
+    private var dirty: () -> Boolean = { false }
+
+    fun protectChanges(check: () -> Boolean) = apply { dirty = check }
+
+    fun requestLeave(action: () -> Unit) {
+        if (!cancelable) return
+        if (dirty()) {
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(context).setTitle("Discard changes?").setMessage("Your unsaved changes will be lost.").setNegativeButton("Keep editing", null).setPositiveButton("Discard changes") { _, _ -> action() }.show()
+        } else {
+            action()
+        }
+    }
+
     private val siblings = mutableMapOf<View, Int>()
     private val previousPageVisibility = mutableMapOf<View, Int>()
     private var opportunityPage = false
@@ -120,7 +133,11 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
             }
             setText(label); isAllCaps = false; minHeight = dp(48); minimumWidth = dp(48)
             setTextColor(context.getColor(if (id == DialogInterface.BUTTON_NEUTRAL) R.color.mango9_calendar_error else R.color.mango9_calendar_accent))
-            setOnClickListener { action?.invoke(this@Mango9FullPage, id); dismiss() }
+            setOnClickListener {
+                if (id == DialogInterface.BUTTON_NEGATIVE) {
+                requestLeave {action?.invoke(this@Mango9FullPage, id); cancelled?.invoke(this@Mango9FullPage); dismiss()}
+            } else { action?.invoke(this@Mango9FullPage, id); dismiss() }
+            }
         }
         buttons[id] = button
         if (id == DialogInterface.BUTTON_NEGATIVE) {
@@ -161,7 +178,7 @@ internal class Mango9FullPage(private val context: Context) : DialogInterface {
         root.requestFocus(); shown?.invoke(this)
     }
 
-    override fun cancel() { if (cancelable) { cancelled?.invoke(this); dismiss() } }
+    override fun cancel() { requestLeave { cancelled?.invoke(this); dismiss() } }
 
     override fun dismiss() {
         if (!isShowing) return

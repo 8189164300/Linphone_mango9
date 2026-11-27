@@ -54,6 +54,12 @@ class Mango9CrmRecordAdapter(
                 if (position != RecyclerView.NO_POSITION) onClick(getItem(position))
             }
             binding.executePendingBindings()
+            org.linphone.mango9.Mango9CrmStatusColor.apply(
+                binding.statusBadge,
+                record.status.ifBlank {
+                "No status"
+            }
+            )
         }
     }
 
